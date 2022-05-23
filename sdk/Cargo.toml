@@ -1,0 +1,82 @@
+[package]
+name = "c2pa"
+version = "0.1.0"
+authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2018"
+rust-version = "1.58.0"
+
+[features]
+async_signer = ["async-trait"]
+file_io = ["openssl"]
+
+# The diagnostics feature is unsupported and might be removed.
+# It enables some low-overhead timing features used in our development cycle.
+diagnostics = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait = { version = "0.1.48", optional = true }
+base64 = "0.12.2"
+bcder = "0.6.0"
+blake3 = "1.0.0"  
+bytes = "1.1.0"
+byteorder = "1.3.4"
+chrono = { version = "0.4.19", features = ["wasmbind"] }
+ciborium = "0.2.0"
+conv = "0.3.3"
+coset = "0.3.1"
+extfmt = "0.1.1"
+hex = "0.4.3"
+image = "0.23.10"
+img-parts = "0.2.3"
+log = "0.4.8"
+multibase = "0.9.0"
+multihash = "0.11.4"
+nom = "6.0"
+png_pong = "0.8.2"
+quick-xml = "0.20.0"
+range-set = "0.0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11.5"
+serde_cbor = "0.11.1"
+serde_derive = "1.0.127"
+serde_json = "1.0.66"
+serde-transcode = "1.1.1"
+sha2 = "0.9.5"
+tempfile = "3.1.0"
+thiserror = ">= 1.0.20, < 1.0.26"
+time = ">= 0.2.23"
+twoway = "0.2.1"
+uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
+x509-parser = "0.11.0"
+x509-certificate = "0.12.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ring = "0.16.20"
+url = "2.2.2"
+ureq = "2.4.0"
+instant = "0.1.0"
+openssl = { version = "0.10.31", features = ["vendored"], optional = true }
+xmp_toolkit = "0.3.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log = { version = "0.2", features = ["color"] }
+getrandom = { version = "0.2.2", features = ["js"] }
+# We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
+# to handle certificate timestamp checking correctly.
+instant = { version = "0.1.0", features = ["wasm-bindgen", "inaccurate"] }
+js-sys = "0.3.54"
+serde-wasm-bindgen = "0.4.1"
+wasm-bindgen = "0.2.77"
+wasm-bindgen-futures = "0.4.27"
+web-sys = { version = "0.3.54", features = ["Crypto", "SubtleCrypto", "CryptoKey", "Window", "WorkerGlobalScope"] }
+
+[dev-dependencies]
+anyhow = "1.0.40"
+env_logger = "0.7.1"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.0"

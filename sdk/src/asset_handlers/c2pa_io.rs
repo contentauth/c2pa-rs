@@ -1,0 +1,96 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions};
+use crate::error::{Error, Result};
+use std::fs::File;
+use std::path::Path;
+
+/// Supports working with ".c2pa" files containing only manifest store data
+pub struct C2paIO {}
+
+impl CAILoader for C2paIO {
+    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let mut cai_data = Vec::new();
+        // read the whole file
+        asset_reader.read_to_end(&mut cai_data)?;
+        Ok(cai_data)
+    }
+
+    // C2PA files have no xmp data
+    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+        None
+    }
+}
+
+impl AssetIO for C2paIO {
+    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(asset_path)?;
+        self.read_cai(&mut f)
+    }
+
+    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        // just save the data in a file
+        std::fs::write(asset_path, &store_bytes)
+            .map_err(|_err| Error::BadParam("C2PA write error".to_owned()))?;
+
+        Ok(())
+    }
+
+    fn get_object_locations(
+        &self,
+        _asset_path: &std::path::Path,
+    ) -> Result<Vec<HashObjectPositions>> {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "file_io")]
+pub mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
+    use super::{AssetIO, C2paIO};
+
+    use tempfile::tempdir;
+
+    use crate::{
+        openssl::temp_signer::get_signer,
+        status_tracker::OneShotStatusTracker,
+        store::Store,
+        utils::test::{fixture_path, temp_dir_path},
+    };
+
+    #[test]
+    fn c2pa_io_parse() {
+        let path = fixture_path("C.jpg");
+
+        let temp_dir = tempdir().expect("temp dir");
+        let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
+
+        let c2pa_io = C2paIO {};
+        let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("read_cai_store");
+        c2pa_io
+            .save_cai_store(&temp_path, &manifest)
+            .expect("save cai store");
+
+        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::new())
+            .expect("loading store");
+
+        let (signer, _) = get_signer(&temp_dir.path());
+
+        let manifest2 = store.to_jumbf(&signer).expect("to_jumbf");
+        assert_eq!(&manifest, &manifest2);
+    }
+}

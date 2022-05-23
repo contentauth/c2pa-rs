@@ -1,0 +1,2 @@
+[workspace]
+members = ["sdk", "c2patool"]
