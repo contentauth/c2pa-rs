@@ -30,6 +30,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
+      
+      - name: Sniff OpenSSL version
+        run: openssl version
 
       - name: Run self tests
         uses: actions-rs/cargo@v1
