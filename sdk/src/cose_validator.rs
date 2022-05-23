@@ -1079,23 +1079,23 @@ pub mod tests {
         let (_, cert_path) = temp_signer::get_rsa_signer(&temp_dir.path(), "ps256", None);
         let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
+        if let Ok(signcert) = openssl::x509::X509::stack_from_pem(&es256_cert) {
+            let der_bytes = signcert[0].to_der().unwrap();
             assert!(check_cert("es256", &der_bytes, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
-            let der_bytes = signcert.to_der().unwrap();
+        if let Ok(signcert) = openssl::x509::X509::stack_from_pem(&es384_cert) {
+            let der_bytes = signcert[0].to_der().unwrap();
             assert!(check_cert("es384", &der_bytes, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
-            let der_bytes = signcert.to_der().unwrap();
+        if let Ok(signcert) = openssl::x509::X509::stack_from_pem(&es512_cert) {
+            let der_bytes = signcert[0].to_der().unwrap();
             assert!(check_cert("es512", &der_bytes, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
+        if let Ok(signcert) = openssl::x509::X509::stack_from_pem(&rsa_pss256_cert) {
+            let der_bytes = signcert[0].to_der().unwrap();
             assert!(check_cert("ps256", &der_bytes, &mut validation_log, None).is_ok());
         }
     }
