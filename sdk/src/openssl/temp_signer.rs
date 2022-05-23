@@ -102,7 +102,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     alg: &str,
     tsa_url: Option<String>,
 ) -> (EcSigner, PathBuf) {
-    let (key_name, ec_key_name) = match alg {
+    let (key_name, _ec_key_name) = match alg {
         "es256" => ("ec256_key", "prime256v1"),
         "es384" => ("ec384_key", "secp384r1"),
         "es512" => ("ec512_key", "secp521r1"),
@@ -111,24 +111,9 @@ pub fn get_ec_signer<P: AsRef<Path>>(
         }
     };
 
-    let (sign_cert_path, pem_key_path) = make_key_path_pair(path, key_name);
+    let (sign_cert_path, pem_key_path) = make_key_path_pair(&path, key_name);
 
-    let mut openssl = Command::new("openssl");
-    openssl
-        .arg("ecparam")
-        .arg("-genkey")
-        .arg("-name")
-        .arg(ec_key_name)
-        .arg("-noout")
-        .arg("-out")
-        .arg(&pem_key_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    process_openssl_output(spawn_openssl(&mut openssl));
-
-    create_x509_key_pair(&sign_cert_path, &pem_key_path, true, None, Some("-sha256"));
+    make_cert_chain(&path, key_name, alg);
 
     (
         EcSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
@@ -159,29 +144,16 @@ pub fn get_ed_signer<P: AsRef<Path>>(
     alg: &str,
     tsa_url: Option<String>,
 ) -> (EdSigner, PathBuf) {
-    let (key_name, openssl_alg_name) = match alg {
+    let (key_name, _openssl_alg_name) = match alg {
         "ed25519" => ("ed25519_key", "ED25519"),
         _ => {
             panic!("Unknown ED signer alg {:#?}", alg);
         }
     };
 
-    let (sign_cert_path, pem_key_path) = make_key_path_pair(path, key_name);
+    let (sign_cert_path, pem_key_path) = make_key_path_pair(&path, key_name);
 
-    let mut openssl = Command::new("openssl");
-    openssl
-        .arg("genpkey")
-        .arg("-algorithm")
-        .arg(&openssl_alg_name)
-        .arg("-out")
-        .arg(&pem_key_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    process_openssl_output(spawn_openssl(&mut openssl));
-
-    create_x509_key_pair(&sign_cert_path, &pem_key_path, true, None, None);
+    make_cert_chain(&path, key_name, alg);
 
     (
         EdSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
@@ -213,7 +185,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     alg: &str,
     tsa_url: Option<String>,
 ) -> (RsaSigner, PathBuf) {
-    let (key_name, sha_mode, rsa_padding_mode) = match alg {
+    let (key_name, _sha_mode, _rsa_padding_mode) = match alg {
         "rs256" => ("rsa256_key", "-sha256", None),
         "rs384" => ("rsa384_key", "-sha384", None),
         "rs512" => ("rsa512_key", "-sha512", None),
@@ -225,15 +197,9 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
         }
     };
 
-    let (sign_cert_path, pem_key_path) = make_key_path_pair(path, key_name);
+    let (sign_cert_path, pem_key_path) = make_key_path_pair(&path, key_name);
 
-    create_x509_key_pair(
-        &sign_cert_path,
-        &pem_key_path,
-        false,
-        rsa_padding_mode,
-        Some(sha_mode),
-    );
+    make_cert_chain(&path, key_name, alg);
 
     (
         RsaSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
@@ -299,6 +265,454 @@ fn make_key_path_pair<P: AsRef<Path>>(path: P, key_name: &str) -> (PathBuf, Path
     //println!("pem_key_path = {:#?}", pem_key_path);
 
     (sign_cert_path, pem_key_path)
+}
+
+// Create key of specified type for the desired signature type
+fn create_keys_by_alg<P: AsRef<Path>>(pem_key_path: P, key_name: &str, key_type: &str) {
+    let mut private_key = pem_key_path.as_ref().to_path_buf();
+    private_key.push(key_name);
+    private_key.set_extension("pkey");
+    let private_key_clone = private_key.clone();
+
+    let mut openssl = Command::new("openssl");
+    openssl.arg("genpkey").arg("-algorithm");
+
+    match key_type {
+        "rsa256" | "rsa384" | "rs512" => {
+            openssl
+                .arg("RSA")
+                .arg("-pkeyopt")
+                .arg("rsa_keygen_bits:4096")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "ps256" => {
+            openssl
+                .arg("RSA-PSS")
+                .arg("-pkeyopt")
+                .arg("rsa_keygen_bits:4096")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_md:sha256")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_mgf1_md:sha256")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_saltlen:32")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "ps384" => {
+            openssl
+                .arg("RSA-PSS")
+                .arg("-pkeyopt")
+                .arg("rsa_keygen_bits:4096")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_md:sha384")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_mgf1_md:sha384")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_saltlen:48")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "ps512" => {
+            openssl
+                .arg("RSA-PSS")
+                .arg("-pkeyopt")
+                .arg("rsa_keygen_bits:4096")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_md:sha512")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_mgf1_md:sha512")
+                .arg("-pkeyopt")
+                .arg("rsa_pss_keygen_saltlen:64")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "es256" => {
+            openssl
+                .arg("EC")
+                .arg("-pkeyopt")
+                .arg("ec_paramgen_curve:P-256")
+                .arg("-outform")
+                .arg("PEM")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "es384" => {
+            openssl
+                .arg("EC")
+                .arg("-pkeyopt")
+                .arg("ec_paramgen_curve:P-384")
+                .arg("-outform")
+                .arg("PEM")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "es512" => {
+            openssl
+                .arg("EC")
+                .arg("-pkeyopt")
+                .arg("ec_paramgen_curve:P-521")
+                .arg("-outform")
+                .arg("PEM")
+                .arg("-out")
+                .arg(private_key);
+        }
+        "ed25519" => {
+            openssl.arg("ED25519").arg("-out").arg(private_key);
+        }
+        _ => return,
+    }
+
+    openssl
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let openssl = spawn_openssl(&mut openssl);
+
+    process_openssl_output(openssl);
+
+    // generate the public key name
+    let mut public_key = pem_key_path.as_ref().to_path_buf();
+    public_key.push(key_name);
+    public_key.set_extension("pub_key");
+
+    // generate the public key
+    let mut openssl = Command::new("openssl");
+    openssl
+        .arg("pkey")
+        .arg("-in")
+        .arg(private_key_clone)
+        .arg("-pubout")
+        .arg("-outform")
+        .arg("PEM")
+        .arg("-out")
+        .arg(public_key);
+
+    openssl
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let openssl = spawn_openssl(&mut openssl);
+
+    process_openssl_output(openssl);
+}
+
+#[allow(dead_code)]
+enum CertType {
+    Root,
+    Intermediate,
+    Client,
+}
+
+// Generate a typical certificate chain from root CA -> intermediate CA -> C2PA signing cert
+fn make_cert_chain<P: AsRef<Path>>(path: P, key_name: &str, alg: &str) {
+    let root_name = format!("{}_root", key_name);
+    let intermediate_name = format!("{}_intermediate", key_name);
+    let signer_name = format!("{}_signer", key_name);
+
+    let (sign_chain_path, pem_key_path) = make_key_path_pair(&path, key_name);
+
+    // create Root CA
+    create_keys_by_alg(&path, &root_name, alg);
+
+    let root_path = create_x509_cert_by_type(
+        &path,
+        &root_name,
+        alg,
+        "C2PA Test Root CA",
+        "Root CA",
+        CertType::Root,
+        None,
+    );
+
+    // create intermediate Root CA
+    create_keys_by_alg(&path, &intermediate_name, alg);
+
+    let intermediate_path = create_x509_cert_by_type(
+        &path,
+        &intermediate_name,
+        alg,
+        "C2PA Test Intermediate Root CA",
+        "Intermediate CA",
+        CertType::Intermediate,
+        Some(root_name),
+    );
+
+    // create signing certificate
+    create_keys_by_alg(&path, &signer_name, alg);
+
+    let mut signer_path = create_x509_cert_by_type(
+        &path,
+        &signer_name,
+        alg,
+        "C2PA Test Signing Cert",
+        "C2PA Signer",
+        CertType::Client,
+        Some(intermediate_name),
+    );
+
+    // make cert chain
+    let mut cat = if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("copy");
+        cmd.arg(signer_path.clone())
+            .arg("+")
+            .arg(intermediate_path)
+            .arg("+")
+            .arg(root_path)
+            .arg(sign_chain_path.clone());
+
+        cmd
+    } else {
+        let mut cmd = Command::new("cat");
+        cmd.arg(signer_path.clone())
+            .arg(intermediate_path)
+            .arg(root_path);
+
+        cmd
+    };
+
+    match cat.output() {
+        Ok(cat_stat) => {
+            if cat_stat.status.success() {
+                // capture the output for systems that support "cat"
+                if !cfg!(target_os = "windows")
+                    && std::fs::write(sign_chain_path, &cat_stat.stdout).is_err()
+                {
+                    eprintln!("Could not generate certificate chain");
+                    panic!("Unable to merge certs");
+                }
+            } else {
+                eprintln!(
+                    "Could not generate certificate chain for {}:{}",
+                    key_name, alg
+                );
+                panic!("Unable to merge certs\n\n{:#?}", cat_stat.status.code());
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "Could not generate certificate chain for {}:{}",
+                key_name, alg
+            );
+            panic!("Unable to merge certs\n\n{:#?}", e);
+        }
+    }
+
+    // copy signing private key
+    signer_path.set_extension("pkey");
+    if std::fs::copy(signer_path, pem_key_path).is_err() {
+        eprintln!("Could not copy private key for {}:{}", key_name, alg);
+        panic!("Unable to copy file");
+    }
+}
+fn add_root_extensions(openssl: &mut Command) {
+    openssl
+        .arg("-days")
+        .arg("3650")
+        .arg("-addext")
+        .arg("authorityKeyIdentifier = keyid:always,issuer")
+        .arg("-addext")
+        .arg("basicConstraints = critical,CA:true")
+        .arg("-addext")
+        .arg("keyUsage = critical,digitalSignature,keyCertSign,cRLSign");
+}
+
+fn add_intermediate_extensions(openssl: &mut Command) {
+    openssl
+        .arg("-addext")
+        .arg("basicConstraints = critical,CA:true")
+        .arg("-addext")
+        .arg("keyUsage =critical,digitalSignature,keyCertSign,cRLSign");
+}
+
+fn add_client_extensions(openssl: &mut Command) {
+    openssl
+        .arg("-addext")
+        .arg("basicConstraints = critical,CA:false")
+        .arg("-addext")
+        .arg("extendedKeyUsage = critical,emailProtection")
+        .arg("-addext")
+        .arg("keyUsage = critical,digitalSignature,nonRepudiation");
+}
+
+fn add_cert_hash(openssl: &mut Command, key_type: &str) {
+    match key_type {
+        "rsa256" | "es256" => openssl.arg("-sha256"),
+        "rsa384" | "es384" => openssl.arg("-sha384"),
+        "rs512" | "es512" => openssl.arg("-sha512"),
+        "ps256" => openssl.arg("-sha256"),
+        "ps384" => openssl.arg("-sha384"),
+        "ps512" => openssl.arg("-sha512"),
+        _ => openssl.arg("-sha256"),
+    };
+}
+fn create_x509_cert_by_type<P: AsRef<Path>>(
+    pem_key_path: P,
+    key_name: &str,
+    key_type: &str,
+    organization: &str,
+    common_name: &str,
+    cert_type: CertType,
+    signing_ca: Option<String>,
+) -> PathBuf {
+    let mut private_key = pem_key_path.as_ref().to_path_buf();
+    private_key.push(key_name);
+    private_key.set_extension("pkey");
+
+    let mut ca = pem_key_path.as_ref().to_path_buf();
+    ca.push(key_name);
+    ca.set_extension("pub");
+
+    let outpath = ca.clone(); // return path to generated certificate
+
+    let subj = format!(
+        "/C=US/ST=CA/L=Somewhere/O={}/OU=FOR TESTING_ONLY/CN={}",
+        organization, common_name
+    );
+
+    let mut openssl = Command::new("openssl");
+
+    match cert_type {
+        CertType::Root => {
+            // create cert
+            openssl
+                .arg("req")
+                .arg("-x509")
+                .arg("-key")
+                .arg(private_key)
+                .arg("-out")
+                .arg(ca)
+                .arg("-subj")
+                .arg(subj);
+
+            // make root cert
+            add_root_extensions(&mut openssl);
+
+            // add cert hash
+            add_cert_hash(&mut openssl, key_type);
+
+            // execute command
+            process_openssl_output(spawn_openssl(&mut openssl));
+        }
+        CertType::Intermediate => {
+            if let Some(signing_ca) = signing_ca {
+                let mut csr = pem_key_path.as_ref().to_path_buf();
+                csr.push(key_name);
+                csr.set_extension("csr");
+
+                // create csr
+                openssl
+                    .arg("req")
+                    .arg("-key")
+                    .arg(private_key)
+                    .arg("-new")
+                    .arg("-out")
+                    .arg(csr.clone())
+                    .arg("-subj")
+                    .arg(subj);
+
+                // make intermediate cert
+                add_intermediate_extensions(&mut openssl);
+
+                // execute command
+                process_openssl_output(spawn_openssl(&mut openssl));
+
+                // sign CSR with desired cert
+                let mut signer = pem_key_path.as_ref().to_path_buf();
+                signer.push(signing_ca.clone());
+                signer.set_extension("pub");
+
+                let mut signer_pkey = pem_key_path.as_ref().to_path_buf();
+                signer_pkey.push(signing_ca);
+                signer_pkey.set_extension("pkey");
+
+                let mut openssl = Command::new("openssl");
+
+                openssl
+                    .arg("x509")
+                    .arg("-req")
+                    .arg("-in")
+                    .arg(csr)
+                    .arg("-CA")
+                    .arg(signer)
+                    .arg("-CAkey")
+                    .arg(signer_pkey)
+                    .arg("-days")
+                    .arg("365")
+                    .arg("-out")
+                    .arg(ca)
+                    .arg("-copy_extensions")
+                    .arg("copyall");
+
+                // add cert hash
+                add_cert_hash(&mut openssl, key_type);
+
+                // execute command
+                process_openssl_output(spawn_openssl(&mut openssl));
+            }
+        }
+        CertType::Client => {
+            if let Some(signing_ca) = signing_ca {
+                let mut csr = pem_key_path.as_ref().to_path_buf();
+                csr.push(key_name);
+                csr.set_extension("csr");
+
+                // create csr
+                openssl
+                    .arg("req")
+                    .arg("-key")
+                    .arg(private_key)
+                    .arg("-new")
+                    .arg("-out")
+                    .arg(csr.clone())
+                    .arg("-subj")
+                    .arg(subj);
+
+                // make intermediate cert
+                add_client_extensions(&mut openssl);
+
+                // execute command
+                process_openssl_output(spawn_openssl(&mut openssl));
+
+                // sign CSR with desired cert
+                let mut signer = pem_key_path.as_ref().to_path_buf();
+                signer.push(signing_ca.clone());
+                signer.set_extension("pub");
+
+                let mut signer_pkey = pem_key_path.as_ref().to_path_buf();
+                signer_pkey.push(signing_ca);
+                signer_pkey.set_extension("pkey");
+
+                let mut openssl = Command::new("openssl");
+
+                openssl
+                    .arg("x509")
+                    .arg("-req")
+                    .arg("-in")
+                    .arg(csr)
+                    .arg("-CA")
+                    .arg(signer)
+                    .arg("-CAkey")
+                    .arg(signer_pkey)
+                    .arg("-days")
+                    .arg("90")
+                    .arg("-out")
+                    .arg(ca.clone())
+                    .arg("-copy_extensions")
+                    .arg("copyall");
+
+                // add cert hash
+                add_cert_hash(&mut openssl, key_type);
+
+                // execute command
+                process_openssl_output(spawn_openssl(&mut openssl));
+            }
+        }
+    }
+    outpath
 }
 
 // The .x509 directory at the root of this repo is flagged
