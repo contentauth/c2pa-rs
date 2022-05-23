@@ -31,7 +31,15 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
       
-      - name: Sniff OpenSSL version
+      - name: Update OpenSSL
+        run: brew install openssl
+        if: matrix.os == 'macos-latest'
+
+      - name: Update OpenSSL
+        run: sudo apt-get install openssl
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Verify OpenSSL version
         run: openssl version
 
       - name: Run self tests
