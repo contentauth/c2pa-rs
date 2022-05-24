@@ -14,9 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
-        # Temporarily reduce build matrix to save runtime cost.
-        # rust_version: [1.59.0, stable]
+        rust_version: [1.58.0, stable]
 
     steps:
       - name: Checkout repository
