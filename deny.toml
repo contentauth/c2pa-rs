@@ -47,7 +47,7 @@ confidence-threshold = 0.8
 name = "ring"
 expression = "LicenseRef-ring"
 license-files = [
-  { path = "LICENSE", hash = 0xbd0eed23 }
+  { path = "LICENSE", hash = 3171872035 }
 ]
 
 [sources]
