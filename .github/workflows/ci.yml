@@ -169,6 +169,7 @@ jobs:
           args: --all-targets
 
   coverage:
+    name: Check code coverage
     runs-on: ubuntu-latest
 
     steps:
