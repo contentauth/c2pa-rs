@@ -1923,9 +1923,9 @@ pub mod tests {
         assert!(!jumbf_bytes.is_empty());
 
         // test adding to actual image
-        let ap = fixture_path("bigjumbf.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "bigjumbf_test.jpg");
+        let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
         // grab jumbf from original
         let original_jumbf = load_jumbf_from_file(&ap).unwrap();
@@ -2122,7 +2122,7 @@ pub mod tests {
     #[test]
     fn test_bad_jumbf() {
         // test bad jumbf
-        let ap = fixture_path("bigjumbf.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let mut report = DetailedStatusTracker::new();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
@@ -2173,7 +2173,7 @@ pub mod tests {
 
     #[test]
     fn test_old_manifest() {
-        let ap = fixture_path("08manifest.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let mut report = DetailedStatusTracker::new();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
@@ -2361,8 +2361,7 @@ pub mod tests {
     #[test]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
-        let mut report =
-            patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
+        let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
         let errors = report_split_errors(report.get_log_mut());
 
         assert_eq!(

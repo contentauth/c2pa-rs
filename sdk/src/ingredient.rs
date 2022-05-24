@@ -599,7 +599,6 @@ mod tests {
 
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
-    const BAD_JUMBF_JPEG: &str = "bigjumbf.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     #[test]
@@ -695,25 +694,6 @@ mod tests {
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, PRERELEASE_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_none());
-        assert!(ingredient.validation_status.is_some());
-        assert_eq!(
-            ingredient.validation_status.unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
-    }
-
-    #[test]
-    fn test_jpg_bad_jumbf() {
-        let ap = fixture_path(BAD_JUMBF_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
-
-        println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, BAD_JUMBF_JPEG);
         assert_eq!(&ingredient.format, "image/jpeg");
         assert!(ingredient.thumbnail.is_some());
         assert!(ingredient.provenance.is_some());
