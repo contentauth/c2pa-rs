@@ -24,6 +24,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
           override: true
 
       - name: Cache Rust dependencies
@@ -35,7 +36,14 @@ jobs:
           command: test
           # args: --all-targets --all-features --workspace (waiting on bug fix)
           args: --all-features --workspace
-        
+        env:
+          RUSTFLAGS: -Cinstrument-coverage
+          LLVM_PROFILE_FILE: c2pa-%p-%m.profraw
+
+      - name: Upload code coverage results
+        run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing -o ./lcov.info
+bash <(curl -s https://codecov.io/bash) -f lcov.info
+
   wasm_tests:
     name: Wasm tests
     runs-on: ubuntu-latest
@@ -167,32 +175,3 @@ jobs:
         with:
           version: latest
           args: --all-targets
-
-  coverage:
-    name: Check code coverage
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Install Rust LLVM tools
-        run: rustup toolchain install stable --component llvm-tools-preview
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v1
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
