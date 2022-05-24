@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn manifest_report_image() {
-        let image_bytes = include_bytes!("../tests/fixtures/CAICAI.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
         let manifest_store =
             ManifestStore::from_bytes("image/jpeg", image_bytes.to_vec(), true).unwrap();
