@@ -179,14 +179,11 @@ jobs:
           args: --all-targets
 
   coverage:
-    name: Code coverage
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-        with:
-          submodules: true
-          fetch-depth: 0
+        uses: actions/checkout@v3
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -194,15 +191,17 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Install cargo tarpaulin
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-tarpaulin
-          use-tool-cache: true
-  
-      - name: Run tests with coverage
-        run: cargo tarpaulin --verbose --ignore-tests --all-features --timeout=1200 --out Xml
+      - name: Install Rust LLVM tools
+        run: rustup toolchain install stable --component llvm-tools-preview
 
-      - name: Upload to codecov.io
-        run: |
-          bash <(curl -s https://codecov.io/bash)
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v1
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
