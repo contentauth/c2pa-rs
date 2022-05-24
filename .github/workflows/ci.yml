@@ -29,6 +29,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
 
+      - name: Install grcov
+        run: cargo install grcov
+
       - name: Run self tests
         uses: actions-rs/cargo@v1
         with:
@@ -39,9 +42,12 @@ jobs:
           RUSTFLAGS: "-C instrument-coverage"
           LLVM_PROFILE_FILE: "c2pa-%p-%m.profraw"
 
-      - name: Upload code coverage results
+      - name: Process raw code coverage results
         run: "grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing -o ./lcov.info
 bash <(curl -s https://codecov.io/bash) -f lcov.info"
+
+      - name: Uplod code coverage results
+        uses: codecov/codecov-action@v2
 
   tests-msrv:
     name: Unit tests (MSRV)
