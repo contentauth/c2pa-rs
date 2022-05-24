@@ -7,7 +7,7 @@ on:
 
 jobs:
   tests-stable-coverage:
-    name: Unit tests + coverage (stable)
+    name: Unit tests
     runs-on: ${{ matrix.os }}
 
     strategy:
