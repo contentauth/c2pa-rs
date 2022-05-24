@@ -2102,7 +2102,7 @@ pub mod tests {
 
     #[test]
     fn test_manifest_bad_sig() {
-        let ap = fixture_path("CAICAI_BAD_SIG.jpg");
+        let ap = fixture_path("CE-sig-CA.jpg");
         assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::new()).is_err());
     }
 
@@ -2136,7 +2136,7 @@ pub mod tests {
     #[test]
     fn test_detect_byte_change() {
         // test bad jumbf
-        let ap = fixture_path("bad_verify.jpeg");
+        let ap = fixture_path("XCA.jpg");
         let mut report = DetailedStatusTracker::new();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
@@ -2311,7 +2311,7 @@ pub mod tests {
     #[test]
     fn test_claim_decoding() {
         // modify a required field label in the claim - causes failure to read claim from cbor
-        let report = patch_and_report("CAICAI.jpg", b"claim_generator", b"claim_generatur");
+        let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
         assert!(matches!(
             report.get_log()[0].err_val,
@@ -2324,7 +2324,7 @@ pub mod tests {
     fn test_modify_xmp() {
         // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
         let mut report = patch_and_report(
-            "CAICAI.jpg",
+            "C.jpg",
             b"W5M0MpCehiHzreSzNTczkc9d",
             b"W5M0MpCehiHzreSzNTczkXXX",
         );
@@ -2341,7 +2341,7 @@ pub mod tests {
     #[test]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
-        let mut report = patch_and_report("CAICAI.jpg", b"CAICAI.jpg", b"XXXCAI.jpg");
+        let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
@@ -2362,7 +2362,7 @@ pub mod tests {
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
         let mut report =
-            patch_and_report("CAICAI.jpg", b"brightnesscontrast", b"brightnesscontraxx");
+            patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
         let errors = report_split_errors(report.get_log_mut());
 
         assert_eq!(
@@ -2379,7 +2379,7 @@ pub mod tests {
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuid:";
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
-        let mut report = patch_and_report("CAICAI.jpg", SEARCH_BYTES, REPLACE_BYTES);
+        let mut report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
         let errors = report_split_errors(report.get_log_mut());
         assert_eq!(
             errors[0].validation_status.as_deref(),
@@ -2410,7 +2410,7 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("CAICAI_BAD_SIG.jpg");
+        let ap = fixture_path("CA.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {}", store);

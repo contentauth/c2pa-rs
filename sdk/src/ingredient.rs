@@ -598,7 +598,7 @@ mod tests {
     //use serde_cbor::{ser::IoWrite, Serializer};
 
     const MANIFEST_JPEG: &str = "C.jpg";
-    const BAD_SIGNATURE_JPEG: &str = "CAICAI_BAD_SIG.jpg";
+    const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const BAD_JUMBF_JPEG: &str = "bigjumbf.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
@@ -667,6 +667,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg_bad_signature() {
         let ap = fixture_path(BAD_SIGNATURE_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
@@ -727,7 +728,7 @@ mod tests {
     #[test]
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
-        let ingredient = Ingredient::from_file(&ap).expect("new_from_file");
+        let ingredient = Ingredient::from_file(&ap).expect("from_file");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status, None);
     }
