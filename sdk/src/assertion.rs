@@ -202,10 +202,12 @@ impl fmt::Debug for AssertionData {
     }
 }
 
-/// Standard Assertion data types.  Each assertion type will
-/// contain its AssertionData.  For the User Assertion type we
-/// allow a String to set the label. The AssertionData contains
-/// the data payload for the assertion and the version number for its schema (if supported).
+/// Internal Assertion structure
+///
+// Each assertion type will
+// contain its AssertionData.  For the User Assertion type we
+// allow a String to set the label. The AssertionData contains
+// the data payload for the assertion and the version number for its schema (if supported).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assertion {
     label: String,
