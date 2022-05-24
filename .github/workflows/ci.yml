@@ -201,7 +201,7 @@ jobs:
           use-tool-cache: true
   
       - name: Run tests with coverage
-        run: cargo tarpaulin --verbose --ignore-tests --all-features --timeout=600 --out Xml
+        run: cargo tarpaulin --verbose --ignore-tests --all-features --timeout=1200 --out Xml
 
       - name: Upload to codecov.io
         run: |
