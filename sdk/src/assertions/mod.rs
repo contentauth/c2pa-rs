@@ -11,17 +11,20 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Assertion helpers to build, validate and parse assertions
+//!
+
 mod actions;
 pub use actions::*;
 
 mod data_hash;
-pub use data_hash::DataHash;
+pub(crate) use data_hash::DataHash;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
 
 mod ingredient;
-pub use ingredient::{Ingredient, Relationship};
+pub(crate) use ingredient::{Ingredient, Relationship};
 
 pub mod labels;
 
@@ -32,7 +35,7 @@ mod schema_org;
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
 
 mod thumbnail;
-pub use thumbnail::Thumbnail;
+pub(crate) use thumbnail::Thumbnail;
 
 mod user;
 pub use user::User;

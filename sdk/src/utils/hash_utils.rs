@@ -37,6 +37,7 @@ impl Exclusion {
     }
 
     /// update the start value
+    #[allow(dead_code)]
     pub fn set_start(&mut self, start: usize) {
         self.start = start;
     }

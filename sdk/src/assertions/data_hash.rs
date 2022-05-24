@@ -88,6 +88,7 @@ impl DataHash {
         self.hash = hash;
     }
 
+    #[allow(dead_code)]
     pub fn exclusions(&self) -> Option<&Vec<Exclusion>> {
         self.exclusions.as_ref()
     }
@@ -109,6 +110,7 @@ impl DataHash {
     }
 
     // generate the hash again
+    #[allow(dead_code)]
     pub fn regen_hash(&mut self) -> Result<()> {
         let p = self.path.clone();
         self.hash = self.hash_from_asset(p.as_path())?;
@@ -204,6 +206,7 @@ impl DataHash {
     }
 
     ///  Used to verify a DataHash against an asset.
+    #[allow(dead_code)] // used in tests
     pub fn verify_hash(&self, asset_path: &Path) -> Result<()> {
         let buf = fs::read(asset_path).map_err(wrap_io_err)?;
         self.verify_in_memory_hash(&buf, self.alg.clone())
