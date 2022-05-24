@@ -199,7 +199,7 @@ impl Manifest {
     }
 
     /// Retrieves an assertion by label if it exists or Error::NotFound
-    pub fn find_assertion<T: DeserializeOwned>(&mut self, label: &str) -> Result<T> {
+    pub fn find_assertion<T: DeserializeOwned>(& self, label: &str) -> Result<T> {
         if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label == label) {
             manifest_assertion.to_assertion()
         } else {

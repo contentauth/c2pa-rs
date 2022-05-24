@@ -17,6 +17,7 @@
 mod actions;
 pub use actions::*;
 
+#[allow(dead_code)]
 mod data_hash;
 pub(crate) use data_hash::DataHash;
 
