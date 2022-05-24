@@ -6,8 +6,8 @@ on:
     branches: main
 
 jobs:
-  tests-stable-coverage:
-    name: Unit tests
+  tests:
+    name: "Unit tests"
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -40,7 +40,7 @@ jobs:
         fail_ci_if_error: true
 
   tests-msrv:
-    name: Unit tests (MSRV)
+    name: "Unit tests (MSRV)"
     runs-on: ${{ matrix.os }}
 
     strategy:
