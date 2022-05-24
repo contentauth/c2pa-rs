@@ -37,8 +37,8 @@ jobs:
           # args: --all-targets --all-features --workspace (waiting on bug fix)
           args: --all-features --workspace
         env:
-          RUSTFLAGS: -Cinstrument-coverage
-          LLVM_PROFILE_FILE: c2pa-%p-%m.profraw
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: "c2pa-%p-%m.profraw"
 
       - name: Upload code coverage results
         run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing -o ./lcov.info
