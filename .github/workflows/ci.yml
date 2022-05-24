@@ -39,6 +39,8 @@ jobs:
   wasm_tests:
     name: Wasm tests
     runs-on: ubuntu-latest
+    matrix:
+      rust_version: [1.58.0, stable]
 
     steps:
       - name: Checkout repository
@@ -47,7 +49,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ matrix.rust_version }}
           override: true
           
       - name: Install wasm-pack
