@@ -144,15 +144,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-
-      - name: Install cargo deny
-        run: cargo install cargo-deny
-
       - name: Audit crate dependencies
         uses: EmbarkStudios/cargo-deny-action@v1
         with:
