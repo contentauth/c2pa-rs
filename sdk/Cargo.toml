@@ -83,8 +83,5 @@ web-sys = { version = "0.3.54", features = ["Crypto", "SubtleCrypto", "CryptoKey
 anyhow = "1.0.40"
 env_logger = "0.7.1"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-grcov = "0.8.9"
-
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.0"
