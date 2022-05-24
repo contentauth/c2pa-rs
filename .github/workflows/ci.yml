@@ -14,13 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
-        # Temporarily reduce build matrix to save runtime cost.
-        # rust_version: [1.59.0, stable]
+        rust_version: [1.58.0, stable]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -44,7 +42,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -64,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -78,7 +76,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
 
-      - uses: actions-rs/clippy-check@v1
+      - name: Cargo clippy
+        uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-features --all-targets -- -D warnings
@@ -90,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -110,7 +109,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -143,16 +142,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-
-      - name: Install cargo deny
-        run: cargo install cargo-deny
+        uses: actions/checkout@v3
 
       - name: Audit crate dependencies
         uses: EmbarkStudios/cargo-deny-action@v1
@@ -164,7 +154,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
