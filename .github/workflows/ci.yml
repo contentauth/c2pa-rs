@@ -89,14 +89,18 @@ jobs:
     name: Enforce Rust code format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
           components: rustfmt
-      - uses: actions-rs/cargo@v1
+
+      - name: Check format
+        uses: actions-rs/cargo@v1
         with:
           command: fmt
           args: --all -- --check
@@ -106,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v1
+        uses: actions/checkout@v2
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -160,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v1
+        uses: actions/checkout@v2
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -173,3 +177,32 @@ jobs:
         with:
           version: latest
           args: --all-targets
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install cargo tarpaulin
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-tarpaulin
+          use-tool-cache: true
+  
+      - name: Run tests with coverage
+        run: cargo tarpaulin --verbose --ignore-tests --all-features --timeout=600 --out Xml
+
+      - name: Upload to codecov.io
+        run: |
+          bash <(curl -s https://codecov.io/bash)
