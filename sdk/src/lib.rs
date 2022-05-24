@@ -19,19 +19,25 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
 //!
-//! # Example: Reading and displaying a manifest as JSON
+//! # Example: Reading a ManifestStore
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::ManifestStore;
+//! use c2pa::{assertions::Actions, ManifestStore};
 //! # fn main() -> Result<()> {
 //! let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
 //! println!("{}", manifest_store);
+//! if let Some(manifest) = manifest_store.get_active() {
+//!     let actions:Actions = manifest.find_assertion(Actions::LABEL)?;
+//!     for action in actions.actions {
+//!         println!("{}\n",action.label);
+//!     }
+//! }
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Example: Adding a manifest to a file
+//! # Example: Adding a Manifest to a file
 //!
 //! ```
 //! # use c2pa::Result;
