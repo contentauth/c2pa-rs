@@ -63,16 +63,26 @@ pub mod c2pa_action {
 pub struct Action {
     #[serde(rename = "action")]
     pub label: String,
+    /// Timestamp of when the action occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+    /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     pub software_agent: Option<String>,
+    /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
+    ///
+    /// If not present, presumed to be undefined.
+    /// When tracking changes and the scope of the changed components is unknown,
+    /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changed: Option<String>,
+    /// The value of the xmpMM:InstanceID property for the modified (output) resource
     #[serde(rename = "InstanceId", skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
+    /// Additional parameters of the action. These will often vary by the type of action
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, Value>>,
+    /// An array of the creators that undertook this action
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<Vec<Actor>>,
 }
@@ -90,31 +100,62 @@ impl Action {
         }
     }
 
-    /// set Timestamp of when the action occurred
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn when(&self) -> Option<&str> {
+        self.when.as_deref()
+    }
+
+    pub fn software_agent(&self) -> Option<&str> {
+        self.software_agent.as_deref()
+    }
+
+    pub fn instance_id(&self) -> Option<&str> {
+        self.instance_id.as_deref()
+    }
+
+    pub fn get_parameters(&self) -> Option<&HashMap<String, Value>> {
+        self.parameters.as_ref()
+    }
+
+    pub fn get_parameter(&self, key: &str) -> Option<&Value> {
+        match self.parameters.as_ref() {
+            Some(parameters) => parameters.get(key),
+            None => None,
+        }
+    }
+
+    pub fn actors(&self) -> Option<&[Actor]> {
+        self.actors.as_deref()
+    }
+
+    /// Sets a timestamp of when the action occurred
     pub fn set_when(mut self, when: &str) -> Self {
         self.when = Some(when.to_owned());
         self
     }
 
-    /// Set the software agent that performed the action.
+    /// Sets the software agent that performed the action.
     pub fn set_software_agent(mut self, software_agent: &str) -> Self {
         self.software_agent = Some(software_agent.to_owned());
         self
     }
 
-    /// Set a list of the parts of the resource that were changed since the previous event history.
+    /// Sets a list of the parts of the resource that were changed since the previous event history.
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
     }
 
-    /// The value of the xmpMM:InstanceID property for the modified (output) resource
+    /// Sets the value of the xmpMM:InstanceID property for the modified (output) resource
     pub fn set_instance_id(mut self, id: &str) -> Self {
         self.instance_id = Some(id.to_owned());
         self
     }
 
-    /// Set additional parameters of the action. These will often vary by the type of action
+    /// Sets additional parameters of the action. These will often vary by the type of action
     pub fn set_parameter<T: Serialize>(mut self, key: String, value: T) -> Result<Self> {
         let value = serde_json::to_value(value).map_err(|_| Error::AssertionEncoding)?;
         self.parameters = Some(match self.parameters {
@@ -131,7 +172,7 @@ impl Action {
         Ok(self)
     }
 
-    /// An array of the creators that undertook this action
+    /// Sets an array of the creators that undertook this action
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
         self
@@ -141,7 +182,9 @@ impl Action {
 /// A list of actions as an assertion
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct Actions {
+    /// A list of Actions
     pub actions: Vec<Action>,
+    /// Additional information about the assertion
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
 }
@@ -160,19 +203,29 @@ impl Actions {
         }
     }
 
-    /// Adds an action
+    /// Returns a list of [Action]
+    pub fn actions(&self) -> &[Action] {
+        &self.actions
+    }
+
+    /// Returns [Metadata] or None
+    pub fn metadata(&self) -> Option<&Metadata> {
+        self.metadata.as_ref()
+    }
+
+    /// Adds an [Action]
     pub fn add_action(&mut self, action: Action) -> &mut Self {
         self.actions.push(action);
         self
     }
 
-    /// Adds a metadata structure to the action
+    /// Adds [Metadata] to the action
     pub fn add_metadata(&mut self, metadata: Metadata) -> &Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// creates an actions assertion from a compatible JSON Value
+    /// Creates an [Actions] assertion from a compatible JSON Value
     pub fn from_json_value(json: &serde_json::Value) -> Result<Self> {
         let actions: Actions = serde_json::from_value(json.clone())?;
         Ok(actions)
@@ -208,7 +261,7 @@ pub mod tests {
     use super::*;
 
     use crate::assertion::{Assertion, AssertionData};
-    use crate::assertions::metadata::{DataSource, ReviewRating, C2PA_SOURCE_GENERATOR_REE};
+    use crate::assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating};
     use crate::hashed_uri::HashedUri;
 
     fn make_hashed_uri1() -> HashedUri {
@@ -262,7 +315,7 @@ pub mod tests {
                 Metadata::new()
                     .add_review(ReviewRating::new("foo", Some("bar".to_owned()), 3))
                     .set_reference(Some(make_hashed_uri1()))
-                    .set_data_source(Some(DataSource::new(C2PA_SOURCE_GENERATOR_REE))),
+                    .set_data_source(Some(DataSource::new(GENERATOR_REE))),
             );
 
         dbg!(&original);
