@@ -92,7 +92,7 @@ impl Ingredient {
     /// * `title` - A user displayable name for this ingredient (often a filename)
     /// * `format` - The Media Type of the ingredient - i.e. image/jpeg
     /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -661,7 +661,10 @@ mod tests {
         assert_eq!(ingredient.provenance(), Some("provenance"));
         assert_eq!(ingredient.is_parent(), true);
         assert!(ingredient.metadata().is_some());
-        assert_eq!(ingredient.thumbnail(), Some(("format","thumbnail".as_bytes())));
+        assert_eq!(
+            ingredient.thumbnail(),
+            Some(("format", "thumbnail".as_bytes()))
+        );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
         assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
     }
