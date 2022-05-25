@@ -639,8 +639,7 @@ mod tests {
     //use serde_cbor::{ser::IoWrite, Serializer};
 
     const MANIFEST_JPEG: &str = "C.jpg";
-    const BAD_SIGNATURE_JPEG: &str = "CAICAI_BAD_SIG.jpg";
-    const BAD_JUMBF_JPEG: &str = "bigjumbf.jpg";
+    const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
     #[test]
     fn test_ingredient_api() {
@@ -732,6 +731,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg_bad_signature() {
         let ap = fixture_path(BAD_SIGNATURE_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
@@ -771,28 +771,9 @@ mod tests {
     }
 
     #[test]
-    fn test_jpg_bad_jumbf() {
-        let ap = fixture_path(BAD_JUMBF_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
-
-        println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, BAD_JUMBF_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_none());
-        assert!(ingredient.validation_status.is_some());
-        assert_eq!(
-            ingredient.validation_status.unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
-    }
-
-    #[test]
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
-        let ingredient = Ingredient::from_file(&ap).expect("new_from_file");
+        let ingredient = Ingredient::from_file(&ap).expect("from_file");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status, None);
     }
