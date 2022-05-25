@@ -1,4 +1,5 @@
 # Makefile to aid with local development and testing
+# This is not required for automated builds
 
 ifeq ($(OS),Windows_NT)
 	PLATFORM := win
@@ -13,29 +14,26 @@ else
 endif
 
 check-format:
-	@echo $("Enforcing standard Rust code format")
 	cargo fmt -- --check
 
 check-docs:
-	@echo $("Enforcing documentation syntax")
 	cargo doc --no-deps --workspace --all-features
 
 clippy:
-	@echo $("Clippy checks")
 	cargo clippy --all-features --all-targets -- -D warnings
 
 test-local:
-	@echo $("Running unit tests")
 	cargo test --all-features
 
 test-wasm:
-	@echo $("Running unit tests in WASM build")
 	cd sdk && wasm-pack test --node
 
+# Full local validation, build and test all features including wasm
+# Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-wasm
 	cargo test --all-features
-	@echo $("DONE")
 
+# Creates a folder wtih c2patool bin, samples and readme
 c2patool-package:
 	rm -rf target/c2patool*
 	mkdir -p target/c2patool
@@ -47,6 +45,7 @@ c2patool-package:
 	cp sdk/tests/fixtures/IMG_0003.jpg target/c2patool/image.jpg
 	cp sdk/tests/fixtures/claim.json target/c2patool/claim.json
 
+# These are for building the c2patool release bin on various platforms
 build-release-win:
 	cargo build --release
 
@@ -64,6 +63,7 @@ build-release-mac-universal: build-release-mac-arm build-release-mac-x86
 build-release-linux:
 	cargo build --release
 
+# Builds and packages a zip for c2patool for each platform
 ifeq ($(PLATFORM), mac)
 c2patool-release: build-release-mac-universal c2patool-package
 	cd target && zip -r c2patool_mac.zip c2patool && cd ..
@@ -77,12 +77,15 @@ c2patool-release: build-release-linux c2patool-package
 	cd target && tar -czvf c2patool_linux.tar.gz c2patool && cd ..
 endif
 
-# Build and view documentation
-doc: 
+# Builds and views documentation
+doc:
 	cargo doc --no-deps --open
 
 # Builds a set of test images using the make_tests example
 # Outputs to release/test-images
 images:
-	@echo $("Generating test images")
 	cargo run --release --example make_tests
+
+# Runs the client example using test image and output to target/tmp/client.jpg
+client:
+	cargo run --example client sdk/tests/fixtures/ca.jpg target/tmp/client.jpg
