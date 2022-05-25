@@ -34,12 +34,11 @@ use std::path::Path;
 #[derive(Debug, Deserialize, Serialize)]
 /// An ingredient is any external asset that has been used in the creation of an image
 ///
-/// This structure captures information about that asset so a user can
 pub struct Ingredient {
     /// A human readable title, generally source filename
     title: String,
 
-    /// The format of the source file as a mime type or extension
+    /// The format of the source file as a mime type
     format: String,
 
     /// Document ID from `xmpMM:DocumentID` in XMP metadata
@@ -62,7 +61,8 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     hash: Option<String>,
 
-    /// Set to True if this is a parent asset
+    /// Set to True if this is the parent Ingredient
+    /// There can only be one parent Ingredient in the ingredients
     #[serde(skip_serializing_if = "Option::is_none")]
     is_parent: Option<bool>,
 
@@ -75,8 +75,8 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     /// any additional Metadata as defined in the C2PA spec
+    #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
     /// A ManifestStore from the source asset extracted as a binary c2pa blob
@@ -85,19 +85,36 @@ pub struct Ingredient {
 }
 
 impl Ingredient {
-    pub fn new(title: &str, format: &str, instance_id: &str) -> Self {
+    /// Returns an [Ingredient]
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - A user displayable name for this ingredient (often a filename)
+    /// * `format` - The Media Type of the ingredient - i.e. image/jpeg
+    /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// use c2pa::Ingredient;
+    /// let ingredient = Ingredient::new("title","image/jpeg","ed610ae51f604002be3dbf0c589a2f1f");
+    /// ```
+    pub fn new<S>(title: S, format: S, instance_id: S) -> Self
+    where
+        S: Into<String>,
+    {
         Self {
-            title: title.to_owned(),
-            format: format.to_owned(),
+            title: title.into(),
+            format: format.into(),
             document_id: None,
-            instance_id: instance_id.to_owned(),
+            instance_id: instance_id.into(),
             provenance: None,
             thumbnail: None,
             hash: None,
             is_parent: None,
-            active_manifest: None,
             validation_status: None,
             metadata: None,
+            active_manifest: None,
             manifest_data: None,
         }
     }
@@ -135,19 +152,13 @@ impl Ingredient {
     }
 
     /// Returns an optional Blake3 hash made from the bits of the original image
-    pub fn hash(&self) -> Option<&[u8]> {
-        self.manifest_data.as_deref()
+    pub fn hash(&self) -> Option<&str> {
+        self.hash.as_deref()
     }
 
     /// Returns true if this is labeled as the parent ingredient
     pub fn is_parent(&self) -> bool {
         self.is_parent.unwrap_or(false)
-    }
-
-    /// Returns an optional label for the active manifest in this ingredient
-    /// If None, the ingredient has no Manifests
-    pub fn active_manifest(&self) -> Option<&str> {
-        self.active_manifest.as_deref()
     }
 
     /// Returns a reference the [ValidationStatus] Vec or None
@@ -156,9 +167,14 @@ impl Ingredient {
     }
 
     /// Returns an optional reference to [Metadata]
-    /// todo: figure out how to not clone this
-    pub fn metadata(&self) -> Option<Metadata> {
-        self.metadata.clone()
+    pub fn metadata(&self) -> Option<&Metadata> {
+        self.metadata.as_ref()
+    }
+
+    /// Returns an optional label for the active manifest in this ingredient
+    /// If None, the ingredient has no Manifests
+    pub fn active_manifest(&self) -> Option<&str> {
+        self.active_manifest.as_deref()
     }
 
     /// Returns an optional reference to c2pa manifest data
@@ -167,36 +183,61 @@ impl Ingredient {
         self.manifest_data.as_deref()
     }
 
-    pub fn set_title(&mut self, title: String) -> &mut Self {
-        self.title = title;
+    /// Sets a human readable title for this manifest
+    pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
+        self.title = title.into();
         self
     }
 
-    /// Sets an optional document_id -- usually from XMP DocumentId.
-    pub fn set_document_id(&mut self, document_id: String) -> &mut Self {
-        self.document_id = Some(document_id);
+    /// Sets an optional document identifier -- usually from XMP DocumentId.
+    pub fn set_document_id<S: Into<String>>(&mut self, document_id: S) -> &mut Self {
+        self.document_id = Some(document_id.into());
+        self
+    }
+
+    /// Sets an optional provenance uri -- related to XMP dc:Provenance.
+    pub fn set_provenance<S: Into<String>>(&mut self, provenance: S) -> &mut Self {
+        self.provenance = Some(provenance.into());
         self
     }
 
     /// Use Manifest.set_parent() for this
-    pub(crate) fn set_parent_state(&mut self, is_parent: bool) -> &mut Self {
+    pub fn set_parent_state(&mut self, is_parent: bool) -> &mut Self {
         self.is_parent = if is_parent { Some(true) } else { None };
         self
     }
 
-    /// set the thumbnail image
-    pub fn set_thumbnail(&mut self, format: String, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format, BytesT(thumbnail)));
+    /// set the thumbnail format and image data
+    pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
+        self.thumbnail = Some((format.into(), BytesT(thumbnail)));
         self
     }
 
-    // Add any desired metadata to this ingredient
+    // set a hash value generated from the entire asset
+    pub fn set_hash<S: Into<String>>(&mut self, hash: S) -> &mut Self {
+        self.hash = Some(hash.into());
+        self
+    }
+
+    /// Adds any desired [Metadata] to this ingredient
     pub fn set_metadata(&mut self, metadata: Metadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
     }
 
-    // Gathers filename, extension and format from a file path
+    /// Sets the label for the active manifest in the manifest data
+    pub fn set_active_manifest<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.active_manifest = Some(label.into());
+        self
+    }
+
+    /// Sets the Manifest C2PA data for this ingredient
+    pub fn set_manifest_data(&mut self, data: Vec<u8>) -> &mut Self {
+        self.manifest_data = Some(data);
+        self
+    }
+
+    /// Gathers filename, extension and format from a file path
     #[cfg(feature = "file_io")]
     fn get_path_info(path: &std::path::Path) -> (String, String, String) {
         let title = path
@@ -593,7 +634,7 @@ mod tests {
 
     use super::*;
 
-    use crate::utils::test::fixture_path;
+    use crate::{assertions::Metadata, utils::test::fixture_path};
 
     //use serde_cbor::{ser::IoWrite, Serializer};
 
@@ -601,6 +642,30 @@ mod tests {
     const BAD_SIGNATURE_JPEG: &str = "CAICAI_BAD_SIG.jpg";
     const BAD_JUMBF_JPEG: &str = "bigjumbf.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
+    #[test]
+    fn test_ingredient_api() {
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        ingredient
+            .set_document_id("document_id")
+            .set_title("title2")
+            .set_hash("hash")
+            .set_provenance("provenance")
+            .set_parent_state(true)
+            .set_metadata(Metadata::new())
+            .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
+            .set_active_manifest("active_manifest")
+            .set_manifest_data("data".as_bytes().to_vec());
+        assert_eq!(ingredient.title(), "title2");
+        assert_eq!(ingredient.format(), "format");
+        assert_eq!(ingredient.instance_id(), "instance_id");
+        assert_eq!(ingredient.document_id(), Some("document_id"));
+        assert_eq!(ingredient.provenance(), Some("provenance"));
+        assert_eq!(ingredient.is_parent(), true);
+        assert!(ingredient.metadata().is_some());
+        assert_eq!(ingredient.thumbnail(), Some(("format","thumbnail".as_bytes())));
+        assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+        assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
+    }
 
     #[test]
     fn test_psd() {

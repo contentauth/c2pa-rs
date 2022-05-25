@@ -280,10 +280,10 @@ impl Manifest {
         });
 
         let title = claim.title().map_or("".to_owned(), |s| s.to_owned());
-        let format = claim.format();
-        let instance_id = claim.instance_id();
+        let format = claim.format().to_owned();
+        let instance_id = claim.instance_id().to_owned();
 
-        let mut asset = Ingredient::new(&title, format, instance_id);
+        let mut asset = Ingredient::new(&title, &format, &instance_id);
 
         for claim_assertion in claim.claim_assertion_store().iter() {
             let assertion = claim_assertion.assertion();
