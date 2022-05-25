@@ -659,7 +659,7 @@ mod tests {
         assert_eq!(ingredient.instance_id(), "instance_id");
         assert_eq!(ingredient.document_id(), Some("document_id"));
         assert_eq!(ingredient.provenance(), Some("provenance"));
-        assert_eq!(ingredient.is_parent(), true);
+        assert!(ingredient.is_parent());
         assert!(ingredient.metadata().is_some());
         assert_eq!(
             ingredient.thumbnail(),
