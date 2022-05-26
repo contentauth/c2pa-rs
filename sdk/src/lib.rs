@@ -19,25 +19,27 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
 //!
-//! # Example: Reading a ManifestStore
+//! # Example: Reading a `ManifestStore`
 //!
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{assertions::Actions, ManifestStore};
+//!
 //! # fn main() -> Result<()> {
 //! let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
 //! println!("{}", manifest_store);
+//!
 //! if let Some(manifest) = manifest_store.get_active() {
-//!     let actions:Actions = manifest.find_assertion(Actions::LABEL)?;
+//!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
-//!         println!("{}\n",action.label);
+//!         println!("{}\n", action.label);
 //!     }
 //! }
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Example: Adding a Manifest to a file
+//! # Example: Adding a `Manifest` to a file
 //!
 //! ```
 //! # use c2pa::Result;
@@ -46,14 +48,18 @@
 //!     openssl::temp_signer::get_signer,
 //!     assertions::User
 //! };
+//!
 //! use std::path::PathBuf;
 //! use tempfile::tempdir;
+//!
 //! # fn main() -> Result<()> {
 //! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new("org.contentauth.mylabel",r#"{"my_tag":"Anything I want"}"#))?;
+//! manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+//!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;
 //! let dest = dir.path().join("test_file.jpg");
+//!
 //! let (signer, _) = get_signer(&dir.path());
 //! manifest.embed(&source, &dest, &signer)?;
 //! # Ok(())
@@ -64,16 +70,22 @@ pub use assertion::{
     Assertion, AssertionBase, AssertionCbor, AssertionDecodeResult, AssertionJson,
 };
 pub mod assertions;
+
 mod cose_validator;
+
 mod error;
 pub use error::{Error, Result};
+
 mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
 pub mod jumbf_io; // used by make_tests
+
 mod manifest;
 pub use manifest::{Manifest, ManifestAssertion};
+
 mod manifest_store;
 pub use manifest_store::ManifestStore;
+
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
