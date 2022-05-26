@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.1.2
+_26 May 2022_
+
+* No-op change to verify correct handling of PR numbers ([#19](https://github.com/contentauth/c2pa-rs/pull/19))
+* Fix error in formatting changelog
+* Fix missing links in changelog
+
+
 ## 0.1.1
 _26 May 2022_
 
