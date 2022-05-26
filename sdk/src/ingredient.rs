@@ -54,7 +54,7 @@ pub struct Ingredient {
     provenance: Option<String>,
 
     /// A thumbnail image capturing the visual state at the time of import.
-    /// 
+    ///
     /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
     #[serde(skip_serializing)]
     thumbnail: Option<(String, BytesT)>,
