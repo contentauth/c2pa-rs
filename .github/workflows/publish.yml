@@ -82,6 +82,7 @@ jobs:
         commit_message: Prepare ${{ steps.set-version.outputs.version }} release
         commit_user_name: Adobe CAI Team
         commit_user_email: noreply@adobe.com
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Create release
       uses: ncipollo/release-action@v1
