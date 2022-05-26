@@ -205,4 +205,4 @@ jobs:
         uses: aig787/cargo-udeps-action@v1
         with:
           version: latest
-          args: --all-targets
+          args: --all-targets --all-features
