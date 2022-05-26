@@ -80,32 +80,27 @@ impl Ingredient {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_parent(mut self) -> Self {
         self.relationship = Relationship::ParentOf;
         self
     }
 
-    #[allow(dead_code)]
     pub fn set_c2pa_manifest_from_hashed_uri(mut self, provenance: Option<HashedUri>) -> Self {
         self.c2pa_manifest = provenance;
         self
     }
 
-    #[allow(dead_code)]
     pub fn set_thumbnail_hash_link(mut self, thumbnail: Option<&str>) -> Self {
         self.thumbnail =
             thumbnail.map(|thumb| HashedUri::new(thumb.to_owned(), None, "Hash".as_bytes()));
         self
     }
 
-    #[allow(dead_code)]
     pub fn set_thumbnail(mut self, hashed_uri: Option<&HashedUri>) -> Self {
         self.thumbnail = hashed_uri.map(|h| h.to_owned());
         self
     }
 
-    #[allow(dead_code)]
     pub fn add_review(mut self, review: ReviewRating) -> Self {
         if self.metadata.is_none() {
             self.metadata = Some(Metadata::new())
@@ -119,7 +114,6 @@ impl Ingredient {
         self
     }
 
-    #[allow(dead_code)]
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
             let mut metadata = Metadata::new();
@@ -129,7 +123,6 @@ impl Ingredient {
         self
     }
 
-    #[allow(dead_code)]
     pub fn add_validation_status(mut self, status: ValidationStatus) {
         match &mut self.validation_status {
             None => self.validation_status = Some(vec![status]),

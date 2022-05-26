@@ -17,13 +17,13 @@
 mod actions;
 pub use actions::*;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // will become public later
 mod data_hash;
 pub(crate) use data_hash::DataHash;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
-
+#[allow(dead_code)] // will become public later
 mod ingredient;
 pub(crate) use ingredient::{Ingredient, Relationship};
 
