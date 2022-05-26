@@ -11,8 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Assertion helpers to build, validate and parse assertions
-//!
+//! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
 pub use actions::*;
