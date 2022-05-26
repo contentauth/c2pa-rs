@@ -12,6 +12,7 @@
 // each license.
 
 pub(crate) mod cbor_types;
+#[allow(dead_code)]
 pub(crate) mod hash_utils;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
