@@ -16,8 +16,7 @@
 use anyhow::Result;
 
 use c2pa::{
-    assertions::labels,
-    assertions::{c2pa_action, Action, Actions, CreativeWork},
+    assertions::{c2pa_action, labels, Action, Actions, CreativeWork},
     openssl::temp_signer::get_signer,
     Ingredient, Manifest, ManifestStore,
 };

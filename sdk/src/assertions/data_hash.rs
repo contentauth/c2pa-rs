@@ -88,10 +88,6 @@ impl DataHash {
         self.hash = hash;
     }
 
-    pub fn exclusions(&self) -> Option<&Vec<Exclusion>> {
-        self.exclusions.as_ref()
-    }
-
     pub fn add_padding(&mut self, padding: Vec<u8>) {
         self.pad = padding;
     }
@@ -105,13 +101,6 @@ impl DataHash {
     pub fn gen_hash(&mut self, asset_path: &Path) -> Result<()> {
         self.hash = self.hash_from_asset(asset_path)?;
         self.path = PathBuf::from(asset_path);
-        Ok(())
-    }
-
-    // generate the hash again
-    pub fn regen_hash(&mut self) -> Result<()> {
-        let p = self.path.clone();
-        self.hash = self.hash_from_asset(p.as_path())?;
         Ok(())
     }
 
