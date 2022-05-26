@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![deny(missing_docs)]
+
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
@@ -32,65 +34,75 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use std::path::Path;
 #[derive(Debug, Deserialize, Serialize)]
-/// An ingredient is any external asset that has been used in the creation of an image
-///
+/// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
-    /// A human readable title, generally source filename
+    /// A human-readable title, generally source filename.
     title: String,
 
-    /// The format of the source file as a mime type
+    /// The format of the source file as a MIME type.
     format: String,
 
-    /// Document ID from `xmpMM:DocumentID` in XMP metadata
+    /// Document ID from `xmpMM:DocumentID` in XMP metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     document_id: Option<String>,
 
-    /// Instance ID from `xmpMM:InstanceID` in XMP metadata
+    /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
     instance_id: String,
 
-    /// URI from `dcterms:provenance` in XMP metadata
+    /// URI from `dcterms:provenance` in XMP metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     provenance: Option<String>,
 
-    /// A thumbnail image capturing the visual state at the time of import
-    /// A tuple of thumbnail mime format (i.e. image/jpg) and binary bits of the image
+    /// A thumbnail image capturing the visual state at the time of import.
+    /// 
+    /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
     #[serde(skip_serializing)]
     thumbnail: Option<(String, BytesT)>,
 
-    /// An optional hash of the asset to prevent duplicates
+    /// An optional hash of the asset to prevent duplicates.
     #[serde(skip_serializing_if = "Option::is_none")]
     hash: Option<String>,
 
-    /// Set to True if this is the parent Ingredient
-    /// There can only be one parent Ingredient in the ingredients
+    /// Set to `true` if this is the parent ingredient.
+    ///
+    /// There can only be one parent ingredient in the ingredients.
     #[serde(skip_serializing_if = "Option::is_none")]
     is_parent: Option<bool>,
 
-    /// The active manifest label if one exists
-    /// If this ingredient has a ManifestStore, this will hold the label of the active Manifest
+    /// The active manifest label (if one exists).
+    ///
+    /// If this ingredient has a [`ManifestStore`],
+    /// this will hold the label of the active [`Manifest`].
+    ///
+    /// [`Manifest`]: crate::Manifest
+    /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     active_manifest: Option<String>,
 
-    /// Validation results
+    /// Validation results.
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
 
-    /// any additional Metadata as defined in the C2PA spec
+    /// Any additional [`Metadata`] as defined in the C2PA spec.
+    ///
+    /// [`Manifest`]: crate::Manifest
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
-    /// A ManifestStore from the source asset extracted as a binary c2pa blob
+    /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
+    ///
+    /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing)]
     manifest_data: Option<Vec<u8>>,
 }
 
 impl Ingredient {
-    /// Returns an [Ingredient].
+    /// Constructs a new `Ingredient`.
     ///
     /// # Arguments
     ///
-    /// * `title` - A user displayable name for this ingredient (often a filename).
-    /// * `format` - The Media Type of the ingredient - i.e. image/jpeg.
+    /// * `title` - A user-displayable name for this ingredient (often a filename).
+    /// * `format` - The MIME media type of the ingredient - i.e. `image/jpeg`.
     /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`.
     ///
     /// # Examples
@@ -119,12 +131,12 @@ impl Ingredient {
         }
     }
 
-    /// Returns a user displayable title for this ingredient.
+    /// Returns a user-displayable title for this ingredient.
     pub fn title(&self) -> &str {
         self.title.as_str()
     }
 
-    /// Returns a mime content_type for this asset associated with this ingredient.
+    /// Returns a MIME content_type for this asset associated with this ingredient.
     pub fn format(&self) -> &str {
         self.format.as_str()
     }
@@ -144,7 +156,7 @@ impl Ingredient {
         self.provenance.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or None.
+    /// Returns a tuple with thumbnail format and image bytes or `None`.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
         self.thumbnail
             .as_ref()
@@ -156,56 +168,66 @@ impl Ingredient {
         self.hash.as_deref()
     }
 
-    /// Returns true if this is labeled as the parent ingredient.
+    /// Returns `true` if this is labeled as the parent ingredient.
     pub fn is_parent(&self) -> bool {
         self.is_parent.unwrap_or(false)
     }
 
-    /// Returns an optional reference the [ValidationStatus]s.
+    /// Returns an optional reference the [`ValidationStatus`]s.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.validation_status.as_deref()
     }
 
-    /// Returns an optional reference to [Metadata].
+    /// Returns an optional reference to [`Metadata`].
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
 
-    /// Returns an optional label for the active manifest in this ingredient.
+    /// Returns an optional label for the active [`Manifest`] in this ingredient.
     ///
-    /// If None, the ingredient has no Manifests.
+    /// If `None`, the ingredient has no [`Manifest`]s.
+    ///
+    /// [`Manifest`]: crate::Manifest
     pub fn active_manifest(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
 
-    /// Returns an optional reference to c2pa manifest data.
+    /// Returns an optional reference to C2PA manifest data.
     ///
     /// This is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<&[u8]> {
         self.manifest_data.as_deref()
     }
 
-    /// Sets a human readable title for this manifest.
+    /// Sets a human-readable title for this manifest.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
         self
     }
 
-    /// Sets an optional document identifier -- usually from XMP DocumentId.
+    /// Sets the document identifier.
+    ///
+    /// This call is optional.
+    ///
+    /// Typically this is found in XMP under `xmpMM:DocumentID`.
     pub fn set_document_id<S: Into<String>>(&mut self, document_id: S) -> &mut Self {
         self.document_id = Some(document_id.into());
         self
     }
 
-    /// Sets an optional provenance uri -- related to XMP dc:Provenance.
+    /// Sets the provenance URI.
+    ///
+    /// This call is optional.
+    ///
+    /// Typically this is found in XMP under `dcterms:provenance`.
     pub fn set_provenance<S: Into<String>>(&mut self, provenance: S) -> &mut Self {
         self.provenance = Some(provenance.into());
         self
     }
 
-    /// Sets the ingredient as a parent.
+    /// Identifies this ingredient as the parent.
     ///
-    /// There can only be one parent ingredient.
+    /// Only one ingredient can be flagged as a parent.
     pub fn set_is_parent(&mut self) -> &mut Self {
         self.is_parent = Some(true);
         self
@@ -217,13 +239,13 @@ impl Ingredient {
         self
     }
 
-    // Sets a hash value generated from the entire asset.
+    /// Sets the hash value generated from the entire asset.
     pub fn set_hash<S: Into<String>>(&mut self, hash: S) -> &mut Self {
         self.hash = Some(hash.into());
         self
     }
 
-    /// Adds any desired [Metadata] to this ingredient.
+    /// Adds any desired [`Metadata`] to this ingredient.
     pub fn set_metadata(&mut self, metadata: Metadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
@@ -241,7 +263,7 @@ impl Ingredient {
         self
     }
 
-    /// Gathers filename, extension and format from a file path.
+    /// Gathers filename, extension, and format from a file path.
     #[cfg(feature = "file_io")]
     fn get_path_info(path: &std::path::Path) -> (String, String, String) {
         let title = path
@@ -271,8 +293,12 @@ impl Ingredient {
         (title, extension, format)
     }
 
-    /// Returns the basic info from a file path, including xmp info from the file if available.
-    /// This is used for making asset ingredients that should not load ManifestStores.
+    /// Generates an `Ingredient` from a file path, including XMP info
+    /// from the file if available.
+    ///
+    /// This is used for making asset ingredients that should not load [`ManifestStore`]s.
+    ///
+    /// [`ManifestStore`]: crate::ManifestStore
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         fn make_id(id_type: &str) -> String {
@@ -302,7 +328,7 @@ impl Ingredient {
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an Ingredient from a file path.
+    /// Creates an `Ingredient` from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let options = IngredientOptions::default();
         Self::from_file_with_options(path.as_ref(), &options)
@@ -318,7 +344,7 @@ impl Ingredient {
         )
     }
 
-    /// Creates an Ingredient from a file path and options.
+    /// Creates an `Ingredient` from a file path and options.
     #[cfg(feature = "file_io")]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
@@ -327,7 +353,7 @@ impl Ingredient {
         Self::from_file_impl(path.as_ref(), options)
     }
 
-    // internal implementation to avoid code bloat
+    // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
@@ -424,7 +450,7 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an Ingredient from a store and a uri to an ingredient assertion.
+    /// Creates an Ingredient from a store and a URI to an ingredient assertion.
     pub(crate) fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
         let assertion =
             store
@@ -608,12 +634,13 @@ impl std::fmt::Display for Ingredient {
 }
 
 #[derive(Default)]
-/// This defines optional actions when creating ingredients from files
+/// This defines optional actions when creating [`Ingredient`]s from files.
 pub struct IngredientOptions {
-    /// This allows setting the title for the ingredient (the default is usually the file name)
+    /// This allows setting the title for the ingredient. (If `None`, then the default behavior is to use the file's name.)
     pub title: Option<&'static str>,
-    /// If true, then generate a Blake3 hash over the source asset and store it here
-    /// This can be used to test for duplicate ingredients or if a source file has changed
+
+    /// If `true`, then generate a Blake3 hash over the source asset and store it in the ingredient.
+    /// This can be used to test for duplicate ingredients or if a source file has changed.
     pub make_hash: bool,
 }
 
