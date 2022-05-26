@@ -173,17 +173,18 @@ impl Ingredient {
         self.is_parent.unwrap_or(false)
     }
 
-    /// Returns an optional reference the [`ValidationStatus`]s.
+    /// Returns a reference to the [`ValidationStatus`]s if they exist.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.validation_status.as_deref()
     }
 
-    /// Returns an optional reference to [`Metadata`].
+    /// Returns a reference to [`Metadata`] if it exists.
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
 
-    /// Returns an optional label for the active [`Manifest`] in this ingredient.
+    /// Returns the label for the active [`Manifest`] in this ingredient
+    /// if one exists.
     ///
     /// If `None`, the ingredient has no [`Manifest`]s.
     ///
@@ -192,7 +193,7 @@ impl Ingredient {
         self.active_manifest.as_deref()
     }
 
-    /// Returns an optional reference to C2PA manifest data.
+    /// Returns a reference to C2PA manifest data if it exists.
     ///
     /// This is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<&[u8]> {
