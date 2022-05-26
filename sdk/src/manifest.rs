@@ -152,8 +152,8 @@ impl Manifest {
             .iter()
             .any(|i| ingredient.hash().is_some() && i.hash() == ingredient.hash())
         {
-            debug!("ws:set_parent {:?}", ingredient.title());
-            ingredient.set_parent_state(true);
+            debug!("ingredients:set_is_parent {:?}", ingredient.title());
+            ingredient.set_is_parent();
             self.ingredients.insert(0, ingredient);
         } else {
             // dup so just keep the ingredient instead of adding the parent

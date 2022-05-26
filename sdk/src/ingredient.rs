@@ -85,13 +85,13 @@ pub struct Ingredient {
 }
 
 impl Ingredient {
-    /// Returns an [Ingredient]
+    /// Returns an [Ingredient].
     ///
     /// # Arguments
     ///
-    /// * `title` - A user displayable name for this ingredient (often a filename)
-    /// * `format` - The Media Type of the ingredient - i.e. image/jpeg
-    /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`
+    /// * `title` - A user displayable name for this ingredient (often a filename).
+    /// * `format` - The Media Type of the ingredient - i.e. image/jpeg.
+    /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`.
     ///
     /// # Examples
     ///
@@ -119,71 +119,73 @@ impl Ingredient {
         }
     }
 
-    /// Returns a user displayable title for this ingredient
+    /// Returns a user displayable title for this ingredient.
     pub fn title(&self) -> &str {
         self.title.as_str()
     }
 
-    /// Returns a mime content_type for this asset associated with this ingredient
+    /// Returns a mime content_type for this asset associated with this ingredient.
     pub fn format(&self) -> &str {
         self.format.as_str()
     }
 
-    /// Returns a document identifier if one exists
+    /// Returns a document identifier if one exists.
     pub fn document_id(&self) -> Option<&str> {
         self.document_id.as_deref()
     }
 
-    /// Returns the instance identifier
+    /// Returns the instance identifier.
     pub fn instance_id(&self) -> &str {
         self.instance_id.as_str()
     }
 
-    /// Returns the provenance uri if available
+    /// Returns the provenance uri if available.
     pub fn provenance(&self) -> Option<&str> {
         self.provenance.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or None
+    /// Returns a tuple with thumbnail format and image bytes or None.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
         self.thumbnail
             .as_ref()
             .map(|(format, image)| (format.as_str(), image.deref()))
     }
 
-    /// Returns an optional Blake3 hash made from the bits of the original image
+    /// Returns an optional Blake3 hash made from the bits of the original image.
     pub fn hash(&self) -> Option<&str> {
         self.hash.as_deref()
     }
 
-    /// Returns true if this is labeled as the parent ingredient
+    /// Returns true if this is labeled as the parent ingredient.
     pub fn is_parent(&self) -> bool {
         self.is_parent.unwrap_or(false)
     }
 
-    /// Returns a reference the [ValidationStatus] Vec or None
+    /// Returns an optional reference the [ValidationStatus]s.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.validation_status.as_deref()
     }
 
-    /// Returns an optional reference to [Metadata]
+    /// Returns an optional reference to [Metadata].
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
 
-    /// Returns an optional label for the active manifest in this ingredient
-    /// If None, the ingredient has no Manifests
+    /// Returns an optional label for the active manifest in this ingredient.
+    ///
+    /// If None, the ingredient has no Manifests.
     pub fn active_manifest(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
 
-    /// Returns an optional reference to c2pa manifest data
-    /// This is the binary form of a manifest store in .c2pa format
+    /// Returns an optional reference to c2pa manifest data.
+    ///
+    /// This is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<&[u8]> {
         self.manifest_data.as_deref()
     }
 
-    /// Sets a human readable title for this manifest
+    /// Sets a human readable title for this manifest.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
         self
@@ -201,43 +203,45 @@ impl Ingredient {
         self
     }
 
-    /// Use Manifest.set_parent() for this
-    pub fn set_parent_state(&mut self, is_parent: bool) -> &mut Self {
-        self.is_parent = if is_parent { Some(true) } else { None };
+    /// Sets the ingredient as a parent.
+    ///
+    /// There can only be one parent ingredient.
+    pub fn set_is_parent(&mut self) -> &mut Self {
+        self.is_parent = Some(true);
         self
     }
 
-    /// set the thumbnail format and image data
+    /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
         self.thumbnail = Some((format.into(), BytesT(thumbnail)));
         self
     }
 
-    // set a hash value generated from the entire asset
+    // Sets a hash value generated from the entire asset.
     pub fn set_hash<S: Into<String>>(&mut self, hash: S) -> &mut Self {
         self.hash = Some(hash.into());
         self
     }
 
-    /// Adds any desired [Metadata] to this ingredient
+    /// Adds any desired [Metadata] to this ingredient.
     pub fn set_metadata(&mut self, metadata: Metadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// Sets the label for the active manifest in the manifest data
+    /// Sets the label for the active manifest in the manifest data.
     pub fn set_active_manifest<S: Into<String>>(&mut self, label: S) -> &mut Self {
         self.active_manifest = Some(label.into());
         self
     }
 
-    /// Sets the Manifest C2PA data for this ingredient
+    /// Sets the Manifest C2PA data for this ingredient.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> &mut Self {
         self.manifest_data = Some(data);
         self
     }
 
-    /// Gathers filename, extension and format from a file path
+    /// Gathers filename, extension and format from a file path.
     #[cfg(feature = "file_io")]
     fn get_path_info(path: &std::path::Path) -> (String, String, String) {
         let title = path
@@ -267,10 +271,9 @@ impl Ingredient {
         (title, extension, format)
     }
 
-    /// Gets the basic info from a file path, including xmp info from the file if available
-    /// This is used for making asset ingredients that should not load ManifestStores
+    /// Returns the basic info from a file path, including xmp info from the file if available.
+    /// This is used for making asset ingredients that should not load ManifestStores.
     #[cfg(feature = "file_io")]
-
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         fn make_id(id_type: &str) -> String {
             use uuid::Uuid;
@@ -299,7 +302,7 @@ impl Ingredient {
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an Ingredient from a file path
+    /// Creates an Ingredient from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let options = IngredientOptions::default();
         Self::from_file_with_options(path.as_ref(), &options)
@@ -315,8 +318,7 @@ impl Ingredient {
         )
     }
 
-    /// Creates an Ingredient from a file path and options
-    // TODO: Review possible error conditions. InvalidJumbfError no longer exists.
+    /// Creates an Ingredient from a file path and options.
     #[cfg(feature = "file_io")]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
@@ -422,8 +424,8 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an Ingredient from a store and a uri to an ingredient assertion
-    pub fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
+    /// Creates an Ingredient from a store and a uri to an ingredient assertion.
+    pub(crate) fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
         let assertion =
             store
                 .get_assertion_from_uri(ingredient_uri)
@@ -484,7 +486,7 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    pub fn add_to_claim(
+    pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
@@ -596,17 +598,6 @@ impl Ingredient {
         ingredient_assertion.validation_status = self.validation_status.clone();
         claim.add_assertion(&ingredient_assertion)
     }
-
-    pub fn stats(&self) -> usize {
-        let thumb_size = self.thumbnail().map_or(0, |(_, image)| image.len());
-        let manifest_data_size = self.manifest_data().map_or(0, |v| v.len());
-
-        println!(
-            "  {} instance_id: {}, thumb size: {}, manifest_data size: {}",
-            self.title, self.instance_id, thumb_size, manifest_data_size,
-        );
-        self.title.len() + self.instance_id.len() + thumb_size + manifest_data_size
-    }
 }
 
 impl std::fmt::Display for Ingredient {
@@ -636,11 +627,24 @@ mod tests {
 
     use crate::{assertions::Metadata, utils::test::fixture_path};
 
-    //use serde_cbor::{ser::IoWrite, Serializer};
-
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
+
+    fn stats(ingredient: &Ingredient) -> usize {
+        let thumb_size = ingredient.thumbnail().map_or(0, |(_, image)| image.len());
+        let manifest_data_size = ingredient.manifest_data().map_or(0, |v| v.len());
+
+        println!(
+            "  {} instance_id: {}, thumb size: {}, manifest_data size: {}",
+            ingredient.title(),
+            ingredient.instance_id(),
+            thumb_size,
+            manifest_data_size,
+        );
+        ingredient.title().len() + ingredient.instance_id().len() + thumb_size + manifest_data_size
+    }
+
     #[test]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
@@ -649,7 +653,7 @@ mod tests {
             .set_title("title2")
             .set_hash("hash")
             .set_provenance("provenance")
-            .set_parent_state(true)
+            .set_is_parent()
             .set_metadata(Metadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
             .set_active_manifest("active_manifest")
@@ -675,7 +679,7 @@ mod tests {
         // env_logger::init();
         let ap = fixture_path("Purple Square.psd");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, "Purple Square.psd");
@@ -688,7 +692,7 @@ mod tests {
     fn test_jpg() {
         let ap = fixture_path(MANIFEST_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
@@ -708,7 +712,7 @@ mod tests {
 
         let ap = fixture_path(MANIFEST_JPEG);
         let ingredient = Ingredient::from_file_with_options(&ap, &options).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, "MyTitle");
@@ -724,7 +728,7 @@ mod tests {
     fn test_png_no_claim() {
         let ap = fixture_path("libpng-test.png");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), "libpng-test.png");
@@ -738,7 +742,7 @@ mod tests {
     fn test_jpg_bad_signature() {
         let ap = fixture_path(BAD_SIGNATURE_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, BAD_SIGNATURE_JPEG);
@@ -758,7 +762,7 @@ mod tests {
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
-        ingredient.stats();
+        stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, PRERELEASE_JPEG);
