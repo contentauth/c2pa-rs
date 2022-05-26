@@ -1,6 +1,6 @@
 [package]
 name = "c2patool"
-version = "0.1.3"
+version = "0.2.0"
 authors = ["Gavin Peacock <gpeacock@adobe.com>", "Maurice Fisher <mfisher@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
