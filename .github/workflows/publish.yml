@@ -33,7 +33,7 @@ jobs:
       uses: mathiasvr/command-output@v1
       id: changelog
       with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD
+        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
 
     - name: Log version & changelog
       run: |
