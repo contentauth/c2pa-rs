@@ -98,10 +98,10 @@ pub fn get_thumbnail_instance(label: &str) -> Option<usize> {
     }
 }
 
-/// The core required trait for all assertions
+/// The core required trait for all assertions.
 ///
 /// This defines the label and version for the assertion
-/// and supplies the to/from converters for c2pa assertion format
+/// and supplies the to/from converters for C2PA assertion format.
 pub trait AssertionBase
 where
     Self: Sized,
@@ -110,7 +110,7 @@ where
 
     const VERSION: Option<usize> = None;
 
-    /// Return a label for this assertion (can be overridden )
+    /// Returns a label for this assertion.
     fn label(&self) -> &str {
         Self::LABEL
     }
@@ -202,10 +202,12 @@ impl fmt::Debug for AssertionData {
     }
 }
 
-/// Standard Assertion data types.  Each assertion type will
-/// contain its AssertionData.  For the User Assertion type we
-/// allow a String to set the label. The AssertionData contains
-/// the data payload for the assertion and the version number for its schema (if supported).
+/// Internal Assertion structure
+///
+// Each assertion type will
+// contain its AssertionData.  For the User Assertion type we
+// allow a String to set the label. The AssertionData contains
+// the data payload for the assertion and the version number for its schema (if supported).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assertion {
     label: String,
