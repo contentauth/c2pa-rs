@@ -31,7 +31,6 @@ test-wasm:
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-wasm
-	cargo test --all-features
 
 # Creates a folder wtih c2patool bin, samples and readme
 c2patool-package:
