@@ -12,6 +12,7 @@ jobs:
       uses: actions/checkout@v2
       with:
         fetch-depth: 0
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Get latest existing tag
       uses: actions-ecosystem/action-get-latest-tag@v1
@@ -32,7 +33,7 @@ jobs:
       uses: mathiasvr/command-output@v1
       id: changelog
       with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD
+        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
 
     - name: Log version & changelog
       run: |
@@ -55,7 +56,7 @@ jobs:
 
     - name: Update changelog
       run: |
-        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%e %B %Y_" && echo "" && echo "$CHANGELOG" && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
+        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%e %B %Y_" && echo "" && (echo "$CHANGELOG" | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && echo "" && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
@@ -90,6 +91,7 @@ jobs:
         commit: ${{ steps.commit.outputs.commit_hash }}
         prerelease: true # remove at 1.0
         tag: ${{ steps.set-version.outputs.version_tag }}
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Publish crate
       run: |
