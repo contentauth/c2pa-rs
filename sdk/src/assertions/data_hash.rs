@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionDecodeResult},
+    assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     cbor_types::UriT,
     error::{wrap_io_err, Error, Result},
@@ -199,7 +199,7 @@ impl DataHash {
     }
 
     /// Create a new instance from Assertion
-    pub fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    pub fn from_assertion(assertion: &Assertion) -> Result<Self> {
         assertion.check_version_from_label(ASSERTION_CREATION_VERSION)?;
         Self::from_cbor_assertion(assertion)
     }
@@ -220,7 +220,7 @@ impl AssertionBase for DataHash {
         Self::to_cbor_assertion(self)
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         Self::from_cbor_assertion(assertion)
     }
 }

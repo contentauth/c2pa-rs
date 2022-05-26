@@ -14,7 +14,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionDecodeResult, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionJson},
     assertions::labels,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -125,7 +125,7 @@ impl AssertionBase for SchemaDotOrg {
         Self::to_json_assertion(self)
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         Self::from_json_assertion(assertion)
     }
 }
