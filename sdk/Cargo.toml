@@ -52,11 +52,11 @@ serde_json = "1.0.66"
 serde-transcode = "1.1.1"
 sha2 = "0.9.5"
 tempfile = "3.1.0"
-thiserror = ">= 1.0.20, < 1.0.26"
+thiserror = ">= 1.0.20, < 1.0.32"
 time = ">= 0.2.23"
 twoway = "0.2.1"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
-x509-parser = "0.11.0"
+x509-parser = "0.13.2"
 x509-certificate = "0.12.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
