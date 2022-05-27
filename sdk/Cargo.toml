@@ -24,7 +24,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 async-trait = { version = "0.1.48", optional = true }
-base64 = "0.12.2"
+base64 = "0.13.0"
 bcder = "0.6.0"
 blake3 = "1.0.0"  
 bytes = "1.1.0"
