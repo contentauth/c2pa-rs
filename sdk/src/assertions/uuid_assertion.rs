@@ -12,9 +12,7 @@
 // each license.
 
 use crate::{
-    assertion::{
-        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeResult,
-    },
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     error::{Error, Result},
 };
 
@@ -56,14 +54,15 @@ impl AssertionBase for Uuid {
         Ok(Assertion::new(&self.label, None, data).set_content_type("application/octet-stream"))
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         match assertion.decode_data() {
             AssertionData::Uuid(s, data) => {
                 Ok(Uuid::new(&assertion.label(), s.clone(), data.clone()))
             }
             ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
                 assertion, ad, "uuid",
-            )),
+            )
+            .into()),
         }
     }
 }

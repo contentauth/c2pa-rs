@@ -13,7 +13,7 @@
 
 //! Example: Creating a custom assertion
 //!
-use c2pa::{Assertion, AssertionBase, AssertionCbor, AssertionDecodeResult, Manifest, Result};
+use c2pa::{Assertion, AssertionBase, AssertionCbor, Manifest, Result};
 use serde::{Deserialize, Serialize};
 
 /// Defines a Custom assertion
@@ -54,7 +54,7 @@ impl AssertionBase for Custom {
         Self::to_cbor_assertion(self)
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         Self::from_cbor_assertion(assertion)
     }
 }

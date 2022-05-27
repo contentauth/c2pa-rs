@@ -14,7 +14,6 @@
 use crate::{
     assertion::{
         get_thumbnail_image_type, Assertion, AssertionBase, AssertionData, AssertionDecodeError,
-        AssertionDecodeResult,
     },
     assertions::labels,
     error::Result,
@@ -68,7 +67,7 @@ impl AssertionBase for Thumbnail {
         Ok(Assertion::new(&self.label, None, data).set_content_type(&self.content_type))
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Thumbnail> {
+    fn from_assertion(assertion: &Assertion) -> Result<Thumbnail> {
         match assertion.decode_data() {
             AssertionData::Binary(data) => Ok(Self {
                 data: data.to_owned(),
@@ -77,7 +76,8 @@ impl AssertionBase for Thumbnail {
             }),
             ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
                 assertion, ad, "binary",
-            )),
+            )
+            .into()),
         }
     }
 }

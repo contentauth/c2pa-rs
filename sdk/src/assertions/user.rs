@@ -12,9 +12,7 @@
 // each license.
 
 use crate::{
-    assertion::{
-        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeResult,
-    },
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     error::{Error, Result},
 };
 use serde::Serialize;
@@ -51,18 +49,22 @@ impl AssertionBase for User {
         Ok(Assertion::new(&self.label, None, data).set_content_type("application/json"))
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         match assertion.decode_data() {
             AssertionData::Json(data) => {
                 // validate that the data is valid json, but do not modify it if valid
-                let _value: serde_json::Value = serde_json::from_str(data)
-                    .map_err(|e| AssertionDecodeError::from_assertion_and_json_err(assertion, e))?;
+                let _value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_json_err(
+                        assertion, e,
+                    ))
+                })?;
 
                 Ok(User::new(&assertion.label(), data))
             }
             ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
                 assertion, ad, "json",
-            )),
+            )
+            .into()),
         }
     }
 }

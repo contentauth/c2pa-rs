@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionDecodeResult},
+    assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Metadata, ReviewRating},
     error::Result,
     hashed_uri::HashedUri,
@@ -141,7 +141,7 @@ impl AssertionBase for Ingredient {
         Self::to_cbor_assertion(self)
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         Self::from_cbor_assertion(assertion)
     }
 }

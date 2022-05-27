@@ -66,9 +66,7 @@
 //! # }
 //! ```
 
-pub use assertion::{
-    Assertion, AssertionBase, AssertionCbor, AssertionDecodeResult, AssertionJson,
-};
+pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
 pub mod assertions;
 
 mod cose_validator;
