@@ -13,8 +13,6 @@
 
 //! Constructs a set of test images using a configuration script
 //!
-use anyhow::{Context, Result};
-
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     jumbf_io,
@@ -22,26 +20,38 @@ use c2pa::{
     Error, Ingredient, IngredientOptions, Manifest, ManifestStore,
 };
 
+use anyhow::{Context, Result};
 use image::GenericImageView;
 use nom::AsBytes;
-use tempfile::tempdir;
-use twoway::find_bytes;
-
+use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-
-use serde::Deserialize;
+use tempfile::tempdir;
+use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
+/// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
 pub struct Recipe {
+    /// The operation to perform:
+    ///
+    /// One of: "copy", "make", "ogp", "dat", "sig", "uri", "clm", "prv"
     pub op: String,
+    /// Path or filename of parent
+    ///
+    /// Assumes output folder if no path
+    /// Will add default extension if non specified
     pub parent: Option<String>,
+    /// A list of Ingredient paths
+    ///
+    /// Assumes output folder if no path
+    /// Will add default extension if non specified
     pub ingredients: Option<Vec<String>>,
+    /// The folder to write files to, will create if it does not exist
     pub output: String,
 }
 
@@ -51,15 +61,15 @@ pub struct Recipe {
 pub struct Config {
     /// The signing algorithm to use
     pub alg: String,
-    /// A url to a time stamp authority if desired
-    pub tsa: Option<String>,
+    /// A url to a time authority if desired
+    pub ta: Option<String>,
     /// The output folder for the generated files
     pub output_path: String,
     /// Extension to add to filenames if none was given
     pub default_ext: String,
     /// A name for a Creative Work Author assertion
     pub author: Option<String>,
-    /// the list of recipes for test files
+    /// A list of recipes for test files
     pub recipes: Vec<Recipe>,
 }
 
@@ -68,7 +78,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             alg: "ps256".to_owned(),
-            tsa: Some("http://timestamp.digicert.com".to_owned()),
+            ta: None,
             output_path: "target/images".to_owned(),
             default_ext: "jpg".to_owned(),
             author: None,
@@ -252,7 +262,7 @@ impl MakeTests {
         // now create store; sign claim and embed in target
         let temp_dir = tempdir()?;
         let (signer, _) =
-            get_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.tsa.clone());
+            get_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.ta.clone());
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 
