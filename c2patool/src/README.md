@@ -28,7 +28,9 @@ this will display the results but not save anything unless an output (-o) is spe
 
 The manifest definition json can also be passed on the command line as string using the -c --create option
 
-```c2patool -c '{"vendor": "myvendor", "claim_generator": "MyApplication", "assertions": [{"label": "myvendor.assertion", "data": {"name": "Jane Doe"}}]}'```
+```shell
+c2patool -c '{"assertions": [{"label": "org.contentauth.test", "data": {"name": "Jane Doe"}}]}'
+```
  
 ## Creating a new output image
 
@@ -61,7 +63,9 @@ By default, c2patool expects to find temp_key.pem and temp_key in the user's ".c
 The location of this folder can be changed by setting the CAI_KEY_PATH environment variable.  
 This expects RSA/RSA_PSS certificates and private key.  It will create signatures as PS256. 
 
-```set CAI_KEY_PATH="~/mykeys"```
+```
+set CAI_KEY_PATH="~/mykeys"
+```
 
 The key and cert can also be placed in the environment variables CAI_PRIVATE_KEY and CAI_PUB_CERT  
 These two variable are used to set the private key and public certificates.  When using these variables
@@ -79,7 +83,7 @@ before the root CA certificate.  See ```sample`` folder for example certificates
 
 To create temporary files for testing you can execute the following command
 
-```
+```shell
 mkdir -p ~/.cai ; sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout ~/.cai/temp_key.pem -out ~/.cai/temp_key.pub -sha256 ; sudo chmod 644 ~/.cai/temp_key.pem
 ```	
 
@@ -90,9 +94,9 @@ certificates have expired.  If c2patool finds the CAI_TA_URL environment variabl
 
 ```set CAI_TA_URL=http://timestamp.digicert.com```
 
-## Manifest definition file format
+## Configuration file format
 
-The manifest definition file is a JSON formatted file with a .json extension:
+The Configuration file is a JSON formatted file with a .json extension:
 
 The schema for this type is as follows:
 ```json
@@ -104,7 +108,7 @@ The schema for this type is as follows:
 	"examples": [
 		{
             "vendor": "myvendor",
-            "claim_generator": "My Application",
+            "claim_generator": "MyApp/0.1",
             "title" : "My Title",
             "parent": "image.jpg",  
             "ingredients": [],
@@ -115,44 +119,46 @@ The schema for this type is as follows:
 						"any_tag": "whatever I want"
 					}
 				}
-			]
-        }    
-	],
+			],
+            "alg": "es256",
+            "private_key": "es256_private.key",
+            "sign_cert": "es256_certs.pem",
+            "ta_url": "http://timestamp.digicert.com"
+		}
+    ],
 	"required": [
-		"vendor",
-		"claim_generator",
 		"assertions",
 	],
 	"properties": {
 		"vendor": {
 			"type": "string",
-			"description": "typically Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`)"
+			"description": "Typically Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`)"
 		},
 		"claim_generator": {
 			"type": "string",
-			"description": "a UserAgent string that will let a user know what software/hardware/system produced this Manifest - names should not contain spaces"
+			"description": "A UserAgent string that will let a user know what software/hardware/system produced this Manifest - names should not contain spaces (defaults to c2patool)"
 		},
 		"title": {
 			"type": "string",
-			"description": "a human-readable string to be displayed as the tile for this Manifest (defaults to embedded file name)"
+			"description": "A human-readable string to be displayed as the tile for this Manifest (defaults to embedded file name)"
 		},
 		"credentials": {
 			"type": "object",
-			"description": "array of W3C verifiable credentials objects defined in the c2pa assertion specification. Section 7"
+			"description": "An array of W3C verifiable credentials objects defined in the c2pa assertion specification. Section 7"
 		},
 		"parent": {
 			"type": "string",
 			"format": "local file system path",
-			"description": "a file path to the source image that was modified by this Manifest (if any)"
+			"description": "A file path to the source image that was modified by this Manifest (if any)"
 		},
         "Ingredients": {
 			"type": "array of string",
 			"format": "array of local file system paths",
-			"description": "file paths to images that were used to modify the image referenced by this Manifest (if any)"
+			"description": "File paths to images that were used to modify the image referenced by this Manifest (if any)"
 		},
 		"assertions": {
 			"type": "object",
-			"description": "object with label, and data - an object with any value as defined in the c2pa assertion specification"
+			"description": "Objects with label, and data - standard c2pa labels must match values as defined in the c2pa assertion specification"
 		},
 	},
 	"additionalProperties": false
