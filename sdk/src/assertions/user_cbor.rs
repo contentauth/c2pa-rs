@@ -14,9 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertion::{
-        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeResult,
-    },
+    assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     error::{Error, Result},
 };
 
@@ -51,18 +49,22 @@ impl AssertionBase for UserCbor {
         Ok(Assertion::new(&self.label, None, data))
     }
 
-    fn from_assertion(assertion: &Assertion) -> AssertionDecodeResult<Self> {
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
         match assertion.decode_data() {
             AssertionData::Cbor(data) => {
                 // validate cbor
-                let _value: serde_cbor::Value = serde_cbor::from_slice(data)
-                    .map_err(|e| AssertionDecodeError::from_assertion_and_cbor_err(assertion, e))?;
+                let _value: serde_cbor::Value = serde_cbor::from_slice(data).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_cbor_err(
+                        assertion, e,
+                    ))
+                })?;
 
                 Ok(Self::new(&assertion.label(), data.clone()))
             }
             ad => Err(AssertionDecodeError::from_assertion_unexpected_data_type(
                 assertion, ad, "cbor",
-            )),
+            )
+            .into()),
         }
     }
 }
