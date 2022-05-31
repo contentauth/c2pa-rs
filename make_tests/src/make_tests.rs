@@ -367,3 +367,31 @@ impl MakeTests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    const TESTS: &str = r#"{
+        "alg": "ps256",
+        "tsa": "http://timestamp.digicert.com",
+        "output_path": "../target/tmp",
+        "default_ext": "jpg",
+        "author": "Gavin Peacock",
+        "recipes": [
+            { "op": "copy", "parent": "../sdk/tests/fixtures/IMG_0003.jpg", "output": "A.jpg" },
+            { "op": "make", "output": "C" },
+            { "op": "ogp", "parent": "C", "output": "XC" },
+            { "op": "sig", "parent": "C", "output": "E-sig-C" } 
+        ]
+    }"#;
+
+    #[test]
+    fn test_make_tests() {
+        let config: Config = serde_json::from_str(TESTS)
+            .context("Config file format")
+            .expect("serde_json");
+        MakeTests::new(config).run().expect("running make_tests");
+    }
+}
