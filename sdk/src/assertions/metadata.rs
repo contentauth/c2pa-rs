@@ -29,13 +29,13 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
-    pub reviews: Option<Vec<ReviewRating>>,
+    reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    pub date_time: Option<String>,
+    date_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reference: Option<HashedUri>,
+    reference: Option<HashedUri>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_source: Option<DataSource>,
+    data_source: Option<DataSource>,
     #[serde(flatten)]
     other: HashMap<String, Value>,
 }
@@ -61,6 +61,11 @@ impl Metadata {
         self.reviews.as_deref()
     }
 
+    /// The ISO 8601 date-time string when the assertion was created/generated
+    pub fn date_time(&self) -> Option<&str> {
+        self.date_time.as_deref()
+    }
+
     /// Returns an optional [DataSource]
     pub fn data_source(&self) -> Option<&DataSource> {
         self.data_source.as_ref()
@@ -76,20 +81,27 @@ impl Metadata {
     }
 
     /// Sets a list of [ReviewRating]s associated with the assertion
-    pub fn set_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
-        self.reviews = reviews;
+    pub fn set_reviews(mut self, reviews: Vec<ReviewRating>) -> Self {
+        self.reviews = Some(reviews);
+        self
+    }
+
+    /// Sets the ISO 8601 date-time string when the assertion was created/generated
+    pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
+        self.date_time = Some(date_time);
         self
     }
 
     /// Sets a hashed_uri reference to another assertion to which this metadata applies
-    pub fn set_reference(mut self, reference: Option<HashedUri>) -> Self {
-        self.reference = reference;
+    #[cfg(test)] // only referenced from test code
+    pub(crate) fn set_reference(mut self, reference: HashedUri) -> Self {
+        self.reference = Some(reference);
         self
     }
 
     /// Sets a description of the source of the assertion data, selected from a predefined list
-    pub fn set_data_source(mut self, data_source: Option<DataSource>) -> Self {
-        self.data_source = data_source;
+    pub fn set_data_source(mut self, data_source: DataSource) -> Self {
+        self.data_source = Some(data_source);
         self
     }
 

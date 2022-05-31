@@ -32,7 +32,7 @@
 //! if let Some(manifest) = manifest_store.get_active() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
-//!         println!("{}\n", action.label);
+//!         println!("{}\n", action.action());
 //!     }
 //! }
 //! # Ok(())
