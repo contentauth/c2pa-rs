@@ -20,13 +20,13 @@ The -d option will output a detailed JSON report of the internal C2PA structure
 
 ## Previewing a Manifest
 
-If a path to a manifest def json file is given,
+If a path to a json config file is given,
 the tool will generate a new manifest using the values given in definition
 this will display the results but not save anything unless an output (-o) is specified
 
-```c2patool claim.json```
+```c2patool sample/config.json```
 
-The manifest definition json can also be passed on the command line as string using the -c --create option
+The config json can also be passed on the command line as string using the -c --config option
 
 ```shell
 c2patool -c '{"assertions": [{"label": "org.contentauth.test", "data": {"name": "Jane Doe"}}]}'
@@ -41,7 +41,7 @@ If you are not changing an image and just adding C2PA data, use an existing outp
 If you have edited an image and want to add C2PA data to it, pass the original as the parent
 and put the edited file at the output location to have the C2PA data added.
 
-```c2patool claim.json -o output.jpg```
+```c2patool sample/config.json -o output.jpg```
 ## Overriding the parent file
 
 When using a json file, the parent file can be specified by passing -p or --parent with the path to the file
@@ -59,40 +59,39 @@ These .c2pa manifest files can be read by claim tool and will generate reports.
 ## Setup
 
 Before you can add a manifest, you need to create an SSL certificate  
-By default, c2patool expects to find temp_key.pem and temp_key in the user's ".cai" folder.  
-The location of this folder can be changed by setting the CAI_KEY_PATH environment variable.  
-This expects RSA/RSA_PSS certificates and private key.  It will create signatures as PS256. 
-
+You can specify the path to the cert files in the configuration fields
 ```
-set CAI_KEY_PATH="~/mykeys"
+private_key
+sign_cert
 ```
+If you are using a signing algorithm other than the default ps256, you will need to specify it in
+```alg```
+Which can be set to one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519] and
+must be compatible with values of private key  and sign cert.
 
-The key and cert can also be placed in the environment variables CAI_PRIVATE_KEY and CAI_PUB_CERT  
-These two variable are used to set the private key and public certificates.  When using these variables
-the CAI_SIGNING_ALGORITHM must also be set to one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519] and
-must be compatible with values of CAI_PRIVATE_KEY and CAI_PUB_CERT. For example to sign with es256 signatures
+The key and cert can also be placed in the environment variables C2PA_PRIVATE_KEY and C2PA_PUB_CERT  
+These two variable are used to set the private key and public certificates.  For example to sign with es256 signatures
 using the content of a private key file and certificate file:
 
-```set CAI_SIGNING_ALGORITHM=es256```
-```set CAI_PRIVATE_KEY=$(cat my_es256_private_key)```
-```set CAI_PUB_CERT=$(cat my_es256_certs)```
+```set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)```
+```set C2PA_PUB_CERT=$(cat my_es256_certs)```
 
-The both CAI_PRIVATE_KEY and CAI_PUB_CERT should be in PEM format.  CAI_PUB_CERT should contain a certificate
+The both private key and sign cert should be in PEM format.  The sign cert should contain a certificate
 chain PEMs starting for the end-entity certificate used to sign the claim ending with intermediate certificate
 before the root CA certificate.  See ```sample`` folder for example certificates.
 
-To create temporary files for testing you can execute the following command
+To create your own temporary files for testing you can execute the following command
 
 ```shell
-mkdir -p ~/.cai ; sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout ~/.cai/temp_key.pem -out ~/.cai/temp_key.pub -sha256 ; sudo chmod 644 ~/.cai/temp_key.pem
+sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout private.key -out certs.pem -sha256
 ```	
 
 Note you may have need to update your openssl version if the above command does not work.
 
 c2patool can also timestamp the signature data that is embedded.  This is useful for validating an asset when the embedded 
-certificates have expired.  If c2patool finds the CAI_TA_URL environment variable set, c2patool will attempt to timestamp the signature using the TA service at the provided URL.  The TA must be RFC3161 compliant.  Example TSA setting:
+certificates have expired.  If the config has a ta_url set, c2patool will attempt to timestamp the signature using the TA service at the provided URL.  The TA must be RFC3161 compliant.  Example TA setting:
 
-```set CAI_TA_URL=http://timestamp.digicert.com```
+```ta_url=http://timestamp.digicert.com```
 
 ## Configuration file format
 
@@ -109,7 +108,6 @@ The schema for this type is as follows:
 		{
             "vendor": "myvendor",
             "claim_generator": "MyApp/0.1",
-            "title" : "My Title",
             "parent": "image.jpg",  
             "ingredients": [],
             "assertions": [
@@ -132,7 +130,7 @@ The schema for this type is as follows:
 	"properties": {
 		"vendor": {
 			"type": "string",
-			"description": "Typically Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`)"
+			"description": "Typically an Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`)"
 		},
 		"claim_generator": {
 			"type": "string",
@@ -148,17 +146,42 @@ The schema for this type is as follows:
 		},
 		"parent": {
 			"type": "string",
-			"format": "local file system path",
+			"format": "Local file system path",
 			"description": "A file path to the source image that was modified by this Manifest (if any)"
 		},
         "Ingredients": {
 			"type": "array of string",
-			"format": "array of local file system paths",
+			"format": "Array of local file system paths",
 			"description": "File paths to images that were used to modify the image referenced by this Manifest (if any)"
 		},
 		"assertions": {
 			"type": "object",
 			"description": "Objects with label, and data - standard c2pa labels must match values as defined in the c2pa assertion specification"
+		},
+		"alg": {
+			"type": "string",
+			"format": "Local file system path",
+			"description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]"
+		},
+		"ta_url": {
+			"type": "string",
+			"format": "http URL",
+			"description": "A URL to an RFC3161 compliant Time Stamp Authority"
+		},
+		"private_key": {
+			"type": "string",
+			"format": "Local file system path",
+			"description": "File path to a private key file"
+		},
+		"sign_cert": {
+			"type": "string",
+			"format": "Local file system path",
+			"description": "File path to signing cert file"
+		},
+		"base_path": {
+			"type": "string",
+			"format": "Local file system path",
+			"description": "File path to a folder to use as the base for relative paths in config"
 		},
 	},
 	"additionalProperties": false
