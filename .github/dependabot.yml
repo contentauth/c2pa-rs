@@ -12,3 +12,8 @@ updates:
     directory: "c2patool"
     schedule:
       interval: "daily"
+
+  - package-ecosystem: "cargo"
+    directory: "make_tests"
+    schedule:
+      interval: "daily"
