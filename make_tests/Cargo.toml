@@ -9,7 +9,6 @@ rust-version = "1.58.0"
 [dependencies]
 anyhow = "1.0"
 c2pa = { path="../sdk", features = ["file_io"] }
-dirs = "4.0" 
 env_logger = "0.9"
 log = "0.4" 
 tempfile = "3.3"
