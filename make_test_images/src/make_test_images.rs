@@ -88,12 +88,12 @@ impl Default for Config {
 }
 
 /// Tool for building test case images for C2PA
-pub struct MakeTests {
+pub struct MakeTestImages {
     config: Config,
     output_dir: PathBuf,
 }
 
-impl MakeTests {
+impl MakeTestImages {
     pub fn new(config: Config) -> Self {
         let output = config.output_path.to_owned();
         Self {
@@ -306,7 +306,10 @@ impl MakeTests {
                 b"W5M0MpCehiHzreSzdeadbeef".as_bytes(),
             ),
             // modify the claim_generator value inside the claim, the claim hash will no longer match the signature
-            "sig" => (b"make_tests".as_bytes(), b"make_xxxxx".as_bytes()),
+            "sig" => (
+                b"make_test_images".as_bytes(),
+                b"make_test_xxxxxx".as_bytes(),
+            ),
             // modify a value inside an actions assertion, the assertion hash will fail
             "uri" => (
                 b"brightnesscontrast".as_bytes(),
@@ -388,10 +391,10 @@ pub mod tests {
     }"#;
 
     #[test]
-    fn test_make_tests() {
+    fn test_make_images() {
         let config: Config = serde_json::from_str(TESTS)
             .context("Config file format")
             .expect("serde_json");
-        MakeTests::new(config).run().expect("running make_tests");
+        MakeTestImages::new(config).run().expect("running");
     }
 }

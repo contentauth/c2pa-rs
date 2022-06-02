@@ -14,6 +14,6 @@ updates:
       interval: "daily"
 
   - package-ecosystem: "cargo"
-    directory: "make_tests"
+    directory: "make_test_images"
     schedule:
       interval: "daily"
