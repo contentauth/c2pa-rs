@@ -76,8 +76,7 @@ pub use error::{Error, Result};
 
 mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
-pub mod jumbf_io; // used by make_tests
-
+pub mod jumbf_io;
 mod manifest;
 pub use manifest::{Manifest, ManifestAssertion};
 

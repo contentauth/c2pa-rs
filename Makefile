@@ -80,10 +80,10 @@ endif
 doc:
 	cargo doc --no-deps --open
 
-# Builds a set of test images using the make_tests example
+# Builds a set of test images using the make_test_images example
 # Outputs to release/test-images
 images:
-	cargo run --release --example make_tests
+	cargo run --release --example make_test_images
 
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
