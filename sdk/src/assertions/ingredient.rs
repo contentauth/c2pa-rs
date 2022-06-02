@@ -110,7 +110,6 @@ impl Ingredient {
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
             let metadata = Metadata::new().set_reviews(reviews);
-            //let metadata = metadata.set_reviews(reviews);
             self.metadata = Some(metadata);
         };
         self
