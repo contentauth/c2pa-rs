@@ -102,22 +102,14 @@ impl Ingredient {
     }
 
     pub fn add_review(mut self, review: ReviewRating) -> Self {
-        if self.metadata.is_none() {
-            self.metadata = Some(Metadata::new())
-        }
-        if let Some(metadata) = &mut self.metadata {
-            match &mut metadata.reviews {
-                None => metadata.reviews = Some(vec![review]),
-                Some(reviews) => reviews.push(review),
-            }
-        }
+        let metadata = self.metadata.unwrap_or_else(Metadata::new);
+        self.metadata = Some(metadata.add_review(review));
         self
     }
 
     pub fn add_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
         if let Some(reviews) = reviews {
-            let mut metadata = Metadata::new();
-            metadata.reviews = Some(reviews);
+            let metadata = Metadata::new().set_reviews(reviews);
             self.metadata = Some(metadata);
         };
         self
@@ -263,13 +255,13 @@ pub mod tests {
 
         assert!(restored.metadata.is_some());
         let metadata = restored.metadata.unwrap();
-        let date_time = metadata.date_time.unwrap();
-        let date_time_parsed = chrono::DateTime::parse_from_rfc3339(&date_time);
+        let date_time = metadata.date_time().unwrap();
+        let date_time_parsed = chrono::DateTime::parse_from_rfc3339(date_time);
 
-        assert!(metadata.reviews.is_some());
+        assert!(metadata.reviews().is_some());
         assert!(date_time_parsed.is_ok());
 
-        let reviews = metadata.reviews.unwrap();
+        let reviews = metadata.reviews().unwrap();
 
         assert_eq!(reviews.len(), 1);
         assert_eq!(
