@@ -83,22 +83,3 @@ pub trait AsyncSigner: Sync {
     /// than this value.
     fn reserve_size(&self) -> usize;
 }
-
-/// The `AsyncPlaceholder` implementation provides a placeholder "async signer"
-/// for use in testing and development contexts where a valid signature is not
-/// required. To state the obvious, claims signed using this implementation
-/// will not verify.
-#[cfg(feature = "async_signer")]
-pub struct AsyncPlaceholder {}
-
-#[cfg(feature = "async_signer")]
-#[async_trait]
-impl AsyncSigner for AsyncPlaceholder {
-    async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
-        Ok(b"invalid signature".to_vec())
-    }
-
-    fn reserve_size(&self) -> usize {
-        128
-    }
-}
