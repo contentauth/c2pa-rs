@@ -13,15 +13,9 @@
 
 //! This generates a set of test images with a wide variety of configurations
 //! To run this, use the following command in a terminal
-<<<<<<< HEAD:make_tests/src/main.rs
-//! cargo run --release --bin make_tests
-//!
-mod make_tests;
-=======
 //! cargo run --release --bin make_test_images
 //!
 mod make_test_images;
->>>>>>> main:make_test_images/src/main.rs
 use anyhow::{Context, Result};
 
 fn main() -> Result<()> {
@@ -29,15 +23,27 @@ fn main() -> Result<()> {
     let path = if args.len() > 1 {
         args[1].as_ref()
     } else {
+<<<<<<< HEAD:make_tests/src/main.rs
         "make_tests/tests.json"
     };
     let buf = std::fs::read_to_string(&path).context(format!("Reading {}", path))?;
     let config: make_tests::Config = serde_json::from_str(&buf).context("Config file format")?;
+=======
+        "make_test_images/tests.json"
+    };
+    let buf = std::fs::read_to_string(&path).context(format!("Reading {}", path))?;
+    let config: make_test_images::Config =
+        serde_json::from_str(&buf).context("Config file format")?;
+>>>>>>> main:make_test_images/src/main.rs
 
     // set RUST_LOG=debug to get detailed debug logging
     env_logger::init();
 
+<<<<<<< HEAD:make_tests/src/main.rs
     make_tests::MakeTests::new(config).run()?;
+=======
+    make_test_images::MakeTestImages::new(config).run()?;
+>>>>>>> main:make_test_images/src/main.rs
 
     Ok(())
 }
