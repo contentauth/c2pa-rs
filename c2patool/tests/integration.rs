@@ -68,7 +68,7 @@ mod integration {
         generate_x509_temp_keys();
 
         Command::cargo_bin("c2patool")?
-            .arg(fixture_path("claim.json"))
+            .arg("sample/config.json")
             .arg("-p")
             .arg(fixture_path(TEST_IMAGE))
             .arg("-o")
