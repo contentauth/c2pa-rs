@@ -198,7 +198,7 @@ pub struct Actor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
 
-    /// List of [`HashedUri`] references to W3C Verifiable Credentials.
+    /// List of references to W3C Verifiable Credentials.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<HashedUri>>,
 }
