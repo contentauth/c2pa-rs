@@ -13,31 +13,26 @@
 
 //! This generates a set of test images with a wide variety of configurations
 //! To run this, use the following command in a terminal
-//! cargo run --release --example make_tests
+//! cargo run --release --bin make_test_images
 //!
-use anyhow::Result;
-use std::path::PathBuf;
-// The make_tests sample is not designed to work with a wasm build
-// so we provide a wasm stub here and only include the module for non wasm
-#[cfg(not(target_arch = "wasm32"))]
-mod make_tests;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::make_tests::make_tests;
+mod make_test_images;
+use anyhow::{Context, Result};
 
-#[cfg(target_arch = "wasm32")]
-fn make_tests(_output_folder: &std::path::Path, _alg: &str, _tsa: Option<String>) -> Result<()> {
-    panic!("Not implemented for wasm");
-}
-
-const TARGET_FOLDER: &str = "target/test_images";
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let path = if args.len() > 1 {
+        args[1].as_ref()
+    } else {
+        "make_test_images/tests.json"
+    };
+    let buf = std::fs::read_to_string(&path).context(format!("Reading {}", path))?;
+    let config: make_test_images::Config =
+        serde_json::from_str(&buf).context("Config file format")?;
+
     // set RUST_LOG=debug to get detailed debug logging
     env_logger::init();
 
-    // choose a timestamp service authority
-    let tsa = Some("http://timestamp.digicert.com".to_string());
-
-    make_tests(&PathBuf::from(TARGET_FOLDER), "ps256", tsa)?;
+    make_test_images::MakeTestImages::new(config).run()?;
 
     Ok(())
 }

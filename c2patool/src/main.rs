@@ -3,7 +3,6 @@
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
-
 // Unless required by applicable law or agreed to in writing,
 // this software is distributed on an "AS IS" BASIS, WITHOUT
 // WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
@@ -11,12 +10,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![doc = include_str!("README.md")]
 /// Tool to display and create C2PA manifests
 ///
 /// A file path to a jpeg must be provided
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a claim def json file is specified, the claim will be added to any existing claims
 /// If the claim def includes an asset_path, the claims in that file will be used instead
+///
 ///
 use anyhow::Result;
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
@@ -29,10 +30,10 @@ use std::{
 use structopt::StructOpt;
 use tempfile::tempdir;
 
-mod claim_def;
-use claim_def::ClaimDef;
+pub mod config;
+use config::Config;
 mod signer;
-use signer::get_test_signer;
+use signer::get_signer;
 
 // define the command line options
 #[derive(Debug, StructOpt)]
@@ -48,10 +49,10 @@ struct CliArgs {
 
     #[structopt(
         short = "c",
-        long = "claimdef",
-        help = "claim definition passed as json string"
+        long = "config",
+        help = "Configuration passed as json string"
     )]
-    claim_def: Option<String>,
+    config: Option<String>,
 
     #[structopt(
         short = "d",
@@ -66,28 +67,43 @@ struct CliArgs {
 }
 
 // converts any relative paths to absolute from base_path
-fn fix_relative_path(path: &Path, base_path: &Path) -> PathBuf {
+pub fn fix_relative_path(path: &Path, base_path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return PathBuf::from(path);
+    }
     let mut p = PathBuf::from(base_path);
     p.push(path);
     p
 }
 
-fn handle_claim_def(
+fn handle_config(
     json: &str,
     base_dir: &Path,
     parent: Option<&Path>,
     output_opt: Option<&Path>,
     is_detailed: bool,
 ) -> Result<()> {
-    let claim_def: ClaimDef = serde_json::from_str(json)?;
+    let config: Config = serde_json::from_str(json)?;
 
-    let mut manifest = Manifest::new(claim_def.claim_generator);
+    let base_path = match &config.base_path {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(base_dir),
+    };
 
-    if let Some(vendor) = claim_def.vendor {
+    let signer = get_signer(&config, &base_path)?;
+
+    let claim_generator = match config.claim_generator {
+        Some(claim_generator) => claim_generator,
+        None => format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+    };
+
+    let mut manifest = Manifest::new(claim_generator);
+
+    if let Some(vendor) = config.vendor {
         manifest.set_vendor(vendor);
     }
 
-    if let Some(credentials) = claim_def.credentials.as_ref() {
+    if let Some(credentials) = config.credentials.as_ref() {
         for credential in credentials {
             manifest.add_verifiable_credential(credential)?;
         }
@@ -96,10 +112,10 @@ fn handle_claim_def(
     // if claim_def has a parent, set the parent asset
     let parent = match parent {
         Some(parent) => Some(PathBuf::from(parent)),
-        None => claim_def
+        None => config
             .parent
             .as_deref()
-            .map(|parent| fix_relative_path(parent, base_dir)),
+            .map(|parent| fix_relative_path(parent, &base_path)),
     };
     if let Some(parent) = parent.as_ref() {
         if !parent.exists() {
@@ -110,9 +126,9 @@ fn handle_claim_def(
     }
 
     // add all the ingredients (claim def ingredients do not include the parent)
-    if let Some(ingredients) = claim_def.ingredients.as_ref() {
+    if let Some(ingredients) = config.ingredients.as_ref() {
         for ingredient in ingredients {
-            let path = fix_relative_path(ingredient, base_dir);
+            let path = fix_relative_path(ingredient, &base_path);
             if !path.exists() {
                 eprintln!("Ingredient file not found {:#?}", path);
                 exit(1);
@@ -126,7 +142,7 @@ fn handle_claim_def(
     }
 
     // add any assertions
-    for assertion in claim_def.assertions {
+    for assertion in config.assertions {
         manifest.add_labeled_assertion(&assertion.label, &assertion.data)?;
     }
 
@@ -151,14 +167,17 @@ fn handle_claim_def(
             }
         };
 
-        // get asset info from the output path (even it it doesn't exist yet)
-        let mut asset = Ingredient::from_file_info(output);
-        if let Some(t) = claim_def.title.as_ref() {
+        // Predefine the manifest asset if we need to set a title
+        // Todo: find a better way to set the title
+        if let Some(t) = config.title.as_ref() {
+            let mut asset = Ingredient::from_file_info(output);
             asset.set_title(t.to_owned());
+            manifest.set_asset(asset);
         };
-        manifest.set_asset(asset);
 
-        // select source from output or fallback to parent
+        // The source path points to the image we want to sign.
+        // If a file already exists at the output location, we will treat that as the source
+        // Otherwise, since this tool does no image editing, we can treat the parent file as the source.
         let source_path = match output.exists() {
             true => output,
             false => {
@@ -169,13 +188,12 @@ fn handle_claim_def(
             }
         };
 
-        // embed to a temporary file and then rename or copy back to the output
-        // so we never have a half written manifest
+        // Embed to a temporary file and then rename or copy back to the output.
+        // This way we never have a half written manifest if something fails.
         let dir = tempdir()?;
-        // temp file_name must match output file name, it is used as the claim title
-        let temp_path = dir.path().join(&file_name);
 
-        let signer = get_test_signer()?;
+        // temp file_name must match output file name, it may be used as the claim title
+        let temp_path = dir.path().join(&file_name);
 
         manifest
             .embed(source_path, &temp_path, signer.as_ref())
@@ -238,7 +256,7 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
-    let mut claim_def = args.claim_def;
+    let mut config = args.config;
     let mut base_dir = PathBuf::from(".");
 
     if let Some(path) = args.path.clone() {
@@ -247,7 +265,6 @@ fn main() -> Result<()> {
             exit(1);
         }
 
-        base_dir = PathBuf::from(&path);
         let extension = path.extension().and_then(|p| p.to_str()).unwrap_or("");
         // path can be a jpeg source file or a json working claim description
         match extension {
@@ -255,11 +272,11 @@ fn main() -> Result<()> {
                 report_from_path(&path, args.detailed);
             }
             "json" => {
-                // file paths in ClaimDef are relative to the json file
+                // file paths in Config are relative to the json file
                 base_dir = PathBuf::from(&path);
                 base_dir.pop();
 
-                claim_def = Some(fs::read_to_string(&path)?);
+                config = Some(fs::read_to_string(&path)?);
             }
             _ => {
                 println!("Unsupported file type {}", extension);
@@ -268,8 +285,8 @@ fn main() -> Result<()> {
         };
     }
 
-    if let Some(json) = claim_def {
-        handle_claim_def(
+    if let Some(json) = config {
+        handle_config(
             &json,
             &base_dir,
             args.parent.as_deref(),
