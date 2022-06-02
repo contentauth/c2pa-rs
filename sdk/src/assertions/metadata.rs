@@ -56,22 +56,22 @@ impl Metadata {
         }
     }
 
-    /// Returns an optional list of [ReviewRating]
+    /// Returns the list of [`ReviewRating`] for this assertion if it exists.
     pub fn reviews(&self) -> Option<&[ReviewRating]> {
         self.reviews.as_deref()
     }
 
-    /// The ISO 8601 date-time string when the assertion was created/generated
+    /// Returns the ISO 8601 date-time string when the assertion was created/generated.
     pub fn date_time(&self) -> Option<&str> {
         self.date_time.as_deref()
     }
 
-    /// Returns an optional [DataSource]
+    /// Returns the [`DataSource`] for this assertion if it exists.
     pub fn data_source(&self) -> Option<&DataSource> {
         self.data_source.as_ref()
     }
 
-    /// Adds a [ReviewRating] associated with the assertion
+    /// Adds a [`ReviewRating`] associated with the assertion.
     pub fn add_review(mut self, review: ReviewRating) -> Self {
         match &mut self.reviews {
             None => self.reviews = Some(vec![review]),
@@ -80,38 +80,40 @@ impl Metadata {
         self
     }
 
-    /// Sets a list of [ReviewRating]s associated with the assertion
+    /// Sets the list of [`ReviewRating`]s associated with the assertion.
+    ///
+    /// This replaces any previous list.
     pub fn set_reviews(mut self, reviews: Vec<ReviewRating>) -> Self {
         self.reviews = Some(reviews);
         self
     }
 
-    /// Sets the ISO 8601 date-time string when the assertion was created/generated
+    /// Sets the ISO 8601 date-time string when the assertion was created/generated.
     pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
         self.date_time = Some(date_time);
         self
     }
 
-    /// Sets a hashed_uri reference to another assertion to which this metadata applies
+    /// Sets a [`HashedUri`] reference to another assertion to which this metadata applies.
     #[cfg(test)] // only referenced from test code
     pub(crate) fn set_reference(mut self, reference: HashedUri) -> Self {
         self.reference = Some(reference);
         self
     }
 
-    /// Sets a description of the source of the assertion data, selected from a predefined list
+    /// Sets a description of the source of the assertion data, selected from a predefined list.
     pub fn set_data_source(mut self, data_source: DataSource) -> Self {
         self.data_source = Some(data_source);
         self
     }
 
-    /// Adds an additional key / value pair
+    /// Adds an additional key / value pair.
     pub fn insert(&mut self, key: &str, value: Value) -> &mut Self {
         self.other.insert(key.to_string(), value);
         self
     }
 
-    /// Gets additional values by key
+    /// Gets additional values by key.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.other.get(key)
     }
@@ -154,13 +156,15 @@ pub mod c2pa_source {
 /// A description of the source for assertion data
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct DataSource {
+    /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
-    /// A value from among the enumerated list indicating the source of the assertion
     pub source_type: String,
-    /// A human readable string giving details about the source of the assertion data
+
+    /// A human-readable string giving details about the source of the assertion data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
-    /// A list of actors associated with this source
+
+    /// A list of [`Actor`]s associated with this source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<Vec<Actor>>,
 }
@@ -174,26 +178,27 @@ impl DataSource {
         }
     }
 
-    /// Set a human readable string giving details about the source of the assertion data
+    /// Sets a human-readable string giving details about the source of the assertion data.
     pub fn set_details(mut self, details: String) -> Self {
         self.details = Some(details);
         self
     }
 
-    /// Sets a list of actors associated with this source
+    /// Sets a list of [`Actor`]s associated with this source.
     pub fn set_actors(mut self, actors: Option<Vec<Actor>>) -> Self {
         self.actors = actors;
         self
     }
 }
 
-/// identifies a person responsible for an action
+/// Identifies a person responsible for an action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Actor {
-    /// An identifier for a human actor, used when the "type" is humanEntry.identified
+    /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
-    // array of hashed_uri references to W3C Verifiable Credentials
+
+    /// List of [`HashedUri`] references to W3C Verifiable Credentials.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Vec<HashedUri>>,
 }
@@ -232,9 +237,9 @@ pub enum ReviewCode {
     Other(String),
 }
 
-/// A rating on an Assertion
+/// A rating on an [`Assertion`].
 ///
-/// <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct ReviewRating {
     pub explanation: String,

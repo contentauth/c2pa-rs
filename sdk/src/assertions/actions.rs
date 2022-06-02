@@ -58,16 +58,26 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
-/// Defines an action taken on an image
+/// Defines a single action taken on an asset.
+///
+/// An [`Action`] describes what took place on the asset, when it took place,
+/// along with possible other information such as what software performed
+/// the action.
+///
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct Action {
+    /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
+
     /// Timestamp of when the action occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
     when: Option<String>,
+
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
     software_agent: Option<String>,
+
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     ///
     /// If not present, presumed to be undefined.
@@ -75,18 +85,25 @@ pub struct Action {
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
-    /// The value of the xmpMM:InstanceID property for the modified (output) resource
+
+    /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
     #[serde(rename = "InstanceId", skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
-    /// Additional parameters of the action. These will often vary by the type of action
+
+    /// Additional parameters of the action. These vary by the type of action.
     #[serde(skip_serializing_if = "Option::is_none")]
     parameters: Option<HashMap<String, Value>>,
-    /// An array of the creators that undertook this action
+
+    /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
     actors: Option<Vec<Actor>>,
 }
 
 impl Action {
+    /// Create a new action with a specific action label.
+    ///
+    /// This label is often one of the labels defined in [`c2pa_action`],
+    /// but can also be a custom string in reverse-domain format.
     pub fn new(label: &str) -> Self {
         Self {
             action: label.to_owned(),
@@ -99,33 +116,40 @@ impl Action {
         }
     }
 
-    /// The Action code associated with this Action
+    /// Returns the label for this action.
     ///
-    /// This can be one of the [c2pa_action] codes or a custom reverse domain formatted string
+    /// This label is often one of the labels defined in [`c2pa_action`],
+    /// but can also be a custom string in reverse-domain format.
     pub fn action(&self) -> &str {
         &self.action
     }
 
-    /// Timestamp of when the action occurred.
+    /// Returns the timestamp of when the action occurred.
+    ///
+    /// This string, if present, will be in ISO-8601 date format.
     pub fn when(&self) -> Option<&str> {
         self.when.as_deref()
     }
 
-    /// The software agent that performed the action.
+    /// Returns the software agent that performed the action.
     pub fn software_agent(&self) -> Option<&str> {
         self.software_agent.as_deref()
     }
 
-    /// The value of the xmpMM:InstanceID property for the modified (output) resource
+    /// Returns the value of the `xmpMM:InstanceID` property for the modified
+    /// (output) resource.
     pub fn instance_id(&self) -> Option<&str> {
         self.instance_id.as_deref()
     }
-    /// Additional parameters of the action. These will often vary by the type of action
+
+    /// Returns the additional parameters for this action.
+    ///
+    /// These vary by the type of action.
     pub fn parameters(&self) -> Option<&HashMap<String, Value>> {
         self.parameters.as_ref()
     }
 
-    /// Get an individual parameter Value by key string
+    /// Returns an individual action parameter if it exists.
     pub fn get_parameter(&self, key: &str) -> Option<&Value> {
         match self.parameters.as_ref() {
             Some(parameters) => parameters.get(key),
@@ -133,12 +157,14 @@ impl Action {
         }
     }
 
-    /// An array of the [Actor]s that undertook this action
+    /// An array of the [`Actor`]s that undertook this action.
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
     }
 
-    /// Sets a timestamp of when the action occurred
+    /// Sets the timestamp for when the action occurred.
+    ///
+    /// This timestamp must be in ISO-8601 date.
     pub fn set_when(mut self, when: &str) -> Self {
         self.when = Some(when.to_owned());
         self
@@ -150,19 +176,23 @@ impl Action {
         self
     }
 
-    /// Sets a list of the parts of the resource that were changed since the previous event history.
+    /// Sets the list of the parts of the resource that were changed
+    /// since the previous event history.
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
     }
 
-    /// Sets the value of the xmpMM:InstanceID property for the modified (output) resource
+    /// Sets the value of the `xmpMM:InstanceID` property for the
+    /// modified (output) resource.
     pub fn set_instance_id(mut self, id: &str) -> Self {
         self.instance_id = Some(id.to_owned());
         self
     }
 
-    /// Sets additional parameters of the action. These will often vary by the type of action
+    /// Sets the additional parameters for this action.
+    ///
+    /// These vary by the type of action.
     pub fn set_parameter<T: Serialize>(mut self, key: String, value: T) -> Result<Self> {
         let value = serde_json::to_value(value).map_err(|_| Error::AssertionEncoding)?;
         self.parameters = Some(match self.parameters {
@@ -179,30 +209,38 @@ impl Action {
         Ok(self)
     }
 
-    /// Sets an array of the [Actor]s that undertook this action
+    /// Sets the array of [`Actor`]s that undertook this action.
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
         self
     }
 }
 
-/// A list of actions as an assertion
+/// An `Actions` assertion provides information on edits and other
+/// actions taken that affect the asset’s content.
+///
+/// This assertion contains a list of [`Action`]s, each one declaring
+/// what took place on the asset, when it took place, along with possible
+/// other information such as what software performed the action.
+///
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct Actions {
-    /// A list of Actions
+    /// A list of [`Action`]s.
     pub actions: Vec<Action>,
-    /// Additional information about the assertion
+
+    /// Additional information about the assertion.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
 }
 
 impl Actions {
-    /// Label prefix for an actions assertion.
+    /// Label prefix for an [`Actions`] assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
 
-    /// creates a new Actions object
+    /// Creates a new [`Actions`] assertion struct.
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
@@ -210,29 +248,29 @@ impl Actions {
         }
     }
 
-    /// Returns a list of [Action]
+    /// Returns the list of [`Action`]s.
     pub fn actions(&self) -> &[Action] {
         &self.actions
     }
 
-    /// Returns [Metadata] or None
+    /// Returns the assertion's [`Metadata`], if it exists.
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
 
-    /// Adds an [Action]
+    /// Adds an [`Action`] to this assertion's list of actions.
     pub fn add_action(&mut self, action: Action) -> &mut Self {
         self.actions.push(action);
         self
     }
 
-    /// Adds [Metadata] to the action
+    /// Sets [`Metadata`] for the action.
     pub fn add_metadata(&mut self, metadata: Metadata) -> &mut Self {
         self.metadata = Some(metadata);
         self
     }
 
-    /// Creates an [Actions] assertion from a compatible JSON Value
+    /// Creates an [`Actions`] assertion from a compatible JSON value.
     pub fn from_json_value(json: &serde_json::Value) -> Result<Self> {
         let actions: Actions = serde_json::from_value(json.clone())?;
         Ok(actions)
