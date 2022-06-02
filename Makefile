@@ -42,7 +42,6 @@ c2patool-package:
 	cp c2patool/sample/* target/c2patool/sample
 	cp CHANGELOG.md target/c2patool/CHANGELOG.md
 	cp sdk/tests/fixtures/IMG_0003.jpg target/c2patool/image.jpg
-	cp sdk/tests/fixtures/claim.json target/c2patool/claim.json
 
 # These are for building the c2patool release bin on various platforms
 build-release-win:

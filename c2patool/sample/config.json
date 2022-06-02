@@ -1,6 +1,11 @@
 {
+    "alg": "es256",
+    "private_key": "es256_private.key",
+    "sign_cert": "es256_certs.pem",
+    "ta": "http://timestamp.digicert.com",
+    
     "vendor": "myvendor",
-    "claim_generator": "My Application",
+    "claim_generator": "TestApp",
     "title": "My Title",
     "assertions": [
         {
@@ -18,32 +23,23 @@
             }
         },
         {
-            "label": "adobe.dictionary",
-            "data": {
-                "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
-            }
-        },
-        {
             "label": "c2pa.actions",
             "data": {
                 "actions": [
                     {
-                        "action": "c2pa.opened",
-                        "when": "2021-03-25T01:37:04.872Z"
+                        "action": "c2pa.opened"
                     },
                     {
                         "action": "c2pa.edited",
                         "parameters": {
                             "name": "brightnesscontrast"
-                        },
-                        "when": "2021-03-25T01:37:22.536Z"
+                        }
                     }
                 ],
                 "metadata": {
-                    "dateTime": "2021-03-25T01:37:22.536Z",
                     "reviewRatings": [
                         {
-                            "code": "unknownActionsPerformed",
+                            "code": "c2pa.unknown",
                             "explanation": "Something untracked happened",
                             "value": 4
                         }
