@@ -1,0 +1,19 @@
+# Please see the documentation for all configuration options:
+# https://help.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "sdk"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "cargo"
+    directory: "c2patool"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "cargo"
+    directory: "make_test_images"
+    schedule:
+      interval: "daily"
