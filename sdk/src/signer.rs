@@ -46,7 +46,7 @@ pub trait Signer {
 }
 
 /// Trait to allow loading of signing credential from external sources
-pub trait ConfigurableSigner: Signer + Sized {
+pub(crate) trait ConfigurableSigner: Signer + Sized {
     /// Create signer form credential files
     fn from_files<P: AsRef<std::path::Path>>(
         signcert_path: P,
@@ -62,33 +62,6 @@ pub trait ConfigurableSigner: Signer + Sized {
         alg: String,
         tsa_url: Option<String>,
     ) -> Result<Self>;
-}
-
-/// The `Placeholder` implementation provides a placeholder "signer" for use
-/// in testing and development contexts where a valid signature is not required.
-/// To state the obvious, claims signed using this implementation will not verify.
-pub struct Placeholder {}
-
-impl Signer for Placeholder {
-    // sign the provided bytes
-    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
-        Ok(b"invalid signature".to_vec())
-    }
-
-    // algoritim iddentifer string for this Signer
-    fn alg(&self) -> Option<String> {
-        None
-    }
-
-    // list of certificates in der format, with last being cert that signed the claim
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(Vec::new())
-    }
-
-    // bytes to reserve for a fully signed claim
-    fn reserve_size(&self) -> usize {
-        128
-    }
 }
 
 #[cfg(feature = "async_signer")]
