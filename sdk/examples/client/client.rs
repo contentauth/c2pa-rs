@@ -48,12 +48,7 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
                 labels::ACTIONS => {
                     let actions: Actions = assertion.to_assertion()?;
                     for action in actions.actions {
-                        println!(
-                            "{}{:?}, {:?}",
-                            indent,
-                            action.label,
-                            action.parameters.unwrap_or_default()
-                        );
+                        println!("{}{}", indent, action.action());
                     }
                 }
                 labels::CREATIVE_WORK => {
