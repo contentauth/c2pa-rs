@@ -15,9 +15,8 @@
 //!
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    jumbf_io,
-    openssl::temp_signer::get_signer_by_alg,
-    Error, Ingredient, IngredientOptions, Manifest, ManifestStore,
+    get_temp_signer_by_alg, jumbf_io, Error, Ingredient, IngredientOptions, Manifest,
+    ManifestStore,
 };
 
 use anyhow::{Context, Result};
@@ -261,7 +260,7 @@ impl MakeTestImages {
         // now create store; sign claim and embed in target
         let temp_dir = tempdir()?;
         let (signer, _) =
-            get_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.ta.clone());
+            get_temp_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.ta.clone());
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 

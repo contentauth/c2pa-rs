@@ -17,8 +17,7 @@ use anyhow::Result;
 
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork},
-    openssl::temp_signer::get_signer,
-    Ingredient, Manifest, ManifestStore,
+    get_temp_signer, Ingredient, Manifest, ManifestStore,
 };
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -111,7 +110,7 @@ pub fn main() -> Result<()> {
 
     // sign and embed into the target file
     let temp_dir = tempdir()?;
-    let (signer, _) = get_signer(&temp_dir.path());
+    let (signer, _) = get_temp_signer(&temp_dir.path());
     manifest.embed(&source, &dest, &signer)?;
 
     let manifest_store = ManifestStore::from_file(&dest)?;

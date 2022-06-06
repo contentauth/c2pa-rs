@@ -575,7 +575,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "file_io")]
     use crate::{
-        openssl::temp_signer::get_signer,
+        openssl::temp_signer::get_temp_signer,
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
@@ -648,7 +648,7 @@ pub(crate) mod tests {
         let test_output = dir.path().join("wc_embed_test.jpg");
 
         //embed a claim generated from this manifest
-        let (signer, _) = get_signer(&dir.path());
+        let (signer, _) = get_temp_signer(&dir.path());
 
         let _store = manifest
             .embed(&source_path, &test_output, &signer)
@@ -751,7 +751,7 @@ pub(crate) mod tests {
             )
             .expect("add_assertion");
 
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         let store1 = manifest.embed(&output, &output, &signer).expect("embed");
         let claim1_label = store1.provenance_label().unwrap();
@@ -776,7 +776,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
 
         //embed a claim in output2
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         let _store2 = manifest2.embed(&output2, &output2, &signer).expect("embed");
 
