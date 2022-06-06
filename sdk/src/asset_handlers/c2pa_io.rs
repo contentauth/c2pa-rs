@@ -66,7 +66,7 @@ pub mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        openssl::temp_signer::get_signer,
+        openssl::temp_signer::get_temp_signer,
         status_tracker::OneShotStatusTracker,
         store::Store,
         utils::test::{fixture_path, temp_dir_path},
@@ -88,7 +88,7 @@ pub mod tests {
         let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::new())
             .expect("loading store");
 
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         let manifest2 = store.to_jumbf(&signer).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
