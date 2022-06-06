@@ -76,13 +76,18 @@ impl ManifestAssertion {
         }
     }
 
-    #[allow(clippy::expect_used)]
-    pub fn data(&self) -> Value {
+    pub fn value(&self) -> Result<&Value> {
         match &self.data {
-            ManifestData::Json(v) => v.clone(),
-            ManifestData::Binary(b) => serde_json::from_slice(b).expect("barrrg"),
+            ManifestData::Json(d) => Ok(d),
+            ManifestData::Binary(_) => Err(Error::UnsupportedType),
         }
-        //&self.data
+    }
+
+    pub fn binary(&self) -> Result<&[u8]> {
+        match &self.data {
+            ManifestData::Json(_) => Err(Error::UnsupportedType),
+            ManifestData::Binary(b) => Ok(b),
+        }
     }
 
     pub fn instance(&self) -> usize {
@@ -116,15 +121,15 @@ impl ManifestAssertion {
         ))
     }
 
-    pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
+    pub fn from_helper<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         Ok(Self::new(
             data.label().to_owned(),
             serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,
         ))
     }
 
-    pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.data()).map_err(|e| {
+    pub fn to_helper<T: DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
             Error::AssertionDecoding(AssertionDecodeError::from_json_err(
                 self.label.to_owned(),
                 None,
@@ -133,6 +138,16 @@ impl ManifestAssertion {
             ))
         })
     }
+
+    // pub fn to_assertion(&self) -> Result<Assertion> {
+    //     match self.kind() {
+    //         ManifestAssertionKind::Cbor =>
+    //             Ok(UserCbor::new(self.label(), serde_cbor::to_vec(&self.value()?)?).to_assertion()?),
+    //         ManifestAssertionKind::Json =>
+    //             Ok(User::new(self.label(), &serde_json::to_string(&self.value()?)?).to_assertion()?),
+    //         _ => Err(Error::AssertionEncoding)
+    //     }
+    // }
 }
 
 #[cfg(test)]
@@ -159,8 +174,8 @@ pub(crate) mod tests {
         assert_eq!(ma.kind(), &ManifestAssertionKind::Json);
 
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-        let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
-        let actions2: Actions = ma2.to_assertion().expect("to_assertion");
+        let ma2 = ManifestAssertion::from_helper(&actions).expect("from_assertion");
+        let actions2: Actions = ma2.to_helper().expect("to_assertion");
         let actions3 = ManifestAssertion::from_labeled_assertion("foo".to_owned(), &actions2)
             .expect("from_labeled_assertion");
         assert_eq!(actions3.label(), "foo");

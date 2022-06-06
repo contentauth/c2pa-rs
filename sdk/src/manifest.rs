@@ -76,10 +76,10 @@ pub struct Manifest {
 impl Manifest {
     /// Create a new Manifest
     /// requires a claim_generator string (User Agent))
-    pub fn new(claim_generator: String) -> Self {
+    pub fn new<S: Into<String>>(claim_generator: S) -> Self {
         Self {
             vendor: None,
-            claim_generator,
+            claim_generator: claim_generator.into(),
             claim_generator_hints: None,
             asset: None,
             ingredients: Vec::new(),
@@ -118,14 +118,14 @@ impl Manifest {
     /// Sets the vendor prefix to be used when generating manifest labels
     /// Optional prefix added to the generated Manifest Label
     /// This is typically a lower case Internet domain name for the vendor (i.e. `adobe`)
-    pub fn set_vendor(&mut self, vendor: String) -> &mut Self {
-        self.vendor = Some(vendor);
+    pub fn set_vendor<S: Into<String>>(&mut self, vendor: S) -> &mut Self {
+        self.vendor = Some(vendor.into());
         self
     }
 
     /// Sets a human readable name for the product that created this manifest
-    pub fn set_claim_generator(&mut self, generator: String) -> &mut Self {
-        self.claim_generator = generator;
+    pub fn set_claim_generator<S: Into<String>>(&mut self, generator: S) -> &mut Self {
+        self.claim_generator = generator.into();
         self
     }
 
@@ -194,15 +194,14 @@ impl Manifest {
 
     /// Adds assertions, data for predefined assertions must be in correct format
     pub fn add_assertion<T: Serialize + AssertionBase>(&mut self, data: &T) -> Result<&mut Self> {
-        self.assertions
-            .push(ManifestAssertion::from_assertion(data)?);
+        self.assertions.push(ManifestAssertion::from_helper(data)?);
         Ok(self)
     }
 
     /// Retrieves an assertion by label if it exists or Error::NotFound
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
         if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
-            manifest_assertion.to_assertion()
+            manifest_assertion.to_helper()
         } else {
             Err(Error::NotFound)
         }
@@ -219,7 +218,7 @@ impl Manifest {
             .iter()
             .find(|a| a.label() == label && a.instance() == instance)
         {
-            manifest_assertion.to_assertion()
+            manifest_assertion.to_helper()
         } else {
             Err(Error::NotFound)
         }
@@ -227,11 +226,11 @@ impl Manifest {
 
     // keep this private until we support it externally
     #[allow(dead_code)]
-    pub(crate) fn add_redaction(&mut self, label: &str) -> Result<&mut Self> {
+    pub(crate) fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
         // todo: any way to verify if this assertion exists in the parent claim here?
         match self.redactions.as_mut() {
-            Some(redactions) => redactions.push(label.to_string()),
-            None => self.redactions = Some([label.to_string()].to_vec()),
+            Some(redactions) => redactions.push(label.into()),
+            None => self.redactions = Some([label.into()].to_vec()),
         }
         Ok(self)
     }
@@ -247,7 +246,7 @@ impl Manifest {
     }
 
     /// Sets the signature information for the report
-    pub fn set_signature(&mut self, issuer: Option<&String>, time: Option<&String>) -> &mut Self {
+    fn set_signature(&mut self, issuer: Option<&String>, time: Option<&String>) -> &mut Self {
         self.signature_info = Some(SignatureInfo {
             issuer: issuer.cloned(),
             time: time.cloned(),
@@ -342,10 +341,7 @@ impl Manifest {
 
                             manifest.assertions.push(ma);
                         }
-                        AssertionData::Binary(_x) => {
-                            //let _value = Value::String("<omitted>".to_owned());
-                            // claim_report.add_assertion(&label, &value)?;
-                        }
+                        AssertionData::Binary(_x) => {}
                         AssertionData::Uuid(_, _) => {}
                     }
                 }
@@ -438,16 +434,16 @@ impl Manifest {
         let salt = DefaultSalt::default();
 
         // add any additional assertions
-        for assertion in &self.assertions {
-            match assertion.label() {
+        for manifest_assertion in &self.assertions {
+            match manifest_assertion.label() {
                 Actions::LABEL => {
-                    let actions: Actions = assertion.to_assertion()?;
+                    let actions: Actions = manifest_assertion.to_helper()?;
                     // todo: fixup parameters field from instance_id to ingredient uri for
                     // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
                     claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
-                    let mut cw: CreativeWork = assertion.to_assertion()?;
+                    let mut cw: CreativeWork = manifest_assertion.to_helper()?;
                     // insert a credentials field if we have a vc that matches the identifier
                     // todo: this should apply to any person, not just author
                     if let Some(cw_authors) = cw.author() {
@@ -467,15 +463,18 @@ impl Manifest {
                     }
                     claim.add_assertion_with_salt(&cw, &salt)
                 }
-                _ => match assertion.kind() {
+                _ => match manifest_assertion.kind() {
                     ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
-                        &UserCbor::new(assertion.label(), serde_cbor::to_vec(&assertion.data())?),
+                        &UserCbor::new(
+                            manifest_assertion.label(),
+                            serde_cbor::to_vec(&manifest_assertion.value()?)?,
+                        ),
                         &salt,
                     ),
                     ManifestAssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
-                            assertion.label(),
-                            &serde_json::to_string(&assertion.data())?,
+                            manifest_assertion.label(),
+                            &serde_json::to_string(&manifest_assertion.value()?)?,
                         ),
                         &salt,
                     ),
