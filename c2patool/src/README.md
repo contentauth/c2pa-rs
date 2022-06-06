@@ -59,7 +59,7 @@ These .c2pa manifest files can be read by claim tool and will generate reports.
 
 ## Setup
 
-Before you can add a manifest, you need to create an x509 certificate  
+Before you can add a manifest, you need to create an X.509 certificate  
 You can specify the path to the cert files in the configuration fields
 ```
 private_key
