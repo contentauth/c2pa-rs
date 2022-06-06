@@ -214,13 +214,13 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use crate::{openssl::temp_signer::get_signer, Signer};
+    use crate::{openssl::temp_signer::get_temp_signer, Signer};
 
     #[test]
     fn signer_from_files() {
         let temp_dir = tempdir().unwrap();
 
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
         let data = b"some sample content to sign";
 
         let signature = signer.sign(data).unwrap();

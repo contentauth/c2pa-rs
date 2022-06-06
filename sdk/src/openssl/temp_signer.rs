@@ -62,7 +62,7 @@ use crate::{
 /// # Panics
 ///
 /// Can panic if unable to invoke OpenSSL executable properly.
-pub fn get_signer<P: AsRef<Path>>(path: P) -> (RsaSigner, PathBuf) {
+pub fn get_temp_signer<P: AsRef<Path>>(path: P) -> (RsaSigner, PathBuf) {
     let (sign_cert_path, pem_key_path) = make_key_path_pair(path, "temp_key");
 
     create_x509_key_pair(
@@ -262,7 +262,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
 /// # Panics
 ///
 /// Can panic if unable to invoke OpenSSL executable properly.
-pub fn get_signer_by_alg<P: AsRef<Path>>(
+pub fn get_temp_signer_by_alg<P: AsRef<Path>>(
     path: P,
     alg: &str,
     tsa_url: Option<String>,

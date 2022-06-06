@@ -18,8 +18,7 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        openssl::temp_signer::get_signer,
-        Ingredient, Manifest, ManifestStore, Result,
+        get_temp_signer, Ingredient, Manifest, ManifestStore, Result,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -93,7 +92,7 @@ mod integration_1 {
 
         // sign and embed into the target file
         let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         manifest.embed(&output_path, &output_path, &signer)?;
 

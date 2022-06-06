@@ -12,23 +12,24 @@
 // each license.
 
 mod rsa_signer;
-pub use rsa_signer::RsaSigner;
+pub(crate) use rsa_signer::RsaSigner;
 
 mod rsa_validator;
-pub use rsa_validator::RsaValidator;
+pub(crate) use rsa_validator::RsaValidator;
 
 mod ec_signer;
-pub use ec_signer::EcSigner;
+pub(crate) use ec_signer::EcSigner;
 
 mod ec_validator;
-pub use ec_validator::EcValidator;
+pub(crate) use ec_validator::EcValidator;
 
 mod ed_signer;
-pub use ed_signer::EdSigner;
+pub(crate) use ed_signer::EdSigner;
 
 mod ed_validator;
-pub use ed_validator::EdValidator;
+pub(crate) use ed_validator::EdValidator;
 
+pub mod signer;
 pub mod temp_signer;
 
 use openssl::x509::X509;

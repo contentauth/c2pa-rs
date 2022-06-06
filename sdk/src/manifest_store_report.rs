@@ -52,7 +52,7 @@ impl ManifestStoreReport {
     }
 
     /// Creates a ManifestStoreReport from an existing Store and a validation log
-    pub fn from_store_with_log(
+    pub(crate) fn from_store_with_log(
         store: &Store,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Self> {
