@@ -87,7 +87,7 @@ To create your own temporary files for testing you can execute the following com
 sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout private.key -out certs.pem -sha256
 ```	
 
-Note: you may have need to update your openssl version if the above command does not work.
+Note: You may have need to update your `openssl` version if the above command does not work. You will likely need version 3.0 or later. You can check the version that is installed by typing `openssl version`.
 
 c2patool can also timestamp the signature data that is embedded.  This is useful for validating an asset when the embedded 
 certificates have expired.  If the config has a ta_url set, c2patool will attempt to timestamp the signature using the TA service at the provided URL.  The TA must be RFC3161 compliant.  Example TA setting:
