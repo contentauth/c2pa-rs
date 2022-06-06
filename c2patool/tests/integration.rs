@@ -117,7 +117,7 @@ mod integration {
         if !(priv_key_path.exists() && sign_cert_path.exists()) {
             // Creating the signer (which we don't use) has the side effect of
             // creating temporary private key and signing certificate.
-            c2pa::openssl::temp_signer::get_signer(&x509_path);
+            c2pa::get_temp_signer(&x509_path);
         }
     }
 }

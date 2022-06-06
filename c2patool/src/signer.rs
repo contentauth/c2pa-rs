@@ -11,15 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{config::Config, fix_relative_path};
-use anyhow::{Context, Result};
 /// Provides a method to read configured certs and generate a singer
 ///
-use c2pa::{
-    openssl::{EcSigner, EdSigner, RsaSigner},
-    signer::ConfigurableSigner,
-    signer::Signer,
-};
+use crate::{config::Config, fix_relative_path};
+
+use anyhow::{Context, Result};
+use c2pa::{get_signer, Signer};
+
 use std::{env, path::Path, process::exit};
 
 pub fn get_ta_url() -> Option<String> {
@@ -30,7 +28,7 @@ pub fn get_ta_url() -> Option<String> {
 /// keys can be directly in environment variables
 /// or in a folder referenced by CAI_KEY_PATH
 /// also supports default dev environment keys
-pub fn get_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Signer>> {
+pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Signer>> {
     let alg = config.alg.as_deref().unwrap_or("ps256").to_lowercase();
     let tsa_url = config.ta_url.clone().or_else(get_ta_url);
 
@@ -60,31 +58,7 @@ pub fn get_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Signer>> 
 
     if let Some(private_key) = private_key {
         if let Some(sign_cert) = sign_cert {
-            let signer: Box<dyn Signer> = match alg.as_str() {
-                "ps256" | "ps384" | "ps512" => Box::new(RsaSigner::from_signcert_and_pkey(
-                    &sign_cert,
-                    &private_key,
-                    alg,
-                    tsa_url,
-                )?),
-                "es256" | "es384" | "es512" => Box::new(EcSigner::from_signcert_and_pkey(
-                    &sign_cert,
-                    &private_key,
-                    alg,
-                    tsa_url,
-                )?),
-                "ed25519" => Box::new(EdSigner::from_signcert_and_pkey(
-                    &sign_cert,
-                    &private_key,
-                    alg.to_owned(),
-                    tsa_url,
-                )?),
-                _ => {
-                    eprintln!("Unsupported signing algorithm, must be one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519 ]");
-                    exit(2);
-                }
-            };
-
+            let signer = get_signer(&sign_cert, &private_key, &alg, tsa_url)?;
             return Ok(signer);
         }
     }
