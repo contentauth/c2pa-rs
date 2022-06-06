@@ -14,13 +14,14 @@
 #[cfg(feature = "file_io")]
 use crate::utils::thumbnail::make_thumbnail;
 use crate::{
-    assertion::{AssertionBase, AssertionData, AssertionDecodeError},
-    assertions::{labels, Actions, CreativeWork, SchemaDotOrg, Thumbnail, UserCbor},
+    assertion::{AssertionBase, AssertionData},
+    assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
     claim::Claim,
     error::{Error, Result},
     jumbf,
+    salt::DefaultSalt,
     store::Store,
-    Ingredient,
+    Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
 
 #[cfg(feature = "file_io")]
@@ -181,9 +182,9 @@ impl Manifest {
     }
 
     /// Adds assertion using given label - the data for predefined assertions must be in correct format
-    pub fn add_labeled_assertion<T: Serialize>(
+    pub fn add_labeled_assertion<S: Into<String>, T: Serialize>(
         &mut self,
-        label: &str,
+        label: S,
         data: &T,
     ) -> Result<&mut Self> {
         self.assertions
@@ -200,7 +201,24 @@ impl Manifest {
 
     /// Retrieves an assertion by label if it exists or Error::NotFound
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
-        if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label == label) {
+        if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
+            manifest_assertion.to_assertion()
+        } else {
+            Err(Error::NotFound)
+        }
+    }
+
+    /// Retrieves an assertion by label and instance if it exists or Error::NotFound
+    pub fn find_assertion_with_instance<T: DeserializeOwned>(
+        &self,
+        label: &str,
+        instance: usize,
+    ) -> Result<T> {
+        if let Some(manifest_assertion) = self
+            .assertions
+            .iter()
+            .find(|a| a.label() == label && a.instance() == instance)
+        {
             manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
@@ -295,10 +313,14 @@ impl Manifest {
                     let ingredient = Ingredient::from_ingredient_uri(store, &assertion_uri)?;
                     manifest.add_ingredient(ingredient);
                 }
-                Actions::LABEL => {
-                    let actions = Actions::from_assertion(assertion)?;
-                    manifest.add_assertion(&actions)?; // assertion.as_json_object()?)?;
-                }
+                // Actions::LABEL => {
+                //     let actions = Actions::from_assertion(assertion)?;
+                //     let ma = ManifestAssertion::new(label, value)
+                //                 .set_instance(claim_assertion.instance())
+                //                 .set_kind(ManifestAssertionKind::Cbor);
+
+                //     manifest.add_assertion(&actions)?.set_instance(claim_assertion.instance()); // assertion.as_json_object()?)?;
+                // }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
                     asset.set_thumbnail(thumbnail.content_type, thumbnail.data);
@@ -308,11 +330,17 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Json(_x) => {
                             let value = assertion.as_json_object()?;
-                            manifest.add_labeled_assertion(&label, &value)?;
+                            let ma = ManifestAssertion::new(label, value)
+                                .set_instance(claim_assertion.instance())
+                                .set_kind(ManifestAssertionKind::Json);
+                            manifest.assertions.push(ma);
                         }
                         AssertionData::Cbor(_x) => {
                             let value = assertion.as_json_object()?; //todo: should this be cbor?
-                            manifest.add_labeled_assertion(&label, &value)?;
+                            let ma = ManifestAssertion::new(label, value)
+                                .set_instance(claim_assertion.instance());
+
+                            manifest.assertions.push(ma);
                         }
                         AssertionData::Binary(_x) => {
                             //let _value = Value::String("<omitted>".to_owned());
@@ -407,17 +435,19 @@ impl Manifest {
         let lib_hint = format!("\"{}\";v=\"{}\"", crate::NAME, crate::VERSION);
         claim.add_claim_generator_hint(GH_UA, Value::from(lib_hint));
 
+        let salt = DefaultSalt::default();
+
         // add any additional assertions
         for assertion in &self.assertions {
-            match assertion.label.as_str() {
+            match assertion.label() {
                 Actions::LABEL => {
+                    let actions: Actions = assertion.to_assertion()?;
                     // todo: fixup parameters field from instance_id to ingredient uri for
                     // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
-                    claim.add_assertion(&Actions::from_json_value(&assertion.data)?)
+                    claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
-                    let mut cw = CreativeWork::from_json_str(&assertion.data.to_string())?;
-
+                    let mut cw: CreativeWork = assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
                     // todo: this should apply to any person, not just author
                     if let Some(cw_authors) = cw.author() {
@@ -435,20 +465,29 @@ impl Manifest {
                         }
                         cw = cw.set_author(&authors)?;
                     }
-                    claim.add_assertion(&cw)
+                    claim.add_assertion_with_salt(&cw, &salt)
                 }
-                labels::CLAIM_REVIEW => {
-                    claim.add_assertion(&SchemaDotOrg::from_json_str(&assertion.data.to_string())?)
-                }
-                _ => {
-                    // default to creating UserCbor assertions
-                    claim.add_assertion(&UserCbor::new(
-                        &assertion.label,
-                        serde_cbor::to_vec(&assertion.data)?,
-                    ))
-                    // todo: add option to use json
-                    //claim.add_assertion(&User::new(&assertion.label, &assertion.data.to_string()), &NoSalt{})?;
-                }
+                _ => match assertion.kind() {
+                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
+                        &UserCbor::new(assertion.label(), serde_cbor::to_vec(&assertion.data())?),
+                        &salt,
+                    ),
+                    ManifestAssertionKind::Json => claim.add_assertion_with_salt(
+                        &User::new(
+                            assertion.label(),
+                            &serde_json::to_string(&assertion.data())?,
+                        ),
+                        &salt,
+                    ),
+                    ManifestAssertionKind::Binary => {
+                        // todo: Support binary kinds
+                        return Err(Error::AssertionEncoding);
+                    }
+                    ManifestAssertionKind::Uri => {
+                        // todo: Support binary kinds
+                        return Err(Error::AssertionEncoding);
+                    }
+                },
             }?;
         }
 
@@ -514,42 +553,6 @@ impl std::fmt::Display for Manifest {
         f.write_str(&json)
     }
 }
-#[derive(Debug, Deserialize, Serialize, Clone)]
-/// A labeled container for an Assertion value in a Manifest
-pub struct ManifestAssertion {
-    /// An assertion label in reverse domain format
-    pub label: String,
-    /// The data of the assertion as Value
-    pub data: Value,
-}
-
-impl ManifestAssertion {
-    pub fn from_labeled_assertion<T: Serialize>(label: &str, data: &T) -> Result<Self> {
-        Ok(Self {
-            label: label.to_owned(),
-            data: serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,
-        })
-    }
-
-    pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
-        Ok(Self {
-            label: data.label().to_owned(),
-            data: serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,
-        })
-    }
-
-    pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.data.clone()).map_err(|e| {
-            Error::AssertionDecoding(AssertionDecodeError::from_json_err(
-                self.label.to_owned(),
-                None,
-                "application/json".to_owned(),
-                e,
-            ))
-        })
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 /// Holds information about a signature
 pub struct SignatureInfo {
@@ -561,20 +564,26 @@ pub struct SignatureInfo {
     time: Option<String>,
 }
 #[cfg(test)]
-#[cfg(feature = "file_io")]
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::{Ingredient, Manifest, Store};
-
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        openssl::temp_signer::get_signer,
-        status_tracker::{DetailedStatusTracker, StatusTracker},
-        utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG, TEST_VC},
+        utils::test::TEST_VC,
+        Manifest, Result,
     };
 
+    #[cfg(feature = "file_io")]
+    use crate::{
+        openssl::temp_signer::get_signer,
+        status_tracker::{DetailedStatusTracker, StatusTracker},
+        store::Store,
+        utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
+        Ingredient,
+    };
+
+    #[cfg(feature = "file_io")]
     use tempfile::tempdir;
 
     // example of random data structure as an assertion
@@ -613,9 +622,7 @@ pub(crate) mod tests {
             )
             .expect("add_assertion");
 
-        let mut actions = Actions::new();
-
-        actions.add_action(
+        let actions = Actions::new().add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "gaussian_blur")
                 .unwrap(),
@@ -683,7 +690,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
     fn test_verifiable_credential() {
         let mut manifest = test_manifest();
         let vc: serde_json::Value = serde_json::from_str(TEST_VC).unwrap();
@@ -696,7 +702,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
     fn test_assertion_user_cbor() {
         use crate::assertions::UserCbor;
         use crate::Manifest;
@@ -791,5 +796,26 @@ pub(crate) mod tests {
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
         assert!(claim1.get_claim_assertion(redacted_uri, 0).is_none());
+    }
+
+    #[test]
+    fn manifest_assertion_instances() {
+        let mut manifest = Manifest::new("test".to_owned());
+        let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
+        // add three assertions with the same label
+        manifest.add_assertion(&actions).expect("add_assertion");
+        manifest.add_assertion(&actions).expect("add_assertion");
+        manifest.add_assertion(&actions).expect("add_assertion");
+
+        // convert to a store and read back again
+        let store = manifest.to_store().expect("to_store");
+        println!("{}", store);
+        let active_label = store.provenance_label().unwrap();
+        let manifest2 = Manifest::from_store(&store, &active_label).expect("from_store");
+        println!("{}", manifest2);
+        // now check to see if we have three separate assertions with different instances
+        let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
+        assert!(!action2.is_err());
+        assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 }

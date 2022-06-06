@@ -178,7 +178,7 @@ impl MakeTestImages {
                 let src_path = &self.make_path(src);
 
                 let parent = Ingredient::from_file_with_options(src_path, &options)?;
-                actions.add_action(
+                actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
                         .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
                 );
@@ -190,7 +190,7 @@ impl MakeTestImages {
 
                 // adjust brightness to show we made an edit
                 img = img.brighten(30);
-                actions.add_action(
+                actions = actions.add_action(
                     Action::new(c2pa_action::COLOR_ADJUSTMENTS)
                         .set_parameter("name".to_owned(), "brightnesscontrast")?,
                 );
@@ -207,7 +207,7 @@ impl MakeTestImages {
                         *pixel = image::Rgb([r, 100, b]);
                     }
                 }
-                actions
+                actions = actions
                     .add_action(Action::new(c2pa_action::CREATED))
                     .add_action(
                         Action::new(c2pa_action::DRAWING)
@@ -239,18 +239,17 @@ impl MakeTestImages {
 
                 // create and add the ingredient
                 let ingredient = Ingredient::from_file_with_options(ing_path, &options)?;
-                actions.add_action(
-                    Action::new(c2pa_action::PLACED).set_parameter(
+                actions =
+                    actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
                         "identifier".to_owned(),
                         ingredient.instance_id().to_owned(),
-                    )?,
-                );
+                    )?);
                 manifest.add_ingredient(ingredient);
 
                 x += width;
             }
             // record what we did as an action (only need to record this once)
-            actions.add_action(Action::new(c2pa_action::RESIZED));
+            actions = actions.add_action(Action::new(c2pa_action::RESIZED));
         }
 
         // save the changes to the image as our target file

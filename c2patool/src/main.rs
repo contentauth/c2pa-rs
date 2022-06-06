@@ -143,7 +143,7 @@ fn handle_config(
 
     // add any assertions
     for assertion in config.assertions {
-        manifest.add_labeled_assertion(&assertion.label, &assertion.data)?;
+        manifest.add_labeled_assertion(assertion.label(), &assertion.data())?;
     }
 
     // if we have an output option, then we must have a source image to add a claim to

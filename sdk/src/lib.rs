@@ -78,7 +78,9 @@ mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
 pub mod jumbf_io;
 mod manifest;
-pub use manifest::{Manifest, ManifestAssertion};
+pub use manifest::Manifest;
+mod manifest_assertion;
+pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 
 mod manifest_store;
 pub use manifest_store::ManifestStore;
