@@ -1,2 +1,2 @@
 [workspace]
-members = ["sdk", "c2patool", "make_test_images"]
+members = ["sdk", "make_test_images"]
