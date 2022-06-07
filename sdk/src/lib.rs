@@ -19,7 +19,7 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
 //!
-//! # Example: Reading a `ManifestStore`
+//! # Example: Reading a ManifestStore
 //!
 //! ```
 //! # use c2pa::Result;
@@ -32,21 +32,21 @@
 //! if let Some(manifest) = manifest_store.get_active() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
-//!         println!("{}\n", action.label);
+//!         println!("{}\n", action.action());
 //!     }
 //! }
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! # Example: Adding a `Manifest` to a file
+//! # Example: Adding a Manifest to a file
 //!
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{
-//!     Manifest,
-//!     openssl::temp_signer::get_signer,
-//!     assertions::User
+//!     assertions::User,
+//!     get_temp_signer,
+//!     Manifest
 //! };
 //!
 //! use std::path::PathBuf;
@@ -60,7 +60,7 @@
 //! let dir = tempdir()?;
 //! let dest = dir.path().join("test_file.jpg");
 //!
-//! let (signer, _) = get_signer(&dir.path());
+//! let (signer, _) = get_temp_signer(&dir.path());
 //! manifest.embed(&source, &dest, &signer)?;
 //! # Ok(())
 //! # }
@@ -76,8 +76,7 @@ pub use error::{Error, Result};
 
 mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
-pub mod jumbf_io; // used by make_tests
-
+pub mod jumbf_io;
 mod manifest;
 pub use manifest::{Manifest, ManifestAssertion};
 
@@ -90,11 +89,18 @@ pub use manifest_store_report::ManifestStoreReport;
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
-pub mod openssl;
+mod openssl;
 #[cfg(feature = "file_io")]
-pub mod signer;
+pub use crate::openssl::{
+    signer::{get_signer, get_signer_from_files},
+    temp_signer::{get_temp_signer, get_temp_signer_by_alg},
+};
+#[cfg(feature = "file_io")]
+mod signer;
 #[cfg(feature = "async_signer")]
-pub use signer::{AsyncPlaceholder, AsyncSigner};
+pub use signer::AsyncSigner;
+#[cfg(feature = "file_io")]
+pub use signer::Signer;
 /// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
@@ -115,8 +121,6 @@ pub(crate) mod hashed_uri;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
 pub(crate) mod salt;
-#[cfg(feature = "file_io")]
-pub(crate) use signer::Signer;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;

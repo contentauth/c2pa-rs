@@ -42,7 +42,6 @@ c2patool-package:
 	cp c2patool/sample/* target/c2patool/sample
 	cp CHANGELOG.md target/c2patool/CHANGELOG.md
 	cp sdk/tests/fixtures/IMG_0003.jpg target/c2patool/image.jpg
-	cp sdk/tests/fixtures/claim.json target/c2patool/claim.json
 
 # These are for building the c2patool release bin on various platforms
 build-release-win:
@@ -80,10 +79,10 @@ endif
 doc:
 	cargo doc --no-deps --open
 
-# Builds a set of test images using the make_tests example
+# Builds a set of test images using the make_test_images example
 # Outputs to release/test-images
 images:
-	cargo run --release --example make_tests
+	cargo run --release --example make_test_images
 
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:

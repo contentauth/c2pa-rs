@@ -1727,7 +1727,7 @@ pub mod tests {
 
     use crate::{
         claim::AssertionStoreJsonFormat, jumbf_io::update_file_jumbf,
-        openssl::temp_signer::get_signer, utils::patch::patch_file,
+        openssl::temp_signer::get_temp_signer, utils::patch::patch_file,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -1779,7 +1779,7 @@ pub mod tests {
 
         // Do we generate JUMBF?
         let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         // Test generate JUMBF
         // Get labels for label test
@@ -2072,7 +2072,7 @@ pub mod tests {
 
         // Do we generate JUMBF?
         let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
@@ -2228,7 +2228,7 @@ pub mod tests {
         use crate::utils::test::create_test_store;
 
         let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2281,7 +2281,7 @@ pub mod tests {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
         let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(&temp_dir.path());
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");

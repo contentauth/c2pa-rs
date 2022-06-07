@@ -37,6 +37,7 @@ impl Exclusion {
     }
 
     /// update the start value
+    #[allow(dead_code)]
     pub fn set_start(&mut self, start: usize) {
         self.start = start;
     }
@@ -199,7 +200,6 @@ pub fn hash256(data: &[u8]) -> String {
 /// Verify muiltihash against input data.  True if match,
 /// false if no match or unsupported.  The hash value should be
 /// be multibase encoded string.
-#[allow(dead_code)]
 pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
     match decode(hash) {
         Ok((_code, mh)) => {
@@ -223,7 +223,6 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
 }
 
 /// Return the hash of data in the same hash format in_hash
-#[allow(dead_code)]
 pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
     match decode(in_hash) {
         Ok((code, mh)) => {
