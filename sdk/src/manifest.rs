@@ -181,7 +181,21 @@ impl Manifest {
         self
     }
 
-    /// Adds assertion using given label - the data for predefined assertions must be in correct format
+    /// Adds assertion using given label and any serde serializable
+    /// The data for predefined assertions must be in correct format
+    ///
+    /// # Example: Creating a custom assertion from a serde_json object.
+    ///```
+    /// # use c2pa::Result;
+    /// use c2pa::Manifest;
+    /// use serde_json::json;
+    /// # fn main() -> Result<()> {
+    /// let mut manifest = Manifest::new("my_app");
+    /// let value = json!({"my_tag": "Anything I want"});
+    /// manifest.add_labeled_assertion("org.contentauth.foo", &value)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_labeled_assertion<S: Into<String>, T: Serialize>(
         &mut self,
         label: S,
@@ -192,22 +206,60 @@ impl Manifest {
         Ok(self)
     }
 
-    /// Adds assertions, data for predefined assertions must be in correct format
+    /// Adds ManifestAssertions from existing assertions
+    /// The data for standard assertions must be in correct format
+    ///
+    /// # Example: Creating a from an Actions object.
+    ///```
+    /// # use c2pa::Result;
+    /// use c2pa::{
+    ///     assertions::{Actions, Action, c2pa_action},
+    ///     Manifest
+    /// };
+    /// # fn main() -> Result<()> {
+    /// let mut manifest = Manifest::new("my_app");
+    /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
+    /// manifest.add_assertion(&actions)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_assertion<T: Serialize + AssertionBase>(&mut self, data: &T) -> Result<&mut Self> {
-        self.assertions.push(ManifestAssertion::from_helper(data)?);
+        self.assertions
+            .push(ManifestAssertion::from_assertion(data)?);
         Ok(self)
     }
 
     /// Retrieves an assertion by label if it exists or Error::NotFound
+    ///
+    /// Example: Find an Actions Assertion
+    /// ```
+    /// # use c2pa::Result;
+    /// use c2pa::{
+    ///     assertions::{Actions, Action, c2pa_action},
+    ///     Manifest
+    /// };
+    /// # fn main() -> Result<()> {
+    /// let mut manifest = Manifest::new("my_app");
+    /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
+    /// manifest.add_assertion(&actions)?;
+    ///
+    /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
+    /// for action in actions.actions {
+    ///    println!("{}", action.action());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn find_assertion<T: DeserializeOwned>(&self, label: &str) -> Result<T> {
         if let Some(manifest_assertion) = self.assertions.iter().find(|a| a.label() == label) {
-            manifest_assertion.to_helper()
+            manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
         }
     }
 
     /// Retrieves an assertion by label and instance if it exists or Error::NotFound
+    ///
     pub fn find_assertion_with_instance<T: DeserializeOwned>(
         &self,
         label: &str,
@@ -218,7 +270,7 @@ impl Manifest {
             .iter()
             .find(|a| a.label() == label && a.instance() == instance)
         {
-            manifest_assertion.to_helper()
+            manifest_assertion.to_assertion()
         } else {
             Err(Error::NotFound)
         }
@@ -312,20 +364,12 @@ impl Manifest {
                     let ingredient = Ingredient::from_ingredient_uri(store, &assertion_uri)?;
                     manifest.add_ingredient(ingredient);
                 }
-                // Actions::LABEL => {
-                //     let actions = Actions::from_assertion(assertion)?;
-                //     let ma = ManifestAssertion::new(label, value)
-                //                 .set_instance(claim_assertion.instance())
-                //                 .set_kind(ManifestAssertionKind::Cbor);
-
-                //     manifest.add_assertion(&actions)?.set_instance(claim_assertion.instance()); // assertion.as_json_object()?)?;
-                // }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
                     asset.set_thumbnail(thumbnail.content_type, thumbnail.data);
                 }
                 _ => {
-                    // inject assertions for all json data
+                    // inject assertions for all other assertions
                     match assertion.decode_data() {
                         AssertionData::Json(_x) => {
                             let value = assertion.as_json_object()?;
@@ -341,6 +385,7 @@ impl Manifest {
 
                             manifest.assertions.push(ma);
                         }
+                        // todo: support binary forms
                         AssertionData::Binary(_x) => {}
                         AssertionData::Uuid(_, _) => {}
                     }
@@ -437,13 +482,13 @@ impl Manifest {
         for manifest_assertion in &self.assertions {
             match manifest_assertion.label() {
                 Actions::LABEL => {
-                    let actions: Actions = manifest_assertion.to_helper()?;
+                    let actions: Actions = manifest_assertion.to_assertion()?;
                     // todo: fixup parameters field from instance_id to ingredient uri for
                     // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
                     claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
-                    let mut cw: CreativeWork = manifest_assertion.to_helper()?;
+                    let mut cw: CreativeWork = manifest_assertion.to_assertion()?;
                     // insert a credentials field if we have a vc that matches the identifier
                     // todo: this should apply to any person, not just author
                     if let Some(cw_authors) = cw.author() {
@@ -814,7 +859,7 @@ pub(crate) mod tests {
         println!("{}", manifest2);
         // now check to see if we have three separate assertions with different instances
         let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
-        assert!(!action2.is_err());
+        assert!(action2.is_ok());
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 }

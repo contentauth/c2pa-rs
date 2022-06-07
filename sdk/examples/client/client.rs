@@ -47,13 +47,13 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
             println!("{}", assertion.label_with_instance());
             match assertion.label() {
                 labels::ACTIONS => {
-                    let actions: Actions = assertion.to_helper()?;
+                    let actions: Actions = assertion.to_assertion()?;
                     for action in actions.actions {
                         println!("{}{}", indent, action.action());
                     }
                 }
                 labels::CREATIVE_WORK => {
-                    let creative_work: CreativeWork = assertion.to_helper()?;
+                    let creative_work: CreativeWork = assertion.to_assertion()?;
                     if let Some(authors) = creative_work.author() {
                         for author in authors {
                             if let Some(name) = author.name() {

@@ -348,7 +348,6 @@ pub mod tests {
     #[test]
     fn assertion_actions() {
         let original = Actions::new()
-            //original
             .add_action(make_action1())
             .add_action(
                 Action::new("c2pa.filtered")
