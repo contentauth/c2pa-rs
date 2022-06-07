@@ -25,7 +25,7 @@ mod integration {
 
     fn fixture_path(name: &str) -> PathBuf {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("../sdk/tests/fixtures");
+        path.push("tests/fixtures");
         path.push(name);
         std::fs::canonicalize(path).expect("canonicalize")
     }
@@ -45,12 +45,6 @@ mod integration {
             .failure()
             .stdout(predicate::str::contains("File not found"));
         Ok(())
-    }
-
-    #[test]
-    fn tool_version_check() {
-        // ensure c2patool version matches the toolkit version
-        assert_eq!(c2pa::VERSION, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
@@ -104,7 +98,6 @@ mod integration {
 
     fn generate_x509_temp_keys() {
         let mut x509_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        x509_path.pop();
         x509_path.push(".x509");
 
         std::fs::create_dir_all(&x509_path).expect("Can't create .x509 dir in repo");

@@ -93,14 +93,8 @@ jobs:
         tag: ${{ steps.set-version.outputs.version_tag }}
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
-    - name: Publish SDK crate
+    - name: Publish crate
       run: |
-        cargo publish --token $CRATES_IO_SECRET -p c2pa
-      env:
-        CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}
-
-    - name: Publish c2patool crate
-      run: |
-        cargo publish --token $CRATES_IO_SECRET -p c2patool
+        cargo publish --token $CRATES_IO_SECRET
       env:
         CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}

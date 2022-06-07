@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![doc = include_str!("README.md")]
+#![doc = include_str!("../README.md")]
 /// Tool to display and create C2PA manifests
 ///
 /// A file path to a jpeg must be provided
