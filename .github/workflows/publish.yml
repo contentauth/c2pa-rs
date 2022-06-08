@@ -98,9 +98,3 @@ jobs:
         cargo publish --token $CRATES_IO_SECRET -p c2pa
       env:
         CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}
-
-    - name: Publish c2patool crate
-      run: |
-        cargo publish --token $CRATES_IO_SECRET -p c2patool
-      env:
-        CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}
