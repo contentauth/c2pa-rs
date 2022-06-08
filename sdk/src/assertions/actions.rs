@@ -259,13 +259,13 @@ impl Actions {
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.
-    pub fn add_action(&mut self, action: Action) -> &mut Self {
+    pub fn add_action(mut self, action: Action) -> Self {
         self.actions.push(action);
         self
     }
 
     /// Sets [`Metadata`] for the action.
-    pub fn add_metadata(&mut self, metadata: Metadata) -> &mut Self {
+    pub fn add_metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -347,8 +347,7 @@ pub mod tests {
 
     #[test]
     fn assertion_actions() {
-        let mut original = Actions::new();
-        original
+        let original = Actions::new()
             .add_action(make_action1())
             .add_action(
                 Action::new("c2pa.filtered")
