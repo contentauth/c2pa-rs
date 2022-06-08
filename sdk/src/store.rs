@@ -18,7 +18,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{self, boxes::*},
-    jumbf_io::{get_cailoader_handler, load_cai_from_memory},
+    jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     validation_status,
     xmp_inmemory_utils::extract_provenance,
@@ -33,7 +33,7 @@ use crate::{
     cose_validator::verify_cose,
     embedded_xmp,
     jumbf_io::{
-        get_supported_file_extension, load_cai_from_file, object_locations, save_jumbf_to_file,
+        get_supported_file_extension, load_jumbf_from_file, object_locations, save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -1457,6 +1457,38 @@ impl Store {
         Ok(())
     }
 
+    /// Return Store from in memory asset
+    pub fn load_cai_from_memory(
+        asset_type: &str,
+        data: &[u8],
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        load_jumbf_from_memory(asset_type, data).and_then(|cai_block| {
+            // load and validate with CAI toolkit and dump if desired
+            Store::from_jumbf(&cai_block, validation_log)
+        })
+    }
+
+    /// load a CAI store from  a file
+    ///
+    /// in_path -  path to source file
+    /// validation_log - optional vec to contain addition info about the asset
+    #[cfg(feature = "file_io")]
+    pub fn load_cai_from_file(
+        in_path: &Path,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        // get jumbf block
+        load_jumbf_from_file(in_path).and_then(|buffer| {
+            if buffer.is_empty() {
+                return Err(Error::JumbfNotFound);
+            }
+
+            // load and validate with CAI toolkit and dump if desired
+            Store::from_jumbf(&buffer, validation_log)
+        })
+    }
+
     /// Load Store from claims in an existing asset
     /// asset_path: path to input asset
     /// verify: determines whether to verify the contents of the provenance claim.  Must be set true to use validation_log
@@ -1468,7 +1500,7 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
-        load_cai_from_file(asset_path, validation_log)
+        Self::load_cai_from_file(asset_path, validation_log)
             .and_then(|mut store| {
                 // verify the store
                 if verify {
@@ -1502,7 +1534,7 @@ impl Store {
         let xmp = cai_loader.read_xmp(&mut buf_reader);
 
         // load jumbf if available
-        load_cai_from_memory(asset_type, data, validation_log)
+        Self::load_cai_from_memory(asset_type, data, validation_log)
             .map(|store| (store, xmp))
             .map_err(|e| {
                 let err = match e {

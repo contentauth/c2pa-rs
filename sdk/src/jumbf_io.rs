@@ -11,15 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fs;
-use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use crate::{
+    asset_handlers::{c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
+    asset_io::{AssetIO, CAILoader, HashObjectPositions},
+    error::{Error, Result},
+};
 
-use crate::asset_handlers::{c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO};
-use crate::asset_io::{AssetIO, CAILoader, HashObjectPositions};
-use crate::error::{Error, Result};
-use crate::status_tracker::StatusTracker;
-use crate::store::Store;
+use std::{
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
 
 static SUPPORTED_TYPES: &[&str; 6] = &[
     "c2pa", // stand-alone manifest file
@@ -44,20 +46,6 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
     Ok(cai_block)
 }
 
-/// Return Store from in memory asset
-pub fn load_cai_from_memory(
-    asset_type: &str,
-    data: &[u8],
-    validation_log: &mut impl StatusTracker,
-) -> Result<Store> {
-    load_jumbf_from_memory(asset_type, data).and_then(|cai_block| {
-        // load and validate with CAI toolkit and dump if desired
-        Store::from_jumbf(&cai_block, validation_log)
-    })
-}
-
-// TODO [scouten]: Find a cleaner way to opt in or out of PDF IO.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
     match ext {
         "c2pa" => Some(Box::new(C2paIO {})),
@@ -67,28 +55,6 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
-    match ext {
-        "c2pa" => Some(Box::new(C2paIO {})),
-        "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
-        "png" => Some(Box::new(PngIO {})),
-        _ => None,
-    }
-}
-
-// TODO [scouten]: Find a cleaner way to opt in or out of PDF IO.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
-    match asset_type {
-        "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        "png" | "image/png" => Some(Box::new(PngIO {})),
-        _ => None,
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
     match asset_type {
         "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
@@ -182,25 +148,6 @@ pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
         Some(asset_handler) => asset_handler.read_cai_store(in_path),
         _ => Err(Error::UnsupportedType),
     }
-}
-
-/// load a CAI store from  a file
-///
-/// in_path -  path to source file
-/// validation_log - optional vec to contain addition info about the asset
-pub fn load_cai_from_file(
-    in_path: &Path,
-    validation_log: &mut impl StatusTracker,
-) -> Result<Store> {
-    // get jumbf block
-    load_jumbf_from_file(in_path).and_then(|buffer| {
-        if buffer.is_empty() {
-            return Err(Error::JumbfNotFound);
-        }
-
-        // load and validate with CAI toolkit and dump if desired
-        Store::from_jumbf(&buffer, validation_log)
-    })
 }
 
 pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
