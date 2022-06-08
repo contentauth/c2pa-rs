@@ -44,7 +44,8 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
         }
 
         for assertion in manifest.assertions().iter() {
-            match assertion.label.as_str() {
+            println!("{}", assertion.label_with_instance());
+            match assertion.label() {
                 labels::ACTIONS => {
                     let actions: Actions = assertion.to_assertion()?;
                     for action in actions.actions {
@@ -95,8 +96,7 @@ pub fn main() -> Result<()> {
     let source = PathBuf::from(&args[1]);
 
     // create an action assertion stating that we imported this file
-    let mut actions = Actions::new();
-    actions.add_action(
+    let actions = Actions::new().add_action(
         Action::new(c2pa_action::PLACED)
             .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
     );

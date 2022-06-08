@@ -33,7 +33,7 @@ use tempfile::tempdir;
 pub mod config;
 use config::Config;
 mod signer;
-use signer::get_signer;
+use signer::get_c2pa_signer;
 
 // define the command line options
 #[derive(Debug, StructOpt)]
@@ -85,12 +85,14 @@ fn handle_config(
 ) -> Result<()> {
     let config: Config = serde_json::from_str(json)?;
 
+    // if the config has a base path, use it for relative paths in the config
+    // otherwise set the base path to the location of the config file
     let base_path = match &config.base_path {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(base_dir),
     };
 
-    let signer = get_signer(&config, &base_path)?;
+    let signer = get_c2pa_signer(&config, &base_path)?;
 
     let claim_generator = match config.claim_generator {
         Some(claim_generator) => claim_generator,
@@ -143,7 +145,7 @@ fn handle_config(
 
     // add any assertions
     for assertion in config.assertions {
-        manifest.add_labeled_assertion(&assertion.label, &assertion.data)?;
+        manifest.add_labeled_assertion(assertion.label(), &assertion.value()?)?;
     }
 
     // if we have an output option, then we must have a source image to add a claim to
