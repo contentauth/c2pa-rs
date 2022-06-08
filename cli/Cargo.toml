@@ -8,14 +8,14 @@ rust-version = "1.61.0"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.2", features = ["file_io"] }
+c2pa = { version = "0.3.0", features = ["file_io"] }
 env_logger = "0.9"
 log = "0.4" 
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 structopt = "0.3"
-tempfile = "3.3" 
+tempfile = "3.3"
 
 [dev-dependencies]
 assert_cmd = "2.0"
