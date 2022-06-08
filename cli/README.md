@@ -1,27 +1,27 @@
-# c2paTool
+# c2patool
 
 Command line tool for displaying and adding C2PA manifests  
-A file path to a JPEG or a claim definition JSON file must be provided  
-If a JPEG path is given, this will generate a summary report of any manifests in that file  
+A file path to an image or a claim definition JSON file must be provided  
+If an image path is given, this will generate a summary report of any manifests in that file  
 If a manifest definition JSON file is specified, the manifest will be created and displayed in a JSON report
 
 ## Displaying Manifest data
 
-Invoking the tool with a path to an image file will output a JSON report of the Manifests in the file
+Invoking the tool with a path to an image file will output a JSON report of the manifests in the file
 File formats supported are jpeg and png. 
 
 ```c2patool image.jpg```
 
-## Displaying detailed Manifest data
+## Displaying detailed manifest data
 
 The -d option will output a detailed JSON report of the internal C2PA structure
 
 ```c2patool image.jpg  -d```
 
-## Previewing a Manifest
+## Previewing a manifest
 
 If a path to a json config file is given,
-the tool will generate a new manifest using the values given in definition
+the tool will generate a new manifest using the values given in the definition
 this will display the results but not save anything unless an output (-o) is specified
 
 ```c2patool sample/config.json```
@@ -56,9 +56,10 @@ If the extension of the output file is '.c2pa' a standalone manifest store will 
 These .c2pa manifest files can be read by claim tool and will generate reports.
 
 ```c2patool manifest.c2pa```
+
 ## Setup
 
-Before you can add a manifest, you need to create an SSL certificate  
+Before you can add a manifest, you need to create an X.509 certificate  
 You can specify the path to the cert files in the configuration fields
 ```
 private_key
@@ -76,7 +77,7 @@ using the content of a private key file and certificate file:
 ```set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)```
 ```set C2PA_PUB_CERT=$(cat my_es256_certs)```
 
-The both private key and sign cert should be in PEM format.  The sign cert should contain a certificate
+Both the private key and sign cert should be in PEM format.  The sign cert should contain a certificate
 chain PEMs starting for the end-entity certificate used to sign the claim ending with intermediate certificate
 before the root CA certificate.  See ```sample`` folder for example certificates.
 
@@ -86,7 +87,7 @@ To create your own temporary files for testing you can execute the following com
 sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout private.key -out certs.pem -sha256
 ```	
 
-Note you may have need to update your openssl version if the above command does not work.
+Note: You may have need to update your `openssl` version if the above command does not work. You will likely need version 3.0 or later. You can check the version that is installed by typing `openssl version`.
 
 c2patool can also timestamp the signature data that is embedded.  This is useful for validating an asset when the embedded 
 certificates have expired.  If the config has a ta_url set, c2patool will attempt to timestamp the signature using the TA service at the provided URL.  The TA must be RFC3161 compliant.  Example TA setting:
