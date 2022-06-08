@@ -58,8 +58,7 @@ pub fn create_test_claim() -> Result<Claim> {
     let _hu = claim.add_verifiable_credential(TEST_VC)?;
 
     // Add assertions.
-    let mut actions = Actions::new();
-    actions
+    let actions = Actions::new()
         .add_action(
             Action::new("c2pa.cropped")
                 .set_parameter(

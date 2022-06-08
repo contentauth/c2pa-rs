@@ -45,7 +45,7 @@ mod integration_1 {
         // add a parent ingredient
         let parent = Ingredient::from_file(&parent_path)?;
         // add an action assertion stating that we imported this file
-        actions.add_action(
+        actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -58,7 +58,7 @@ mod integration_1 {
         let mut img = image::open(&parent_path)?;
         img = img.brighten(50); // brighten the image
 
-        actions.add_action(
+        actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
@@ -71,7 +71,7 @@ mod integration_1 {
         image::imageops::overlay(&mut img, &img_small, 0, 0);
 
         // add an action assertion stating that we imported this file
-        actions.add_action(
+        actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), ingredient.instance_id().to_owned())?,

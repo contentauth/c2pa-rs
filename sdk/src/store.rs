@@ -1715,8 +1715,7 @@ pub mod tests {
     }
 
     fn create_capture_claim(claim: &mut Claim) -> Result<&mut Claim> {
-        let mut actions = Actions::new();
-        actions.add_action(Action::new("c2pa.created"));
+        let actions = Actions::new().add_action(Action::new("c2pa.created"));
 
         claim.add_assertion(&actions)?;
 

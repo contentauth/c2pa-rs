@@ -78,7 +78,9 @@ mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
 pub mod jumbf_io;
 mod manifest;
-pub use manifest::{Manifest, ManifestAssertion};
+pub use manifest::Manifest;
+mod manifest_assertion;
+pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 
 mod manifest_store;
 pub use manifest_store::ManifestStore;
@@ -108,15 +110,10 @@ pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod claim;
-pub mod validation_status;
-// TODO: Make this a private module again once we no longer need
-// access to this from claims signer.
 #[cfg(feature = "file_io")]
 pub(crate) mod cose_sign;
-
 #[cfg(feature = "file_io")]
 pub(crate) mod embedded_xmp;
-
 pub(crate) mod hashed_uri;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
@@ -125,6 +122,7 @@ pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
+pub mod validation_status;
 pub(crate) use utils::cbor_types;
 pub(crate) use utils::hash_utils;
 pub(crate) use utils::xmp_inmemory_utils;

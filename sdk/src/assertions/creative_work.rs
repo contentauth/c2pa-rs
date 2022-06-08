@@ -47,8 +47,8 @@ impl CreativeWork {
     }
 
     /// insert key / value pair
-    pub fn insert<T: Serialize>(self, key: String, value: T) -> Result<Self> {
-        self.0.insert(key, value).map(Self)
+    pub fn insert<S: Into<String>, T: Serialize>(self, key: S, value: T) -> Result<Self> {
+        self.0.insert(key.into(), value).map(Self)
     }
 
     /// get creative work from json string
