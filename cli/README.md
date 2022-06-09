@@ -37,7 +37,7 @@ cargo build
 ### Manifest definition format
 
 Writing or previewing a manifest requires you to provide a manifest definition, which is a JSON data structure
-that describes the manifest data. The JSON schema for this file is available at [`schemas/manifest-definition.json`](schemas/manifest-definition.json).
+that describes the manifest data. The JSON schema for this file is available at [`schemas/manifest-definition.json`](./schemas/manifest-definition.json).
 
 **Note:** Any file references specified will be relative to the location of the manifest definition file.
 
