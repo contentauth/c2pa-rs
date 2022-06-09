@@ -1,90 +1,155 @@
-# c2patool
+# c2patool - C2PA command line tool
 
-Command line tool for displaying and adding C2PA manifests  
-A file path to an image or a claim definition JSON file must be provided  
-If an image path is given, this will generate a summary report of any manifests in that file  
-If a manifest definition JSON file is specified, the manifest will be created and displayed in a JSON report
+c2patool is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests). Currently, the tool supports:
 
-## Displaying Manifest data
+- Reading a JSON report of C2PA manifests in [supported file formats](#supported-file-formats)
+- Reading a low-level report of C2PA manifest data in [supported file formats](#supported-file-formats)
+- Previewing manifest data from a [manifest definition](#manifest-definition-format)
+- Adding a C2PA manifest to [supported file formats](#supported-file-formats)
 
-Invoking the tool with a path to an image file will output a JSON report of the manifests in the file
-File formats supported are jpeg and png. 
+## Supported file formats
 
-```c2patool image.jpg```
+- `image/jpeg`
+- `image/png`
 
-## Displaying detailed manifest data
+## Installation
 
-The -d option will output a detailed JSON report of the internal C2PA structure
+### via Homebrew
 
-```c2patool image.jpg  -d```
+You can install c2patool on Mac and Linux via [Homebrew](https://brew.sh/):
 
-## Previewing a manifest
+```shell
+brew tap contentauth/tools
+brew install c2patool
+```
 
-If a path to a json config file is given,
-the tool will generate a new manifest using the values given in the definition
-this will display the results but not save anything unless an output (-o) is specified
+### Building from source
 
-```c2patool sample/config.json```
+If you have Rust installed, you can build c2patool from source:
 
-The config json can also be passed on the command line as string using the -c --config option
+```shell
+git clone git@github.com:contentauth/c2patool.git
+cargo build
+```
+
+## Optional prerequisites
+
+### Manifest definition format
+
+Writing or previewing a manifest requires you to provide a manifest definition, which is a JSON data structure
+that describes the manifest data. The JSON schema for this file is available at [`schemas/manifest-definition.json`](schemas/manifest-definition.json).
+
+**Note:** Any file references specified will be relative to the location of the manifest definition file.
+
+### Creating certificates
+
+You should be able to test creating your own manifests using pre-built certificates supplied with this tool. However, if
+you want to create your own official certificates, please reference the section titled ["Creating and using an X.509 certificate"](#creating-and-using-an-x509-certificate).
+
+## Usage
+
+**Note:** You can check out this repository locally to run the example code below.
+
+### Displaying manifest data
+
+Invoking the tool with a path to an asset will output a JSON report of the manifests contained in the file.
+
+```shell
+c2patool image.jpg
+```
+
+### Detailed manifest report
+
+The `-d` option will output a detailed JSON report of the internal C2PA structure.
+
+```shell
+c2patool image.jpg -d
+```
+
+### Previewing a manifest
+
+If a path to a JSON manifest definition file is given, the tool will generate a new manifest using the values given in the definition. This will print the report to stdout.
+
+```shell
+# output to screen
+c2patool sample/test.json
+
+# redirect to file
+c2patool sample/test.json > report.json
+```
+
+The [manifest definition](#manifest-definition-format) can also be passed on the command line as a string using the `-c` or `--config` option:
 
 ```shell
 c2patool -c '{"assertions": [{"label": "org.contentauth.test", "data": {"name": "Jane Doe"}}]}'
 ```
  
-## Creating a new output image
+### Adding a manifest to a file
 
-A file path for creating an output file with any added claim data  
-If the output file already exists, any C2PA data in that file will be replaced and the image maintained  
-If the output file doesn't exist, a parent file must be available for a source image  
-If you are not changing an image and just adding C2PA data, use an existing output file and no parent  
-If you have edited an image and want to add C2PA data to it, pass the original as the parent
-and put the edited file at the output location to have the C2PA data added.
+#### Writing the manifest
 
-```c2patool sample/config.json -o output.jpg```
-## Overriding the parent file
+You can add C2PA data to a file by passing a [manifest definition](#manifest-definition-format) JSON file together with a path to a supported file extension (e.g. PNG) specified by the output (`-o`) flag.
 
-When using a json file, the parent file can be specified by passing -p or --parent with the path to the file
-This allows adding the same manifest data to different source images
+If the output file already exists, any C2PA data in that file will be replaced and the asset maintained. If the output doesn't exist and a parent file is available, the parent will be copied to the output and the C2PA data will be added.
 
-## Working with .c2pa manifest files
+#### Overriding the parent file
 
-If the extension of the output file is '.c2pa' a standalone manifest store will be written 
+When using a JSON file, the parent file can be specified by passing `-p` or `--parent` with the path to the file. This allows using the same manifest definition with different parent assets.
 
-```c2patool claim_image.jpg -o manifest.c2pa```
+#### Usage notes
 
-These .c2pa manifest files can be read by claim tool and will generate reports.
-
-```c2patool manifest.c2pa```
-
-## Setup
-
-Before you can add a manifest, you need to create an X.509 certificate  
-You can specify the path to the cert files in the configuration fields
-```
-private_key
-sign_cert
-```
-If you are using a signing algorithm other than the default ps256, you will need to specify it in
-```alg```
-Which can be set to one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519] and
-must be compatible with values of private key  and sign cert.
-
-The key and cert can also be placed in the environment variables C2PA_PRIVATE_KEY and C2PA_PUB_CERT  
-These two variable are used to set the private key and public certificates.  For example to sign with es256 signatures
-using the content of a private key file and certificate file:
-
-```set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)```
-```set C2PA_PUB_CERT=$(cat my_es256_certs)```
-
-Both the private key and sign cert should be in PEM format.  The sign cert should contain a certificate
-chain PEMs starting for the end-entity certificate used to sign the claim ending with intermediate certificate
-before the root CA certificate.  See ```sample`` folder for example certificates.
-
-To create your own temporary files for testing you can execute the following command
+If you are not changing an asset and just adding C2PA data, use an existing output file and no parent. _Note that this will replace any existing C2PA data in the existing output file._ For instance:
 
 ```shell
-sudo openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext "keyUsage = digitalSignature" -addext "extendedKeyUsage = emailProtection" -nodes -x509 -keyout private.key -out certs.pem -sha256
+c2patool sample/test.json -o existing.jpg
+```
+
+If you have edited an asset and want to add C2PA data to it, pass the original as the parent and put the edited file at the output location to have the C2PA data added.
+
+```shell
+c2patool sample/test.json -p original.jpg -o image-with-c2pa.jpg
+```
+
+## Appendix
+
+### Creating and using an X.509 certificate
+
+Before you can add a manifest, you need to create an X.509 certificate. You can specify the path to the cert files in the following configuration fields:
+
+- `private_key`
+- `sign_cert`
+
+If you are using a signing algorithm other than the default `ps256`, you will need to specify it in `alg`, which can be set to one of the following:
+
+- `ps256`
+- `ps384`
+- `ps512`
+- `es256`
+- `es384`
+- `es512`
+- `ed25519`
+
+The specified algorithm must be compatible with values of `private_key` and `sign_cert`.
+
+The key and cert can also be placed in the environment variables `C2PA_PRIVATE_KEY` and `C2PA_PUB_CERT`. These two variables are used to set the private key and public certificates. For example, to sign with es256 signatures using the content of a private key file and certificate file, you would run:
+
+```shell
+set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)
+set C2PA_PUB_CERT=$(cat my_es256_certs)
+```
+
+Both the `private_key` and `sign_cert` should be in PEM format. The `sign_cert` should contain a PEM certificate chain starting for the end-entity certificate used to sign the claim ending with the intermediate certificate before the root CA certificate. See the ["sample" folder](https://github.com/contentauth/c2patool/tree/main/sample) for example certificates.
+
+To create your own temporary files for testing, you can execute the following command:
+
+```shell
+openssl req -new -newkey rsa:4096 
+   -sigopt rsa_padding_mode:pss \ 
+   -days 180 \
+   -extensions v3_ca \
+   -addext "keyUsage = digitalSignature" \
+   -addext "extendedKeyUsage = emailProtection" \
+   -nodes -x509 -keyout private.key -out certs.pem -sha256
 ```	
 
 Note: You may have need to update your `openssl` version if the above command does not work. You will likely need version 3.0 or later. You can check the version that is installed by typing `openssl version`.

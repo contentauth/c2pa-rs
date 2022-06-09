@@ -59,7 +59,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn std::error::Error>> {
     generate_x509_temp_keys();
 
     Command::cargo_bin("c2patool")?
-        .arg("sample/config.json")
+        .arg("sample/test.json")
         .arg("-p")
         .arg(fixture_path(TEST_IMAGE))
         .arg("-o")

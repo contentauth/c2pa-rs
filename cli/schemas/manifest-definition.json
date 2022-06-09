@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "http://ns.adobe.com/cai/claim-definition/v1",
+  "type": "object",
+  "description": "Definition format for claim created with c2patool",
+  "examples": [
+    {
+      "vendor": "myvendor",
+      "claim_generator": "MyApp/0.1",
+      "parent": "image.jpg",
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "my.assertion",
+          "data": {
+            "any_tag": "whatever I want"
+          }
+        }
+      ],
+      "alg": "es256",
+      "private_key": "es256_private.key",
+      "sign_cert": "es256_certs.pem",
+      "ta_url": "http://timestamp.digicert.com"
+    }
+  ],
+  "required": ["assertions"],
+  "properties": {
+    "vendor": {
+      "type": "string",
+      "description": "Typically an Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`)"
+    },
+    "claim_generator": {
+      "type": "string",
+      "description": "A UserAgent string that will let a user know what software/hardware/system produced this Manifest - names should not contain spaces (defaults to c2patool)"
+    },
+    "title": {
+      "type": "string",
+      "description": "A human-readable string to be displayed as the tile for this Manifest (defaults to embedded file name)"
+    },
+    "credentials": {
+      "type": "object",
+      "description": "An array of W3C verifiable credentials objects defined in the c2pa assertion specification. Section 7"
+    },
+    "parent": {
+      "type": "string",
+      "format": "Local file system path",
+      "description": "A file path to the source image that was modified by this Manifest (if any)"
+    },
+    "ingredients": {
+      "type": "array",
+      "format": "Array of local file system paths",
+      "description": "File paths to images that were used to modify the image referenced by this Manifest (if any)"
+    },
+    "assertions": {
+      "type": "object",
+      "description": "Objects with label, and data - standard c2pa labels must match values as defined in the c2pa assertion specification"
+    },
+    "alg": {
+      "type": "string",
+      "format": "Local file system path",
+      "description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]"
+    },
+    "ta_url": {
+      "type": "string",
+      "format": "http URL",
+      "description": "A URL to an RFC3161 compliant Time Stamp Authority"
+    },
+    "private_key": {
+      "type": "string",
+      "format": "Local file system path",
+      "description": "File path to a private key file"
+    },
+    "sign_cert": {
+      "type": "string",
+      "format": "Local file system path",
+      "description": "File path to signing cert file"
+    },
+    "base_path": {
+      "type": "string",
+      "format": "Local file system path",
+      "description": "File path to a folder to use as the base for relative paths in config"
+    }
+  },
+  "additionalProperties": false
+}
