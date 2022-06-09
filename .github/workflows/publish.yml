@@ -29,46 +29,29 @@ jobs:
         major_pattern: "(MAJOR)"
         minor_pattern: "(MINOR)"
 
+    - name: Log version
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
+        VERSION_TAG: ${{ steps.set-version.outputs.version_tag }}
+        LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
+      run: |
+        echo "Version: $VERSION"
+        echo "Version tag: $VERSION_TAG"
+        echo "Latest tag detected: $LATEST_TAG"
+
     - name: Generate changelog since last tag
-      uses: mathiasvr/command-output@v1
-      continue-on-error: true
-      id: changelog
-      with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
-
-    - name: (TEMP) Generate changelog since last tag
       run: |
-        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
+        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)" > target/changelog-fragment.md
 
-    - name: (TEMP) Generate changelog since last tag without grep -v
+    - name: Log changelog fragment
       run: |
-        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
-
-    - name: Log changelog stdout
-      run: |
-        echo ${{ steps.changelog.outputs.stdout }}
-
-    - name: Log changelog stderr
-      run: |
-        echo ${{ steps.changelog.outputs.stderr }}
+        cat target/changelog-fragment.md
 
     - name: Stop after debugging
       uses: actions/github-script@v3
       with:
         script: |
           core.setFailed("Debugging: STOP")
-
-    - name: Log version & changelog
-      run: |
-        echo "Version: $VERSION"
-        echo "Version tag: $VERSION_TAG"
-        echo "Latest tag detected: $LATEST_TAG"
-        echo "Changelog: $CHANGELOG"
-      env:
-        VERSION: ${{ steps.set-version.outputs.version }}
-        VERSION_TAG: ${{ steps.set-version.outputs.version_tag }}
-        LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
 
     - name: Prevent empty release
       if: ${{ steps.changelog.outputs.stdout == '' }}
