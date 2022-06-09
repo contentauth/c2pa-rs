@@ -2586,11 +2586,7 @@ pub mod tests {
 
         let errors = report_split_errors(report.get_log_mut());
 
-        println!(
-            "Error report for {}: {:?}",
-            ap.as_display(),
-            errors
-        );
+        println!("Error report for {}: {:?}", ap.as_display(), errors);
         assert!(errors.is_empty());
 
         println!("store = {}", store);
