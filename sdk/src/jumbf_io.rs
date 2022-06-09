@@ -94,7 +94,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         "png" | "image/png" => Some(Box::new(PngIO {})),
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
         | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-            if cfg!(feature = "bmff") =>
+            if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32")=>
         {
             Some(Box::new(BmffIO::new(asset_type)))
         }
