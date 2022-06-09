@@ -1084,7 +1084,7 @@ pub mod tests {
         let errors = report_split_errors(log.get_log_mut());
         assert!(errors.is_empty());
 
-        print!("Store: \n{}", store.unwrap().to_string());
+        print!("Store: \n{}", store.unwrap());
     }
 
     #[test]
@@ -1100,7 +1100,7 @@ pub mod tests {
         let bmff = BmffIO::new("mp4");
 
         //let test_data =  bmff.read_cai_store(&source).unwrap();
-        bmff.save_cai_store(&output, &test_data).unwrap();
+        bmff.save_cai_store(&output, test_data).unwrap();
 
         let read_test_data = bmff.read_cai_store(&output).unwrap();
 
