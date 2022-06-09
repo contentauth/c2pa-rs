@@ -57,6 +57,10 @@ jobs:
       with:
         run: cat target/changelog-fragment.md | wc -l | sed 's/ //g'
 
+    - name: Log changelog fragment (2)
+      run: |
+        echo xxx${{ steps.changelog-size.outputs.stdout }}xxx
+
     - name: Prevent empty release
       if: ${{ steps.changelog-size.outputs.stdout == '2\n' }}
       uses: actions/github-script@v3
