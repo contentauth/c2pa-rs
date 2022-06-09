@@ -13,6 +13,7 @@ rust-version = "1.58.0"
 
 [features]
 async_signer = ["async-trait"]
+bmff = []  #work in progress support for BMFF based containers
 file_io = ["openssl"]
 
 # The diagnostics feature is unsupported and might be removed.
@@ -24,6 +25,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 async-trait = { version = "0.1.48", optional = true }
+atree = "0.5.2"
 base64 = "0.13.0"
 bcder = "0.6.0"
 blake3 = "1.0.0"  
