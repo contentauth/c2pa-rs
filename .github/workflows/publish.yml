@@ -36,6 +36,14 @@ jobs:
       with:
         run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
 
+    - name: (TEMP) Generate changelog since last tag
+      run: |
+        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
+
+    - name: (TEMP) Generate changelog since last tag without grep -v
+      run: |
+        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
+
     - name: Log changelog stdout
       run: |
         echo ${{ steps.changelog.outputs.stdout }}
