@@ -1,4 +1,4 @@
-## Changes in This Pull Request
+## Changes in this pull request
 _Give a narrative description of what has been changed._
 
 ## Checklist
