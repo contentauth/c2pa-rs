@@ -55,7 +55,7 @@ jobs:
         run: cat target/changelog-fragment.md | wc -l | sed 's/ //g'
 
     - name: Prevent empty release
-      if: ${{ steps.changelog-size.outputs.stdout == '0' }}
+      if: ${{ steps.changelog-size.outputs.stdout == '2' }}
       uses: actions/github-script@v3
       with:
         script: |
