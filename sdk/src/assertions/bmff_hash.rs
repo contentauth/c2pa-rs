@@ -119,7 +119,7 @@ impl BmffHash {
     /// Label prefix for a BMFF hash assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
-    
+
     pub fn new(name: &str, alg: &str, url: Option<UriT>) -> Self {
         BmffHash {
             exclusions: Vec::new(),
