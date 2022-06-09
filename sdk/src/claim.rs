@@ -1055,7 +1055,7 @@ impl Claim {
         data_hashes
     }
 
-    pub fn bmff_hash_assertions_mut(&self) -> Vec<&Assertion> {
+    pub fn bmff_hash_assertions(&self) -> Vec<&Assertion> {
         // add in an BMFF hashes
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);

@@ -1460,7 +1460,7 @@ impl Store {
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
 
             if !pc.update_manifest() {
-                let bmff_hashes = pc.bmff_hash_assertions_mut();
+                let bmff_hashes = pc.bmff_hash_assertions();
 
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;

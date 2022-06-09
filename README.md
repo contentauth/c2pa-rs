@@ -48,6 +48,7 @@ c2pa = "0.1"
 
 * `async_signer` enables signing via asynchronous services which require `async` support.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
+* `bmff` enables handling of BMFF file formats.  Currently only MP4 enabled for writing.  
 
 ## Rust version requirements
 

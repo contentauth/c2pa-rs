@@ -1062,7 +1062,8 @@ impl AssetIO for BmffIO {
 
 #[cfg(test)]
 #[cfg(feature = "bmff")]
-
+#[allow(clippy::expect_used)]
+#[allow(clippy::unwrap_used)]
 pub mod tests {
     use tempfile::tempdir;
 
