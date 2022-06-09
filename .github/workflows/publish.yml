@@ -41,6 +41,7 @@ jobs:
 
     - name: Generate changelog since last tag
       run: |
+        mkdir -p target
         git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)" > target/changelog-fragment.md
 
     - name: Log changelog fragment
