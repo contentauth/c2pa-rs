@@ -48,18 +48,24 @@ jobs:
       run: |
         cat target/changelog-fragment.md
 
+    - name: Look for empty changelog
+      uses: mathiasvr/command-output@v1
+      id: changelog-size
+      with:
+        run: cat target/changelog-fragment.md | wc -l | sed 's/ //g'
+
+    - name: Prevent empty release
+      if: ${{ steps.changelog-size.outputs.stdout == '0' }}
+      uses: actions/github-script@v3
+      with:
+        script: |
+          core.setFailed("No changes since prior release")
+
     - name: Stop after debugging
       uses: actions/github-script@v3
       with:
         script: |
           core.setFailed("Debugging: STOP")
-
-    - name: Prevent empty release
-      if: ${{ steps.changelog.outputs.stdout == '' }}
-      uses: actions/github-script@v3
-      with:
-        script: |
-          core.setFailed("No changes since prior release")
 
     - name: Update changelog
       run: |
