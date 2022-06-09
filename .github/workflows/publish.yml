@@ -39,6 +39,9 @@ jobs:
         echo "Version tag: $VERSION_TAG"
         echo "Latest tag detected: $LATEST_TAG"
 
+    # TODO (#7): Investigate apparent fragility of command-output action in
+    # capturing output containing (). For now, doing this quick and dirty workaround.
+
     - name: Generate changelog since last tag
       run: |
         mkdir -p target
@@ -55,7 +58,7 @@ jobs:
         run: cat target/changelog-fragment.md | wc -l | sed 's/ //g'
 
     - name: Prevent empty release
-      if: ${{ steps.changelog-size.outputs.stdout == '2' }}
+      if: ${{ steps.changelog-size.outputs.stdout == '2\n' }}
       uses: actions/github-script@v3
       with:
         script: |
