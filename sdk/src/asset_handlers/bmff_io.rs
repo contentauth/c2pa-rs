@@ -1104,7 +1104,7 @@ pub mod tests {
 
         let read_test_data = bmff.read_cai_store(&output).unwrap();
 
-        assert!(vec_compare(&test_data, &read_test_data));
+        assert!(vec_compare(test_data, &read_test_data));
     }
 
     #[test]

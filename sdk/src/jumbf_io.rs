@@ -43,7 +43,8 @@ static SUPPORTED_TYPES: [&str; 17] = [
     "video/mp4",
 ];
 
-static BMFF_TYPE: [&str; 11] = [
+#[cfg(feature = "file_io")]
+static BMFF_TYPES: [&str; 11] = [
     "avif",
     "heif",
     "heic",
@@ -57,8 +58,9 @@ static BMFF_TYPE: [&str; 11] = [
     "video/mp4",
 ];
 
+#[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    BMFF_TYPE.contains(&asset_type)
+    BMFF_TYPES.contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
