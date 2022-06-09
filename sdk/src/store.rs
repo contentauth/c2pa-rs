@@ -33,7 +33,8 @@ use crate::{
     cose_validator::verify_cose,
     embedded_xmp,
     jumbf_io::{
-        get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations, save_jumbf_to_file,
+        get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
+        save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
