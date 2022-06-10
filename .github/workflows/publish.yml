@@ -1,6 +1,8 @@
 name: Publish release
 
-on: [push] # Temporary while debugging
+on:
+  push: # Temporary while debugging
+  workflow_dispatch:
 
 jobs:
   publish:
