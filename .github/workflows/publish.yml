@@ -31,32 +31,9 @@ jobs:
 
     - name: Generate changelog since last tag
       uses: mathiasvr/command-output@v1
-      continue-on-error: true
       id: changelog
       with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
-
-    - name: (TEMP) Generate changelog since last tag
-      run: |
-        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
-
-    - name: (TEMP) Generate changelog since last tag without grep -v
-      run: |
-        git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep -v "(IGNORE)"
-
-    - name: Log changelog stdout
-      run: |
-        echo ${{ steps.changelog.outputs.stdout }}
-
-    - name: Log changelog stderr
-      run: |
-        echo ${{ steps.changelog.outputs.stderr }}
-
-    - name: Stop after debugging
-      uses: actions/github-script@v3
-      with:
-        script: |
-          core.setFailed("Debugging: STOP")
+        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
 
     - name: Log version & changelog
       run: |
