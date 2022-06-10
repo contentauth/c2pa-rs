@@ -56,30 +56,19 @@ jobs:
       with:
         run: cat target/changelog-fragment.md | wc -l | sed 's/ //g'
 
-    - name: Log changelog fragment (2)
-      run: |
-        echo "xxx${{ steps.changelog-size.outputs.stdout }}xxx"
-
     - name: Prevent empty release
-      if: ${{ startsWith(steps.changelog-size.outputs.stdout, '4\n') }}
+      if: ${{ startsWith(steps.changelog-size.outputs.stdout, '0') }}
       uses: actions/github-script@v3
       with:
         script: |
           core.setFailed("No changes since prior release")
 
-    - name: Stop after debugging
-      uses: actions/github-script@v3
-      with:
-        script: |
-          core.setFailed("Debugging: STOP")
-
     - name: Update changelog
       run: |
-        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%e %B %Y_" && echo "" && (echo "$CHANGELOG" | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && echo "" && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
+        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%e %B %Y_" && echo "" && (cat target/changelog-fragment.md | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && echo "" && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
@@ -112,8 +101,14 @@ jobs:
         tag: ${{ steps.set-version.outputs.version_tag }}
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
-    - name: Publish crate
-      run: |
-        cargo publish --token $CRATES_IO_SECRET
-      env:
-        CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}
+    # - name: Stop after debugging
+    #   uses: actions/github-script@v3
+    #   with:
+    #     script: |
+    #       core.setFailed("Debugging: STOP")
+
+    # - name: Publish crate
+    #   run: |
+    #     cargo publish --token $CRATES_IO_SECRET
+    #   env:
+    #     CRATES_IO_SECRET: ${{ secrets.CRATES_IO_SECRET }}
