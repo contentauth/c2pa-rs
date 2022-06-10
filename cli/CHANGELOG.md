@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.1.2
+_10 June 2022_
+
+* Update crate's description field
+
+
 ## 0.1.1
 _10 June 2022_
 
