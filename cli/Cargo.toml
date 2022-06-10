@@ -1,8 +1,12 @@
 [package]
 name = "c2patool"
 version = "0.1.0"
+description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Gavin Peacock <gpeacock@adobe.com>", "Maurice Fisher <mfisher@adobe.com>"]
 license = "MIT OR Apache-2.0"
+documentation = "https://opensource.contentauthenticity.org/docs/c2patool"
+readme = "README.md"
+keywords = ["c2pa", "xmp", "metadata"]
 edition = "2018"
 rust-version = "1.61.0"
 
@@ -20,3 +24,4 @@ tempfile = "3.3"
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "2.1"
+
