@@ -70,7 +70,7 @@ jobs:
 
     - name: Bump crate versions
       run: |
-        sed -i "" 's/^version = "[^"]*"$/version = "$VERSION"/;' Cargo.toml
+        sed -i 's/^version = "[^"]*"$/version = "$VERSION"/;' Cargo.toml
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
 
