@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.0.4
+_12 June 2022_
+
+* Adjust for Linux version of sed?
+* Remove cargo-edit and use sed for Cargo.toml manipulation
+
+
 ## 0.0.3
 _10 June 2022_
 
