@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.0.5
+_12 June 2022_
+
+* Fix escaping. I hope.
+
+
 ## 0.0.4
 _12 June 2022_
 
