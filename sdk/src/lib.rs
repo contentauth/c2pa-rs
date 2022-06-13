@@ -60,7 +60,8 @@
 //! let dir = tempdir()?;
 //! let dest = dir.path().join("test_file.jpg");
 //!
-//! let (signer, _) = get_temp_signer(&dir.path());
+//! let cert_dir = PathBuf::from("tests/fixtures/certs");
+//! let (signer, _) = get_temp_signer(&cert_dir);
 //! manifest.embed(&source, &dest, &signer)?;
 //! # Ok(())
 //! # }
