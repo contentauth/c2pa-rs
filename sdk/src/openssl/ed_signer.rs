@@ -127,15 +127,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    use tempfile::tempdir;
-
-    use crate::openssl::temp_signer;
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
 
     #[test]
     fn ed25519_signer() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ed_signer(&temp_dir.path(), "ed25519", None);
+        let (signer, _) = temp_signer::get_ed_signer(&cert_dir, "ed25519", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
