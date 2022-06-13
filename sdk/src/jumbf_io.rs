@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-static SUPPORTED_TYPES: [&str; 17] = [
+static SUPPORTED_TYPES: [&str; 18] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -45,7 +45,7 @@ static SUPPORTED_TYPES: [&str; 17] = [
 ];
 
 #[cfg(feature = "file_io")]
-static BMFF_TYPES: [&str; 11] = [
+static BMFF_TYPES: [&str; 12] = [
     "avif",
     "heif",
     "heic",
