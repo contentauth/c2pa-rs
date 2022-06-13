@@ -1009,7 +1009,7 @@ impl AssetIO for BmffIO {
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
         match self.bmff_format.as_ref() {
-            "mp4" | "mov" => {
+            "m4a" | "mp4" | "mov" => {
                 // rebuild box layout for output file
                 // create root node
                 let root_box = BoxInfo {

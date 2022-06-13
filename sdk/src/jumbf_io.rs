@@ -32,6 +32,7 @@ static SUPPORTED_TYPES: [&str; 17] = [
     "jpeg",
     "mp4",
     "m4a",
+    "mov",
     "png",
     "application/mp4",
     "audio/mp4",
@@ -50,6 +51,7 @@ static BMFF_TYPES: [&str; 11] = [
     "heic",
     "mp4",
     "m4a",
+    "mov",
     "application/mp4",
     "audio/mp4",
     "image/avif",
@@ -78,19 +80,21 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
-    match ext {
+    let ext = ext.to_lowercase();
+    match ext.as_ref() {
         "c2pa" => Some(Box::new(C2paIO {})),
         "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
         "png" => Some(Box::new(PngIO {})),
-        "avif" | "heif" | "heic" | "mp4" | "m4a" if cfg!(feature = "bmff") => {
-            Some(Box::new(BmffIO::new(ext)))
+        "avif" | "heif" | "heic" | "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => {
+            Some(Box::new(BmffIO::new(&ext)))
         }
         _ => None,
     }
 }
 
 pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
-    match asset_type {
+    let asset_type = asset_type.to_lowercase();
+    match asset_type.as_ref() {
         "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
@@ -98,7 +102,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
             if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
         {
-            Some(Box::new(BmffIO::new(asset_type)))
+            Some(Box::new(BmffIO::new(&asset_type)))
         }
         _ => None,
     }
