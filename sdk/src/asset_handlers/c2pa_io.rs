@@ -88,7 +88,8 @@ pub mod tests {
         let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::new())
             .expect("loading store");
 
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         let manifest2 = store.to_jumbf(&signer).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
