@@ -20,7 +20,13 @@ use c2pa::{
     get_temp_signer, Ingredient, Manifest, ManifestStore,
 };
 use std::path::PathBuf;
-use tempfile::tempdir;
+// returns a path to a file in the fixtures folder
+fn fixture_path(file_name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("../sdk/tests/fixtures");
+    path.push(file_name);
+    path
+}
 
 const GENERATOR: &str = "test_app/0.1";
 const CREATIVE_WORK_URL: &str = r#"{"@type":"CreativeWork","@context":"https://schema.org","url":"http://contentauthenticity.org"}"#;
@@ -109,8 +115,8 @@ pub fn main() -> Result<()> {
     manifest.add_assertion(&creative_work)?;
 
     // sign and embed into the target file
-    let temp_dir = tempdir()?;
-    let (signer, _) = get_temp_signer(&temp_dir.path());
+    let cert_dir = fixture_path("certs");
+    let (signer, _) = get_temp_signer(&cert_dir);
     manifest.embed(&source, &dest, &signer)?;
 
     let manifest_store = ManifestStore::from_file(&dest)?;

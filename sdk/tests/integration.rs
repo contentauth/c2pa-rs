@@ -25,6 +25,13 @@ mod integration_1 {
 
     const GENERATOR: &str = "app";
 
+    fn fixture_path(file_name: &str) -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures");
+        path.push(file_name);
+        path
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
@@ -91,8 +98,8 @@ mod integration_1 {
         img.save(&output_path)?;
 
         // sign and embed into the target file
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         manifest.embed(&output_path, &output_path, &signer)?;
 

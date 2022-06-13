@@ -27,12 +27,18 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tempfile::tempdir;
 use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
+// returns a path to a file in the fixtures folder
+fn fixture_path(file_name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("../sdk/tests/fixtures");
+    path.push(file_name);
+    path
+}
 /// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
 pub struct Recipe {
@@ -258,9 +264,9 @@ impl MakeTestImages {
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
         // now create store; sign claim and embed in target
-        let temp_dir = tempdir()?;
+        let cert_dir: PathBuf = fixture_path("certs");
         let (signer, _) =
-            get_temp_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.ta.clone());
+            get_temp_signer_by_alg(&cert_dir, &self.config.alg, self.config.ta.clone());
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 

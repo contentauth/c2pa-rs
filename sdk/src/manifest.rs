@@ -693,7 +693,8 @@ pub(crate) mod tests {
         let test_output = dir.path().join("wc_embed_test.jpg");
 
         //embed a claim generated from this manifest
-        let (signer, _) = get_temp_signer(&dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         let _store = manifest
             .embed(&source_path, &test_output, &signer)
@@ -796,7 +797,8 @@ pub(crate) mod tests {
             )
             .expect("add_assertion");
 
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         let store1 = manifest.embed(&output, &output, &signer).expect("embed");
         let claim1_label = store1.provenance_label().unwrap();
@@ -818,10 +820,10 @@ pub(crate) mod tests {
         manifest2
             .add_redaction(ASSERTION_LABEL)
             .expect("add_redaction");
-        let temp_dir = tempdir().expect("temp dir");
 
         //embed a claim in output2
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         let _store2 = manifest2.embed(&output2, &output2, &signer).expect("embed");
 

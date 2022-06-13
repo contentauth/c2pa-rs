@@ -1060,23 +1060,22 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_cert_algorithms() {
-        use tempfile::tempdir;
+        let cert_dir = crate::utils::test::fixture_path("certs");
 
         use crate::openssl::temp_signer;
 
         let mut validation_log = DetailedStatusTracker::new();
 
-        let temp_dir = tempdir().unwrap();
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
         let es256_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es384", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
         let es384_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es512", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
         let es512_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_rsa_signer(&temp_dir.path(), "ps256", None);
+        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, "ps256", None);
         let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {

@@ -208,15 +208,12 @@ mod tests {
 
     use super::*;
 
-    use tempfile::tempdir;
-
-    use crate::openssl::temp_signer;
-
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
     #[test]
     fn es256_signer() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -229,9 +226,9 @@ mod tests {
 
     #[test]
     fn es384_signer() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&temp_dir.path(), "es384", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -244,9 +241,9 @@ mod tests {
 
     #[test]
     fn es512_signer() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&temp_dir.path(), "es512", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
