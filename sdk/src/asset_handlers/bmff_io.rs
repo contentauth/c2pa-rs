@@ -949,7 +949,7 @@ impl AssetIO for BmffIO {
             ((ftyp_info.offset + ftyp_info.size), None)
         };
 
-        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2); // 20 is box header + extension)
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
         write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
         let new_c2pa_box_size = new_c2pa_box.len();
@@ -975,7 +975,7 @@ impl AssetIO for BmffIO {
             (end, end)
         };
 
-        // write block before jumbf
+        // write content before ContentProvenanceBox
         input.seek(SeekFrom::Start(0))?;
         let mut b = vec![0u8; start];
         input.read_exact(&mut b)?;
@@ -984,7 +984,7 @@ impl AssetIO for BmffIO {
         // write ContentProvenanceBox
         temp_file.write_all(&new_c2pa_box)?;
 
-        // calc offect adjustments
+        // calc offset adjustments
         let offset_adjust: i32 = if end == 0 {
             new_c2pa_box_size as i32
         } else {
@@ -994,7 +994,7 @@ impl AssetIO for BmffIO {
             pad_size
         };
 
-        // write data after
+        // write content after ContentProvenanceBox
         input.seek(SeekFrom::Start(end as u64))?;
         let mut chunk = vec![0u8; 4096];
         loop {
