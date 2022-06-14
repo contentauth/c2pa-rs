@@ -800,6 +800,7 @@ impl Claim {
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
+        const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
 
         match verified {
@@ -958,7 +959,7 @@ impl Claim {
             for dh_assertion in claim.data_hash_assertions() {
                 if dh_assertion.label_root() == DataHash::LABEL {
                     let dh = DataHash::from_assertion(dh_assertion)?;
-                    let name = dh.name.as_ref().map_or("unnamed".to_string(), default_str);
+                    let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
                         match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {

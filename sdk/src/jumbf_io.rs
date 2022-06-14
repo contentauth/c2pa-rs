@@ -85,7 +85,7 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "c2pa" => Some(Box::new(C2paIO {})),
         "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
         "png" => Some(Box::new(PngIO {})),
-        "avif" | "heif" | "heic" | "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => {
+        "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => {
             Some(Box::new(BmffIO::new(&ext)))
         }
         _ => None,

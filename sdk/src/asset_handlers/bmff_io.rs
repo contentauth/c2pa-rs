@@ -490,6 +490,7 @@ pub fn bmff_to_jumbf_exclusions(
     Ok(exclusions)
 }
 
+// stco and co64 elements contain absolute file offsets so they need to be adjusted based on wether content was added or removed
 fn adjust_stco_and_co64<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
@@ -1010,7 +1011,6 @@ impl AssetIO for BmffIO {
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
         match self.bmff_format.as_ref() {
             "m4a" | "mp4" | "mov" => {
-                // rebuild box layout for output file
                 // create root node
                 let root_box = BoxInfo {
                     path: "".to_string(),
@@ -1023,6 +1023,7 @@ impl AssetIO for BmffIO {
                     flags: None,
                 };
 
+                // rebuild box layout for output file
                 let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
                 let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
@@ -1036,6 +1037,7 @@ impl AssetIO for BmffIO {
                     &mut output_bmff_map,
                 )?;
 
+                // adjust based on current layyout
                 adjust_stco_and_co64(
                     &mut temp_file,
                     &output_bmff_tree,
