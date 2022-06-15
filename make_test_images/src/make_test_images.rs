@@ -39,6 +39,7 @@ fn fixture_path(file_name: &str) -> PathBuf {
     path.push(file_name);
     path
 }
+
 /// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
 pub struct Recipe {
@@ -67,7 +68,7 @@ pub struct Config {
     /// The signing algorithm to use
     pub alg: String,
     /// A url to a time authority if desired
-    pub ta: Option<String>,
+    pub tsa: Option<String>,
     /// The output folder for the generated files
     pub output_path: String,
     /// Extension to add to filenames if none was given
@@ -83,7 +84,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             alg: "ps256".to_owned(),
-            ta: None,
+            tsa: None,
             output_path: "target/images".to_owned(),
             default_ext: "jpg".to_owned(),
             author: None,
@@ -264,9 +265,9 @@ impl MakeTestImages {
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
         // now create store; sign claim and embed in target
-        let cert_dir: PathBuf = fixture_path("certs");
+        let certs_dir = fixture_path("certs");
         let (signer, _) =
-            get_temp_signer_by_alg(&cert_dir, &self.config.alg, self.config.ta.clone());
+            get_temp_signer_by_alg(&certs_dir, &self.config.alg, self.config.tsa.clone());
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 
