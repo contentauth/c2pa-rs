@@ -1,6 +1,6 @@
 {
     "alg": "ps256",
-    "tsa": "http://timestamp.digicert.com",
+    "tsa_url": "http://timestamp.digicert.com",
     "output_path": "target/images",
     "default_ext": "jpg",
     "author": "Gavin Peacock",
