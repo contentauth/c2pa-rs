@@ -1067,7 +1067,6 @@ impl AssetIO for BmffIO {
 pub mod tests {
     #[allow(clippy::expect_used)]
     #[allow(clippy::unwrap_used)]
-
     use tempfile::tempdir;
 
     use super::*;
