@@ -490,7 +490,7 @@ pub fn bmff_to_jumbf_exclusions(
     Ok(exclusions)
 }
 
-// stco and co64 elements contain absolute file offsets so they need to be adjusted based on wether content was added or removed
+// `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
 fn adjust_stco_and_co64<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
@@ -1064,9 +1064,10 @@ impl AssetIO for BmffIO {
 
 #[cfg(test)]
 #[cfg(feature = "bmff")]
-#[allow(clippy::expect_used)]
-#[allow(clippy::unwrap_used)]
 pub mod tests {
+    #[allow(clippy::expect_used)]
+    #[allow(clippy::unwrap_used)]
+
     use tempfile::tempdir;
 
     use super::*;

@@ -10,10 +10,11 @@ keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2018"
 rust-version = "1.58.0"
+exclude = ["tests/fixtures"]
 
 [features]
 async_signer = ["async-trait"]
-bmff = []  #work in progress support for BMFF based containers
+bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
 
 # The diagnostics feature is unsupported and might be removed.
