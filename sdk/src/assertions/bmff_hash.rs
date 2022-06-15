@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//use std::{fs, path::*};
-
 use std::{
     fs,
     io::Cursor,
