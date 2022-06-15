@@ -10,6 +10,7 @@ keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2018"
 rust-version = "1.58.0"
+exclude = ["tests/fixtures"]
 
 [features]
 async_signer = ["async-trait"]
