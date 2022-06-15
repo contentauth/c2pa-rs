@@ -27,14 +27,22 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tempfile::tempdir;
 use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
+// returns a path to a file in the fixtures folder
+fn fixture_path(file_name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("../sdk/tests/fixtures");
+    path.push(file_name);
+    path
+}
+
 /// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Recipe {
     /// The operation to perform:
     ///
@@ -56,12 +64,12 @@ pub struct Recipe {
 
 /// Configuration
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// The signing algorithm to use
     pub alg: String,
-    /// A url to a time authority if desired
-    pub ta: Option<String>,
+    /// A url to a time stamp authority if desired
+    pub tsa_url: Option<String>,
     /// The output folder for the generated files
     pub output_path: String,
     /// Extension to add to filenames if none was given
@@ -77,7 +85,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             alg: "ps256".to_owned(),
-            ta: None,
+            tsa_url: None,
             output_path: "target/images".to_owned(),
             default_ext: "jpg".to_owned(),
             author: None,
@@ -258,9 +266,9 @@ impl MakeTestImages {
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
         // now create store; sign claim and embed in target
-        let temp_dir = tempdir()?;
+        let certs_dir = fixture_path("certs");
         let (signer, _) =
-            get_temp_signer_by_alg(&temp_dir.path(), &self.config.alg, self.config.ta.clone());
+            get_temp_signer_by_alg(&certs_dir, &self.config.alg, self.config.tsa_url.clone());
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 
@@ -376,7 +384,7 @@ pub mod tests {
     use super::*;
     const TESTS: &str = r#"{
         "alg": "ps256",
-        "tsa": "http://timestamp.digicert.com",
+        "tsa_url": "http://timestamp.digicert.com",
         "output_path": "../target/tmp",
         "default_ext": "jpg",
         "author": "Gavin Peacock",

@@ -79,20 +79,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    use tempfile::tempdir;
-
-    use crate::{
-        openssl::{ec_signer::EcSigner, temp_signer},
-        signer::ConfigurableSigner,
-        utils::test::fixture_path,
-        Signer,
-    };
+    use crate::{openssl::temp_signer, utils::test::fixture_path, Signer};
 
     #[test]
     fn sign_and_validate_es256() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -113,9 +106,9 @@ mod tests {
 
     #[test]
     fn sign_and_validate_es384() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es384", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -136,9 +129,9 @@ mod tests {
 
     #[test]
     fn sign_and_validate_es512() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es512", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -159,9 +152,9 @@ mod tests {
 
     #[test]
     fn bad_sig_es256() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -180,9 +173,9 @@ mod tests {
 
     #[test]
     fn bad_data_es256() {
-        let temp_dir = tempdir().unwrap();
+        let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
 
         let mut data = b"some sample content to sign".to_vec();
         println!("data len = {}", data.len());
@@ -197,29 +190,5 @@ mod tests {
 
         let validator = EcValidator::new("es256");
         assert!(!validator.validate(&signature, &data, &pub_key).unwrap());
-    }
-
-    #[test]
-    fn sign_and_validate_with_chain() {
-        let pkey_path = fixture_path("bob.key");
-        let cert_path = fixture_path("bob.pem");
-
-        let signer =
-            EcSigner::from_files(&cert_path, &pkey_path, "es256".to_string(), None).unwrap();
-
-        let data = b"some sample content to sign";
-        println!("data len = {}", data.len());
-
-        let signature = signer.sign(data).unwrap();
-        println!("signature.len = {}", signature.len());
-        assert!(signature.len() >= 64);
-        assert!(signature.len() <= signer.reserve_size());
-
-        let cert_bytes = &signer.certs().unwrap()[0];
-        let signcert = openssl::x509::X509::from_der(cert_bytes).unwrap();
-
-        let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
-        let validator = EcValidator::new("es256");
-        assert!(validator.validate(&signature, data, &pub_key).unwrap());
     }
 }

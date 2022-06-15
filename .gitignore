@@ -7,10 +7,5 @@ Cargo.lock
 .DS_Store
 .idea
 
-.x509
-.ec
-.rsa
-.ed
-.es509
-
 .vscode
+

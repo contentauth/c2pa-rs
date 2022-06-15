@@ -1,6 +1,6 @@
 [package]
 name = "make_test_images"
-version = "0.1.0"
+version = "0.3.0"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
@@ -11,7 +11,6 @@ anyhow = "1.0"
 c2pa = { path="../sdk", features = ["file_io"] }
 env_logger = "0.9"
 log = "0.4" 
-tempfile = "3.3"
 image = "0.23.10"
 nom = "7.1.1"
 regex = "1.5.6"

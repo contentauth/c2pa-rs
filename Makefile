@@ -39,7 +39,7 @@ doc:
 # Builds a set of test images using the make_test_images example
 # Outputs to release/test-images
 images:
-	cargo run --release --example make_test_images
+	cargo run --release --bin make_test_images
 
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
