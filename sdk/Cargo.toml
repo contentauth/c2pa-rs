@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.2.0"
+version = "0.3.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
@@ -24,7 +24,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 async-trait = { version = "0.1.48", optional = true }
-base64 = "0.12.2"
+base64 = "0.13.0"
 bcder = "0.6.0"
 blake3 = "1.0.0"  
 bytes = "1.1.0"
@@ -43,7 +43,7 @@ multihash = "0.11.4"
 nom = "6.0"
 png_pong = "0.8.2"
 quick-xml = "0.20.0"
-range-set = "0.0.7"
+range-set = "0.0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
@@ -52,7 +52,7 @@ serde_json = "1.0.66"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
-thiserror = ">= 1.0.20, < 1.0.26"
+thiserror = ">= 1.0.20, < 1.0.32"
 time = ">= 0.2.23"
 twoway = "0.2.1"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
@@ -81,7 +81,6 @@ web-sys = { version = "0.3.54", features = ["Crypto", "SubtleCrypto", "CryptoKey
 
 [dev-dependencies]
 anyhow = "1.0.40"
-env_logger = "0.7.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.0"

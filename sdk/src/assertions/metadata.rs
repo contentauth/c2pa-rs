@@ -29,13 +29,13 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
-    pub reviews: Option<Vec<ReviewRating>>,
+    reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    pub date_time: Option<String>,
+    date_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reference: Option<HashedUri>,
+    reference: Option<HashedUri>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_source: Option<DataSource>,
+    data_source: Option<DataSource>,
     #[serde(flatten)]
     other: HashMap<String, Value>,
 }
@@ -56,7 +56,22 @@ impl Metadata {
         }
     }
 
-    /// add a review rating associated with the assertion
+    /// Returns the list of [`ReviewRating`] for this assertion if it exists.
+    pub fn reviews(&self) -> Option<&[ReviewRating]> {
+        self.reviews.as_deref()
+    }
+
+    /// Returns the ISO 8601 date-time string when the assertion was created/generated.
+    pub fn date_time(&self) -> Option<&str> {
+        self.date_time.as_deref()
+    }
+
+    /// Returns the [`DataSource`] for this assertion if it exists.
+    pub fn data_source(&self) -> Option<&DataSource> {
+        self.data_source.as_ref()
+    }
+
+    /// Adds a [`ReviewRating`] associated with the assertion.
     pub fn add_review(mut self, review: ReviewRating) -> Self {
         match &mut self.reviews {
             None => self.reviews = Some(vec![review]),
@@ -65,33 +80,42 @@ impl Metadata {
         self
     }
 
-    /// Set review ratings associated with the assertion
-    pub fn set_reviews(mut self, reviews: Option<Vec<ReviewRating>>) -> Self {
-        self.reviews = reviews;
+    /// Sets the list of [`ReviewRating`]s associated with the assertion.
+    ///
+    /// This replaces any previous list.
+    pub fn set_reviews(mut self, reviews: Vec<ReviewRating>) -> Self {
+        self.reviews = Some(reviews);
         self
     }
 
-    /// Set hashed_uri reference to another assertion to which this metadata applies
-    pub fn set_reference(mut self, reference: Option<HashedUri>) -> Self {
-        self.reference = reference;
+    /// Sets the ISO 8601 date-time string when the assertion was created/generated.
+    pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
+        self.date_time = Some(date_time);
         self
     }
 
-    /// set a description of the source of the assertion data, selected from a predefined list
-    pub fn set_data_source(mut self, data_source: Option<DataSource>) -> Self {
-        self.data_source = data_source;
+    /// Sets a [`HashedUri`] reference to another assertion to which this metadata applies.
+    #[cfg(test)] // only referenced from test code
+    pub(crate) fn set_reference(mut self, reference: HashedUri) -> Self {
+        self.reference = Some(reference);
         self
     }
 
-    /// add additional key / value pair
-    pub fn insert(&mut self, key: &str, value: &Value) -> &mut Self {
-        self.other.insert(key.to_string(), value.clone());
+    /// Sets a description of the source of the assertion data, selected from a predefined list.
+    pub fn set_data_source(mut self, data_source: DataSource) -> Self {
+        self.data_source = Some(data_source);
         self
     }
 
-    /// get additional values by key
-    pub fn get(self, key: &str) -> Option<Value> {
-        self.other.get(key).cloned()
+    /// Adds an additional key / value pair.
+    pub fn insert(&mut self, key: &str, value: Value) -> &mut Self {
+        self.other.insert(key.to_string(), value);
+        self
+    }
+
+    /// Gets additional values by key.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.other.get(key)
     }
 }
 
@@ -117,25 +141,32 @@ impl AssertionBase for Metadata {
 }
 
 /// DATA_SOURCE Type values
-pub const C2PA_SOURCE_SIGNER: &str = "signer";
-pub const C2PA_SOURCE_GENERATOR_REE: &str = "claimGenerator.REE";
-pub const C2PA_SOURCE_GENERATOR_TEE: &str = "claimGenerator.TEE";
-pub const C2PA_SOURCE_LOCAL_REE: &str = "localProvider.REE";
-pub const C2PA_SOURCE_LOCAL_TEE: &str = "localProvider.TEE";
-pub const C2PA_SOURCE_REMOTE_REE: &str = "remoteProvider.1stParty";
-pub const C2PA_SOURCE_REMOTE_TEE: &str = "remoteProvider.3rdParty";
-pub const C2PA_SOURCE_HUMAN_ANONYMOUS: &str = "humanEntry.anonymous";
-pub const C2PA_SOURCE_HUMAN_IDENTIFIED: &str = "humanEntry.identified";
+pub mod c2pa_source {
+    pub const SIGNER: &str = "signer";
+    pub const GENERATOR_REE: &str = "claimGenerator.REE";
+    pub const GENERATOR_TEE: &str = "claimGenerator.TEE";
+    pub const LOCAL_REE: &str = "localProvider.REE";
+    pub const LOCAL_TEE: &str = "localProvider.TEE";
+    pub const REMOTE_REE: &str = "remoteProvider.1stParty";
+    pub const REMOTE_TEE: &str = "remoteProvider.3rdParty";
+    pub const HUMAN_ANONYMOUS: &str = "humanEntry.anonymous";
+    pub const HUMAN_IDENTIFIED: &str = "humanEntry.identified";
+}
 
 /// A description of the source for assertion data
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct DataSource {
+    /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
-    pub source_type: String, // A value from among the enumerated list indicating the source of the assertion
+    pub source_type: String,
+
+    /// A human-readable string giving details about the source of the assertion data.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>, // A human readable string giving details about the source of the assertion data
+    pub details: Option<String>,
+
+    /// A list of [`Actor`]s associated with this source.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub actors: Option<Vec<Actor>>, //  array of hashed_uri references to W3C Verifiable Credentials
+    pub actors: Option<Vec<Actor>>,
 }
 
 impl DataSource {
@@ -147,25 +178,29 @@ impl DataSource {
         }
     }
 
-    /// Set a human readable string giving details about the source of the assertion data
-    pub fn set_details(mut self, details: Option<&str>) -> Self {
-        self.details = details.map(|s| s.to_owned());
+    /// Sets a human-readable string giving details about the source of the assertion data.
+    pub fn set_details(mut self, details: String) -> Self {
+        self.details = Some(details);
         self
     }
 
-    /// Set list of actors associated with this source
-    pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
-        self.actors = actors.cloned();
+    /// Sets a list of [`Actor`]s associated with this source.
+    pub fn set_actors(mut self, actors: Option<Vec<Actor>>) -> Self {
+        self.actors = actors;
         self
     }
 }
-/// identifies a person responsible for an action
+
+/// Identifies a person responsible for an action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Actor {
+    /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<String>, // An identifier for a human actor, used when the "type" is humanEntry.identified
+    pub identifier: Option<String>,
+
+    /// List of references to W3C Verifiable Credentials.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub credentials: Option<Vec<HashedUri>>, // array of hashed_uri references to W3C Verifiable Credentials
+    pub credentials: Option<Vec<HashedUri>>,
 }
 
 impl Actor {
@@ -202,7 +237,9 @@ pub enum ReviewCode {
     Other(String),
 }
 
-/// A rating on an assertion
+/// A rating on an [`Assertion`].
+///
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct ReviewRating {
     pub explanation: String,
@@ -233,7 +270,7 @@ pub mod tests {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
         let test_value = Value::from("test");
         let mut original = Metadata::new().add_review(review);
-        original.insert("foo", &test_value);
+        original.insert("foo", test_value);
         println!("{:?}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
@@ -242,7 +279,7 @@ pub mod tests {
         println!("{:?}", serde_json::to_string(&result));
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
-        assert_eq!(original.get("foo").unwrap(), "test".to_string());
+        assert_eq!(original.get("foo").unwrap(), "test");
         //assert_eq!(original.reviews.unwrap().len(), 1);
     }
 }

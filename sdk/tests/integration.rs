@@ -18,13 +18,19 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        openssl::temp_signer::get_signer,
-        Ingredient, Manifest, ManifestStore, Result,
+        get_temp_signer, Ingredient, Manifest, ManifestStore, Result,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
 
     const GENERATOR: &str = "app";
+
+    fn fixture_path(file_name: &str) -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures");
+        path.push(file_name);
+        path
+    }
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -46,7 +52,7 @@ mod integration_1 {
         // add a parent ingredient
         let parent = Ingredient::from_file(&parent_path)?;
         // add an action assertion stating that we imported this file
-        actions.add_action(
+        actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -59,7 +65,7 @@ mod integration_1 {
         let mut img = image::open(&parent_path)?;
         img = img.brighten(50); // brighten the image
 
-        actions.add_action(
+        actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
@@ -72,7 +78,7 @@ mod integration_1 {
         image::imageops::overlay(&mut img, &img_small, 0, 0);
 
         // add an action assertion stating that we imported this file
-        actions.add_action(
+        actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), ingredient.instance_id().to_owned())?,
@@ -92,8 +98,8 @@ mod integration_1 {
         img.save(&output_path)?;
 
         // sign and embed into the target file
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         manifest.embed(&output_path, &output_path, &signer)?;
 

@@ -9,6 +9,6 @@ updates:
       interval: "daily"
 
   - package-ecosystem: "cargo"
-    directory: "c2patool"
+    directory: "make_test_images"
     schedule:
       interval: "daily"

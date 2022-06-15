@@ -1,18 +1,18 @@
-# C2PA Rust SDK and Command-Line Tool
+# C2PA Rust SDK
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. C2PA is a Joint Development Foundation project, formed through an alliance between Adobe, Arm, Intel, Microsoft and Truepic.
 
-This Rust library and command-line tool for creating and inspecting C2PA data structures are created by Adobe and other contributors as part of our work on the [Content Authenticity Initiative](https://contentauthenticity.org).
+This Rust library for creating and inspecting C2PA data structures are created by Adobe and other contributors as part of our work on the [Content Authenticity Initiative](https://contentauthenticity.org).
 
-## Key Features
+## Key features
 
-* Creation and signing of C2PA [claims](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests).
-* Embedding manifests in certain file formats.
-* Parsing and validation of manifests found in certain file formats.
-* Support for several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions).
-* [Hard binding](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_hard_bindings) support.
+* Creation and signing of C2PA [claims](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests)
+* Embedding manifests in certain file formats
+* Parsing and validation of manifests found in certain file formats
+* Support for several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions)
+* [Hard binding](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_hard_bindings) support
 
-## State of the Project
+## State of the project
 
 This project is in a "soft launch" state as of May 2022.
 
@@ -29,7 +29,7 @@ We expect to do work on a number of areas in the next few months while we remain
 
 While in prerelease form, we'll increment the minor version number (0.x.0) when we make breaking API changes and we expect that this will happen with some frequency.
 
-## What's Implemented and Not Implemented?
+## What's implemented and not implemented?
 
 * This crate implements a subset of the [C2PA 1.0 technical specification](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html).
 * This crate currently only supports still image formats (JPEG and PNG).
@@ -44,16 +44,16 @@ Add this to your `Cargo.toml`:
 c2pa = "0.1"
 ```
 
-## Crate Features
+## Crate features
 
 * `async_signer` enables signing via asynchronous services which require `async` support.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 
-## Rust Version Requirements
+## Rust version requirements
 
 This crate requires **Rust version 1.58.0** or newer.
 
-## Supported Platforms
+## Supported platforms
 
 We have tested it on recent versions of the following operating systems:
 
@@ -62,7 +62,7 @@ We have tested it on recent versions of the following operating systems:
 * Ubuntu Linux
 * WASM (note that claim _generation_ is not available on WASM)
 
-## What Feedback Do We Seek?
+## What feedback do we seek?
 
 We would welcome feedback on:
 

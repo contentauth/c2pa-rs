@@ -17,11 +17,16 @@ use anyhow::Result;
 
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork},
-    openssl::temp_signer::get_signer,
-    Ingredient, Manifest, ManifestStore,
+    get_temp_signer, Ingredient, Manifest, ManifestStore,
 };
 use std::path::PathBuf;
-use tempfile::tempdir;
+// returns a path to a file in the fixtures folder
+fn fixture_path(file_name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("../sdk/tests/fixtures");
+    path.push(file_name);
+    path
+}
 
 const GENERATOR: &str = "test_app/0.1";
 const CREATIVE_WORK_URL: &str = r#"{"@type":"CreativeWork","@context":"https://schema.org","url":"http://contentauthenticity.org"}"#;
@@ -45,16 +50,12 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
         }
 
         for assertion in manifest.assertions().iter() {
-            match assertion.label.as_str() {
+            println!("{}", assertion.label_with_instance());
+            match assertion.label() {
                 labels::ACTIONS => {
                     let actions: Actions = assertion.to_assertion()?;
                     for action in actions.actions {
-                        println!(
-                            "{}{:?}, {:?}",
-                            indent,
-                            action.label,
-                            action.parameters.unwrap_or_default()
-                        );
+                        println!("{}{}", indent, action.action());
                     }
                 }
                 labels::CREATIVE_WORK => {
@@ -101,8 +102,7 @@ pub fn main() -> Result<()> {
     let source = PathBuf::from(&args[1]);
 
     // create an action assertion stating that we imported this file
-    let mut actions = Actions::new();
-    actions.add_action(
+    let actions = Actions::new().add_action(
         Action::new(c2pa_action::PLACED)
             .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
     );
@@ -115,8 +115,8 @@ pub fn main() -> Result<()> {
     manifest.add_assertion(&creative_work)?;
 
     // sign and embed into the target file
-    let temp_dir = tempdir()?;
-    let (signer, _) = get_signer(&temp_dir.path());
+    let cert_dir = fixture_path("certs");
+    let (signer, _) = get_temp_signer(&cert_dir);
     manifest.embed(&source, &dest, &signer)?;
 
     let manifest_store = ManifestStore::from_file(&dest)?;
