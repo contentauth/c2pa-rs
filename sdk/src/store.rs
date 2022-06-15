@@ -1576,7 +1576,9 @@ impl Store {
 
         let xmp_copy = xmp_opt.clone();
 
-        Store::verify_store(self, xmp_opt, buf_reader.get_ref(), validation_log)?;
+        let buf = buf_reader.into_inner();
+
+        Store::verify_store(self, xmp_opt, buf, validation_log)?;
 
         // set the provenance if there is xmp otherwise it will default to active manifest
         if let Some(xmp) = xmp_copy {

@@ -189,8 +189,6 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
         }
     }
 
-    println!("path: {}", path.as_ref().display());
-
     let mut sign_cert_path = path.as_ref().to_path_buf();
     sign_cert_path.push(alg);
     sign_cert_path.set_extension("pub");
@@ -206,12 +204,6 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
             pem_key_path.display()
         );
     }
-
-    println!(
-        "path: {}, {}",
-        sign_cert_path.display(),
-        pem_key_path.display()
-    );
 
     (
         RsaSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
