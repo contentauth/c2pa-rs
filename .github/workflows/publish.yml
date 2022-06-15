@@ -67,11 +67,11 @@ jobs:
       with:
         toolchain: stable
 
-    - name: Install cargo-edit
-      run: cargo install cargo-edit
-
     - name: Bump crate versions
-      run: cargo set-version --workspace ${{ steps.set-version.outputs.version }}
+      run: |
+        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" Cargo.toml
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
 
     - name: Report differences for "prepare (release)" commit
       run: git diff
