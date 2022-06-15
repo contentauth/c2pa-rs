@@ -1,0 +1,2 @@
+ignore:
+  - "make_test_images/**/*"
