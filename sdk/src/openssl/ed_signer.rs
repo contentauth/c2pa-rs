@@ -73,7 +73,7 @@ impl ConfigurableSigner for EdSigner {
             signcerts,
             pkey,
             certs_size,
-            timestamp_size: 4096, // todo: call out to TSA to get actual timestamp and use that size
+            timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
             alg: "ed25519".to_string(),
             tsa_url,
         })
