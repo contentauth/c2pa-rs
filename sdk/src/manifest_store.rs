@@ -261,7 +261,7 @@ mod tests {
         assert!(manifest_store.validation_status().is_none());
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
-        assert_eq!(manifest.issuer().unwrap(), "Some Company");
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
         assert!(manifest.time().is_some());
     }
 }
