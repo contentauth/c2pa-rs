@@ -67,11 +67,11 @@ jobs:
       with:
         toolchain: stable
 
-    - name: Install cargo-edit
-      run: cargo install cargo-edit
-
     - name: Bump crate versions
-      run: cargo set-version --workspace ${{ steps.set-version.outputs.version }}
+      run: |
+        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" Cargo.toml
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
 
     - name: Report differences for "prepare (release)" commit
       run: git diff
@@ -93,7 +93,7 @@ jobs:
         tag: ${{ steps.set-version.outputs.version_tag }}
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
-    - name: Publish SDK crate
+    - name: Publish crate
       run: |
         cargo publish --token $CRATES_IO_SECRET -p c2pa
       env:
