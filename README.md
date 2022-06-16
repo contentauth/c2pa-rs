@@ -43,7 +43,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.1"
+version = "0.4.1"
 ```
 
 ## Crate features
