@@ -8,8 +8,8 @@ Do not manually edit this file. It will be automatically updated when a new rele
 
 ## 0.4.1
 _16 June 2022_
-* Fix bug in Cargo.toml updates ([#49](https://github.com/contentauth/c2pa-rs/pull/49))
 
+* Fix bug in Cargo.toml updates ([#49](https://github.com/contentauth/c2pa-rs/pull/49))
 
 ## 0.4.0
 _16 June 2022_
