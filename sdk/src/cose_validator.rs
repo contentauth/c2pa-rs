@@ -341,22 +341,17 @@ fn check_cert(
 
     let is_self_signed = tbscert.is_ca() && tbscert.issuer_uid == tbscert.subject_uid;
 
-    // only allowable for self sigbed
-    if !is_self_signed && tbscert.issuer_uid.is_some() || tbscert.subject_uid.is_some() {
+    // self signed certs are disallowed
+    if is_self_signed {
         let log_item = log_item!(
             "Cose_Sign1",
-            "certificate issuer and subject cannot be the same",
+            "certificate issuer and subject cannot be the same {self-signed disallowed}",
             "check_cert_alg"
         )
         .error(Error::CoseInvalidCert)
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
         validation_log.log_silent(log_item);
 
-        return Err(Error::CoseInvalidCert);
-    }
-
-    // non self signed CA certs are not allowed, must be an end entity (leaf) cert
-    if tbscert.is_ca() && !is_self_signed {
         return Err(Error::CoseInvalidCert);
     }
 
