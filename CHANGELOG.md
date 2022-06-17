@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.4.2
+_16 June 2022_
+
+* Fix bug in updating crate reference in README ([#50](https://github.com/contentauth/c2pa-rs/pull/50))
+
+## 0.4.1
+_16 June 2022_
+
+* Fix bug in Cargo.toml updates ([#49](https://github.com/contentauth/c2pa-rs/pull/49))
+
 ## 0.4.0
 _16 June 2022_
 
@@ -20,9 +30,8 @@ _16 June 2022_
 * Remove need for using OpenSSL to generate certs by using pre-generated certs ([#41](https://github.com/contentauth/c2pa-rs/pull/41))
 * Update README and pull request template with formatting changes ([#38](https://github.com/contentauth/c2pa-rs/pull/38))
 
-
 ## 0.3.0
-_ 8 June 2022_
+_08 June 2022_
 
 * Make most jumbf_io functions crate private and move Store dependencies to Store ([#37](https://github.com/contentauth/c2pa-rs/pull/37))
 * Remove c2patool source now that it's in its own repo ([#35](https://github.com/contentauth/c2pa-rs/pull/35))
@@ -37,13 +46,11 @@ _ 8 June 2022_
 * Make Assertions opaque in the public SDK ([#22](https://github.com/contentauth/c2pa-rs/pull/22))
 * Update c2pa requirement from 0.1 to 0.2 in /c2patool ([#23](https://github.com/contentauth/c2pa-rs/pull/23))
 
-
 ## 0.2.0
 _26 May 2022_
 
 * Fix dependency reference from c2patool crate to c2pa crate ([#21](https://github.com/contentauth/c2pa-rs/pull/21))
 * (MINOR) Detailed API review for Ingredient struct ([#17](https://github.com/contentauth/c2pa-rs/pull/17))
-
 
 ## 0.1.3
 _26 May 2022_
@@ -51,14 +58,12 @@ _26 May 2022_
 * Publish c2patool crate ([#20](https://github.com/contentauth/c2pa-rs/pull/20))
 * Improve documentation ([#14](https://github.com/contentauth/c2pa-rs/pull/14))
 
-
 ## 0.1.2
 _26 May 2022_
 
 * No-op change to verify correct handling of PR numbers ([#19](https://github.com/contentauth/c2pa-rs/pull/19))
 * Fix error in formatting changelog
 * Fix missing links in changelog
-
 
 ## 0.1.1
 _26 May 2022_
