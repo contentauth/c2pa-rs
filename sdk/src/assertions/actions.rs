@@ -165,14 +165,14 @@ impl Action {
     /// Sets the timestamp for when the action occurred.
     ///
     /// This timestamp must be in ISO-8601 date.
-    pub fn set_when(mut self, when: &str) -> Self {
-        self.when = Some(when.to_owned());
+    pub fn set_when<S: Into<String>>(mut self, when: S) -> Self {
+        self.when = Some(when.into());
         self
     }
 
     /// Sets the software agent that performed the action.
-    pub fn set_software_agent(mut self, software_agent: &str) -> Self {
-        self.software_agent = Some(software_agent.to_owned());
+    pub fn set_software_agent<S: Into<String>>(mut self, software_agent: S) -> Self {
+        self.software_agent = Some(software_agent.into());
         self
     }
 
@@ -185,24 +185,28 @@ impl Action {
 
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
-    pub fn set_instance_id(mut self, id: &str) -> Self {
-        self.instance_id = Some(id.to_owned());
+    pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
+        self.instance_id = Some(id.into());
         self
     }
 
     /// Sets the additional parameters for this action.
     ///
     /// These vary by the type of action.
-    pub fn set_parameter<T: Serialize>(mut self, key: String, value: T) -> Result<Self> {
+    pub fn set_parameter<S: Into<String>, T: Serialize>(
+        mut self,
+        key: S,
+        value: T,
+    ) -> Result<Self> {
         let value = serde_json::to_value(value).map_err(|_| Error::AssertionEncoding)?;
         self.parameters = Some(match self.parameters {
             Some(mut parameters) => {
-                parameters.insert(key, value);
+                parameters.insert(key.into(), value);
                 parameters
             }
             None => {
                 let mut p = HashMap::new();
-                p.insert(key, value);
+                p.insert(key.into(), value);
                 p
             }
         });
@@ -219,7 +223,7 @@ impl Action {
 /// An `Actions` assertion provides information on edits and other
 /// actions taken that affect the asset’s content.
 ///
-/// This assertion contains a list of [`Action`]s, each one declaring
+/// This assertion contains a list of [`Action`], each one declaring
 /// what took place on the asset, when it took place, along with possible
 /// other information such as what software performed the action.
 ///
