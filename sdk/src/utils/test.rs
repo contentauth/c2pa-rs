@@ -179,9 +179,12 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 ///
 /// # Returns
 ///
-/// Returns a [`Signer`] instance
+/// Returns a boxed [`Signer`] instance.
 ///
-/// Can Panic if the certs cannot be read (use only for tests)
+/// # Panics
+///
+/// Can panic if the certs cannot be read. (This function should only
+/// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
 pub fn temp_signer() -> RsaSigner {
     #![allow(clippy::expect_used)]
@@ -197,19 +200,19 @@ pub fn temp_signer() -> RsaSigner {
         .expect("get_temp_signer")
 }
 
-/// Create a [`Signer`] instance that can be used for testing purposes.
+/// Create a [`Signer`] instance for a specific algorithm that can be used for testing purposes.
 ///
 /// # Parameters:
 /// alg: The algorithm to use
 ///
-/// This is a suitable default for use when you need a [`Signer`], but
-/// don't care what the format is.
-///
 /// # Returns
 ///
-/// Returns a tuple Boxed [`Signer`] instance and path to certs
+/// Returns a boxed [`Signer`] instance.
 ///
-/// Can Panic if the certs cannot be read (use only for tests)
+/// # Panics
+///
+/// Can panic if the certs cannot be read. (This function should only
+/// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
 pub fn temp_signer_with_alg(alg: &str) -> Box<dyn Signer> {
     #![allow(clippy::expect_used)]
