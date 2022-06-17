@@ -30,7 +30,8 @@ mod ed_validator;
 pub(crate) use ed_validator::EdValidator;
 
 pub mod signer;
-pub mod temp_signer;
+#[cfg(test)]
+pub(crate) mod temp_signer;
 
 use openssl::x509::X509;
 

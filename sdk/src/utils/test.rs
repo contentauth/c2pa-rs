@@ -20,6 +20,14 @@ use crate::{
     store::Store,
     Result,
 };
+
+#[cfg(feature = "file_io")]
+use crate::{
+    get_signer_from_files,
+    openssl::RsaSigner,
+    signer::{ConfigurableSigner, Signer},
+};
+
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -162,6 +170,60 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
     let fixture_copy = temp_dir_path(temp_dir, file_name);
     std::fs::copy(&fixture_src, &fixture_copy).unwrap();
     fixture_copy
+}
+
+/// Create a [`Signer`] instance that can be used for testing purposes.
+///
+/// This is a suitable default for use when you need a [`Signer`], but
+/// don't care what the format is.
+///
+/// # Returns
+///
+/// Returns a [`Signer`] instance
+///
+/// Can Panic if the certs cannot be read (use only for tests)
+#[cfg(feature = "file_io")]
+pub fn temp_signer() -> RsaSigner {
+    #![allow(clippy::expect_used)]
+    let mut sign_cert_path = fixture_path("certs");
+    sign_cert_path.push("ps256");
+    sign_cert_path.set_extension("pub");
+
+    let mut pem_key_path = fixture_path("certs");
+    pem_key_path.push("ps256");
+    pem_key_path.set_extension("pem");
+
+    RsaSigner::from_files(&sign_cert_path, &pem_key_path, "ps256".to_string(), None)
+        .expect("get_temp_signer")
+}
+
+/// Create a [`Signer`] instance that can be used for testing purposes.
+///
+/// # Parameters:
+/// alg: The algorithm to use
+///
+/// This is a suitable default for use when you need a [`Signer`], but
+/// don't care what the format is.
+///
+/// # Returns
+///
+/// Returns a tuple Boxed [`Signer`] instance and path to certs
+///
+/// Can Panic if the certs cannot be read (use only for tests)
+#[cfg(feature = "file_io")]
+pub fn temp_signer_with_alg(alg: &str) -> Box<dyn Signer> {
+    #![allow(clippy::expect_used)]
+    // sign and embed into the target file
+    let mut sign_cert_path = fixture_path("certs");
+    sign_cert_path.push(alg);
+    sign_cert_path.set_extension("pub");
+
+    let mut pem_key_path = fixture_path("certs");
+    pem_key_path.push(alg);
+    pem_key_path.set_extension("pem");
+
+    get_signer_from_files(sign_cert_path.clone(), pem_key_path, alg, None)
+        .expect("get_temp_signer_with_alg")
 }
 
 #[test]
