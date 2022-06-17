@@ -11,7 +11,6 @@ _10 June 2022_
 
 * Update crate's description field
 
-
 ## 0.1.1
 _10 June 2022_
 
