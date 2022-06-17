@@ -1721,15 +1721,15 @@ pub mod tests {
 
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
-        claim::Claim,
-        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file},
+        claim::{AssertionStoreJsonFormat, Claim},
+        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
         status_tracker::*,
-        utils::test::{create_test_claim, fixture_path, temp_dir_path, temp_fixture_path},
-    };
-
-    use crate::{
-        claim::AssertionStoreJsonFormat, jumbf_io::update_file_jumbf,
-        openssl::temp_signer::get_temp_signer, utils::patch::patch_file,
+        utils::{
+            patch::patch_file,
+            test::{
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+            },
+        },
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -1779,8 +1779,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // Test generate JUMBF
         // Get labels for label test
@@ -2072,8 +2071,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
@@ -2228,9 +2226,7 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
-        let cert_dir = fixture_path("certs");
-
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2282,9 +2278,7 @@ pub mod tests {
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
-        let cert_dir = fixture_path("certs");
-
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
