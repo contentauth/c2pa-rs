@@ -45,7 +45,7 @@
 //! # use c2pa::Result;
 //! use c2pa::{
 //!     assertions::User,
-//!     get_temp_signer,
+//!     get_signer_from_files,
 //!     Manifest
 //! };
 //!
@@ -60,9 +60,13 @@
 //! let dir = tempdir()?;
 //! let dest = dir.path().join("test_file.jpg");
 //!
-//! let cert_dir = PathBuf::from("tests/fixtures/certs");
-//! let (signer, _) = get_temp_signer(&cert_dir);
-//! manifest.embed(&source, &dest, &signer)?;
+//! // Create a ps256 signer using certs and key files
+//! let signcert_path = "tests/fixtures/certs/ps256.pub";
+//! let pkey_path = "tests/fixtures/certs/ps256.pem";
+//! let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+//!
+//! // embed a manifest using the signer
+//! manifest.embed(&source, &dest, &*signer)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -94,10 +98,8 @@ pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
 mod openssl;
 #[cfg(feature = "file_io")]
-pub use crate::openssl::{
-    signer::{get_signer, get_signer_from_files},
-    temp_signer::{get_temp_signer, get_temp_signer_by_alg},
-};
+pub use crate::openssl::signer::{get_signer, get_signer_from_files};
+
 #[cfg(feature = "file_io")]
 mod signer;
 #[cfg(feature = "async_signer")]

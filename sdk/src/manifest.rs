@@ -542,28 +542,55 @@ impl Manifest {
         Ok(store)
     }
 
-    /// Embed a signed manifest into the target file using a supplied signer
+    /// Embed a signed manifest into the target file using a supplied signer.
+    ///
+    /// # Example: Embed a manifest in a file
+    ///
+    /// ```
+    /// # use c2pa::Result;
+    /// use c2pa::{
+    ///     assertions::User,
+    ///     get_signer_from_files,
+    ///     Manifest
+    /// };
+    /// # fn main() -> Result<()> {
+    /// let mut manifest = Manifest::new("my_app".to_owned());
+    /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+    ///
+    /// let source = "tests/fixtures/C.jpg";
+    /// let dest = "../target/test_file.jpg";
+    ///
+    /// // Create a PS256 signer using certs and public key files.
+    /// let signcert_path = "tests/fixtures/certs/ps256.pub";
+    /// let pkey_path = "tests/fixtures/certs/ps256.pem";
+    /// let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+    ///
+    /// // Embed a manifest using the signer.
+    /// manifest.embed(&source, &dest, &*signer)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[cfg(feature = "file_io")]
-    pub fn embed(
+    pub fn embed<P: AsRef<Path>>(
         &mut self,
-        source_path: &Path,
-        dest_path: &Path,
+        source_path: P,
+        dest_path: P,
         signer: &dyn Signer,
     ) -> Result<Store> {
-        if !source_path.exists() {
-            let path = source_path.to_string_lossy().into_owned();
+        if !source_path.as_ref().exists() {
+            let path = source_path.as_ref().to_string_lossy().into_owned();
             return Err(Error::FileNotFound(path));
         }
         // we need to copy the source to target before setting the asset info
-        if !dest_path.exists() {
+        if !dest_path.as_ref().exists() {
             std::fs::copy(&source_path, &dest_path)?;
         }
         // first add the information about the target file
-        self.set_asset_from_path(dest_path);
+        self.set_asset_from_path(dest_path.as_ref());
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
-        store.save_to_asset(source_path, signer, dest_path.as_ref())?;
+        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
 
         // todo: update xmp
         Ok(store)
@@ -620,10 +647,11 @@ pub(crate) mod tests {
 
     #[cfg(feature = "file_io")]
     use crate::{
-        openssl::temp_signer::get_temp_signer,
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
-        utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
+        utils::test::{
+            fixture_path, temp_dir_path, temp_fixture_path, temp_signer, TEST_SMALL_JPEG,
+        },
         Ingredient,
     };
 
@@ -693,8 +721,7 @@ pub(crate) mod tests {
         let test_output = dir.path().join("wc_embed_test.jpg");
 
         //embed a claim generated from this manifest
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         let _store = manifest
             .embed(&source_path, &test_output, &signer)
@@ -797,8 +824,7 @@ pub(crate) mod tests {
             )
             .expect("add_assertion");
 
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         let store1 = manifest.embed(&output, &output, &signer).expect("embed");
         let claim1_label = store1.provenance_label().unwrap();
@@ -822,9 +848,7 @@ pub(crate) mod tests {
             .expect("add_redaction");
 
         //embed a claim in output2
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
-
+        let signer = temp_signer();
         let _store2 = manifest2.embed(&output2, &output2, &signer).expect("embed");
 
         let mut report = DetailedStatusTracker::new();
