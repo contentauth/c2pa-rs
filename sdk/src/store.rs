@@ -1444,7 +1444,9 @@ impl Store {
 
         let xmp_copy = xmp_opt.clone();
 
-        Store::verify_store(self, xmp_opt, buf_reader.get_ref(), validation_log)?;
+        let buf = buf_reader.into_inner();
+
+        Store::verify_store(self, xmp_opt, buf, validation_log)?;
 
         // set the provenance if there is xmp otherwise it will default to active manifest
         if let Some(xmp) = xmp_copy {
@@ -1777,8 +1779,8 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         // Test generate JUMBF
         // Get labels for label test
@@ -2070,8 +2072,8 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
@@ -2226,8 +2228,9 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2279,8 +2282,9 @@ pub mod tests {
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
-        let temp_dir = tempdir().unwrap();
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let cert_dir = fixture_path("certs");
+
+        let (signer, _) = get_temp_signer(&cert_dir);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");

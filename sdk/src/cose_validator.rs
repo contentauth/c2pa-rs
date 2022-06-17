@@ -341,22 +341,17 @@ fn check_cert(
 
     let is_self_signed = tbscert.is_ca() && tbscert.issuer_uid == tbscert.subject_uid;
 
-    // only allowable for self sigbed
-    if !is_self_signed && tbscert.issuer_uid.is_some() || tbscert.subject_uid.is_some() {
+    // self signed certs are disallowed
+    if is_self_signed {
         let log_item = log_item!(
             "Cose_Sign1",
-            "certificate issuer and subject cannot be the same",
+            "certificate issuer and subject cannot be the same {self-signed disallowed}",
             "check_cert_alg"
         )
         .error(Error::CoseInvalidCert)
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
         validation_log.log_silent(log_item);
 
-        return Err(Error::CoseInvalidCert);
-    }
-
-    // non self signed CA certs are not allowed, must be an end entity (leaf) cert
-    if tbscert.is_ca() && !is_self_signed {
         return Err(Error::CoseInvalidCert);
     }
 
@@ -1060,23 +1055,22 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_cert_algorithms() {
-        use tempfile::tempdir;
+        let cert_dir = crate::utils::test::fixture_path("certs");
 
         use crate::openssl::temp_signer;
 
         let mut validation_log = DetailedStatusTracker::new();
 
-        let temp_dir = tempdir().unwrap();
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es256", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
         let es256_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es384", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
         let es384_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), "es512", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
         let es512_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_rsa_signer(&temp_dir.path(), "ps256", None);
+        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, "ps256", None);
         let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
