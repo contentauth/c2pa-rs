@@ -4,16 +4,6 @@
 version: 2
 updates:
   - package-ecosystem: "cargo"
-    directory: "sdk"
-    schedule:
-      interval: "daily"
-
-  - package-ecosystem: "cargo"
-    directory: "c2patool"
-    schedule:
-      interval: "daily"
-
-  - package-ecosystem: "cargo"
-    directory: "make_test_images"
+    directory: "/"
     schedule:
       interval: "daily"
