@@ -544,7 +544,7 @@ impl Manifest {
 
     /// Embed a signed manifest into the target file using a supplied signer.
     ///
-    /// ## Example: Embed a manifest in a file
+    /// # Example: Embed a manifest in a file
     ///
     /// ```
     /// # use c2pa::Result;
