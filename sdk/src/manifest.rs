@@ -542,9 +542,10 @@ impl Manifest {
         Ok(store)
     }
 
-    /// Embed a signed manifest into the target file using a supplied signer
+    /// Embed a signed manifest into the target file using a supplied signer.
     ///
-    /// Example: Embed a Manifest in a file
+    /// # Example: Embed a manifest in a file
+    ///
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
@@ -557,15 +558,14 @@ impl Manifest {
     /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
     ///
     /// let source = "tests/fixtures/C.jpg";
-    /// // let dir = tempdir()?;
     /// let dest = "../target/test_file.jpg";
     ///
-    /// // Create a ps256 signer using certs and public key files
+    /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
     /// let pkey_path = "tests/fixtures/certs/ps256.pem";
     /// let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
     ///
-    /// // embed a manifest using the signer
+    /// // Embed a manifest using the signer.
     /// manifest.embed(&source, &dest, &*signer)?;
     /// # Ok(())
     /// # }
