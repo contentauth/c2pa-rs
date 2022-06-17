@@ -16,14 +16,12 @@
 use anyhow::Result;
 
 use c2pa::{
-    assertions::{c2pa_action, labels, Action, Actions, CreativeWork},
+    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     get_signer_from_files, Ingredient, Manifest, ManifestStore,
 };
 use std::path::PathBuf;
 
 const GENERATOR: &str = "test_app/0.1";
-const CREATIVE_WORK_URL: &str = r#"{"@type":"CreativeWork","@context":"https://schema.org","url":"http://contentauthenticity.org"}"#;
-
 const INDENT_SPACE: usize = 2;
 
 // Example for reading the contents of a manifest store, recursively showing nested manifests
@@ -80,32 +78,37 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
 
 pub fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        println!("This requires a path to a source image and a path to an output file. Both must be jpg or png files.");
-        return Ok(());
-    }
-    let source = PathBuf::from(&args[1]);
-    let dest = PathBuf::from(&args[2]);
-
-    // create a new Manifest
-    let mut manifest = Manifest::new(GENERATOR.to_owned());
+    // allow passing in source and dest paths or use defaults
+    let (src, dst) = match args.len() >= 3 {
+        true => (args[1].as_str(), args[2].as_str()),
+        false => (
+            "sdk/tests/fixtures/earth_apollo17.jpg",
+            "target/tmp/client.jpg",
+        ),
+    };
+    let source = PathBuf::from(src);
+    let dest = PathBuf::from(dst);
 
     // if a filepath was provided on the command line, read it as a parent file
-    let parent = Ingredient::from_file(source)?;
-    let source = PathBuf::from(&args[1]);
+    let parent = Ingredient::from_file(source.as_path())?;
 
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
         Action::new(c2pa_action::PLACED)
-            .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
+            .set_parameter("identifier", parent.instance_id().to_owned())?,
     );
-    manifest.add_assertion(&actions)?;
 
-    // set the parent ingredient
-    manifest.set_parent(parent)?;
+    // build a creative work assertion
+    let creative_work =
+        CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
-    let creative_work = CreativeWork::from_json_str(CREATIVE_WORK_URL)?;
-    manifest.add_assertion(&creative_work)?;
+    // create a new Manifest
+    let mut manifest = Manifest::new(GENERATOR.to_owned());
+    // add parent and assertions
+    manifest
+        .set_parent(parent)?
+        .add_assertion(&actions)?
+        .add_assertion(&creative_work)?;
 
     // sign and embed into the target file
     let signcert_path = "../sdk/tests/fixtures/certs.ps256.pem";
