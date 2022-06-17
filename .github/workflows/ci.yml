@@ -34,6 +34,8 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
         run: cargo llvm-cov --all-features --lcov --output-path lcov.info
 
       - name: Upload code coverage results
