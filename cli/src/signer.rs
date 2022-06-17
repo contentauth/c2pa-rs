@@ -16,18 +16,18 @@ use anyhow::{Context, Result};
 /// Provides a method to read configured certs and generate a singer
 ///
 use c2pa::{get_signer, Signer};
-use std::{env, path::Path, process::exit};
+use std::{env, path::Path};
 
 pub fn get_ta_url() -> Option<String> {
     std::env::var("C2PA_TA_URL").ok()
 }
 
-/// Generates a signature from local keys specified by the environment
-/// keys can be directly in environment variables
-/// or in a folder referenced by CAI_KEY_PATH
-/// also supports default dev environment keys
+// Pull in default certs so the binary can self config
+const DEFAULT_CERTS: &[u8] = include_bytes!("../sample/es256_certs.pem");
+const DEFAULT_KEY: &[u8] = include_bytes!("../sample/es256_private.key");
+
 pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Signer>> {
-    let alg = config.alg.as_deref().unwrap_or("ps256").to_lowercase();
+    let alg = config.alg.as_deref().unwrap_or("es256").to_lowercase();
     let tsa_url = config.ta_url.clone().or_else(get_ta_url);
 
     let mut private_key = None;
@@ -38,6 +38,7 @@ pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Sign
         private_key =
             Some(std::fs::read(&path).context(format!("Reading private key: {:?}", &path))?);
     }
+
     if private_key.is_none() {
         if let Ok(key) = env::var("C2PA_PRIVATE_KEY") {
             private_key = Some(key.as_bytes().to_vec());
@@ -48,6 +49,7 @@ pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Sign
         let path = fix_relative_path(path, base_path);
         sign_cert = Some(std::fs::read(&path).context(format!("Reading sign cert: {:?}", &path))?);
     }
+
     if sign_cert.is_none() {
         if let Ok(cert) = env::var("C2PA_SIGN_CERT") {
             sign_cert = Some(cert.as_bytes().to_vec());
@@ -56,24 +58,19 @@ pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Sign
 
     if let Some(private_key) = private_key {
         if let Some(sign_cert) = sign_cert {
-            let signer = get_signer(&sign_cert, &private_key, &alg, tsa_url)?;
+            let signer = get_signer(&sign_cert, &private_key, &alg, tsa_url)
+                .context("Invalid certification data")?;
             return Ok(signer);
         }
     }
 
     eprintln!(
         "\n\n-----------\n\n\
-        Claim creation requires a private key and signing certificate \n\
-        Set the config file fields, private_key and sign_cert to paths to the required files.
-        \n\
-        You can generate a throwaway RSAPSS SSH private key and cert for testing on macos by \n\
-        pasting the following line into a terminal and hitting enter\n\
-        openssl req -new -newkey rsa:4096 -sigopt rsa_padding_mode:pss -days 180 -extensions v3_ca -addext \"keyUsage = digitalSignature\" -addext \"extendedKeyUsage = emailProtection\" -nodes -x509 -keyout private.key -out certs.pem -sha256\n\
-        \n\
-        You then need to reference those files in config.private_key and config.sign_cert\n\
-        \n\
-        The private key can alternatively be passed in the environment var C2PA_PRIVATE_KEY
-        The signing cert can alternatively be passed in the environment var C2PA_SIGN_CERT
-        -----------\n\n");
-    exit(1);
+        Note: Using default private key and signing certificate. This is only valid for development.\n\
+        A permanent key and cert should be provided in the manifest definition or in the environment variables.\n");
+
+    let signer = get_signer(DEFAULT_CERTS, DEFAULT_KEY, &alg, tsa_url)
+        .context("Invalid certification data")?;
+
+    Ok(signer)
 }

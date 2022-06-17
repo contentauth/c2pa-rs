@@ -233,7 +233,7 @@ fn report_from_path<P: AsRef<Path>>(path: &P, is_detailed: bool) {
             println!("{}", report);
         }
         Err(Error::JumbfNotFound) | Err(Error::LogStop) => {
-            println!("No claim found");
+            eprintln!("No claim found");
             exit(1)
         }
         Err(Error::PrereleaseError) => {
@@ -241,7 +241,7 @@ fn report_from_path<P: AsRef<Path>>(path: &P, is_detailed: bool) {
             exit(1)
         }
         Err(e) => {
-            println!("Error Loading {:?} {:?}", &path.as_ref(), e);
+            eprintln!("Error Loading {:?} {:?}", &path.as_ref(), e);
             exit(1);
         }
     }
@@ -261,7 +261,7 @@ fn main() -> Result<()> {
 
     if let Some(path) = args.path.clone() {
         if !path.exists() {
-            println!("File not found {:?}", path);
+            eprintln!("File not found {:?}", path);
             exit(1);
         }
 
@@ -279,7 +279,7 @@ fn main() -> Result<()> {
                 config = Some(fs::read_to_string(&path)?);
             }
             _ => {
-                println!("Unsupported file type {}", extension);
+                eprintln!("Unsupported file type {}", extension);
                 exit(1);
             }
         };

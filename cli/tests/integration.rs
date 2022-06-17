@@ -40,7 +40,7 @@ fn tool_not_found() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg("test/file/not.found");
     cmd.assert()
         .failure()
-        .stdout(predicate::str::contains("File not found"));
+        .stderr(predicate::str::contains("File not found"));
     Ok(())
 }
 
@@ -50,7 +50,7 @@ fn tool_jpeg_no_report() -> Result<(), Box<dyn std::error::Error>> {
     cmd.arg(fixture_path(TEST_IMAGE));
     cmd.assert()
         .failure()
-        .stdout(predicate::str::contains("No claim found"));
+        .stderr(predicate::str::contains("No claim found"));
     Ok(())
 }
 
