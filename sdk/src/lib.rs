@@ -115,7 +115,7 @@ pub(crate) mod asset_io;
 pub(crate) mod claim;
 #[cfg(feature = "file_io")]
 pub(crate) mod cose_sign;
-#[cfg(feature = "file_io")]
+#[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
 pub(crate) mod hashed_uri;
 #[allow(dead_code)]
