@@ -50,6 +50,7 @@ c2pa = "0.4.2"
 
 * `async_signer` enables signing via asynchronous services which require `async` support.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
+* `xmp_write` enables updating XMP on embed with the dcterms:provenance field (requires xmp_toolkit)
 
 ## Rust version requirements
 
