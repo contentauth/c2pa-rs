@@ -355,9 +355,38 @@ impl Store {
         &self,
         claim: &Claim,
         signer: &dyn AsyncSigner,
+        box_size: usize,
     ) -> Result<Vec<u8>> {
+        use crate::cose_sign::cose_sign_async;
+        use crate::cose_validator::verify_cose_async;
+
         let claim_bytes = claim.data()?;
-        signer.sign(&claim_bytes).await
+
+        match cose_sign_async(signer, &claim_bytes, box_size).await {
+            // Sanity check: Ensure that this signature is valid.
+            Ok(sig) => {
+                let mut cose_log = OneShotStatusTracker::new();
+                match verify_cose_async(
+                    sig.clone(),
+                    claim_bytes,
+                    b"".to_vec(),
+                    false,
+                    &mut cose_log,
+                )
+                .await
+                {
+                    Ok(_) => Ok(sig),
+                    Err(err) => {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        Err(err)
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// return the current provenance claim label if available
@@ -1296,7 +1325,9 @@ impl Store {
         let jumbf_bytes = self.start_save(asset_path, output_path, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim_async(pc, signer).await?;
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
         let sig_placeholder = self.sign_claim_placeholder(pc, signer.reserve_size());
 
         match self.finish_save(jumbf_bytes, output_path, sig, &sig_placeholder) {
@@ -1975,79 +2006,68 @@ pub mod tests {
         assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
     }
 
-    /*  async signing not supported at the moment
-        NOTE: Add this to Cargo.toml if this test is restored.
+    #[cfg(feature = "async_signer")]
+    #[actix::test]
+    async fn test_jumbf_generation_async() {
+        let signer =
+            crate::openssl::temp_signer_async::AsyncSignerAdapter::new("ps256".to_string());
 
-        [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-        actix = "0.11.0"
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
-        #[cfg(feature = "async_signer")]
-        #[actix::test]
-        async fn test_jumbf_generation_async() {
-            let signer = crate::AsyncPlaceholder {};
+        // Create claims store.
+        let mut store = Store::new();
 
-            // test adding to actual image
-            let ap = fixture_path("earth_apollo17.jpg");
-            let temp_dir = tempdir().expect("temp dir");
-            let op = temp_dir_path(&temp_dir, "test-async.jpg");
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
 
-            // Create claims store.
-            let mut store = Store::new();
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        create_editing_claim(&mut claim2).unwrap();
 
-            // Create a new claim.
-            let claim1 = create_test_claim().unwrap();
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        create_capture_claim(&mut claim_capture).unwrap();
 
-            // Create a new claim.
-            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
-            create_editing_claim(&mut claim2).unwrap();
+        // Test generate JUMBF
+        // Get labels for label test
+        let claim1_label = claim1.label().to_string();
+        let capture = claim_capture.label().to_string();
+        let claim2_label = claim2.label().to_string();
 
-            // Create a 3rd party claim
-            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
-            create_capture_claim(&mut claim_capture).unwrap();
+        /*
+        Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
+        */
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
+        store.commit_claim(claim2).unwrap();
+        store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
 
-            // Test generate JUMBF
-            // Get labels for label test
-            let claim1_label = claim1.label().to_string();
-            let capture = claim_capture.label().to_string();
-            let claim2_label = claim2.label().to_string();
+        // test finding claims by label
+        let c1 = store.get_claim(&claim1_label);
+        let c2 = store.get_claim(&capture);
+        let c3 = store.get_claim(&claim2_label);
+        assert_eq!(&claim1_label, c1.unwrap().label());
+        assert_eq!(&capture, c2.unwrap().label());
+        assert_eq!(claim2_label, c3.unwrap().label());
 
-            /*
-            Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
-            */
-            store.commit_claim(claim1).unwrap();
-            store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
-            store.commit_claim(claim_capture).unwrap();
-            store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
-            store.commit_claim(claim2).unwrap();
-            store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
+        // Do we generate JUMBF
+        let jumbf_bytes = store.to_jumbf_async(&signer).unwrap();
+        assert!(!jumbf_bytes.is_empty());
 
-            // test finding claims by label
-            let c1 = store.get_claim(&claim1_label);
-            let c2 = store.get_claim(&capture);
-            let c3 = store.get_claim(&claim2_label);
-            assert_eq!(&claim1_label, c1.unwrap().label());
-            assert_eq!(&capture, c2.unwrap().label());
-            assert_eq!(claim2_label, c3.unwrap().label());
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            // Do we generate JUMBF
-            let jumbf_bytes = store.to_jumbf_async(&signer).unwrap();
-            assert!(!jumbf_bytes.is_empty());
+        // make sure we can read from new file
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+        
+    }
 
-            // write to new file
-            println!("Provenance: {}\n", store.provenance_path().unwrap());
-
-            // read from new file
-            let mut report: Vec<ValidationItem> = Vec::new();
-            let new_store = Store::load_from_asset(&op, true, Some(&mut report)).unwrap();
-            // Async placeholder signature won't verify. We need the load to complete,
-            // but we ignore the validation log which we know will have errors.
-
-            let claim = new_store.provenance_claim().unwrap();
-            let sig = claim.signature_val();
-
-            assert_eq!(&sig[0..19], b"invalid signature\0\0");
-        }
-    */
     #[test]
     #[cfg(feature = "file_io")]
     fn test_png_jumbf_generation() {

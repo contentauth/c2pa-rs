@@ -15,35 +15,18 @@ use crate::time_stamp::{cose_timestamp_countersign, make_cose_timestamp};
 use crate::{Error, Result, Signer}; // enable when TimeStamp Authority is ready
 
 use ciborium::value::Value;
-use coset::{iana, CoseSign1, CoseSign1Builder, HeaderBuilder, Label, TaggedCborSerializable};
+use coset::{
+    iana, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, TaggedCborSerializable,
+};
 
-/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
-    // 13.2.1. X.509 Certificates
-    //
-    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
-    // The value is a CBOR array of byte strings, each of which contains the certificate
-    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
-    // least one element. The first element of the array must be the certificate of
-    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
-    // public key used to validate the signature. The Validity member of the TBSCertificate
-    // sequence provides the time validity period of the certificate.
-
-    /*
-       This header parameter allows for a single X.509 certificate or a
-       chain of X.509 certificates to be carried in the message.
-
-       *  If a single certificate is conveyed, it is placed in a CBOR
-           byte string.
-
-       *  If multiple certificates are conveyed, a CBOR array of byte
-           strings is used, with each certificate being in its own byte
-           string.
-    */
-
-    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
-
-    let alg_id = match alg.as_ref() {
+fn build_unprotected_header(
+    data: &[u8],
+    alg: &str,
+    certs: Vec<Vec<u8>>,
+    ta_url: Option<String>,
+    ocsp_val: Option<Vec<u8>>,
+) -> Result<(Header, Header)> {
+    let alg_id = match alg {
         "ps256" => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS256)
             .build(),
@@ -86,7 +69,6 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
     };
 
     // Get the public CAs for the Signer
-    let certs = signer.certs()?;
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()), // single cert
         _ => {
@@ -98,26 +80,20 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
         }
     };
 
-    let mut unprotected = match signer.time_authority_url() {
-        Some(url) => {
-            let cts = cose_timestamp_countersign(data, &alg, &url)?;
-            let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
-            let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
+    let mut unprotected = if let Some(url) = ta_url {
+        let cts = cose_timestamp_countersign(data, alg, &url)?;
+        let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
+        let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
 
-            HeaderBuilder::new()
-                .text_value("x5chain".to_string(), sc_der_array_or_bytes)
-                .text_value("sigTst".to_string(), sigtst_cbor)
-        }
-        None => {
-            let sign_time = chrono::Utc::now().to_rfc3339(); // todo: remove when switch to cose_timestamp
-            HeaderBuilder::new()
-                .text_value("x5chain".to_string(), sc_der_array_or_bytes)
-                .text_value("temp_signing_time".to_string(), Value::Text(sign_time))
-        }
+        HeaderBuilder::new()
+            .text_value("x5chain".to_string(), sc_der_array_or_bytes)
+            .text_value("sigTst".to_string(), sigtst_cbor)
+    } else {
+        HeaderBuilder::new().text_value("x5chain".to_string(), sc_der_array_or_bytes)
     };
 
     // set the ocsp responder response if available
-    if let Some(ocsp) = signer.ocsp_val() {
+    if let Some(ocsp) = ocsp_val {
         let mut ocsp_vec: Vec<Value> = Vec::new();
         let mut r_vals: Vec<(Value, Value)> = vec![];
 
@@ -130,6 +106,44 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
     // build complete header
     let unprotected_header = unprotected.build();
 
+    Ok((alg_id, unprotected_header))
+}
+
+/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
+pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
+    // 13.2.1. X.509 Certificates
+    //
+    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
+    // The value is a CBOR array of byte strings, each of which contains the certificate
+    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
+    // least one element. The first element of the array must be the certificate of
+    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
+    // public key used to validate the signature. The Validity member of the TBSCertificate
+    // sequence provides the time validity period of the certificate.
+
+    /*
+       This header parameter allows for a single X.509 certificate or a
+       chain of X.509 certificates to be carried in the message.
+
+       *  If a single certificate is conveyed, it is placed in a CBOR
+           byte string.
+
+       *  If multiple certificates are conveyed, a CBOR array of byte
+           strings is used, with each certificate being in its own byte
+           string.
+    */
+
+    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
+
+    // build complete header
+    let (alg_id, unprotected_header) = build_unprotected_header(
+        data,
+        &alg,
+        signer.certs()?,
+        signer.time_authority_url(),
+        signer.ocsp_val(),
+    )?;
+
     let aad = b""; // no additional data required here
 
     let sign1_builder = CoseSign1Builder::new()
@@ -139,6 +153,73 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
         .try_create_signature(aad, |bytes| signer.sign(bytes))?;
 
     let mut sign1 = sign1_builder.build();
+    sign1.payload = None; // clear the payload since it is known
+
+    let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
+
+    // println!("sig: {}", Hexlify(&c2pa_sig_data));
+
+    Ok(c2pa_sig_data)
+}
+
+/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
+#[cfg(feature = "async_signer")]
+pub async fn cose_sign_async(
+    signer: &dyn crate::AsyncSigner,
+    data: &[u8],
+    box_size: usize,
+) -> Result<Vec<u8>> {
+    // 13.2.1. X.509 Certificates
+    //
+    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
+    // The value is a CBOR array of byte strings, each of which contains the certificate
+    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
+    // least one element. The first element of the array must be the certificate of
+    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
+    // public key used to validate the signature. The Validity member of the TBSCertificate
+    // sequence provides the time validity period of the certificate.
+
+    /*
+       This header parameter allows for a single X.509 certificate or a
+       chain of X.509 certificates to be carried in the message.
+
+       *  If a single certificate is conveyed, it is placed in a CBOR
+           byte string.
+
+       *  If multiple certificates are conveyed, a CBOR array of byte
+           strings is used, with each certificate being in its own byte
+           string.
+    */
+
+    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
+
+    // build complete header
+    let (alg_id, unprotected_header) = build_unprotected_header(
+        data,
+        &alg,
+        signer.certs()?,
+        signer.time_authority_url(),
+        signer.ocsp_val(),
+    )?;
+
+    let aad = b""; // no additional data required here
+
+    let sign1_builder = CoseSign1Builder::new()
+        .protected(alg_id)
+        .unprotected(unprotected_header)
+        .payload(data.to_vec());
+
+    let mut sign1 = sign1_builder.build();
+
+    let tbs = coset::sig_structure_data(
+        coset::SignatureContext::CoseSign1,
+        sign1.protected.clone(),
+        None,
+        aad,
+        sign1.payload.as_ref().unwrap_or(&vec![]),
+    );
+    sign1.signature = signer.sign(tbs).await?;
+
     sign1.payload = None; // clear the payload since it is known
 
     let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
@@ -163,12 +244,15 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
         .map_err(|_e| Error::CoseSignature)?;
     let cur_size = cur_vec.len();
 
-    // check for box too small
-    match cur_size > end_size {
+    if cur_size == end_size {
+        return Ok(cur_vec);
+    }
+
+    // check for box too small and matched size
+    match cur_size + PAD_OFFSET > end_size {
         true => {
             return Err(Error::CoseSigboxTooSmall);
         }
-        false if cur_size == end_size => return Ok(cur_vec),
         false => (),
     }
 
@@ -208,7 +292,7 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
         match new_cbor.len() < end_size {
             true => target_guess += 1,
             false if new_cbor.len() == end_size => return Ok(new_cbor),
-            false => break, // we couuld not match end_size in a single pad so break and add a second
+            false => break, // we could not match end_size in a single pad so break and add a second
         }
     }
 
