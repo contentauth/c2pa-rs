@@ -30,15 +30,13 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
 
     println!("{}manifest_label: {}", indent, manifest_label);
     if let Some(manifest) = manifest_store.get(manifest_label) {
-        if let Some(asset) = manifest.asset().as_ref() {
-            println!(
-                "{}title: {} , format: {}, instance_id: {}",
-                indent,
-                asset.title(),
-                asset.format(),
-                asset.instance_id()
-            );
-        }
+        println!(
+            "{}title: {} , format: {}, instance_id: {}",
+            indent,
+            manifest.title().unwrap_or_default(),
+            manifest.format(),
+            manifest.instance_id()
+        );
 
         for assertion in manifest.assertions().iter() {
             println!("{}", assertion.label_with_instance());

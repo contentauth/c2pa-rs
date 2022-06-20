@@ -200,7 +200,7 @@ impl Ingredient {
         self.manifest_data.as_deref()
     }
 
-    /// Sets a human-readable title for this manifest.
+    /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
         self
