@@ -4,7 +4,7 @@
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. C2PA is a Joint Development Foundation project, formed through an alliance between Adobe, Arm, Intel, Microsoft and Truepic.
 
-This Rust library for creating and inspecting C2PA data structures are created by Adobe and other contributors as part of our work on the [Content Authenticity Initiative](https://contentauthenticity.org).
+This Rust library for creating and inspecting C2PA data structures is created by Adobe and other contributors as part of our work on the [Content Authenticity Initiative](https://contentauthenticity.org).
 
 ## Key features
 
