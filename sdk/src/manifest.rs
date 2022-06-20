@@ -94,7 +94,7 @@ impl Manifest {
         self.claim_generator.as_str()
     }
 
-    /// Returns a MIME content_type for this asset associated with this manifest.
+    /// Returns a MIME content_type for the asset associated with this manifest.
     pub fn format(&self) -> &str {
         self.asset().map(|asset| asset.format()).unwrap_or_default()
     }
