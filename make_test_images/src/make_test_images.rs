@@ -15,8 +15,8 @@
 //!
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    get_temp_signer_by_alg, jumbf_io, Error, Ingredient, IngredientOptions, Manifest,
-    ManifestStore,
+    get_signer_from_files, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore,
+    Signer,
 };
 
 use anyhow::{Context, Result};
@@ -32,12 +32,13 @@ use twoway::find_bytes;
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
-// returns a path to a file in the fixtures folder
-fn fixture_path(file_name: &str) -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("../sdk/tests/fixtures");
-    path.push(file_name);
-    path
+fn get_signer_with_alg(alg: &str) -> c2pa::Result<Box<dyn Signer>> {
+    // sign and embed into the target file
+    let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", alg));
+    let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+    get_signer_from_files(signcert_path, pkey_path, alg, None)
 }
 
 /// Defines an operation for creating a test image
@@ -265,10 +266,8 @@ impl MakeTestImages {
         // add all our actions as an assertion now.
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
-        // now create store; sign claim and embed in target
-        let certs_dir = fixture_path("certs");
-        let (signer, _) =
-            get_temp_signer_by_alg(&certs_dir, &self.config.alg, self.config.tsa_url.clone());
+        // now sign manifest and embed in target
+        let signer = get_signer_with_alg(&self.config.alg)?;
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 

@@ -142,7 +142,7 @@ impl SchemaDotOrgPerson {
         Self(SchemaDotOrg::new(Self::PERSON.to_owned()))
     }
 
-    pub fn new_person(name: String, identifier: String) -> Result<Self> {
+    pub fn new_person<S: Into<String>>(name: S, identifier: S) -> Result<Self> {
         Self(SchemaDotOrg::new(Self::PERSON.to_owned()))
             .set_name(name)?
             .set_identifier(identifier)
@@ -154,16 +154,16 @@ impl SchemaDotOrgPerson {
     }
 
     /// insert key / value pair
-    pub fn insert<T: Serialize>(self, key: String, value: T) -> Result<Self> {
-        self.0.insert(key, value).map(Self)
+    pub fn insert<S: Into<String>, T: Serialize>(self, key: S, value: T) -> Result<Self> {
+        self.0.insert(key.into(), value).map(Self)
     }
 
     // add a value to a Vec stored at key
-    pub fn insert_push<T>(self, key: String, value: T) -> Result<Self>
+    pub fn insert_push<S: Into<String>, T>(self, key: S, value: T) -> Result<Self>
     where
         T: Serialize + DeserializeOwned,
     {
-        self.0.insert_push(key, value).map(Self)
+        self.0.insert_push(key.into(), value).map(Self)
     }
 
     // get name field if it exists
@@ -171,8 +171,8 @@ impl SchemaDotOrgPerson {
         self.get(Self::NAME)
     }
 
-    pub fn set_name(self, author: String) -> Result<Self> {
-        self.insert(Self::NAME.to_owned(), author)
+    pub fn set_name<S: Into<String>>(self, author: S) -> Result<Self> {
+        self.insert(Self::NAME.to_string(), author.into())
     }
 
     // get identifier field if it exists
@@ -180,8 +180,8 @@ impl SchemaDotOrgPerson {
         self.get(Self::IDENTIFIER)
     }
 
-    pub fn set_identifier(self, identifier: String) -> Result<Self> {
-        self.insert(Self::IDENTIFIER.to_owned(), identifier)
+    pub fn set_identifier<S: Into<String>>(self, identifier: S) -> Result<Self> {
+        self.insert(Self::IDENTIFIER.to_owned(), identifier.into())
     }
 
     pub fn add_credential(self, credential: HashedUri) -> Result<Self> {

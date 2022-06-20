@@ -115,13 +115,11 @@ impl ManifestStore {
     }
 
     /// generate a Store from a format string and bytes
-    pub fn from_bytes(format: &str, image_bytes: Vec<u8>, verify: bool) -> Option<ManifestStore> {
+    pub fn from_bytes(format: &str, image_bytes: Vec<u8>, verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        match Store::load_from_memory(format, &image_bytes, verify, &mut validation_log) {
-            Ok(store) => Some(Self::from_store(&store, &mut validation_log)),
-            Err(_err) => None,
-        }
+        Store::load_from_memory(format, &image_bytes, verify, &mut validation_log)
+            .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -149,14 +147,12 @@ impl ManifestStore {
         format: &str,
         image_bytes: Vec<u8>,
         verify: bool,
-    ) -> Option<ManifestStore> {
+    ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        match Store::load_from_memory_async(format, &image_bytes, verify, &mut validation_log).await
-        {
-            Ok(store) => Some(Self::from_store(&store, &mut validation_log)),
-            Err(_err) => None,
-        }
+        Store::load_from_memory_async(format, &image_bytes, verify, &mut validation_log)
+            .await
+            .map(|store| Self::from_store(&store, &mut validation_log))
     }
 }
 
@@ -261,7 +257,7 @@ mod tests {
         assert!(manifest_store.validation_status().is_none());
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
-        assert_eq!(manifest.issuer().unwrap(), "Some Company");
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
         assert!(manifest.time().is_some());
     }
 }
