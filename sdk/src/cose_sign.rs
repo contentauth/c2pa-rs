@@ -249,11 +249,8 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
     }
 
     // check for box too small and matched size
-    match cur_size + PAD_OFFSET > end_size {
-        true => {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-        false => (),
+    if cur_size + PAD_OFFSET > end_size {
+        return Err(Error::CoseSigboxTooSmall);
     }
 
     let mut padding_found = false;
