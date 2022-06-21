@@ -31,7 +31,6 @@ use crate::{
     asset_io::{HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    embedded_xmp,
     jumbf_io::{
         get_supported_file_extension, load_jumbf_from_file, object_locations, save_jumbf_to_file,
     },
@@ -41,6 +40,9 @@ use crate::{
     },
     Signer,
 };
+
+#[cfg(all(feature = "xmp_write", feature = "file_io"))]
+use crate::embedded_xmp;
 
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
@@ -1355,20 +1357,20 @@ impl Store {
             fs::copy(&asset_path, &output_path).map_err(Error::IoError)?;
         }
 
-        // get the provenance claim
-        let pp = self.provenance_path();
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-
         //  update file following the steps outlined in CAI spec
 
         // 1) Add DC provenance XMP
         // update XMP info & add xmp hash to provenance claim
-        if let Some(provenance) = pp {
+        #[cfg(feature = "xmp_write")]
+        if let Some(provenance) = self.provenance_path() {
             embedded_xmp::add_manifest_uri_to_file(output_path, &provenance)
                 .map_err(|_err| Error::XmpWriteError)?;
         } else {
             return Err(Error::XmpWriteError);
         }
+
+        // get the provenance claim
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // 2) Get hash ranges if needed, do not generate for update manifests
         let mut hash_ranges = object_locations(output_path)?;
