@@ -25,18 +25,22 @@ fn get_local_signer(alg: &str) -> Box<dyn crate::Signer> {
 
     match alg {
         "ps256" | "ps384" | "ps512" => {
-            let (s, _k) = super::temp_signer::get_rsa_signer(&cert_dir, &alg, None);
+            let (s, _k) = super::temp_signer::get_rsa_signer(&cert_dir, alg, None);
             Box::new(s)
         }
         "es256" | "es384" | "es512" => {
-            let (s, _k) = super::temp_signer::get_ec_signer(&cert_dir, &alg, None);
+            let (s, _k) = super::temp_signer::get_ec_signer(&cert_dir, alg, None);
             Box::new(s)
         }
         "ed25519" => {
-            let (s, _k) = super::temp_signer::get_ed_signer(&cert_dir, &alg, None);
+            let (s, _k) = super::temp_signer::get_ed_signer(&cert_dir, alg, None);
             Box::new(s)
         }
-        _ => panic!("invalid signature algorithm passed to AsyncSignerAdapter"),
+        _ => {
+            let (s, _k) = super::temp_signer::get_rsa_signer(&cert_dir, "ps256", None);
+            Box::new(s)
+        }
+            
     }
 }
 
@@ -56,7 +60,7 @@ impl AsyncSignerAdapter {
 
         AsyncSignerAdapter {
             alg,
-            certs: signer.certs().unwrap_or(vec![]),
+            certs: signer.certs().unwrap_or_default(),
             reserve_size: signer.reserve_size(),
             tsa_url: signer.time_authority_url(),
             ocsp_val: signer.ocsp_val(),
