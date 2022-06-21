@@ -145,7 +145,12 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
 
     // println!("sig: {}", Hexlify(&c2pa_sig_data));
 
-    Ok(c2pa_sig_data)
+    // make sure the completed size will fit in the reserved box
+    if c2pa_sig_data.len() > signer.reserve_size() {
+        Err(Error::CoseSigboxTooSmall)
+    } else {
+        Ok(c2pa_sig_data)
+    }
 }
 
 const PAD: &str = "pad";
