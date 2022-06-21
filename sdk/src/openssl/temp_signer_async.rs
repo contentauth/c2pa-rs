@@ -40,7 +40,6 @@ fn get_local_signer(alg: &str) -> Box<dyn crate::Signer> {
             let (s, _k) = super::temp_signer::get_rsa_signer(&cert_dir, "ps256", None);
             Box::new(s)
         }
-            
     }
 }
 
