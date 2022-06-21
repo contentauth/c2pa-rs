@@ -2065,7 +2065,6 @@ pub mod tests {
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-        
     }
 
     #[test]
