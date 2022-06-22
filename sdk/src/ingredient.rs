@@ -16,12 +16,12 @@
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
-    cbor_types::BytesT,
     claim::Claim,
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf,
     store::Store,
+    utils::features::skip_serializing_thumbnails,
     validation_status::{self, ValidationStatus},
 };
 use std::ops::Deref;
@@ -56,8 +56,8 @@ pub struct Ingredient {
     /// A thumbnail image capturing the visual state at the time of import.
     ///
     /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
-    #[serde(skip_serializing)]
-    thumbnail: Option<(String, BytesT)>,
+    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
+    thumbnail: Option<(String, Vec<u8>)>,
 
     /// An optional hash of the asset to prevent duplicates.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,7 +236,7 @@ impl Ingredient {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format.into(), BytesT(thumbnail)));
+        self.thumbnail = Some((format.into(), thumbnail));
         self
     }
 
