@@ -2039,9 +2039,6 @@ pub mod tests {
         let capture = claim_capture.label().to_string();
         let claim2_label = claim2.label().to_string();
 
-        /*
-        Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
-        */
         store.commit_claim(claim1).unwrap();
         store.save_to_asset_async(&ap, &signer, &op).await.unwrap();
         store.commit_claim(claim_capture).unwrap();
