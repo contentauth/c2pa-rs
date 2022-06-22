@@ -21,7 +21,6 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf,
     store::Store,
-    utils::features::skip_serializing_thumbnails,
     validation_status::{self, ValidationStatus},
 };
 use std::ops::Deref;
@@ -30,6 +29,12 @@ use std::ops::Deref;
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+
+/// Function that is used by serde to determine whether or not we should serialize
+/// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
+pub fn skip_serializing_thumbnails(_value: &Option<(String, Vec<u8>)>) -> bool {
+    !cfg!(feature = "serialize_thumbnails")
+}
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
