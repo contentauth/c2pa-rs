@@ -14,6 +14,7 @@ rust-version = "1.58.0"
 [features]
 async_signer = ["async-trait"]
 file_io = ["openssl"]
+serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 
 # The diagnostics feature is unsupported and might be removed.
