@@ -101,7 +101,7 @@ impl ManifestAssertion {
     /// This can be used to set an instance number, but generally should not be used
     /// Instance numbers will be assigned automatically when the assertions are embedded
     pub(crate) fn set_instance(mut self, instance: usize) -> Self {
-        self.instance = if instance > 1 { Some(instance) } else { None };
+        self.instance = if instance > 0 { Some(instance) } else { None };
         self
     }
 
@@ -215,8 +215,10 @@ pub(crate) mod tests {
         let mut ma = ManifestAssertion::new(Actions::LABEL.to_owned(), value);
         assert_eq!(ma.label(), Actions::LABEL);
 
-        ma = ma.set_instance(1);
+        ma = ma.set_instance(0);
         assert_eq!(ma.instance, None);
+        ma = ma.set_instance(1);
+        assert_eq!(ma.instance(), 1);
         ma = ma.set_instance(2);
         assert_eq!(ma.instance(), 2);
         assert_eq!(ma.kind(), &ManifestAssertionKind::Cbor);
