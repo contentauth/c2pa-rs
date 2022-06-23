@@ -49,6 +49,7 @@ c2pa = "0.5.2"
 ## Crate features
 
 * `async_signer` enables signing via asynchronous services which require `async` support.
+* `bmff` enables handling of BMFF file formats. Currently only MP4, M4A, and MOV are enabled for writing.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field (requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit)).
