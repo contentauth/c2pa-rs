@@ -31,7 +31,6 @@ use crate::{
     asset_io::{HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    embedded_xmp,
     jumbf_io::{
         get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
         save_jumbf_to_file,
@@ -42,6 +41,9 @@ use crate::{
     },
     Signer,
 };
+
+#[cfg(all(feature = "xmp_write", feature = "file_io"))]
+use crate::embedded_xmp;
 
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
@@ -1421,15 +1423,12 @@ impl Store {
             fs::copy(&asset_path, &output_path).map_err(Error::IoError)?;
         }
 
-        // get the provenance claim
-        let pp = self.provenance_path();
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-
         //  update file following the steps outlined in CAI spec
 
         // 1) Add DC provenance XMP
         // update XMP info & add xmp hash to provenance claim
-        if let Some(provenance) = pp {
+        #[cfg(feature = "xmp_write")]
+        if let Some(provenance) = self.provenance_path() {
             embedded_xmp::add_manifest_uri_to_file(output_path, &provenance)
                 .map_err(|_err| Error::XmpWriteError)?;
         } else {
@@ -1440,6 +1439,9 @@ impl Store {
 
         let mut data;
         let jumbf_size;
+
+        // get the provenance claim
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
@@ -1853,15 +1855,15 @@ pub mod tests {
 
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
-        claim::Claim,
-        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file},
+        claim::{AssertionStoreJsonFormat, Claim},
+        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
         status_tracker::*,
-        utils::test::{create_test_claim, fixture_path, temp_dir_path, temp_fixture_path},
-    };
-
-    use crate::{
-        claim::AssertionStoreJsonFormat, jumbf_io::update_file_jumbf,
-        openssl::temp_signer::get_temp_signer, utils::patch::patch_file,
+        utils::{
+            patch::patch_file,
+            test::{
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+            },
+        },
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -1911,8 +1913,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // Test generate JUMBF
         // Get labels for label test
@@ -2204,8 +2205,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
@@ -2360,9 +2360,7 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
-        let cert_dir = fixture_path("certs");
-
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2414,9 +2412,7 @@ pub mod tests {
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
-        let cert_dir = fixture_path("certs");
-
-        let (signer, _) = get_temp_signer(&cert_dir);
+        let signer = temp_signer();
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");

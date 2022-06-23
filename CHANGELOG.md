@@ -6,8 +6,50 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.5.2
+_23 June 2022_
+
+* Return assertion instance values starting at `1` instead of `2` ([#60](https://github.com/contentauth/c2pa-rs/pull/60))
+
+## 0.5.1
+_22 June 2022_
+
+* Update thumbnail to be `Vec<u8>`, add serialization feature ([#59](https://github.com/contentauth/c2pa-rs/pull/59))
+* Adds xmp_write feature to make xmp-toolkit inclusion optional ([#53](https://github.com/contentauth/c2pa-rs/pull/53))
+
+## 0.5.0
+_20 June 2022_
+
+* (MINOR) Add asset attribute getters for manifest ([#56](https://github.com/contentauth/c2pa-rs/pull/56))
+* (MINOR) Remove temp_signer from sdk; update docs and examples to use get_signer_from_files ([#52](https://github.com/contentauth/c2pa-rs/pull/52))
+* (MINOR) Clean up client example; update actions and schema ([#51](https://github.com/contentauth/c2pa-rs/pull/51))
+
+## 0.4.2
+_16 June 2022_
+
+* Fix bug in updating crate reference in README ([#50](https://github.com/contentauth/c2pa-rs/pull/50))
+
+## 0.4.1
+_16 June 2022_
+
+* Fix bug in Cargo.toml updates ([#49](https://github.com/contentauth/c2pa-rs/pull/49))
+
+## 0.4.0
+_16 June 2022_
+
+* Add status badges for CI validation, crates.io, and code coverage ([#46](https://github.com/contentauth/c2pa-rs/pull/46))
+* Remove self-signed end-entity cert support ([#48](https://github.com/contentauth/c2pa-rs/pull/48))
+* Add rustfmt toml to get edition 2018 formatting ([#36](https://github.com/contentauth/c2pa-rs/pull/36))
+* (MINOR) Update from_bytes(_async) to return a Result ([#43](https://github.com/contentauth/c2pa-rs/pull/43))
+* Adjust temp signer reserved sizes to account for large timestamps ([#45](https://github.com/contentauth/c2pa-rs/pull/45))
+* Fix bug in verify_from_buffer ([#44](https://github.com/contentauth/c2pa-rs/pull/44))
+* Remove cargo edit from publish workflow ([#42](https://github.com/contentauth/c2pa-rs/pull/42))
+* Apply fix from c2patool publish workflow ([#40](https://github.com/contentauth/c2pa-rs/pull/40))
+* Remove need for using OpenSSL to generate certs by using pre-generated certs ([#41](https://github.com/contentauth/c2pa-rs/pull/41))
+* Update README and pull request template with formatting changes ([#38](https://github.com/contentauth/c2pa-rs/pull/38))
+
 ## 0.3.0
-_ 8 June 2022_
+_08 June 2022_
 
 * Make most jumbf_io functions crate private and move Store dependencies to Store ([#37](https://github.com/contentauth/c2pa-rs/pull/37))
 * Remove c2patool source now that it's in its own repo ([#35](https://github.com/contentauth/c2pa-rs/pull/35))
@@ -22,13 +64,11 @@ _ 8 June 2022_
 * Make Assertions opaque in the public SDK ([#22](https://github.com/contentauth/c2pa-rs/pull/22))
 * Update c2pa requirement from 0.1 to 0.2 in /c2patool ([#23](https://github.com/contentauth/c2pa-rs/pull/23))
 
-
 ## 0.2.0
 _26 May 2022_
 
 * Fix dependency reference from c2patool crate to c2pa crate ([#21](https://github.com/contentauth/c2pa-rs/pull/21))
 * (MINOR) Detailed API review for Ingredient struct ([#17](https://github.com/contentauth/c2pa-rs/pull/17))
-
 
 ## 0.1.3
 _26 May 2022_
@@ -36,14 +76,12 @@ _26 May 2022_
 * Publish c2patool crate ([#20](https://github.com/contentauth/c2pa-rs/pull/20))
 * Improve documentation ([#14](https://github.com/contentauth/c2pa-rs/pull/14))
 
-
 ## 0.1.2
 _26 May 2022_
 
 * No-op change to verify correct handling of PR numbers ([#19](https://github.com/contentauth/c2pa-rs/pull/19))
 * Fix error in formatting changelog
 * Fix missing links in changelog
-
 
 ## 0.1.1
 _26 May 2022_

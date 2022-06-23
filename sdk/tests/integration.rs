@@ -18,18 +18,21 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        get_temp_signer, Ingredient, Manifest, ManifestStore, Result,
+        get_signer_from_files, Ingredient, Manifest, ManifestStore, Result, Signer,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
 
     const GENERATOR: &str = "app";
 
-    fn fixture_path(file_name: &str) -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/fixtures");
-        path.push(file_name);
-        path
+    fn get_temp_signer() -> Box<dyn Signer> {
+        // sign and embed into the target file
+        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        signcert_path.push("tests/fixtures/certs/ps256.pub");
+        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pkey_path.push("tests/fixtures/certs/ps256.pem");
+        get_signer_from_files(signcert_path, pkey_path, "ps256", None)
+            .expect("get_signer_from_files")
     }
 
     #[test]
@@ -98,10 +101,8 @@ mod integration_1 {
         img.save(&output_path)?;
 
         // sign and embed into the target file
-        let cert_dir = fixture_path("certs");
-        let (signer, _) = get_temp_signer(&cert_dir);
-
-        manifest.embed(&output_path, &output_path, &signer)?;
+        let signer = get_temp_signer();
+        manifest.embed(&output_path, &output_path, &*signer)?;
 
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
@@ -110,7 +111,7 @@ mod integration_1 {
 
         assert!(manifest_store.get_active().is_some());
         if let Some(manifest) = manifest_store.get_active() {
-            assert!(manifest.asset().is_some());
+            assert!(manifest.title().is_some());
             assert_eq!(manifest.ingredients().len(), 2);
         } else {
             panic!("no manifest in store");

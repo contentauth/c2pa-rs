@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.3.0"
+version = "0.5.2"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
@@ -16,6 +16,8 @@ exclude = ["tests/fixtures"]
 async_signer = ["async-trait"]
 bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
+serialize_thumbnails = []
+xmp_write = ["xmp_toolkit"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -68,7 +70,7 @@ url = "2.2.2"
 ureq = "2.4.0"
 instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
-xmp_toolkit = "0.3.4"
+xmp_toolkit = { version = "0.3.4", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "0.2", features = ["color"] }
