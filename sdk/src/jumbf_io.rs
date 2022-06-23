@@ -12,25 +12,58 @@
 // each license.
 
 use crate::{
-    asset_handlers::{c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
+    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
     asset_io::{AssetIO, CAILoader, HashObjectPositions},
     error::{Error, Result},
 };
 
 use std::{
-    fs,
+    fs::{self, File},
     io::Cursor,
     path::{Path, PathBuf},
 };
 
-static SUPPORTED_TYPES: &[&str; 6] = &[
+static SUPPORTED_TYPES: [&str; 18] = [
+    "avif",
     "c2pa", // stand-alone manifest file
+    "heif",
+    "heic",
     "jpg",
     "jpeg",
+    "mp4",
+    "m4a",
+    "mov",
     "png",
+    "application/mp4",
+    "audio/mp4",
+    "image/avif",
+    "image/heic",
+    "image/heif",
     "image/jpeg",
     "image/png",
+    "video/mp4",
 ];
+
+#[cfg(feature = "file_io")]
+static BMFF_TYPES: [&str; 12] = [
+    "avif",
+    "heif",
+    "heic",
+    "mp4",
+    "m4a",
+    "mov",
+    "application/mp4",
+    "audio/mp4",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "video/mp4",
+];
+
+#[cfg(feature = "file_io")]
+pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
+    BMFF_TYPES.contains(&asset_type)
+}
 
 /// Return jumbf block from in memory asset
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
@@ -47,19 +80,28 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
-    match ext {
+    let ext = ext.to_lowercase();
+    match ext.as_ref() {
         "c2pa" => Some(Box::new(C2paIO {})),
         "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
         "png" => Some(Box::new(PngIO {})),
+        "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
         _ => None,
     }
 }
 
 pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
-    match asset_type {
+    let asset_type = asset_type.to_lowercase();
+    match asset_type.as_ref() {
         "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
+        "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
+        | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
+            if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
+        {
+            Some(Box::new(BmffIO::new(&asset_type)))
+        }
         _ => None,
     }
 }
@@ -144,8 +186,11 @@ pub fn update_file_jumbf(
 pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.read_cai_store(in_path),
+    match get_cailoader_handler(&ext) {
+        Some(asset_handler) => {
+            let mut f = File::open(in_path)?;
+            asset_handler.read_cai(&mut f)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }

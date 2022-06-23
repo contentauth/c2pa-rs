@@ -22,7 +22,7 @@ use crate::assertion::{
     get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion, AssertionBase,
     AssertionData,
 };
-use crate::assertions::{self, labels, DataHash};
+use crate::assertions::{self, labels, BmffHash, DataHash};
 use crate::cose_validator::{get_signing_info, verify_cose, verify_cose_async};
 use crate::hashed_uri::HashedUri;
 use crate::jumbf::{
@@ -609,6 +609,46 @@ impl Claim {
         }
     }
 
+    // crate private function to allow for patching a BMFF hash with final contents
+    #[cfg(feature = "file_io")]
+    pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
+        let replacement_assertion = bmff_hash.to_assertion()?;
+
+        match self.assertion_store.iter_mut().find(|assertion| {
+            // is this a BMFFHash Assertion
+            Assertion::assertions_eq(&replacement_assertion, assertion.assertion())
+        }) {
+            Some(ref mut bmff_assertion) => {
+                let original_hash = bmff_assertion.hash().to_vec();
+
+                let replacement_hash = Claim::calc_box_hash(
+                    &bmff_assertion.label(),
+                    &replacement_assertion,
+                    bmff_assertion.salt().clone(),
+                    bmff_assertion.hash_alg(),
+                )?;
+                bmff_assertion.update_assertion(replacement_assertion, replacement_hash)?;
+
+                // fix up hashed uri
+                match self.assertions.iter_mut().find_map(|f| {
+                    if f.url().contains(&bmff_assertion.label())
+                        && vec_compare(&f.hash(), &original_hash)
+                    {
+                        // replace with newly updated hash
+                        f.update_hash(bmff_assertion.hash().to_vec());
+                        Some(f)
+                    } else {
+                        None
+                    }
+                }) {
+                    Some(_) => Ok(()),
+                    None => Err(Error::NotFound),
+                }
+            }
+            None => Err(Error::NotFound),
+        }
+    }
+
     /// Not ready for use!!!!!
     /// Redact an assertion from a prior claim.
     /// This will remove the assertion from the JUMBF
@@ -760,6 +800,7 @@ impl Claim {
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
+        const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
 
         match verified {
@@ -916,10 +957,45 @@ impl Claim {
             }
 
             for dh_assertion in claim.data_hash_assertions() {
-                let dh = DataHash::from_assertion(&dh_assertion)?;
-                let name = dh.name.as_ref().map_or("unnamed".to_string(), default_str);
-                if !dh.is_remote_hash() {
-                    // only verify local hashes here
+                if dh_assertion.label_root() == DataHash::LABEL {
+                    let dh = DataHash::from_assertion(dh_assertion)?;
+                    let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
+                    if !dh.is_remote_hash() {
+                        // only verify local hashes here
+                        match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
+                            Ok(_a) => {
+                                let log_item = log_item!(
+                                    claim.assertion_uri(&dh_assertion.label()),
+                                    "data hash valid",
+                                    "verify_internal"
+                                )
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                                validation_log.log_silent(log_item);
+
+                                continue;
+                            }
+                            Err(e) => {
+                                let log_item = log_item!(
+                                    claim.assertion_uri(&dh_assertion.label()),
+                                    format!("asset hash error, name: {}, error: {}", name, e),
+                                    "verify_internal"
+                                )
+                                .error(Error::HashMismatch(format!("Asset hash failure: {}", e)))
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+
+                                validation_log.log(
+                                    log_item,
+                                    Some(Error::HashMismatch(format!("Asset hash failure: {}", e))),
+                                )?;
+                            }
+                        }
+                    }
+                } else {
+                    // handle BMFF data hashes
+                    let dh = BmffHash::from_assertion(dh_assertion)?;
+
+                    let name = dh.name().map_or("unnamed".to_string(), default_str);
+
                     match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
                         Ok(_a) => {
                             let log_item = log_item!(
@@ -967,7 +1043,7 @@ impl Claim {
     }
 
     /// Return list of data hash assertions
-    pub fn data_hash_assertions(&self) -> Vec<Assertion> {
+    pub fn data_hash_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
         let mut data_hashes = self.assertions_by_type(&dummy_hash);
@@ -980,10 +1056,16 @@ impl Claim {
         data_hashes
     }
 
+    pub fn bmff_hash_assertions(&self) -> Vec<&Assertion> {
+        // add in an BMFF hashes
+        let dummy_bmff_data = AssertionData::Cbor(Vec::new());
+        let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
+        self.assertions_by_type(&dummy_bmff_hash)
+    }
     /// Return list of ingredient assertions. This function
     /// is only useful on commited or loaded claims since ingredients
     /// are resolved at commit time.
-    pub fn ingredient_assertions(&self) -> Vec<Assertion> {
+    pub fn ingredient_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(labels::INGREDIENT, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient)
@@ -1050,12 +1132,12 @@ impl Claim {
             .collect()
     }
 
-    pub fn assertions_by_type(&self, assertion_proto: &Assertion) -> Vec<Assertion> {
+    pub fn assertions_by_type(&self, assertion_proto: &Assertion) -> Vec<&Assertion> {
         self.assertion_store
             .iter()
             .filter_map(|x| {
                 if Assertion::assertions_eq(assertion_proto, x.assertion()) {
-                    Some(x.assertion.clone())
+                    Some(&x.assertion)
                 } else {
                     None
                 }
