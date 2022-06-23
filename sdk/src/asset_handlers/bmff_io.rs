@@ -1062,11 +1062,9 @@ impl AssetIO for BmffIO {
     }
 }
 
-#[cfg(test)]
 #[cfg(feature = "bmff")]
+#[cfg(test)]
 pub mod tests {
-    #[allow(clippy::expect_used)]
-    #[allow(clippy::unwrap_used)]
     use tempfile::tempdir;
 
     use super::*;
@@ -1086,7 +1084,9 @@ pub mod tests {
         let errors = report_split_errors(log.get_log_mut());
         assert!(errors.is_empty());
 
-        print!("Store: \n{}", store.unwrap());
+        if let Ok(s) = store {
+            print!("Store: \n{}", s);
+        }
     }
 
     #[test]
@@ -1094,19 +1094,23 @@ pub mod tests {
         let test_data = "some test data".as_bytes();
         let source = fixture_path("video1.mp4");
 
-        let temp_dir = tempdir().expect("temp dir");
-        let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-        std::fs::copy(&source, &output).unwrap();
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let bmff = BmffIO::new("mp4");
 
-        let bmff = BmffIO::new("mp4");
-
-        //let test_data =  bmff.read_cai_store(&source).unwrap();
-        bmff.save_cai_store(&output, test_data).unwrap();
-
-        let read_test_data = bmff.read_cai_store(&output).unwrap();
-
-        assert!(vec_compare(test_data, &read_test_data));
+                //let test_data =  bmff.read_cai_store(&source).unwrap();
+                if let Ok(()) = bmff.save_cai_store(&output, test_data) {
+                    if let Ok(read_test_data) = bmff.read_cai_store(&output) {
+                        assert!(vec_compare(test_data, &read_test_data));
+                        success = true;
+                    }
+                }
+            }
+        }
+        assert!(success)
     }
 
     #[test]
@@ -1114,19 +1118,24 @@ pub mod tests {
         let mut more_data = "some more test data".as_bytes().to_vec();
         let source = fixture_path("video1.mp4");
 
-        let temp_dir = tempdir().expect("temp dir");
-        let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-        std::fs::copy(&source, &output).unwrap();
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let bmff = BmffIO::new("mp4");
 
-        let bmff = BmffIO::new("mp4");
-
-        let mut test_data = bmff.read_cai_store(&source).unwrap();
-        test_data.append(&mut more_data);
-        bmff.save_cai_store(&output, &test_data).unwrap();
-
-        let read_test_data = bmff.read_cai_store(&output).unwrap();
-
-        assert!(vec_compare(&test_data, &read_test_data));
+                if let Ok(mut test_data) = bmff.read_cai_store(&source) {
+                    test_data.append(&mut more_data);
+                    if let Ok(()) = bmff.save_cai_store(&output, &test_data) {
+                        if let Ok(read_test_data) = bmff.read_cai_store(&output) {
+                            assert!(vec_compare(&test_data, &read_test_data));
+                            success = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(success)
     }
 }
