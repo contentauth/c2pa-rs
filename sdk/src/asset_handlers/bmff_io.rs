@@ -558,7 +558,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             // read header
             let header = BoxHeaderLite::read(output)
                 .map_err(|_err| Error::BadParam("Bad BMFF".to_string()))?;
-            if header.name != BoxType::StcoBox {
+            if header.name != BoxType::Co64Box {
                 return Err(Error::BadParam("Bad BMFF".to_string()));
             }
 
@@ -996,7 +996,7 @@ impl AssetIO for BmffIO {
 
         // write content after ContentProvenanceBox
         input.seek(SeekFrom::Start(end as u64))?;
-        let mut chunk = vec![0u8; 4096];
+        let mut chunk = vec![0u8; 1024 * 1024];
         loop {
             let len = match input.read(&mut chunk) {
                 Ok(0) => break,
