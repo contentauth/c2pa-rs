@@ -1063,6 +1063,7 @@ impl AssetIO for BmffIO {
 }
 
 #[cfg(test)]
+#[cfg(feature = "bmff")]
 pub mod tests {
     #[allow(clippy::expect_used)]
     #[allow(clippy::unwrap_used)]
