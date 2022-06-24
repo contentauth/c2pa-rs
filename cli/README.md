@@ -95,7 +95,7 @@ Here's an example of a manifest definition that inserts a CreativeWork author as
 
 ```json
 {
-    "ta": "http://timestamp.digicert.com",
+    "ta_url": "http://timestamp.digicert.com",
     
     "claim_generator": "TestApp",
     "assertions": [

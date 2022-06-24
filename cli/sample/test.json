@@ -2,7 +2,7 @@
     "alg": "es256",
     "private_key": "es256_private.key",
     "sign_cert": "es256_certs.pem",
-    "ta": "http://timestamp.digicert.com",
+    "ta_url": "http://timestamp.digicert.com",
     
     "claim_generator": "TestApp",
     "title": "My Title",
