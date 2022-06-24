@@ -27,7 +27,8 @@ use std::{
     path::{Path, PathBuf},
     process::exit,
 };
-use structopt::StructOpt;
+use structopt::{clap::AppSettings, StructOpt};
+
 use tempfile::tempdir;
 
 pub mod config;
@@ -37,31 +38,31 @@ use signer::get_c2pa_signer;
 
 // define the command line options
 #[derive(Debug, StructOpt)]
-#[structopt(author = "Adobe", about = "Tool for displaying and creating C2PA manifests",setting = structopt::clap::AppSettings::ColoredHelp)]
+#[structopt(about = "Tool for displaying and creating C2PA manifests.",global_settings = &[AppSettings::ColoredHelp, AppSettings::ArgRequiredElseHelp])]
 struct CliArgs {
     #[structopt(parse(from_os_str))]
-    #[structopt(short = "o", long = "output", help = "path to output file")]
+    #[structopt(short = "o", long = "output", help = "Path to output file.")]
     output: Option<std::path::PathBuf>,
 
     #[structopt(parse(from_os_str))]
-    #[structopt(short = "p", long = "parent", help = "path to parent file")]
+    #[structopt(short = "p", long = "parent", help = "Path to parent file.")]
     parent: Option<std::path::PathBuf>,
 
     #[structopt(
         short = "c",
         long = "config",
-        help = "Configuration passed as json string"
+        help = "Configuration passed as a JSON string."
     )]
     config: Option<String>,
 
     #[structopt(
         short = "d",
         long = "detailed",
-        help = "display detailed internal manifest data"
+        help = "Display detailed C2PA-formatted manifest data."
     )]
     detailed: bool,
 
-    /// The path to the file to read (jpg or json for adding claims)
+    /// The path to the asset to read, or a JSON configuration file.
     #[structopt(parse(from_os_str))]
     path: Option<std::path::PathBuf>,
 }
