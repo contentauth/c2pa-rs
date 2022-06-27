@@ -42,7 +42,7 @@ pub struct Config {
     /// Signing algorithm to use - must match the associated certs
     ///
     /// Must be one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519 ]
-    /// Defaults to ps256
+    /// Defaults to es256
     pub alg: Option<String>,
     /// A path to a file containing the private key required for signing
     pub private_key: Option<PathBuf>,

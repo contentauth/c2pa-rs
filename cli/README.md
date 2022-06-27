@@ -194,7 +194,7 @@ The schema for this type is as follows:
 		"alg": {
 			"type": "string",
 			"format": "Local file system path",
-			"description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]. Defaults to ps256."
+			"description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]. Defaults to es256."
 		},
 		"ta_url": {
 			"type": "string",
@@ -231,7 +231,7 @@ you want to use your own generated certificates, you can specify the path to the
 - `private_key`
 - `sign_cert`
 
-If you are using a signing algorithm other than the default `ps256`, you will need to specify it in the manfifest defnition field `alg`, which can be set to one of the following:
+If you are using a signing algorithm other than the default `es256`, you will need to specify it in the manfifest defnition field `alg`, which can be set to one of the following:
 
 - `ps256`
 - `ps384`
@@ -243,11 +243,11 @@ If you are using a signing algorithm other than the default `ps256`, you will ne
 
 The specified algorithm must be compatible with values of `private_key` and `sign_cert`.
 
-The key and cert can also be placed directly in the environment variables `C2PA_PRIVATE_KEY` and `C2PA_PUB_CERT`. These two variables are used to set the private key and public certificates. For example, to sign with es256 signatures using the content of a private key file and certificate file, you would run:
+The key and cert can also be placed directly in the environment variables `C2PA_PRIVATE_KEY` and `C2PA_SIGN_CERT`. These two variables are used to set the private key and public certificates. For example, to sign with es256 signatures using the content of a private key file and certificate file, you would run:
 
 ```shell
 set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)
-set C2PA_PUB_CERT=$(cat my_es256_certs)
+set C2PA_SIGN_CERT=$(cat my_es256_certs)
 ```
 
 Both the `private_key` and `sign_cert` should be in PEM format. The `sign_cert` should contain a PEM certificate chain starting for the end-entity certificate used to sign the claim ending with the intermediate certificate before the root CA certificate. See the ["sample" folder](https://github.com/contentauth/c2patool/tree/main/sample) for example certificates.
