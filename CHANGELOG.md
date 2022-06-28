@@ -9,8 +9,7 @@ Do not manually edit this file. It will be automatically updated when a new rele
 ## 0.6.0
 _28 June 2022_
 
-* (MINOR) Mark as minor version for BMFF support
-* Initial BMFF support ([#39](https://github.com/contentauth/c2pa-rs/pull/39))
+* (MINOR) Initial BMFF support ([#39](https://github.com/contentauth/c2pa-rs/pull/39))
 
 ## 0.5.2
 _23 June 2022_
