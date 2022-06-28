@@ -356,9 +356,10 @@ impl Manifest {
 
         for claim_assertion in claim.claim_assertion_store().iter() {
             let assertion = claim_assertion.assertion();
-            let label = assertion.label();
+            let label = claim_assertion.label();
+            let base_label = assertion.label();
             debug!("assertion = {}", label);
-            match label.as_ref() {
+            match base_label.as_ref() {
                 labels::INGREDIENT => {
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(store, &assertion_uri)?;
@@ -373,14 +374,14 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Json(_x) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
                             manifest.assertions.push(ma);
                         }
                         AssertionData::Cbor(_x) => {
                             let value = assertion.as_json_object()?; //todo: should this be cbor?
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance());
 
                             manifest.assertions.push(ma);
