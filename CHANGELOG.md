@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.6.1
+_28 June 2022_
+
+* Fix up changelog noise
+* Fix bug with multiple ingredients in `Manifest::from_store` ([#61](https://github.com/contentauth/c2pa-rs/pull/61))
+
 ## 0.6.0
 _28 June 2022_
 
