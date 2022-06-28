@@ -236,9 +236,11 @@ mod tests {
         assert!(!manifest_store.manifests.is_empty());
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
+        // make sure we have two different ingredients
+        assert_eq!(manifest.ingredients()[0].format(), "image/jpeg");
+        assert_eq!(manifest.ingredients()[1].format(), "image/png");
 
-        let full_report =
-            ManifestStore::from_store(&store, &mut OneShotStatusTracker::new()).to_string();
+        let full_report = manifest_store.to_string();
         assert!(!full_report.is_empty());
         println!("{}", full_report);
     }
@@ -249,6 +251,23 @@ mod tests {
 
         let manifest_store =
             ManifestStore::from_bytes("image/jpeg", image_bytes.to_vec(), true).unwrap();
+
+        assert!(!manifest_store.manifests.is_empty());
+        assert!(manifest_store.active_label().is_some());
+        assert!(manifest_store.get_active().is_some());
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        let manifest = manifest_store.get_active().unwrap();
+        assert!(!manifest.ingredients().is_empty());
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
+        assert!(manifest.time().is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_report_from_file() {
+        let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
+        println!("{}", manifest_store);
 
         assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
