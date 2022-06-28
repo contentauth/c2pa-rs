@@ -27,13 +27,13 @@ use crate::{
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionData,
-    assertions::DataHash,
+    assertions::{BmffHash, DataHash, DataMap, ExclusionsMap, SubsetMap},
     asset_io::{HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    embedded_xmp,
     jumbf_io::{
-        get_supported_file_extension, load_jumbf_from_file, object_locations, save_jumbf_to_file,
+        get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
+        save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -41,6 +41,9 @@ use crate::{
     },
     Signer,
 };
+
+#[cfg(all(feature = "xmp_write", feature = "file_io"))]
+use crate::embedded_xmp;
 
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
@@ -987,7 +990,7 @@ impl Store {
 
         // walk the ingredients
         for i in claim.ingredient_assertions() {
-            let ingredient_assertion = Ingredient::from_assertion(&i)?;
+            let ingredient_assertion = Ingredient::from_assertion(i)?;
 
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
@@ -1095,7 +1098,7 @@ impl Store {
     ) -> Result<()> {
         // walk the ingredients
         for i in claim.ingredient_assertions() {
-            let ingredient_assertion = Ingredient::from_assertion(&i)?;
+            let ingredient_assertion = Ingredient::from_assertion(i)?;
 
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
@@ -1260,6 +1263,102 @@ impl Store {
         Ok(hashes)
     }
 
+    #[cfg(feature = "file_io")]
+    fn generate_bmff_data_hashes(
+        asset_path: &Path,
+        alg: &str,
+        calc_hashes: bool,
+    ) -> Result<Vec<BmffHash>> {
+        use serde_bytes::ByteBuf;
+
+        // The spec has mandatory BMFF exclusion ranges for certain atoms.
+        // The function makes sure those are included.
+
+        let mut hashes: Vec<BmffHash> = Vec::new();
+
+        let mut dh = BmffHash::new("jumbf manifest", alg, None);
+        let exclusions = dh.exclusions_mut();
+
+        // jumbf exclusion
+        let mut uuid = ExclusionsMap::new("/uuid".to_owned());
+        let data = DataMap {
+            offset: 8,
+            value: vec![
+                216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+            ], // C2PA identifier
+        };
+        let data_vec = vec![data];
+        uuid.data = Some(data_vec);
+        exclusions.push(uuid);
+
+        // ftyp exclusion
+        let ftyp = ExclusionsMap::new("/ftyp".to_owned());
+        exclusions.push(ftyp);
+
+        // meta/iloc exclusion
+        let iloc = ExclusionsMap::new("/meta/iloc".to_owned());
+        exclusions.push(iloc);
+
+        // /mfra/tfra exclusion
+        let tfra = ExclusionsMap::new("/mfra/tfra".to_owned());
+        exclusions.push(tfra);
+
+        // /moov/trak/mdia/minf/stbl/stco exclusion
+        let mut stco = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/stco".to_owned());
+        let subset_stco = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_stco_vec = vec![subset_stco];
+        stco.subset = Some(subset_stco_vec);
+        exclusions.push(stco);
+
+        // /moov/trak/mdia/minf/stbl/co64 exclusion
+        let mut co64 = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/co64".to_owned());
+        let subset_co64 = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_co64_vec = vec![subset_co64];
+        co64.subset = Some(subset_co64_vec);
+        exclusions.push(co64);
+
+        // /moof/traf/tfhd exclusion
+        let mut tfhd = ExclusionsMap::new("/moof/traf/tfhd".to_owned());
+        let subset_tfhd = SubsetMap {
+            offset: 16,
+            length: 8,
+        };
+        let subset_tfhd_vec = vec![subset_tfhd];
+        tfhd.subset = Some(subset_tfhd_vec);
+        tfhd.flags = Some(ByteBuf::from([1, 0, 0]));
+        exclusions.push(tfhd);
+
+        // /moof/traf/trun exclusion
+        let mut trun = ExclusionsMap::new("/moof/traf/trun".to_owned());
+        let subset_trun = SubsetMap {
+            offset: 16,
+            length: 4,
+        };
+        let subset_trun_vec = vec![subset_trun];
+        trun.subset = Some(subset_trun_vec);
+        trun.flags = Some(ByteBuf::from([1, 0, 0]));
+        exclusions.push(trun);
+
+        if calc_hashes {
+            dh.gen_hash(asset_path)?;
+        } else {
+            match alg {
+                "sha256" => dh.set_hash([0u8; 32].to_vec()),
+                "sha384" => dh.set_hash([0u8; 48].to_vec()),
+                "sha512" => dh.set_hash([0u8; 64].to_vec()),
+                _ => return Err(Error::UnsupportedType),
+            }
+        }
+        hashes.push(dh);
+
+        Ok(hashes)
+    }
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
     #[cfg(feature = "file_io")]
     pub fn save_to_asset(
@@ -1319,66 +1418,101 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // clone the source to working copy if requested
         get_supported_file_extension(asset_path).ok_or(Error::UnsupportedType)?; // verify extensions
-        let _ext = get_supported_file_extension(output_path).ok_or(Error::UnsupportedType)?;
+        let ext = get_supported_file_extension(output_path).ok_or(Error::UnsupportedType)?;
         if asset_path != output_path {
             fs::copy(&asset_path, &output_path).map_err(Error::IoError)?;
         }
-
-        // get the provenance claim
-        let pp = self.provenance_path();
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         //  update file following the steps outlined in CAI spec
 
         // 1) Add DC provenance XMP
         // update XMP info & add xmp hash to provenance claim
-        if let Some(provenance) = pp {
+        #[cfg(feature = "xmp_write")]
+        if let Some(provenance) = self.provenance_path() {
             embedded_xmp::add_manifest_uri_to_file(output_path, &provenance)
                 .map_err(|_err| Error::XmpWriteError)?;
         } else {
             return Err(Error::XmpWriteError);
         }
 
-        // 2) Get hash ranges if needed, do not generate for update manifests
-        let mut hash_ranges = object_locations(output_path)?;
-        let hashes: Vec<DataHash> = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes(output_path, pc.alg(), &mut hash_ranges, false)?
-        };
+        let is_bmff = is_bmff_format(&ext);
 
-        // add the placeholder data hashes to provenance claim so that the required space is reserved
-        for mut hash in hashes {
-            // add padding to account for possible cbor expansion of final DataHash
-            let padding: Vec<u8> = vec![0x0; 10];
-            hash.add_padding(padding);
+        let mut data;
+        let jumbf_size;
 
-            pc.add_assertion(&hash)?;
-        }
-
-        // 3) Generate in memory CAI jumbf block
-        // and write preliminary jumbf store to file
-        // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
-        let mut data = self.to_jumbf_internal(reserve_size)?;
-        let jumbf_size = data.len();
-        save_jumbf_to_file(&data, output_path, Some(output_path))?;
-
-        // 4)  determine final object locations and patch the asset hashes with correct offset
-        // replace the source with correct asset hashes so that the claim hash will be correct
+        // get the provenance claim
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        // get the final hash ranges, but not for update manifests
-        let mut new_hash_ranges = object_locations(output_path)?;
-        let updated_hashes = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes(output_path, pc.alg(), &mut new_hash_ranges, true)?
-        };
+        if is_bmff {
+            // 2) Get hash ranges if needed, do not generate for update manifests
+            if !pc.update_manifest() {
+                let bmff_hashes = Store::generate_bmff_data_hashes(output_path, pc.alg(), false)?;
+                for hash in bmff_hashes {
+                    pc.add_assertion(&hash)?;
+                }
+            }
 
-        // patch existing claim hash with updated data
-        for mut hash in updated_hashes {
-            hash.gen_hash(output_path)?; // generate
-            pc.update_data_hash(hash)?;
+            // 3) Generate in memory CAI jumbf block
+            // and write preliminary jumbf store to file
+            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+            save_jumbf_to_file(&data, output_path, Some(output_path))?;
+
+            // generate actual hash values
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+
+            if !pc.update_manifest() {
+                let bmff_hashes = pc.bmff_hash_assertions();
+
+                if !bmff_hashes.is_empty() {
+                    let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                    bmff_hash.gen_hash(output_path)?;
+                    pc.update_bmff_hash(bmff_hash)?;
+                }
+            }
+        } else {
+            // 2) Get hash ranges if needed, do not generate for update manifests
+            let mut hash_ranges = object_locations(output_path)?;
+            let hashes: Vec<DataHash> = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes(output_path, pc.alg(), &mut hash_ranges, false)?
+            };
+
+            // add the placeholder data hashes to provenance claim so that the required space is reserved
+            for mut hash in hashes {
+                // add padding to account for possible cbor expansion of final DataHash
+                let padding: Vec<u8> = vec![0x0; 10];
+                hash.add_padding(padding);
+
+                pc.add_assertion(&hash)?;
+            }
+
+            // 3) Generate in memory CAI jumbf block
+            // and write preliminary jumbf store to file
+            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+            save_jumbf_to_file(&data, output_path, Some(output_path))?;
+
+            // 4)  determine final object locations and patch the asset hashes with correct offset
+            // replace the source with correct asset hashes so that the claim hash will be correct
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+            // get the final hash ranges, but not for update manifests
+            let mut new_hash_ranges = object_locations(output_path)?;
+            let updated_hashes = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes(output_path, pc.alg(), &mut new_hash_ranges, true)?
+            };
+
+            // patch existing claim hash with updated data
+            for mut hash in updated_hashes {
+                hash.gen_hash(output_path)?; // generate
+                pc.update_data_hash(hash)?;
+            }
         }
 
         // regenerate the jumbf because the cbor changed
@@ -2441,6 +2575,21 @@ pub mod tests {
         let ap = fixture_path("CA.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+        println!("store = {}", store);
+    }
+
+    #[test]
+    #[cfg(feature = "bmff")]
+    fn test_bmff() {
+        let ap = fixture_path("video1.mp4");
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+
+        let errors = report_split_errors(report.get_log_mut());
+
+        println!("Error report for {}: {:?}", ap.as_display(), errors);
+        assert!(errors.is_empty());
+
         println!("store = {}", store);
     }
 }

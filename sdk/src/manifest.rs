@@ -94,8 +94,30 @@ impl Manifest {
         self.claim_generator.as_str()
     }
 
+    /// Returns a MIME content_type for the asset associated with this manifest.
+    pub fn format(&self) -> &str {
+        self.asset().map(|asset| asset.format()).unwrap_or_default()
+    }
+
+    /// Returns the instance identifier.
+    pub fn instance_id(&self) -> &str {
+        self.asset()
+            .map(|asset| asset.instance_id())
+            .unwrap_or_default()
+    }
+
+    /// Returns a user-displayable title for this manifest
+    pub fn title(&self) -> Option<&str> {
+        self.asset().map(|asset| asset.title())
+    }
+
+    /// Returns a tuple with thumbnail format and image bytes or `None`.
+    pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
+        self.asset().and_then(|asset| asset.thumbnail())
+    }
+
     /// Returns an [Ingredient] reference to the asset associated with this manifest
-    pub fn asset(&self) -> Option<&Ingredient> {
+    pub(crate) fn asset(&self) -> Option<&Ingredient> {
         self.asset.as_ref()
     }
 
@@ -727,6 +749,10 @@ pub(crate) mod tests {
         let _store = manifest
             .embed(&source_path, &test_output, &signer)
             .expect("embed");
+
+        assert_eq!(manifest.format(), "image/jpeg");
+        assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
+        assert!(manifest.thumbnail().is_some());
 
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");
         assert!(ingredient.active_manifest().is_some());

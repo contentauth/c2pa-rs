@@ -16,7 +16,6 @@
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
-    cbor_types::BytesT,
     claim::Claim,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -30,6 +29,12 @@ use std::ops::Deref;
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+
+/// Function that is used by serde to determine whether or not we should serialize
+/// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
+pub fn skip_serializing_thumbnails(_value: &Option<(String, Vec<u8>)>) -> bool {
+    !cfg!(feature = "serialize_thumbnails")
+}
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -56,8 +61,8 @@ pub struct Ingredient {
     /// A thumbnail image capturing the visual state at the time of import.
     ///
     /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
-    #[serde(skip_serializing)]
-    thumbnail: Option<(String, BytesT)>,
+    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
+    thumbnail: Option<(String, Vec<u8>)>,
 
     /// An optional hash of the asset to prevent duplicates.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,7 +205,7 @@ impl Ingredient {
         self.manifest_data.as_deref()
     }
 
-    /// Sets a human-readable title for this manifest.
+    /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
         self
@@ -236,7 +241,7 @@ impl Ingredient {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format.into(), BytesT(thumbnail)));
+        self.thumbnail = Some((format.into(), thumbnail));
         self
     }
 

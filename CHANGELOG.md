@@ -6,6 +6,30 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.6.0
+_28 June 2022_
+
+* (MINOR) Mark as minor version for BMFF support
+* Initial BMFF support ([#39](https://github.com/contentauth/c2pa-rs/pull/39))
+
+## 0.5.2
+_23 June 2022_
+
+* Return assertion instance values starting at `1` instead of `2` ([#60](https://github.com/contentauth/c2pa-rs/pull/60))
+
+## 0.5.1
+_22 June 2022_
+
+* Update thumbnail to be `Vec<u8>`, add serialization feature ([#59](https://github.com/contentauth/c2pa-rs/pull/59))
+* Adds xmp_write feature to make xmp-toolkit inclusion optional ([#53](https://github.com/contentauth/c2pa-rs/pull/53))
+
+## 0.5.0
+_20 June 2022_
+
+* (MINOR) Add asset attribute getters for manifest ([#56](https://github.com/contentauth/c2pa-rs/pull/56))
+* (MINOR) Remove temp_signer from sdk; update docs and examples to use get_signer_from_files ([#52](https://github.com/contentauth/c2pa-rs/pull/52))
+* (MINOR) Clean up client example; update actions and schema ([#51](https://github.com/contentauth/c2pa-rs/pull/51))
+
 ## 0.4.2
 _16 June 2022_
 
