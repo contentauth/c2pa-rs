@@ -6,6 +6,15 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.2.0
+_28 June 2022_
+
+* (MINOR) Upgrade to c2pa Rust SDK version 0.6.0 ([contentauth/c2patool#24](https://github.com/contentauth/c2patool/pull/24))
+* Fix an error in the README documentation ([contentauth/c2patool#23](https://github.com/contentauth/c2patool/pull/23))
+* Display help if there are no arguments on the command line ([contentauth/c2patool#21](https://github.com/contentauth/c2patool/pull/21))
+* Bump anyhow from 1.0.57 to 1.0.58 ([contentauth/c2patool#17](https://github.com/contentauth/c2patool/pull/17))
+* Updates examples to use ta_url instead of ta ([contentauth/c2patool#15](https://github.com/contentauth/c2patool/pull/15))
+
 ## 0.1.3
 _17 June 2022_
 
