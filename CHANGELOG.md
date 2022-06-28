@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.6.0
+_28 June 2022_
+
+* (MINOR) Mark as minor version for BMFF support
+* Initial BMFF support ([#39](https://github.com/contentauth/c2pa-rs/pull/39))
+
 ## 0.5.2
 _23 June 2022_
 
