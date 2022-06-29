@@ -1649,6 +1649,10 @@ impl Store {
                 let err = match e {
                     Error::PrereleaseError => Error::PrereleaseError,
                     Error::JumbfNotFound => Error::JumbfNotFound,
+                    Error::IoError(_) => {
+                        Error::FileNotFound(asset_path.to_string_lossy().to_string())
+                    }
+                    Error::UnsupportedType => Error::UnsupportedType,
                     _ => Error::LogStop,
                 };
                 let log_item = log_item!("asset", "error loading file", "load_from_asset").error(e);
@@ -1676,6 +1680,7 @@ impl Store {
                 let err = match e {
                     Error::PrereleaseError => Error::PrereleaseError,
                     Error::JumbfNotFound => Error::JumbfNotFound,
+                    Error::UnsupportedType => Error::UnsupportedType,
                     _ => Error::LogStop,
                 };
                 let log_item =
@@ -2273,11 +2278,10 @@ pub mod tests {
 
     #[test]
     fn test_unsupported_type() {
-        // test bad xmp
         let ap = fixture_path("Purple Square.psd");
         let mut report = DetailedStatusTracker::new();
-        let _r = Store::load_from_asset(&ap, true, &mut report);
-
+        let result = Store::load_from_asset(&ap, true, &mut report);
+        assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.as_display(), report);
         assert!(!report.get_log().is_empty());
 
