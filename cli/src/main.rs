@@ -13,13 +13,13 @@
 #![doc = include_str!("../README.md")]
 /// Tool to display and create C2PA manifests
 ///
-/// A file path to a jpeg must be provided
+/// A file path to an asset must be provided
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a claim def json file is specified, the claim will be added to any existing claims
 /// If the claim def includes an asset_path, the claims in that file will be used instead
 ///
 ///
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
 
 use std::{
@@ -83,7 +83,7 @@ fn handle_config(
     parent: Option<&Path>,
     output_opt: Option<&Path>,
     is_detailed: bool,
-) -> Result<()> {
+) -> Result<String> {
     let config: Config = serde_json::from_str(json)?;
 
     let base_path = match &config.base_path {
@@ -93,10 +93,13 @@ fn handle_config(
 
     let signer = get_c2pa_signer(&config, &base_path)?;
 
-    let claim_generator = match config.claim_generator {
-        Some(claim_generator) => claim_generator,
-        None => format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
-    };
+    // construct a claim generator for this tool
+    let mut claim_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+
+    // if the config has a claim_generator, add it as the first entry
+    if let Some(generator) = config.claim_generator {
+        claim_generator = format!("{} {}", generator, claim_generator);
+    }
 
     let mut manifest = Manifest::new(claim_generator);
 
@@ -110,7 +113,7 @@ fn handle_config(
         }
     }
 
-    // if claim_def has a parent, set the parent asset
+    // if the config has a parent, set the parent asset
     let parent = match parent {
         Some(parent) => Some(PathBuf::from(parent)),
         None => config
@@ -126,7 +129,7 @@ fn handle_config(
         manifest.set_parent(Ingredient::from_file(parent)?)?;
     }
 
-    // add all the ingredients (claim def ingredients do not include the parent)
+    // add all the ingredients (config ingredients do not include the parent)
     if let Some(ingredients) = config.ingredients.as_ref() {
         for ingredient in ingredients {
             let path = fix_relative_path(ingredient, &base_path);
@@ -182,6 +185,9 @@ fn handle_config(
         let source_path = match output.exists() {
             true => output,
             false => {
+                let mut output_dir = PathBuf::from(output);
+                output_dir.pop();
+                std::fs::create_dir_all(&output_dir)?;
                 parent.as_deref().filter(|p| p.exists()).or_else(||{
                     eprintln!("A valid parent path or existing output file is required for claim embedding");
                     exit(1);
@@ -209,43 +215,29 @@ fn handle_config(
             .or_else(|_| std::fs::copy(&temp_path, &output).and(Ok(())))
             .map_err(Error::IoError)?;
 
-        // print a report on the output file
-        report_from_path(&output, is_detailed);
-
-        Ok(())
+        // generate a report on the output file
+        report_from_path(&output, is_detailed)
+    } else if is_detailed {
+        Err(anyhow!("detailed report not supported for preview"))
     } else {
-        if is_detailed {
-            eprintln!("detailed report not supported for preview")
-        } else {
-            println!("{}", ManifestStore::from_manifest(&manifest)?);
-        }
-        Ok(())
+        Ok(ManifestStore::from_manifest(&manifest)?.to_string())
     }
 }
 
 // prints the requested kind of report or exits with error
-fn report_from_path<P: AsRef<Path>>(path: &P, is_detailed: bool) {
+fn report_from_path<P: AsRef<Path>>(path: &P, is_detailed: bool) -> Result<String> {
     let report = match is_detailed {
         true => ManifestStoreReport::from_file(path).map(|r| r.to_string()),
         false => ManifestStore::from_file(path).map(|r| r.to_string()),
     };
-    match report {
-        Ok(report) => {
-            println!("{}", report);
-        }
-        Err(Error::JumbfNotFound) | Err(Error::LogStop) => {
-            eprintln!("No claim found");
-            exit(1)
-        }
-        Err(Error::PrereleaseError) => {
-            eprintln!("Prerelease claim found");
-            exit(1)
-        }
-        Err(e) => {
-            eprintln!("Error Loading {:?} {:?}", &path.as_ref(), e);
-            exit(1);
-        }
-    }
+    // Map some errors to strings we expect
+    report.map_err(|e| match e {
+        Error::JumbfNotFound => anyhow!("No claim found"),
+        Error::FileNotFound(name) => anyhow!("File not found: {}", name),
+        Error::UnsupportedType => anyhow!("Unsupported file type"),
+        Error::PrereleaseError => anyhow!("Prerelease claim found"),
+        _ => e.into(),
+    })
 }
 
 fn main() -> Result<()> {
@@ -261,39 +253,51 @@ fn main() -> Result<()> {
     let mut base_dir = PathBuf::from(".");
 
     if let Some(path) = args.path.clone() {
-        if !path.exists() {
-            eprintln!("File not found {:?}", path);
-            exit(1);
-        }
-
         let extension = path.extension().and_then(|p| p.to_str()).unwrap_or("");
-        // path can be a jpeg source file or a json working claim description
-        match extension {
-            "jpg" | "jpeg" | "png" | "c2pa" => {
-                report_from_path(&path, args.detailed);
-            }
-            "json" => {
-                // file paths in Config are relative to the json file
-                base_dir = PathBuf::from(&path);
-                base_dir.pop();
+        if extension == "json" {
+            // file paths in Config are relative to the json file
+            base_dir = PathBuf::from(&path);
+            base_dir.pop();
 
-                config = Some(fs::read_to_string(&path)?);
-            }
-            _ => {
-                eprintln!("Unsupported file type {}", extension);
-                exit(1);
-            }
-        };
+            config = Some(fs::read_to_string(&path)?);
+        } else {
+            println!("{}", report_from_path(&path, args.detailed)?);
+        }
     }
 
     if let Some(json) = config {
-        handle_config(
-            &json,
-            &base_dir,
-            args.parent.as_deref(),
-            args.output.as_deref(),
-            args.detailed,
-        )?;
+        println!(
+            "{}",
+            handle_config(
+                &json,
+                &base_dir,
+                args.parent.as_deref(),
+                args.output.as_deref(),
+                args.detailed,
+            )?
+        );
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    const CONFIG: &str = r#"{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}"#;
+
+    #[test]
+    fn test_handle_config() {
+        //let config = Some(fs::read_to_string("sample/test.json").expect("read_json"));
+        let report = handle_config(
+            CONFIG,
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            Some(&PathBuf::from("tests/fixtures/earth_apollo17.jpg")),
+            Some(&PathBuf::from("target/tmp/unit_out.jpg")),
+            false,
+        )
+        .expect("handle_config");
+        assert!(report.contains("my_key"));
+    }
 }

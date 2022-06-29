@@ -37,7 +37,7 @@ fn temp_path(name: &str) -> PathBuf {
 #[test]
 fn tool_not_found() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("c2patool")?;
-    cmd.arg("test/file/not.found");
+    cmd.arg("test/file/notfound.jpg");
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("File not found"));

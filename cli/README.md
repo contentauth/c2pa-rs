@@ -8,9 +8,18 @@ c2patool is a command line tool for working with C2PA [manifests](https://c2pa.o
 - Adding a C2PA manifest to [supported file formats](#supported-file-formats)
 
 ## Supported file formats
-
-- `image/jpeg`
-- `image/png`
+| MIME type         | extensions  | read only |
+| ----------------- | ----------- | --------- |
+| `image/jpeg`      | `jpg, jpeg` |           |
+| `image/png`       | `png`       |           |
+| `image/avif`      | `avif`      |    X      |
+| `image/heic`      | `heic`      |    X      |
+| `image/heif`      | `heif`      |    X      |
+| `video/mp4`       | `mp4`       |           |
+| `application/mp4` | `mp4`       |           |
+| `audio/mp4`       | `m4a`       |           |
+| `application/c2pa`| `c2pa`      |    X      |
+|                   | `mov`       |           |
 
 ## Installation
 
