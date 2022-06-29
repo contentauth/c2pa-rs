@@ -33,8 +33,6 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
-const GH_UA: &str = "Sec-CH-UA";
-
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Manifest {
@@ -494,10 +492,6 @@ impl Manifest {
         for ingredient in &self.ingredients {
             ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
         }
-
-        // add a claim_generator_hint for the version of the library used to create the claim
-        let lib_hint = format!("\"{}\";v=\"{}\"", crate::NAME, crate::VERSION);
-        claim.add_claim_generator_hint(GH_UA, Value::from(lib_hint));
 
         let salt = DefaultSalt::default();
 

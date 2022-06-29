@@ -8,7 +8,7 @@ rust-version = "1.58.0"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { path="../sdk", features = ["file_io"] }
+c2pa = { path="../sdk", features = ["file_io", "xmp_write"] }
 env_logger = "0.9"
 log = "0.4" 
 image = "0.23.10"
