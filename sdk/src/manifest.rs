@@ -990,6 +990,13 @@ pub(crate) mod tests {
         Manifest, Result,
     };
 
+    #[cfg(not(feature = "with_rustls"))]
+    use crate::openssl::temp_signer::get_temp_signer;
+    #[cfg(feature = "with_rustls")]
+    use crate::rustls::temp_signer::get_temp_signer;
+
+    use tempfile::tempdir;
+
     // example of random data structure as an assertion
     #[derive(serde::Serialize)]
     struct MyStruct {

@@ -248,6 +248,22 @@ pub enum Error {
     OpenSslError(#[from] openssl::error::ErrorStack),
 
     #[error(transparent)]
+    #[cfg(feature = "file_io")]
+    RustlsError(#[from] rustls::Error),
+
+    #[cfg(feature = "file_io")]
+    #[error("could not choose signature scheme")]
+    RustlsInvalidSignatureSchemeError,
+
+    #[cfg(feature = "file_io")]
+    #[error("could not sign")]
+    RustlsCouldNotSignError,
+
+    #[cfg(feature = "file_io")]
+    #[error("no such algorithm")]
+    RustlsUnknownAlgorithmError,
+
+    #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     #[error("prerelease content detected")]

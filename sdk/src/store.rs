@@ -305,7 +305,7 @@ impl Store {
     }
 
     /// Returns an Assertion referenced by JUMBF URI.  The URI should be absolute and include
-    /// the desired Claim in the path. If you need to specify the Claim for this URI use  
+    /// the desired Claim in the path. If you need to specify the Claim for this URI use
     /// get_assertion_from_uri_and_claim.
     /// uri - The JUMBF URI for desired Assertion.
     pub fn get_assertion_from_uri(&self, uri: &str) -> Option<&Assertion> {
@@ -1265,7 +1265,7 @@ impl Store {
     /// store: Store to validate
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     pub async fn verify_store_async(
         store: &Store,
         asset_bytes: &[u8],
@@ -1296,7 +1296,7 @@ impl Store {
     /// store: Store to validate
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
-    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     pub fn verify_store(
         store: &Store,
         asset_data: &ClaimAssetData<'_>,
@@ -2015,7 +2015,7 @@ impl Store {
 
     /// Verify Store from an existing asset
     /// asset_path: path to input asset
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[cfg(feature = "file_io")]
     pub fn verify_from_path(
         &mut self,
@@ -2191,7 +2191,7 @@ impl Store {
     /// Load Store from claims in an existing asset
     /// asset_path: path to input asset
     /// verify: determines whether to verify the contents of the provenance claim.  Must be set true to use validation_log
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[cfg(feature = "file_io")]
     pub fn load_from_asset(
         asset_path: &Path,
@@ -2395,20 +2395,18 @@ pub mod tests {
     use tempfile::tempdir;
     use twoway::find_bytes;
 
-    use super::*;
+    #[cfg(not(feature = "with_rustls"))]
+    use crate::openssl::temp_signer::get_temp_signer;
+    #[cfg(feature = "with_rustls")]
+    use crate::rustls::temp_signer::get_temp_signer;
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},
         jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
         status_tracker::*,
-        utils::{
-            patch::patch_file,
-            test::{
-                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
-            },
-        },
-        SigningAlg,
+        utils::test::{create_test_claim, fixture_path, temp_dir_path, temp_fixture_path},
     };
+    use crate::{utils::patch::patch_file, SigningAlg};
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
         let uuid_str = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -2673,7 +2671,12 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+        #[cfg(not(feature = "with_rustls"))]
+        use crate::openssl::RsaSigner;
+        #[cfg(feature = "with_rustls")]
+        use crate::rustls::RustlsSigner;
+        use crate::signer::ConfigurableSigner;
+        use crate::signer::SigningAlg;
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2687,7 +2690,7 @@ pub mod tests {
         let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
         let pkey_path = fixture_path("rsa-pss256-expired.pem");
         let signer =
-            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
+            RustlsSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
 
         store.commit_claim(claim).unwrap();
 

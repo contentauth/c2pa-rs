@@ -79,6 +79,7 @@ mod tests {
     use crate::{openssl::temp_signer, utils::test::fixture_path, Signer, SigningAlg};
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es256() {
         let cert_dir = fixture_path("certs");
 
@@ -102,6 +103,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es384() {
         let cert_dir = fixture_path("certs");
 
@@ -125,6 +127,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es512() {
         let cert_dir = fixture_path("certs");
 
@@ -169,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn bad_data_es256() {
         let cert_dir = fixture_path("certs");
 

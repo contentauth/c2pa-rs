@@ -11,22 +11,30 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(dead_code)]
+
 mod rsa_signer;
+#[allow(unused_imports)]
 pub(crate) use rsa_signer::RsaSigner;
 
 mod rsa_validator;
+#[allow(unused_imports)]
 pub(crate) use rsa_validator::RsaValidator;
 
 mod ec_signer;
+#[allow(unused_imports)]
 pub(crate) use ec_signer::EcSigner;
 
 mod ec_validator;
+#[allow(unused_imports)]
 pub(crate) use ec_validator::EcValidator;
 
 mod ed_signer;
+#[allow(unused_imports)]
 pub(crate) use ed_signer::EdSigner;
 
 mod ed_validator;
+#[allow(unused_imports)]
 pub(crate) use ed_validator::EdValidator;
 
 #[cfg(test)]

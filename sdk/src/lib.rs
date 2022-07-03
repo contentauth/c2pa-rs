@@ -117,6 +117,20 @@ pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "sign")]
 mod openssl;
+#[cfg(feature = "file_io")]
+mod rustls;
+
+#[cfg(all(feature = "file_io", not(feature = "with_rustls")))]
+pub use crate::openssl::{
+    signer::{get_signer, get_signer_from_files},
+    temp_signer::{get_temp_signer, get_temp_signer_by_alg},
+};
+
+#[cfg(all(feature = "file_io", feature = "with_rustls"))]
+pub use crate::rustls::{
+    signer::{get_signer, get_signer_from_files},
+    temp_signer::{get_temp_signer, get_temp_signer_by_alg},
+};
 
 #[cfg(feature = "sign")]
 mod signer;

@@ -230,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn es512_signer() {
         let cert_dir = fixture_path("certs");
 

@@ -15,9 +15,14 @@ use chrono::{DateTime, Utc};
 
 #[cfg(feature = "sign")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
+
+#[cfg(all(feature = "file_io"))]
+use crate::rustls;
 use crate::{Result, SigningAlg};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Default)]
+
 pub struct ValidationInfo {
     pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
@@ -49,23 +54,27 @@ impl CoseValidator for DummyValidator {
 // • PS512 (RSASSA-PSS using SHA-512 and MGF1 with SHA-512)
 // • RS256	RSASSA-PKCS1-v1_5 using SHA-256
 // • RS384	RSASSA-PKCS1-v1_5 using SHA-384
-// • RS512	RSASSA-PKCS1-v1_5 using SHA-512
+// • RS512	RSASSA-PKCS1-v1_5 using SHA-512 // validation not supported by Ring
 // • ED25519 Edwards Curve ED25519
 
-/// return validator for supported C2PA  algorithms
-#[cfg(feature = "openssl")]
+/// return validator for supported C2PA algorithms
+#[cfg(feature = "file_io")]
 pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
-    match alg {
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-            Box::new(EcValidator::new(alg))
+    if cfg!(feature = "with_rustls") {
+        Some(Box::new(rustls::Validator::new(alg)))
+    } else {
+        match alg {
+            SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+                Box::new(EcValidator::new(alg))
+            }
+            SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
+                Box::new(RsaValidator::new(alg))
+            }
+            // "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
+            // "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
+            // "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
+            SigningAlg::Ed25519 => Box::new(EdValidator::new(alg)),
         }
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
-            Box::new(RsaValidator::new(alg))
-        }
-        // "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
-        // "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
-        // "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
-        SigningAlg::Ed25519 => Box::new(EdValidator::new(alg)),
     }
 }
 
