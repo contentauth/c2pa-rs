@@ -13,8 +13,9 @@
 
 #[cfg(feature = "file_io")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
+#[cfg(all(feature = "file_io"))]
+use crate::rustls;
 use crate::Result;
-
 use chrono::{DateTime, Utc};
 
 #[derive(Debug)]
@@ -59,24 +60,28 @@ impl CoseValidator for DummyValidator {
 // • PS512 (RSASSA-PSS using SHA-512 and MGF1 with SHA-512)
 // • RS256	RSASSA-PKCS1-v1_5 using SHA-256
 // • RS384	RSASSA-PKCS1-v1_5 using SHA-384
-// • RS512	RSASSA-PKCS1-v1_5 using SHA-512
+// • RS512	RSASSA-PKCS1-v1_5 using SHA-512 // validation not supported by Ring
 // • ED25519 Edwards Curve ED25519
 
-/// return validator for supported C2PA  algorthms
+/// return validator for supported C2PA algorithms
 #[cfg(feature = "file_io")]
 pub(crate) fn get_validator(alg: &str) -> Option<Box<dyn CoseValidator>> {
-    match alg.to_lowercase().as_str() {
-        "es256" => Some(Box::new(EcValidator::new("es256"))),
-        "es384" => Some(Box::new(EcValidator::new("es384"))),
-        "es512" => Some(Box::new(EcValidator::new("es512"))),
-        "ps256" => Some(Box::new(RsaValidator::new("ps256"))),
-        "ps384" => Some(Box::new(RsaValidator::new("ps384"))),
-        "ps512" => Some(Box::new(RsaValidator::new("ps512"))),
-        "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
-        "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
-        "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
-        "ed25519" => Some(Box::new(EdValidator::new("ed25519"))),
-        _ => None,
+    if cfg!(feature = "with_rustls") {
+        Some(Box::new(rustls::Validator::new(alg)))
+    } else {
+        match alg.to_lowercase().as_str() {
+            "es256" => Some(Box::new(EcValidator::new("es256"))),
+            "es384" => Some(Box::new(EcValidator::new("es384"))),
+            "es512" => Some(Box::new(EcValidator::new("es512"))),
+            "ps256" => Some(Box::new(RsaValidator::new("ps256"))),
+            "ps384" => Some(Box::new(RsaValidator::new("ps384"))),
+            "ps512" => Some(Box::new(RsaValidator::new("ps512"))),
+            "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
+            "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
+            "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
+            "ed25519" => Some(Box::new(EdValidator::new("ed25519"))),
+            _ => None,
+        }
     }
 }
 

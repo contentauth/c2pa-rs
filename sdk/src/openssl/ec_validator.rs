@@ -89,6 +89,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es256() {
         let temp_dir = tempdir().unwrap();
 
@@ -112,6 +113,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es384() {
         let temp_dir = tempdir().unwrap();
 
@@ -135,6 +137,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn sign_and_validate_es512() {
         let temp_dir = tempdir().unwrap();
 
@@ -179,6 +182,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn bad_data_es256() {
         let temp_dir = tempdir().unwrap();
 

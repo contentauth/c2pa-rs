@@ -243,6 +243,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "with_rustls"), ignore)]
     fn es512_signer() {
         let temp_dir = tempdir().unwrap();
 

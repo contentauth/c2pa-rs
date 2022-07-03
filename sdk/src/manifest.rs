@@ -570,10 +570,14 @@ pub(crate) mod tests {
 
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        openssl::temp_signer::get_temp_signer,
         status_tracker::{DetailedStatusTracker, StatusTracker},
         utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG, TEST_VC},
     };
+
+    #[cfg(not(feature = "with_rustls"))]
+    use crate::openssl::temp_signer::get_temp_signer;
+    #[cfg(feature = "with_rustls")]
+    use crate::rustls::temp_signer::get_temp_signer;
 
     use tempfile::tempdir;
 

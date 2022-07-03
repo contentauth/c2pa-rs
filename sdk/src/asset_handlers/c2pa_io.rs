@@ -66,11 +66,15 @@ pub mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        openssl::temp_signer::get_temp_signer,
         status_tracker::OneShotStatusTracker,
         store::Store,
         utils::test::{fixture_path, temp_dir_path},
     };
+
+    #[cfg(not(feature = "with_rustls"))]
+    use crate::openssl::temp_signer::get_temp_signer;
+    #[cfg(feature = "with_rustls")]
+    use crate::rustls::temp_signer::get_temp_signer;
 
     #[test]
     fn c2pa_io_parse() {
