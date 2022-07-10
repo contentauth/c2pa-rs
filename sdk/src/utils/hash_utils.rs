@@ -237,7 +237,7 @@ pub fn hash_asset_by_alg(
         let start = r.start();
         let end = r.end();
         let mut chunk_left = end - start + 1;
-     
+
         // move to start of range
         data.seek(SeekFrom::Start(*start))?;
 

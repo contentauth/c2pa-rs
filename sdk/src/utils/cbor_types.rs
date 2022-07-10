@@ -105,7 +105,7 @@ impl<'de> Deserialize<'de> for BytesT {
     }
 }
 
-impl<'a> AsRef<Vec<u8>> for BytesT {
+impl AsRef<Vec<u8>> for BytesT {
     fn as_ref(&self) -> &Vec<u8> {
         &self.0
     }
