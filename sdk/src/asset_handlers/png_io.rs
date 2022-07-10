@@ -78,8 +78,7 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
             .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
 
         // read crc
-        let _crc = f
-            .read_exact(&mut buf4)
+        f.read_exact(&mut buf4)
             .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
 
         let chunk_name = String::from_utf8(name.to_vec())

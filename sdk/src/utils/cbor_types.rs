@@ -42,7 +42,7 @@ impl<'de> Deserialize<'de> for DateT {
     }
 }
 
-impl<'a> AsRef<str> for DateT {
+impl AsRef<str> for DateT {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -74,7 +74,7 @@ impl<'de> Deserialize<'de> for UriT {
     }
 }
 
-impl<'a> AsRef<str> for UriT {
+impl AsRef<str> for UriT {
     fn as_ref(&self) -> &str {
         &self.0
     }
