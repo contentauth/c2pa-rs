@@ -14,7 +14,7 @@
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, Ingredient, Relationship},
-    claim::{Claim, ClaimAssertion},
+    claim::{Claim, ClaimAssertion, ClaimAssetData},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{self, boxes::*},
@@ -980,10 +980,10 @@ impl Store {
     }
 
     // wake the ingredients and validate
-    fn ingredient_checks(
+    fn ingredient_checks<'a>(
         store: &Store,
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
@@ -1026,7 +1026,7 @@ impl Store {
 
                     // make sure
                     // verify the ingredient claim
-                    Claim::verify_claim(ingredient, asset_bytes, false, validation_log)?;
+                    Claim::verify_claim(ingredient, asset_data, false, validation_log)?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1181,18 +1181,18 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
-    pub fn verify_store(
+    pub fn verify_store<'a>(
         store: &Store,
         xmp_opt: Option<String>,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = Store::provenance_checks(store, xmp_opt, validation_log)?;
 
         // verify the provenance claim
-        Claim::verify_claim(claim, asset_bytes, true, validation_log)?;
+        Claim::verify_claim(claim, asset_data, true, validation_log)?;
 
-        Store::ingredient_checks(store, claim, asset_bytes, validation_log)?;
+        Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 
         Ok(())
     }
@@ -1549,17 +1549,38 @@ impl Store {
     /// asset_path: path to input asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
     #[cfg(feature = "file_io")]
-    pub fn verify_from_path(
+    pub fn verify_from_path<'a>(
         &mut self,
-        asset_path: &Path,
+        asset_path: &'a Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let ext = get_supported_file_extension(asset_path).ok_or(Error::UnsupportedType)?;
 
-        // load the bytes
-        let buf = fs::read(asset_path).map_err(crate::error::wrap_io_err)?;
+        let cai_loader = get_cailoader_handler(&ext).ok_or(Error::UnsupportedType)?;
 
-        self.verify_from_buffer(&buf, &ext, validation_log)
+        let mut asset_reader = fs::File::open(asset_path)?;
+
+        // read xmp if available
+        let xmp_opt = cai_loader.read_xmp(&mut asset_reader);
+
+        let xmp_copy = xmp_opt.clone();
+
+        Store::verify_store(
+            self,
+            xmp_opt,
+            &ClaimAssetData::PathData(asset_path),
+            validation_log,
+        )?;
+
+        // set the provenance if there is xmp otherwise it will default to active manifest
+        if let Some(xmp) = xmp_copy {
+            if let Some(xmp_provenance) = extract_provenance(&xmp) {
+                let claim_label = Store::manifest_label_from_path(&xmp_provenance);
+                self.set_provenance_path(&claim_label);
+            }
+        }
+
+        Ok(())
     }
 
     // verify from a buffer without file i/o
@@ -1580,7 +1601,12 @@ impl Store {
 
         let buf = buf_reader.into_inner();
 
-        Store::verify_store(self, xmp_opt, buf, validation_log)?;
+        Store::verify_store(
+            self,
+            xmp_opt,
+            &ClaimAssetData::ByteData(buf),
+            validation_log,
+        )?;
 
         // set the provenance if there is xmp otherwise it will default to active manifest
         if let Some(xmp) = xmp_copy {
@@ -1695,22 +1721,25 @@ impl Store {
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    pub fn load_from_memory(
+    pub fn load_from_memory<'a>(
         asset_type: &str,
-        data: &[u8],
+        data: &'a [u8],
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, data, validation_log).and_then(
             |(mut store, xmp_opt)| {
-                let buf_reader = Cursor::new(data);
-
                 // verify the store
                 if verify {
                     let xmp_copy = xmp_opt.clone();
 
                     // verify store and claims
-                    Store::verify_store(&store, xmp_opt, buf_reader.get_ref(), validation_log)?;
+                    Store::verify_store(
+                        &store,
+                        xmp_opt,
+                        &ClaimAssetData::ByteData(data),
+                        validation_log,
+                    )?;
 
                     // set the provenance if checks pass & has xmp, otherwise default to active manifest
                     if let Some(xmp) = xmp_copy {
