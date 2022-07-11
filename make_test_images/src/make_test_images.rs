@@ -164,10 +164,27 @@ impl MakeTestImages {
         // keep track of all actions here
         let mut actions = Actions::new();
 
-        let options = IngredientOptions {
-            make_hash: true,
-            title: None,
-        };
+        struct ImageOptions {
+            path: PathBuf,
+        }
+        impl ImageOptions {
+            fn new(path: &Path) -> Self {
+                ImageOptions {
+                    path: PathBuf::from(path),
+                }
+            }
+        }
+
+        impl IngredientOptions for ImageOptions {
+            fn hash(&self) -> Option<String> {
+                // read the file into a buffer for processing
+                if let Ok(buf) = std::fs::read(&self.path) {
+                    Some(blake3::hash(&buf).to_hex().as_str().to_owned())
+                } else {
+                    None
+                }
+            }
+        }
 
         let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         let mut manifest = Manifest::new(generator);
@@ -185,7 +202,8 @@ impl MakeTestImages {
             Some(src) => {
                 let src_path = &self.make_path(src);
 
-                let parent = Ingredient::from_file_with_options(src_path, &options)?;
+                let parent =
+                    Ingredient::from_file_with_options(src_path, &ImageOptions::new(src_path))?;
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
                         .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -246,7 +264,8 @@ impl MakeTestImages {
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
                 // create and add the ingredient
-                let ingredient = Ingredient::from_file_with_options(ing_path, &options)?;
+                let ingredient =
+                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new(ing_path))?;
                 actions =
                     actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
                         "identifier".to_owned(),

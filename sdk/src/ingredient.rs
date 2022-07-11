@@ -168,7 +168,7 @@ impl Ingredient {
             .map(|(format, image)| (format.as_str(), image.deref()))
     }
 
-    /// Returns an optional Blake3 hash made from the bits of the original image.
+    /// Returns an optional hash to uniquely identify this asset
     pub fn hash(&self) -> Option<&str> {
         self.hash.as_deref()
     }
@@ -336,8 +336,7 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     /// Creates an `Ingredient` from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let options = IngredientOptions::default();
-        Self::from_file_with_options(path.as_ref(), &options)
+        Self::from_file_with_options(path.as_ref(), &DefaultOptions {})
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
@@ -354,14 +353,14 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
-        options: &IngredientOptions,
+        options: &dyn IngredientOptions,
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
 
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
-    fn from_file_impl(path: &Path, options: &IngredientOptions) -> Result<Self> {
+    fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
         use crate::jumbf_io;
         use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
@@ -380,17 +379,14 @@ impl Ingredient {
         }
 
         // if options includes a title, use it
-        if let Some(opt_title) = options.title {
-            ingredient.title = opt_title.to_string();
+        if let Some(opt_title) = options.title() {
+            ingredient.title = opt_title;
         }
         // read the file into a buffer for processing
         let buf = std::fs::read(path).map_err(wrap_io_err)?;
 
-        // generate a hash so we know if the file has changed
-        // todo:: make hash algorithm an option fn taking stream
-        ingredient.hash = options
-            .make_hash
-            .then(|| blake3::hash(&buf).to_hex().as_str().to_owned());
+        // optionally generate a hash so we know if the file has changed
+        ingredient.hash = options.hash();
 
         let mut report = DetailedStatusTracker::new();
 
@@ -639,16 +635,22 @@ impl std::fmt::Display for Ingredient {
     }
 }
 
-#[derive(Default)]
-/// This defines optional actions when creating [`Ingredient`]s from files.
-pub struct IngredientOptions {
-    /// This allows setting the title for the ingredient. (If `None`, then the default behavior is to use the file's name.)
-    pub title: Option<&'static str>,
-
-    /// If `true`, then generate a Blake3 hash over the source asset and store it in the ingredient.
+/// This defines optional operations when creating [`Ingredient`] structs from files.
+pub trait IngredientOptions {
+    /// This allows setting the title for the ingredient.
+    /// If it returns `None`, then the default behavior is to use the file's name.
+    fn title(&self) -> Option<String> {
+        None
+    }
+    /// returns an optional hash value for the ingredient
     /// This can be used to test for duplicate ingredients or if a source file has changed.
-    pub make_hash: bool,
+    fn hash(&self) -> Option<String> {
+        None
+    }
 }
+
+pub struct DefaultOptions {}
+impl IngredientOptions for DefaultOptions {}
 
 #[cfg(test)]
 #[cfg(feature = "file_io")]
@@ -738,13 +740,18 @@ mod tests {
 
     #[test]
     fn test_jpg_options() {
-        let options = IngredientOptions {
-            make_hash: true,
-            title: Some("MyTitle"),
-        };
+        struct MyOptions {}
+        impl IngredientOptions for MyOptions {
+            fn title(&self) -> Option<String> {
+                Some("MyTitle".to_string())
+            }
+            fn hash(&self) -> Option<String> {
+                Some("1234568abcdef".to_string())
+            }
+        }
 
         let ap = fixture_path(MANIFEST_JPEG);
-        let ingredient = Ingredient::from_file_with_options(&ap, &options).expect("from_file");
+        let ingredient = Ingredient::from_file_with_options(&ap, &MyOptions {}).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
