@@ -233,7 +233,8 @@ impl Ingredient {
 
     /// Identifies this ingredient as the parent.
     ///
-    /// Only one ingredient can be flagged as a parent.
+    /// Only one ingredient should be flagged as a parent.
+    /// Use Manifest.set_parent to ensure this is the only parent ingredient
     pub fn set_is_parent(&mut self) -> &mut Self {
         self.is_parent = Some(true);
         self
@@ -248,6 +249,15 @@ impl Ingredient {
     /// Sets the hash value generated from the entire asset.
     pub fn set_hash<S: Into<String>>(&mut self, hash: S) -> &mut Self {
         self.hash = Some(hash.into());
+        self
+    }
+
+    /// Adds a [ValidationStatus] to this ingredient.
+    pub fn add_validation_status(&mut self, status: ValidationStatus) -> &mut Self {
+        match &mut self.validation_status {
+            None => self.validation_status = Some(vec![status]),
+            Some(validation_status) => validation_status.push(status),
+        }
         self
     }
 
@@ -651,14 +661,57 @@ pub struct IngredientOptions {
 }
 
 #[cfg(test)]
-#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
     use super::*;
 
-    use crate::{assertions::Metadata, utils::test::fixture_path};
+    use crate::assertions::Metadata;
+    #[test]
+    fn test_ingredient_api() {
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        ingredient
+            .set_document_id("document_id")
+            .set_title("title2")
+            .set_hash("hash")
+            .set_provenance("provenance")
+            .set_is_parent()
+            .set_metadata(Metadata::new())
+            .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
+            .set_active_manifest("active_manifest")
+            .set_manifest_data("data".as_bytes().to_vec())
+            .add_validation_status(ValidationStatus::new("status_code"));
+        assert_eq!(ingredient.title(), "title2");
+        assert_eq!(ingredient.format(), "format");
+        assert_eq!(ingredient.instance_id(), "instance_id");
+        assert_eq!(ingredient.document_id(), Some("document_id"));
+        assert_eq!(ingredient.provenance(), Some("provenance"));
+        assert_eq!(ingredient.hash(), Some("hash"));
+        assert!(ingredient.is_parent());
+        assert!(ingredient.metadata().is_some());
+        assert_eq!(
+            ingredient.thumbnail(),
+            Some(("format", "thumbnail".as_bytes()))
+        );
+        assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+        assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            "status_code"
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "file_io")]
+mod tests_file_io {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    use crate::utils::test::fixture_path;
 
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
@@ -679,34 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ingredient_api() {
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
-        ingredient
-            .set_document_id("document_id")
-            .set_title("title2")
-            .set_hash("hash")
-            .set_provenance("provenance")
-            .set_is_parent()
-            .set_metadata(Metadata::new())
-            .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
-            .set_active_manifest("active_manifest")
-            .set_manifest_data("data".as_bytes().to_vec());
-        assert_eq!(ingredient.title(), "title2");
-        assert_eq!(ingredient.format(), "format");
-        assert_eq!(ingredient.instance_id(), "instance_id");
-        assert_eq!(ingredient.document_id(), Some("document_id"));
-        assert_eq!(ingredient.provenance(), Some("provenance"));
-        assert!(ingredient.is_parent());
-        assert!(ingredient.metadata().is_some());
-        assert_eq!(
-            ingredient.thumbnail(),
-            Some(("format", "thumbnail".as_bytes()))
-        );
-        assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
-        assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
-    }
-
-    #[test]
+    #[cfg(feature = "file_io")]
     fn test_psd() {
         // std::env::set_var("RUST_LOG", "debug");
         // env_logger::init();
@@ -722,6 +748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg() {
         let ap = fixture_path(MANIFEST_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
@@ -737,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg_options() {
         let options = IngredientOptions {
             make_hash: true,
@@ -758,6 +786,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_png_no_claim() {
         let ap = fixture_path("libpng-test.png");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
@@ -792,6 +821,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
@@ -811,6 +841,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
