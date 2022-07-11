@@ -212,7 +212,7 @@ pub fn hash_asset_by_alg(
             // if not enough range we will just calc to the end
             if data_len < exclusion_end as u64 {
                 return Err(Error::BadParam(
-                    "the exclusion range exceed the data length".to_string(),
+                    "The exclusion range exceed the data length".to_string(),
                 ));
             }
 
