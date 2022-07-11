@@ -531,12 +531,12 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
                 let new_offset = if adjust < 0 {
                     offset
                         - u32::try_from(adjust.abs()).map_err(|_| {
-                            Error::BadParam("bad bmff offset adjustment".to_string())
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
                         })?
                 } else {
                     offset
                         + u32::try_from(adjust).map_err(|_| {
-                            Error::BadParam("bad bmff offset adjustment".to_string())
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
                         })?
                 };
                 entries.push(new_offset);
@@ -582,12 +582,12 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
                 let new_offset = if adjust < 0 {
                     offset
                         - u64::try_from(adjust.abs()).map_err(|_| {
-                            Error::BadParam("bad bmff offset adjustment".to_string())
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
                         })?
                 } else {
                     offset
                         + u64::try_from(adjust).map_err(|_| {
-                            Error::BadParam("bad bmff offset adjustment".to_string())
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
                         })?
                 };
                 entries.push(new_offset);
