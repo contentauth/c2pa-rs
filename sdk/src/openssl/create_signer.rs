@@ -15,6 +15,8 @@
 
 //! The `create_signer` module provides a way to obtain a [`Signer`]
 //! instance for each signing format supported by this crate.
+//!
+//! This module is only available when the `file_io` feature is enabled.
 
 use std::path::Path;
 
@@ -30,6 +32,8 @@ use crate::{
 ///
 /// The signing certificate and private key are passed to the underlying
 /// C++ code, which copies them into its own storage.
+///
+/// This function is only available when the `file_io` feature is enabled.
 ///
 /// # Arguments
 ///
@@ -70,6 +74,8 @@ pub fn from_keys(
 
 /// Creates a [`Signer`] instance using signing certificate and
 /// private key files.
+///
+/// This function is only available when the `file_io` feature is enabled.
 ///
 /// # Arguments
 ///
