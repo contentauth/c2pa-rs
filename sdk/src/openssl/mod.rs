@@ -29,7 +29,8 @@ pub(crate) use ed_signer::EdSigner;
 mod ed_validator;
 pub(crate) use ed_validator::EdValidator;
 
-pub mod signer;
+pub mod create_signer;
+
 #[cfg(test)]
 pub(crate) mod temp_signer;
 
