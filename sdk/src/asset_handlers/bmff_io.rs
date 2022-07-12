@@ -12,7 +12,7 @@
 // each license.
 
 use std::collections::HashMap;
-use std::convert::From;
+use std::convert::{From, TryFrom};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -529,9 +529,15 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             for _e in 0..entry_count {
                 let offset = output.read_u32::<BigEndian>()?;
                 let new_offset = if adjust < 0 {
-                    offset - adjust.abs() as u32
+                    offset
+                        - u32::try_from(adjust.abs()).map_err(|_| {
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                        })?
                 } else {
-                    offset + adjust as u32
+                    offset
+                        + u32::try_from(adjust).map_err(|_| {
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                        })?
                 };
                 entries.push(new_offset);
             }
@@ -574,9 +580,15 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             for _e in 0..entry_count {
                 let offset = output.read_u64::<BigEndian>()?;
                 let new_offset = if adjust < 0 {
-                    offset - adjust.abs() as u64
+                    offset
+                        - u64::try_from(adjust.abs()).map_err(|_| {
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                        })?
                 } else {
-                    offset + adjust as u64
+                    offset
+                        + u64::try_from(adjust).map_err(|_| {
+                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                        })?
                 };
                 entries.push(new_offset);
             }
