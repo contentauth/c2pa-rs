@@ -1,0 +1,58 @@
+name: Binaries
+
+on:  
+  workflow_dispatch:
+      branches: [main]
+
+jobs:
+  binaries:
+    name: Build and post binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        rust_version: [stable]
+        include:
+          - os: ubuntu-latest
+            rust_version: [stable]
+            artifact_name: c2patool
+            asset_name: c2patool-linux-amd64
+
+          - os: macos-latest
+            ust_version: [stable]
+            artifact_name: c2patool
+            asset_name: c2patool-macos-amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+          override: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Build binary
+        env:
+          MACOSX_DEPLOYMENT_TARGET: 10.15
+        run: cargo build --release
+
+      - name: Get latest existing tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+        with:
+          semver_only: true
+
+      - name: Upload binary to release
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/release/${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.asset_name }}
+          tag: ${{  steps.get-latest-tag.outputs.tag }}
+          overwrite: true
