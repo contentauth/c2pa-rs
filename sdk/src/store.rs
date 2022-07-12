@@ -1429,8 +1429,7 @@ impl Store {
         // update XMP info & add xmp hash to provenance claim
         #[cfg(feature = "xmp_write")]
         if let Some(provenance) = self.provenance_path() {
-            embedded_xmp::add_manifest_uri_to_file(output_path, &provenance)
-                .map_err(|_err| Error::XmpWriteError)?;
+            embedded_xmp::add_manifest_uri_to_file(output_path, &provenance)?;
         } else {
             return Err(Error::XmpWriteError);
         }

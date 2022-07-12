@@ -13,7 +13,10 @@
 
 use std::path::Path;
 
-use xmp_toolkit::{OpenFileOptions, XmpFile, XmpFileError, XmpMeta};
+use log::error;
+use xmp_toolkit::{OpenFileOptions, XmpError, XmpFile, XmpMeta};
+
+use crate::{Error, Result};
 
 /// Add the URI for the active manifest to the XMP packet for a file.
 ///
@@ -22,20 +25,29 @@ use xmp_toolkit::{OpenFileOptions, XmpFile, XmpFileError, XmpMeta};
 ///
 /// This does not check the claim at all; it is presumed
 /// that the string that is passed is a valid signed claim.
-pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(
-    path: P,
-    manifest_uri: &str,
-) -> Result<(), XmpFileError> {
-    XmpMeta::register_namespace("http://purl.org/dc/terms/", "dcterms");
+pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(path: P, manifest_uri: &str) -> Result<()> {
+    XmpMeta::register_namespace("http://purl.org/dc/terms/", "dcterms").map_err(xmp_write_err)?;
 
-    let mut f = XmpFile::new();
+    let mut f = XmpFile::new().map_err(xmp_write_err)?;
 
-    f.open_file(path, OpenFileOptions::OPEN_FOR_UPDATE)?;
+    f.open_file(path, OpenFileOptions::default().for_update())
+        .map_err(xmp_write_err)?;
 
-    let mut m = f.xmp().unwrap_or_else(XmpMeta::new);
-    m.set_property("http://purl.org/dc/terms/", "provenance", manifest_uri);
-    f.put_xmp(&m);
+    let mut m = match f.xmp() {
+        Some(m) => m,
+        None => XmpMeta::new().map_err(xmp_write_err)?,
+    };
+
+    m.set_property("http://purl.org/dc/terms/", "provenance", manifest_uri)
+        .map_err(xmp_write_err)?;
+
+    f.put_xmp(&m).map_err(xmp_write_err)?;
     f.close();
 
     Ok(())
+}
+
+fn xmp_write_err(err: XmpError) -> crate::Error {
+    error!("Unable to add manifest URI to file: {:?}", err);
+    Error::XmpWriteError
 }
