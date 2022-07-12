@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs, path::*};
+use std::path::*;
 
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
@@ -20,8 +20,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     cbor_types::UriT,
-    error::{wrap_io_err, Error, Result},
-    utils::hash_utils::{hash_by_alg, verify_by_alg, Exclusion},
+    error::{Error, Result},
+    utils::hash_utils::{hash_asset_by_alg, verify_asset_by_alg, verify_by_alg, Exclusion},
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -149,8 +149,6 @@ impl DataHash {
             ));
         }
 
-        let data = fs::read(asset_path).map_err(wrap_io_err)?;
-
         let alg = match self.alg {
             Some(ref a) => a.clone(),
             None => "sha256".to_string(),
@@ -158,8 +156,8 @@ impl DataHash {
 
         // sort the exclusions
         let hash = match self.exclusions {
-            Some(ref e) => hash_by_alg(&alg, &data, Some(e.clone())),
-            None => hash_by_alg(&alg, &data, None),
+            Some(ref e) => hash_asset_by_alg(&alg, asset_path, Some(e.clone()))?,
+            None => hash_asset_by_alg(&alg, asset_path, None)?,
         };
 
         if hash.is_empty() {
@@ -175,10 +173,10 @@ impl DataHash {
             return Err(Error::BadParam("asset hash is remote".to_owned()));
         }
 
-        let curr_alg = match alg {
-            Some(a) => a,
-            None => match self.alg {
-                Some(ref a) => a.clone(),
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a,
                 None => "sha256".to_string(),
             },
         };
@@ -194,9 +192,26 @@ impl DataHash {
 
     ///  Used to verify a DataHash against an asset.
     #[allow(dead_code)] // used in tests
-    pub fn verify_hash(&self, asset_path: &Path) -> Result<()> {
-        let buf = fs::read(asset_path).map_err(wrap_io_err)?;
-        self.verify_in_memory_hash(&buf, self.alg.clone())
+    pub fn verify_hash(&self, asset_path: &Path, alg: Option<String>) -> Result<()> {
+        if self.is_remote_hash() {
+            return Err(Error::BadParam("asset hash is remote".to_owned()));
+        }
+
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a,
+                None => "sha256".to_string(),
+            },
+        };
+
+        let exclusions = self.exclusions.as_ref().cloned();
+
+        if verify_asset_by_alg(&curr_alg, &self.hash, asset_path, exclusions) {
+            Ok(())
+        } else {
+            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+        }
     }
 
     /// Create a new instance from Assertion
@@ -293,7 +308,7 @@ pub mod tests {
         data_hash.gen_hash(&ap).unwrap();
 
         // verify
-        data_hash.verify_hash(&ap).unwrap();
+        data_hash.verify_hash(&ap, None).unwrap();
 
         let assertion = data_hash.to_assertion().unwrap();
 
