@@ -13,7 +13,7 @@
 
 use std::path::Path;
 
-use xmp_toolkit::{OpenFileOptions, XmpFile, XmpFileError, XmpMeta};
+use xmp_toolkit::{OpenFileOptions, XmpError, XmpFile, XmpMeta};
 
 /// Add the URI for the active manifest to the XMP packet for a file.
 ///
@@ -25,16 +25,19 @@ use xmp_toolkit::{OpenFileOptions, XmpFile, XmpFileError, XmpMeta};
 pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(
     path: P,
     manifest_uri: &str,
-) -> Result<(), XmpFileError> {
-    XmpMeta::register_namespace("http://purl.org/dc/terms/", "dcterms");
+) -> Result<(), XmpError> {
+    XmpMeta::register_namespace("http://purl.org/dc/terms/", "dcterms")?;
 
-    let mut f = XmpFile::new();
+    let mut f = XmpFile::new()?;
 
-    f.open_file(path, OpenFileOptions::OPEN_FOR_UPDATE)?;
+    f.open_file(path, OpenFileOptions::default().for_update())?;
 
-    let mut m = f.xmp().unwrap_or_else(XmpMeta::new);
-    m.set_property("http://purl.org/dc/terms/", "provenance", manifest_uri);
-    f.put_xmp(&m);
+    let mut m = f.xmp().unwrap_or_else(|| XmpMeta::new().unwrap());
+    // Justification for unwrap() here: XmpMeta::new() will only fail
+    // in extreme conditions such as out-of-memory.
+
+    m.set_property("http://purl.org/dc/terms/", "provenance", manifest_uri)?;
+    f.put_xmp(&m)?;
     f.close();
 
     Ok(())
