@@ -13,6 +13,7 @@
 
 use std::path::Path;
 
+use log::error;
 use xmp_toolkit::{OpenFileOptions, XmpError, XmpFile, XmpMeta};
 
 use crate::{Error, Result};
@@ -46,6 +47,7 @@ pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(path: P, manifest_uri: &s
     Ok(())
 }
 
-fn xmp_write_err(_err: XmpError) -> crate::Error {
+fn xmp_write_err(err: XmpError) -> crate::Error {
+    error!("Unable to add manifest URI to file: {:?}", err);
     Error::XmpWriteError
 }
