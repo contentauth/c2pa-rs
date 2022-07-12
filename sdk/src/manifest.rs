@@ -33,8 +33,6 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
-const GH_UA: &str = "Sec-CH-UA";
-
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Manifest {
@@ -378,9 +376,10 @@ impl Manifest {
 
         for claim_assertion in claim.claim_assertion_store().iter() {
             let assertion = claim_assertion.assertion();
-            let label = assertion.label();
+            let label = claim_assertion.label();
+            let base_label = assertion.label();
             debug!("assertion = {}", label);
-            match label.as_ref() {
+            match base_label.as_ref() {
                 labels::INGREDIENT => {
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(store, &assertion_uri)?;
@@ -395,14 +394,14 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Json(_x) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
                             manifest.assertions.push(ma);
                         }
                         AssertionData::Cbor(_x) => {
                             let value = assertion.as_json_object()?; //todo: should this be cbor?
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance());
 
                             manifest.assertions.push(ma);
@@ -493,10 +492,6 @@ impl Manifest {
         for ingredient in &self.ingredients {
             ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
         }
-
-        // add a claim_generator_hint for the version of the library used to create the claim
-        let lib_hint = format!("\"{}\";v=\"{}\"", crate::NAME, crate::VERSION);
-        claim.add_claim_generator_hint(GH_UA, Value::from(lib_hint));
 
         let salt = DefaultSalt::default();
 

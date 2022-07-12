@@ -6,6 +6,33 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.7.0
+_29 June 2022_
+
+* (MINOR) Return specific errors for FileNotFound and UnsupportedType ([#62](https://github.com/contentauth/c2pa-rs/pull/62))
+
+## 0.6.1
+_28 June 2022_
+
+* Fix up changelog noise
+* Fix bug with multiple ingredients in `Manifest::from_store` ([#61](https://github.com/contentauth/c2pa-rs/pull/61))
+
+## 0.6.0
+_28 June 2022_
+
+* (MINOR) Initial BMFF support ([#39](https://github.com/contentauth/c2pa-rs/pull/39))
+
+## 0.5.2
+_23 June 2022_
+
+* Return assertion instance values starting at `1` instead of `2` ([#60](https://github.com/contentauth/c2pa-rs/pull/60))
+
+## 0.5.1
+_22 June 2022_
+
+* Update thumbnail to be `Vec<u8>`, add serialization feature ([#59](https://github.com/contentauth/c2pa-rs/pull/59))
+* Adds xmp_write feature to make xmp-toolkit inclusion optional ([#53](https://github.com/contentauth/c2pa-rs/pull/53))
+
 ## 0.5.0
 _20 June 2022_
 

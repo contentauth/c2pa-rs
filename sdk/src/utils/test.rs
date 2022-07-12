@@ -133,7 +133,16 @@ pub fn create_test_claim() -> Result<Claim> {
     //.set_manifest_data(&data_path)
     .add_review(review);
 
+    let ingredient2 = Ingredient::new(
+        "image 2.png",
+        "image/png",
+        "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738c",
+        Some("xmp.did:87d51599-286e-43b2-9478-88c79f49c346"),
+    )
+    .set_thumbnail(Some(&thumb_uri));
+
     claim.add_assertion_with_salt(&ingredient, &DefaultSalt::default())?;
+    claim.add_assertion_with_salt(&ingredient2, &DefaultSalt::default())?;
 
     Ok(claim)
 }
