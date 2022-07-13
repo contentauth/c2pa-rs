@@ -79,6 +79,9 @@ mod cose_validator;
 mod error;
 pub use error::{Error, Result};
 
+mod external_signer;
+pub use external_signer::external_sign;
+
 mod ingredient;
 pub use ingredient::{Ingredient, IngredientOptions};
 pub mod jumbf_io;
