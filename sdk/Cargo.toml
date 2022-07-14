@@ -12,6 +12,10 @@ edition = "2018"
 rust-version = "1.58.0"
 exclude = ["tests/fixtures"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 async_signer = ["async-trait"]
 bmff = []  # Work in progress support for BMFF-based containers
