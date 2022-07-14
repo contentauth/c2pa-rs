@@ -32,8 +32,8 @@ use serde::{Deserialize, Serialize};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
-pub fn skip_serializing_thumbnails(_value: &Option<(String, Vec<u8>)>) -> bool {
-    !cfg!(feature = "serialize_thumbnails")
+fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
+    !cfg!(feature = "serialize_thumbnails") || value.is_none()
 }
 
 #[cfg(feature = "file_io")]
@@ -441,10 +441,9 @@ impl Ingredient {
             }
         }
 
-        // create a thumbnail if we don't already have a claim with a thumb we can use
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
-            use crate::utils::thumbnail::make_thumbnail;
-            if let Ok((format, image)) = make_thumbnail(path) {
+            if let Some((format, image)) = options.thumbnail(path) {
                 ingredient.set_thumbnail(format, image);
             }
         }
@@ -514,6 +513,7 @@ impl Ingredient {
         Ok(ingredient)
     }
 
+    /// Converts a higher level Ingredient into the appropriate components in a claim
     pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
@@ -636,20 +636,35 @@ impl std::fmt::Display for Ingredient {
 }
 
 /// This defines optional operations when creating [`Ingredient`] structs from files.
+#[cfg(feature = "file_io")]
 pub trait IngredientOptions {
     /// This allows setting the title for the ingredient.
+    ///
     /// If it returns `None`, then the default behavior is to use the file's name.
     fn title(&self) -> Option<String> {
         None
     }
-    /// returns an optional hash value for the ingredient
+    /// Returns an optional hash value for the ingredient
+    ///
     /// This can be used to test for duplicate ingredients or if a source file has changed.
     fn hash(&self) -> Option<String> {
         None
     }
+
+    /// Returns an optional thumbnail image representing the asset
+    ///
+    /// The first value is the content type of the thumbnail, i.e. image/jpeg
+    /// The second value is bytes of the thumbnail image
+    /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
+    fn thumbnail(&self, path: &Path) -> Option<(String, Vec<u8>)> {
+        use crate::utils::thumbnail::make_thumbnail;
+        make_thumbnail(path).ok()
+    }
 }
 
+#[cfg(feature = "file_io")]
 pub struct DefaultOptions {}
+#[cfg(feature = "file_io")]
 impl IngredientOptions for DefaultOptions {}
 
 #[cfg(test)]

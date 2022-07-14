@@ -80,7 +80,7 @@ mod error;
 pub use error::{Error, Result};
 
 mod ingredient;
-pub use ingredient::{Ingredient, IngredientOptions};
+pub use ingredient::Ingredient;
 pub mod jumbf_io;
 mod manifest;
 pub use manifest::Manifest;
@@ -93,6 +93,8 @@ pub use manifest_store::ManifestStore;
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
+#[cfg(feature = "file_io")]
+pub use ingredient::IngredientOptions;
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
