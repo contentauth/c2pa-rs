@@ -43,7 +43,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.7.0"
+c2pa = "0.7.2"
 ```
 
 ## Crate features
@@ -52,7 +52,7 @@ c2pa = "0.7.0"
 * `bmff` enables handling of BMFF file formats. Currently only MP4, M4A, and MOV are enabled for writing.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field (requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit)).
+* `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
 
 ## Rust version requirements
 
