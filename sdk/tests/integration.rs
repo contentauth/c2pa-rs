@@ -18,7 +18,7 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        get_signer_from_files, Ingredient, Manifest, ManifestStore, Result, Signer,
+        create_signer, Ingredient, Manifest, ManifestStore, Result, Signer,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -31,7 +31,7 @@ mod integration_1 {
         signcert_path.push("tests/fixtures/certs/ps256.pub");
         let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pkey_path.push("tests/fixtures/certs/ps256.pem");
-        get_signer_from_files(signcert_path, pkey_path, "ps256", None)
+        create_signer::from_files(signcert_path, pkey_path, "ps256", None)
             .expect("get_signer_from_files")
     }
 

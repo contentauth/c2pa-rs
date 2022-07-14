@@ -23,7 +23,7 @@ use crate::{
 
 #[cfg(feature = "file_io")]
 use crate::{
-    get_signer_from_files,
+    create_signer,
     openssl::RsaSigner,
     signer::{ConfigurableSigner, Signer},
 };
@@ -234,7 +234,7 @@ pub fn temp_signer_with_alg(alg: &str) -> Box<dyn Signer> {
     pem_key_path.push(alg);
     pem_key_path.set_extension("pem");
 
-    get_signer_from_files(sign_cert_path.clone(), pem_key_path, alg, None)
+    create_signer::from_files(sign_cert_path.clone(), pem_key_path, alg, None)
         .expect("get_temp_signer_with_alg")
 }
 
