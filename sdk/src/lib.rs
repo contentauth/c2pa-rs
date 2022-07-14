@@ -77,6 +77,9 @@ pub mod assertions;
 
 mod cose_validator;
 
+#[cfg(feature = "file_io")]
+pub mod create_signer;
+
 mod error;
 pub use error::{Error, Result};
 
@@ -98,8 +101,6 @@ pub use manifest_store_report::ManifestStoreReport;
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
 mod openssl;
-#[cfg(feature = "file_io")]
-pub use crate::openssl::create_signer;
 
 #[cfg(feature = "file_io")]
 mod signer;
