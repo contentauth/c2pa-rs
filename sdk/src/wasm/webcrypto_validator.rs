@@ -11,12 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::wasm::context::WindowOrWorker;
-use crate::{Error, Result};
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
+
+use crate::{wasm::context::WindowOrWorker, Error, Result, SingingAlg};
+
 pub struct RsaHashedImportParams {
     name: String,
     hash: String,
