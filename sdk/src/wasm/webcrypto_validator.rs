@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 
-use crate::{wasm::context::WindowOrWorker, Error, Result, SingingAlg};
+use crate::{wasm::context::WindowOrWorker, Error, Result, SigningAlg};
 
 pub struct RsaHashedImportParams {
     name: String,

@@ -925,7 +925,7 @@ fn validate_with_cert(
 
 #[cfg(target_arch = "wasm32")]
 async fn validate_with_cert_async(
-    validator_str: &str,
+    signing_alg: SigningAlg,
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
@@ -935,7 +935,7 @@ async fn validate_with_cert_async(
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
-    if validate_async(validator_str, sig, data, pk_der).await? {
+    if validate_async(signing_alg, sig, data, pk_der).await? {
         Ok(extract_subject_from_cert(&signcert)?)
     } else {
         Err(Error::CoseSignature)
@@ -944,7 +944,7 @@ async fn validate_with_cert_async(
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn validate_with_cert_async(
-    _validator_str: SigningAlg,
+    _signing_alg: SigningAlg,
     _sig: &[u8],
     _data: &[u8],
     _der_bytes: &[u8],

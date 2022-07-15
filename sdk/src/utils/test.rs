@@ -18,7 +18,7 @@ use crate::{
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result, SigningAlg,
+    Result,
 };
 
 #[cfg(feature = "file_io")]
@@ -26,6 +26,7 @@ use crate::{
     create_signer,
     openssl::RsaSigner,
     signer::{ConfigurableSigner, Signer},
+    SigningAlg,
 };
 
 use std::path::PathBuf;

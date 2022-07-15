@@ -11,12 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::Result;
 #[cfg(feature = "file_io")]
-use crate::{
-    openssl::{EcValidator, EdValidator, RsaValidator},
-    SigningAlg,
-};
+use crate::openssl::{EcValidator, EdValidator, RsaValidator};
+use crate::{Result, SigningAlg};
 
 use chrono::{DateTime, Utc};
 
