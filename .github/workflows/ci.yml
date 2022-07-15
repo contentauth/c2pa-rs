@@ -146,27 +146,31 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  doc_format:
-    name: Doc format
+  docs_rs:
+    name: Preflight docs.rs build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
       
-      - name: Install Rust toolchain
+      - name: Install nightly Rust toolchain
+        # Nightly is used here because the docs.rs build
+        # uses nightly and we use doc_cfg features that are
+        # not in stable Rust as of this writing (Rust 1.62).
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: nightly
           override: true
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
-
       - name: Run cargo docs
-        uses: actions-rs/cargo@v1
-        with:
-          command: doc
-          args: --no-deps
+        # This is intended to mimic the docs.rs build
+        # environment. The goal is to fail PR validation
+        # if the subsequent release would result in a failed
+        # documentation build on docs.rs.
+        run: cargo +nightly doc --all-features
+        env:
+          RUSTDOCFLAGS: --cfg docsrs
+          DOCS_RS: 1
 
   cargo-deny:
     name: License / vulnerability audit
@@ -179,7 +183,7 @@ jobs:
           - advisories
           - bans licenses sources
 
-    # Prevent sudden announcement of a new advisory from failing ci:
+    # Prevent sudden announcement of a new advisory from failing CI:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
 
     steps:

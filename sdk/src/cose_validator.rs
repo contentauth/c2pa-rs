@@ -1013,9 +1013,9 @@ pub mod tests {
     fn test_verify_cose_good() {
         let validator = get_validator("ps256").unwrap();
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         assert!(validator
             .validate(sig_bytes, data_bytes, key_bytes)
@@ -1050,9 +1050,9 @@ pub mod tests {
     fn test_verify_cose_bad() {
         let validator = get_validator("ps256").unwrap();
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         let mut bad_bytes = data_bytes.to_vec();
         bad_bytes[0] = b'c';
