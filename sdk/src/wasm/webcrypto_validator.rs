@@ -23,33 +23,6 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
-pub struct RsaHashedImportParams {
-    name: String,
-    hash: String,
-}
-
-impl RsaHashedImportParams {
-    pub fn new(name: &str, hash: &str) -> Self {
-        RsaHashedImportParams {
-            name: name.to_owned(),
-            hash: hash.to_owned(),
-        }
-    }
-
-    pub fn as_js_object(&self) -> Object {
-        let obj = Object::new();
-        Reflect::set(&obj, &"name".into(), &self.name.clone().into()).expect("not valid name");
-
-        let inner_obj = Object::new();
-        Reflect::set(&inner_obj, &"name".into(), &self.hash.clone().into())
-            .expect("not valid name");
-
-        Reflect::set(&obj, &"hash".into(), &inner_obj).expect("not valid name");
-
-        obj
-    }
-}
-
 pub struct EcKeyImportParams {
     name: String,
     named_curve: String,
@@ -174,8 +147,6 @@ async fn async_validate(
 
     match algo.as_ref() {
         "RSA-PSS" => {
-            // Create key
-
             let spki = SubjectPublicKeyInfo::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
             let (_, seq) = parse_ber_sequence(spki.subject_public_key)
@@ -198,32 +169,6 @@ async fn async_validate(
                     Ok(false)
                 }
             }
-        }
-        "RSASSA-PKCS1-v1_5" => {
-            // Create Key
-            let algorithm = RsaHashedImportParams::new(&algo, &hash).as_js_object();
-            let key_array_buf = data_as_array_buffer(&pkey);
-            let usages = Array::new();
-            usages.push(&"verify".into());
-
-            let promise = subtle_crypto
-                .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
-                .map_err(|_err| Error::WasmKey)?;
-            let crypto_key: CryptoKey = JsFuture::from(promise)
-                .await
-                .map_err(|_err| Error::WasmKey)?
-                .into();
-            web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
-
-            // Create verifier
-            crypto_is_verified(
-                &subtle_crypto,
-                &algorithm,
-                &crypto_key,
-                &sig_array_buf,
-                &data_array_buf,
-            )
-            .await
         }
         "ECDSA" => {
             // Create Key
@@ -299,39 +244,6 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "rs256" => {
-            async_validate(
-                "RSASSA-PKCS1-v1_5".to_string(),
-                "SHA-256".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        "rs384" => {
-            async_validate(
-                "RSASSA-PKCS1-v1_5".to_string(),
-                "SHA-384".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        "rs512" => {
-            async_validate(
-                "RSASSA-PKCS1-v1_5".to_string(),
-                "SHA-512".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
         "es256" => {
             async_validate(
                 "ECDSA".to_string(),
@@ -386,9 +298,9 @@ pub mod tests {
     #[wasm_bindgen_test]
     async fn test_async_verify_rsa_pss() {
         // PS signatures
-        let sig_bytes = include_bytes!("../../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../../tests/fixtures/key_ps256.data");
 
         let validated = validate_async("ps256", sig_bytes, data_bytes, key_bytes)
             .await
@@ -439,9 +351,9 @@ pub mod tests {
     #[wasm_bindgen_test]
     #[ignore]
     async fn test_async_verify_bad() {
-        let sig_bytes = include_bytes!("../../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../../tests/fixtures/key_ps256.data");
 
         let mut bad_bytes = data_bytes.to_vec();
         bad_bytes[0] = b'c';
