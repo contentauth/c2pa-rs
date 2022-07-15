@@ -59,6 +59,7 @@ serde_cbor = "0.11.1"
 serde_derive = "1.0.127"
 serde_json = "1.0.66"
 serde-transcode = "1.1.1"
+sha2 = "0.10.2"
 tempfile = "3.1.0"
 thiserror = ">= 1.0.20, < 1.0.32"
 time = ">= 0.2.23"
@@ -73,7 +74,6 @@ url = "2.2.2"
 ureq = "2.4.0"
 instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
-sha2 = "0.9.5"
 xmp_toolkit = { version = "0.5.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -87,8 +87,6 @@ rand = "0.8.5"
 rsa = "0.6.1"
 serde-wasm-bindgen = "0.4.3"
 spki = "0.6.0"
-# 0.10.x needed for a compatibility with rsa::PaddingScheme
-sha2 = "0.10.2"
 wasm-bindgen = "0.2.81"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = ["Crypto", "SubtleCrypto", "CryptoKey", "Window", "WorkerGlobalScope"] }
