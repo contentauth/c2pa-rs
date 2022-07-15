@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-async_signer = ["async-trait"]
+async_signer = ["async-trait", "file_io"]
 bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
 serialize_thumbnails = []
@@ -96,3 +96,6 @@ anyhow = "1.0.40"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+actix = "0.11.0"
