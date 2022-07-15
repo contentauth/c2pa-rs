@@ -17,7 +17,7 @@ use anyhow::Result;
 
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    create_signer, Ingredient, Manifest, ManifestStore,
+    create_signer, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
 use std::path::PathBuf;
 
@@ -111,7 +111,7 @@ pub fn main() -> Result<()> {
     // sign and embed into the target file
     let signcert_path = "../sdk/tests/fixtures/certs.ps256.pem";
     let pkey_path = "../sdk/tests/fixtures/certs.ps256.pub";
-    let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
+    let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 
     manifest.embed(&source, &dest, &*signer)?;
 

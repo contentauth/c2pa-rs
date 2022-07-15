@@ -22,7 +22,7 @@ use std::{fmt, str::FromStr};
 /// > All digital signatures that are stored in a C2PA Manifest shall
 /// > be generated using one of the digital signature algorithms and
 /// > key types listed as described in this section.
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SigningAlg {
     /// ECDSA with SHA-256
     Es256,

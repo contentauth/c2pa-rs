@@ -12,7 +12,7 @@
 // each license.
 
 use crate::time_stamp::{cose_timestamp_countersign, make_cose_timestamp};
-use crate::{Error, Result, Signer}; // enable when TimeStamp Authority is ready
+use crate::{Error, Result, Signer, SigningAlg}; // enable when TimeStamp Authority is ready
 
 use ciborium::value::Value;
 use coset::{iana, CoseSign1, CoseSign1Builder, HeaderBuilder, Label, TaggedCborSerializable};
@@ -41,48 +41,30 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
            string.
     */
 
-    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
+    let alg = signer.alg();
 
-    let alg_id = match alg.as_ref() {
-        "ps256" => HeaderBuilder::new()
+    let alg_id = match alg {
+        SigningAlg::Ps256 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS256)
             .build(),
-        "ps384" => HeaderBuilder::new()
+        SigningAlg::Ps384 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS384)
             .build(),
-        "ps512" => HeaderBuilder::new()
+        SigningAlg::Ps512 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS512)
             .build(),
-        /* No longer supported by C2PA
-        "rs256" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS256)
-                .build()
-        }
-        "rs384" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS384)
-                .build()
-        }
-        "rs512" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS512)
-                .build()
-        }
-        */
-        "es256" => HeaderBuilder::new()
+        SigningAlg::Es256 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES256)
             .build(),
-        "es384" => HeaderBuilder::new()
+        SigningAlg::Es384 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES384)
             .build(),
-        "es512" => HeaderBuilder::new()
+        SigningAlg::Es512 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES512)
             .build(),
-        "ed25519" => HeaderBuilder::new()
+        SigningAlg::Ed25519 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
             .build(),
-        _ => return Err(Error::UnsupportedType),
     };
 
     // Get the public CAs for the Signer
@@ -100,7 +82,7 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
 
     let mut unprotected = match signer.time_authority_url() {
         Some(url) => {
-            let cts = cose_timestamp_countersign(data, &alg, &url)?;
+            let cts = cose_timestamp_countersign(data, alg, &url)?;
             let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
             let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
 

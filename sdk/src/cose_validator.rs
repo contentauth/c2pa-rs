@@ -20,6 +20,7 @@ use crate::validator::get_validator;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::validator::CoseValidator;
 use crate::validator::ValidationInfo;
+use crate::SigningAlg;
 
 #[cfg(target_arch = "wasm32")]
 use crate::wasm::webcrypto_validator::validate_async;
@@ -93,7 +94,7 @@ fn get_cose_sign1(
     }
 }
 fn check_cert(
-    _alg: &str,
+    _alg: SigningAlg,
     ca_der_bytes: &[u8],
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
@@ -492,50 +493,46 @@ fn check_cert(
     }
 }
 
-pub(crate) fn get_validator_str(cs1: &coset::CoseSign1) -> Result<String> {
+pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
-    let validator_str = match cs1.protected.header.alg {
+    match cs1.protected.header.alg {
         Some(ref alg) => {
-            let alg_str = match alg {
+            match alg {
                 coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-                    -39 => "ps512",
-                    -38 => "ps384",
-                    -37 => "ps256",
-                    -36 => "es512",
-                    -35 => "es384",
-                    -7 => "es256",
+                    -39 => Ok(SigningAlg::Ps512),
+                    -38 => Ok(SigningAlg::Ps384),
+                    -37 => Ok(SigningAlg::Ps256),
+                    -36 => Ok(SigningAlg::Es512),
+                    -35 => Ok(SigningAlg::Es384),
+                    -7 => Ok(SigningAlg::Es256),
                     // todo: deprecated  figure out lecacy support for RS signatures
-                    -259 => "rs512",
-                    -258 => "rs384",
-                    -257 => "rs256",
-
-                    -8 => "ed25519",
-                    _ => "unknown",
+                    // -259 => "rs512",
+                    // -258 => "rs384",
+                    // -257 => "rs256",
+                    -8 => Ok(SigningAlg::Ed25519),
+                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
                 },
                 coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
-                    coset::iana::Algorithm::PS512 => "ps512",
-                    coset::iana::Algorithm::PS384 => "ps384",
-                    coset::iana::Algorithm::PS256 => "ps256",
-                    coset::iana::Algorithm::ES512 => "es512",
-                    coset::iana::Algorithm::ES384 => "es384",
-                    coset::iana::Algorithm::ES256 => "es256",
+                    coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
+                    coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
+                    coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
+                    coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
+                    coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
+                    coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
                     // todo: deprecated  figure out lecacy support for RS signatures
-                    coset::iana::Algorithm::RS512 => "rs512",
-                    coset::iana::Algorithm::RS384 => "rs384",
-                    coset::iana::Algorithm::RS256 => "rs256",
-                    coset::iana::Algorithm::EdDSA => "ed25519",
-                    _ => "unknown",
+                    // coset::iana::Algorithm::RS512 => "rs512",
+                    // coset::iana::Algorithm::RS384 => "rs384",
+                    // coset::iana::Algorithm::RS256 => "rs256",
+                    coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
+                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
                 },
-                coset::RegisteredLabelWithPrivate::Text(a) => a,
-            };
-
-            Some(alg_str.to_owned())
+                coset::RegisteredLabelWithPrivate::Text(a) => a
+                    .parse()
+                    .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
+            }
         }
-        None => None,
+        None => Err(Error::CoseSignatureAlgorithmNotSupported),
     }
-    .ok_or(Error::CoseSignatureAlgorithmNotSupported)?;
-
-    Ok(validator_str)
 }
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
@@ -638,9 +635,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
             }
         })
     {
-        let alg = get_validator_str(sign1)?;
+        let alg = get_signing_alg(sign1)?;
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &alg)?;
+        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, alg)?;
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -674,8 +671,8 @@ pub async fn verify_cose_async(
 ) -> Result<ValidationInfo> {
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
 
-    let validator_str = match get_validator_str(&sign1) {
-        Ok(s) => s,
+    let alg = match get_signing_alg(&sign1) {
+        Ok(a) => a,
         Err(_) => {
             let log_item = log_item!(
                 "Cose_Sign1",
@@ -701,15 +698,11 @@ pub async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => {
-                check_cert(&validator_str, &der_bytes, validation_log, Some(&tst_info))?
-            }
+            Ok(tst_info) => check_cert(alg, &der_bytes, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => {
-                        check_cert(&validator_str, &der_bytes, validation_log, None)?
-                    }
+                    Error::NotFound => check_cert(alg, &der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -754,12 +747,10 @@ pub async fn verify_cose_async(
         sign1.payload.as_ref().unwrap_or(&vec![]),
     ); // get "to be signed" bytes
 
-    if let Ok(issuer) =
-        validate_with_cert_async(&validator_str, &sign1.signature, &tbs, &der_bytes).await
-    {
+    if let Ok(issuer) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await {
         result.issuer_org = Some(issuer);
         result.validated = true;
-        result.alg = validator_str.to_owned();
+        result.alg = Some(alg);
 
         // parse the temp time for now util we have TA
         result.date = get_signing_time(&sign1, &data, validation_log);
@@ -775,7 +766,7 @@ pub fn get_signing_info(
 ) -> ValidationInfo {
     let mut date = None;
     let mut issuer_org = None;
-    let mut alg = "".to_string();
+    let mut alg: Option<SigningAlg> = None;
 
     let _ = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
@@ -784,8 +775,8 @@ pub fn get_signing_info(
         let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
             date = get_signing_time(&sign1, data, validation_log);
             issuer_org = extract_subject_from_cert(&signcert).ok();
-            if let Ok(a) = get_validator_str(&sign1) {
-                alg = a;
+            if let Ok(a) = get_signing_alg(&sign1) {
+                alg = Some(a);
             }
 
             (_rem, signcert)
@@ -817,8 +808,8 @@ pub fn verify_cose(
 ) -> Result<ValidationInfo> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
-    let validator_str = match get_validator_str(&sign1) {
-        Ok(s) => s,
+    let alg = match get_signing_alg(&sign1) {
+        Ok(a) => a,
         Err(_) => {
             let log_item = log_item!(
                 "Cose_Sign1",
@@ -834,8 +825,7 @@ pub fn verify_cose(
         }
     };
 
-    let validator =
-        get_validator(&validator_str).ok_or(Error::CoseSignatureAlgorithmNotSupported)?;
+    let validator = get_validator(alg);
 
     // build result structure
     let mut result = ValidationInfo::default();
@@ -849,11 +839,11 @@ pub fn verify_cose(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, data) {
-            Ok(tst_info) => check_cert(&validator_str, der_bytes, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(alg, der_bytes, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(&validator_str, der_bytes, validation_log, None)?,
+                    Error::NotFound => check_cert(alg, der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -890,7 +880,7 @@ pub fn verify_cose(
         if let Ok(issuer) = validate_with_cert(validator, sig, verify_data, der_bytes) {
             result.issuer_org = Some(issuer);
             result.validated = true;
-            result.alg = validator_str.to_string();
+            result.alg = Some(alg);
 
             // parse the temp time for now util we have TA
             result.date = get_signing_time(&sign1, data, validation_log);
@@ -954,7 +944,7 @@ async fn validate_with_cert_async(
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn validate_with_cert_async(
-    _validator_str: &str,
+    _validator_str: SigningAlg,
     _sig: &[u8],
     _data: &[u8],
     _der_bytes: &[u8],
@@ -969,7 +959,7 @@ pub mod tests {
 
     use sha2::digest::generic_array::sequence::Shorten;
 
-    use crate::status_tracker::DetailedStatusTracker;
+    use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
 
     use super::*;
 
@@ -985,7 +975,7 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert("ps256", &der_bytes, &mut validation_log, None).is_err());
+            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_err());
 
             assert!(!validation_log.get_log().is_empty());
 
@@ -998,7 +988,7 @@ pub mod tests {
 
     #[test]
     fn test_verify_cose_good() {
-        let validator = get_validator("ps256").unwrap();
+        let validator = get_validator(SigningAlg::Ps256);
 
         let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
         let data_bytes = include_bytes!("../tests/fixtures/data.data");
@@ -1012,7 +1002,7 @@ pub mod tests {
     #[test]
     fn test_verify_ec_good() {
         // EC signatures
-        let mut validator = get_validator("es384").unwrap();
+        let mut validator = get_validator(SigningAlg::Es384);
 
         let sig_es384_bytes = include_bytes!("../tests/fixtures/sig_es384.data");
         let data_es384_bytes = include_bytes!("../tests/fixtures/data_es384.data");
@@ -1022,7 +1012,7 @@ pub mod tests {
             .validate(sig_es384_bytes, data_es384_bytes, key_es384_bytes)
             .unwrap());
 
-        validator = get_validator("es512").unwrap();
+        validator = get_validator(SigningAlg::Es512);
 
         let sig_es512_bytes = include_bytes!("../tests/fixtures/sig_es512.data");
         let data_es512_bytes = include_bytes!("../tests/fixtures/data_es512.data");
@@ -1035,7 +1025,7 @@ pub mod tests {
 
     #[test]
     fn test_verify_cose_bad() {
-        let validator = get_validator("ps256").unwrap();
+        let validator = get_validator(SigningAlg::Ps256);
 
         let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
         let data_bytes = include_bytes!("../tests/fixtures/data.data");
@@ -1061,36 +1051,36 @@ pub mod tests {
 
         let mut validation_log = DetailedStatusTracker::new();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
         let es256_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
         let es384_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
+        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let es512_cert = std::fs::read(&cert_path).unwrap();
 
-        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, "ps256", None);
+        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
         let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert("es256", &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(SigningAlg::Es256, &der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert("es384", &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(SigningAlg::Es384, &der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert("es512", &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(SigningAlg::Es512, &der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert("ps256", &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
         }
     }
 }
