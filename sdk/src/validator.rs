@@ -20,23 +20,12 @@ use crate::{
 
 use chrono::{DateTime, Utc};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ValidationInfo {
     pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
     pub issuer_org: Option<String>,
     pub validated: bool, // claim signature is valid
-}
-
-impl Default for ValidationInfo {
-    fn default() -> Self {
-        ValidationInfo {
-            alg: None,
-            date: None,
-            issuer_org: None,
-            validated: false,
-        }
-    }
 }
 
 /// Trait to support validating a signature against the provided data
