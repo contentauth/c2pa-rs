@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.8.1
+_15 July 2022_
+
+* Use rsa crate for RSA-PSS verification in Wasm ([#77](https://github.com/contentauth/c2pa-rs/pull/77))
+
 ## 0.8.0
 _15 July 2022_
 
