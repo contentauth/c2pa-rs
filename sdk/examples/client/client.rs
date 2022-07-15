@@ -84,9 +84,9 @@ pub fn main() -> Result<()> {
             "target/tmp/client.jpg",
         ),
     };
+
     let source = PathBuf::from(src);
     let dest = PathBuf::from(dst);
-
     // if a filepath was provided on the command line, read it as a parent file
     let parent = Ingredient::from_file(source.as_path())?;
 
@@ -109,10 +109,10 @@ pub fn main() -> Result<()> {
         .add_assertion(&creative_work)?;
 
     // sign and embed into the target file
-    let signcert_path = "../sdk/tests/fixtures/certs.ps256.pem";
-    let pkey_path = "../sdk/tests/fixtures/certs.ps256.pub";
-    let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+    let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
+    let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
 
+    let signer = get_signer_from_files(signcert_path, pkey_path, "es256", None)?;
     manifest.embed(&source, &dest, &*signer)?;
 
     let manifest_store = ManifestStore::from_file(&dest)?;

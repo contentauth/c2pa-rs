@@ -44,3 +44,7 @@ images:
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
 	cargo run --example client sdk/tests/fixtures/ca.jpg target/tmp/client.jpg
+
+# Runs the show example
+show:
+	cargo run --example show -- sdk/tests/fixtures/ca.jpg

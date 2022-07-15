@@ -290,9 +290,24 @@ impl Ingredient {
             "psd" => "image/vnd.adobe.photoshop",
             "tiff" => "image/tiff",
             "svg" => "image/svg+xml",
-            "ico" => "image/vnd.microsoft.icon",
+            "ico" => "image/x-icon",
             "bmp" => "image/bmp",
             "webp" => "image/webp",
+            "dng" => "image/dng",
+            "heic" => "image/heic",
+            "heif" => "image/heif",
+            "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
+            "mp4" => "video/mp4",
+            "avif" => "image/avif",
+            "mov" | "qt" => "video/quicktime",
+            "m4a" => "audio/mp4",
+            "mid" | "rmi" => "audio/mid",
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/vnd.wav",
+            "aif" | "aifc" | "aiff" => "audio/aiff",
+            "ogg" => "audio/ogg",
+            "pdf" => "application/pdf",
+            "ai" => "application/postscript",
             _ => "application/octet-stream",
         }
         .to_owned();
@@ -656,9 +671,18 @@ pub trait IngredientOptions {
     /// The first value is the content type of the thumbnail, i.e. image/jpeg
     /// The second value is bytes of the thumbnail image
     /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
+    #[cfg(feature = "add_thumbnails")]
     fn thumbnail(&self, path: &Path) -> Option<(String, Vec<u8>)> {
-        use crate::utils::thumbnail::make_thumbnail;
-        make_thumbnail(path).ok()
+        crate::utils::thumbnail::make_thumbnail(path).ok()
+    }
+    /// Returns an optional thumbnail image representing the asset
+    ///
+    /// The first value is the content type of the thumbnail, i.e. image/jpeg
+    /// The second value is bytes of the thumbnail image
+    /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
+    #[cfg(not(feature = "add_thumbnails"))]
+    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+        None
     }
 }
 
@@ -732,10 +756,10 @@ mod tests {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, "Purple Square.psd");
-        assert_eq!(&ingredient.format, "image/vnd.adobe.photoshop");
-        assert!(ingredient.thumbnail.is_none());
-        assert!(ingredient.manifest_data.is_none());
+        assert_eq!(ingredient.title(), "Purple Square.psd");
+        assert_eq!(ingredient.format(), "image/vnd.adobe.photoshop");
+        assert!(ingredient.thumbnail().is_none());
+        assert!(ingredient.manifest_data().is_none());
     }
 
     #[test]
@@ -746,11 +770,11 @@ mod tests {
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.metadata.is_none());
+        assert_eq!(ingredient.format(), "image/jpeg");
+        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
     }
 
     #[test]
@@ -770,13 +794,13 @@ mod tests {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, "MyTitle");
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.hash.is_some());
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.metadata.is_none());
+        assert_eq!(ingredient.title(), "MyTitle");
+        assert_eq!(ingredient.format(), "image/jpeg");
+        assert!(ingredient.hash().is_some());
+        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
     }
 
     #[test]
@@ -787,7 +811,9 @@ mod tests {
 
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), "libpng-test.png");
+        #[cfg(feature = "add_thumbnails")]
         assert!(ingredient.thumbnail().is_some());
+        #[cfg(feature = "add_thumbnails")]
         assert_eq!(ingredient.thumbnail().unwrap().0, "image/png");
         assert!(ingredient.manifest_data.is_none());
     }
@@ -800,14 +826,15 @@ mod tests {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, BAD_SIGNATURE_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.validation_status.is_some());
+        assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.validation_status().is_some());
         assert!(ingredient
-            .validation_status
+            .validation_status()
             .unwrap()
             .iter()
             .any(|s| s.code() == validation_status::CLAIM_SIGNATURE_MISMATCH));
@@ -820,14 +847,15 @@ mod tests {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, PRERELEASE_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_none());
-        assert!(ingredient.validation_status.is_some());
+        assert_eq!(ingredient.title(), PRERELEASE_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_none());
+        assert!(ingredient.validation_status().is_some());
         assert_eq!(
-            ingredient.validation_status.unwrap()[0].code(),
+            ingredient.validation_status().unwrap()[0].code(),
             validation_status::STATUS_PRERELEASE
         );
     }
@@ -837,6 +865,6 @@ mod tests {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         println!("ingredient = {}", ingredient);
-        assert_eq!(ingredient.validation_status, None);
+        assert_eq!(ingredient.validation_status(), None);
     }
 }

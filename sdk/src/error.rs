@@ -215,6 +215,7 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
+    #[cfg(feature = "add_thumbnails")]
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]

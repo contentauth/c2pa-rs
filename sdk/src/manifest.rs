@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use crate::utils::thumbnail::make_thumbnail;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
@@ -487,7 +485,8 @@ impl Manifest {
             self.set_title(ingredient.title());
         }
 
-        if let Ok((format, image)) = make_thumbnail(path.as_ref()) {
+        #[cfg(feature = "add_thumbnails")]
+        if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
             self.set_thumbnail(format, image);
         }
     }
@@ -783,6 +782,7 @@ pub(crate) mod tests {
 
         assert_eq!(manifest.format(), "image/jpeg");
         assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
+        #[cfg(feature = "add_thumbnails")]
         assert!(manifest.thumbnail().is_some());
 
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");

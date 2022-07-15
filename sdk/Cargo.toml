@@ -13,6 +13,8 @@ rust-version = "1.58.0"
 exclude = ["tests/fixtures"]
 
 [features]
+default = ["add_thumbnails"]
+add_thumbnails = ["image"]
 async_signer = ["async-trait"]
 bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
@@ -22,6 +24,19 @@ xmp_write = ["xmp_toolkit"]
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
+
+#[cfg(not(target_arch = "wasm32"))]
+[[example]]
+name = "client"
+required-features = ["file_io"]
+
+[[example]]
+name = "show"
+required-features = ["file_io"]
+
+[[example]]
+name = "custom_assertion"
+
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -39,7 +54,7 @@ conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
 hex = "0.4.3"
-image = "0.23.10"
+image = { version = "0.24", optional = true }
 img-parts = "0.2.3"
 log = "0.4.8"
 multibase = "0.9.0"

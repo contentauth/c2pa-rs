@@ -95,6 +95,25 @@ impl Default for Config {
     }
 }
 
+fn blake3_hash(path: &Path) -> Result<String> {
+    use std::fs::File;
+    use std::io::Read;
+    // Hash an input incrementally.
+    let mut hasher = blake3::Hasher::new();
+    const BUFFER_LEN: usize = 1024 * 1024;
+    let mut buffer = [0u8; BUFFER_LEN];
+    let mut file = File::open(path)?;
+    loop {
+        let read_count = file.read(&mut buffer)?;
+        hasher.update(&buffer[..read_count]);
+        if read_count != BUFFER_LEN {
+            break;
+        }
+    }
+    let hash = hasher.finalize();
+    Ok(hash.to_hex().as_str().to_owned())
+}
+
 /// Tool for building test case images for C2PA
 pub struct MakeTestImages {
     config: Config,
@@ -177,12 +196,7 @@ impl MakeTestImages {
 
         impl IngredientOptions for ImageOptions {
             fn hash(&self) -> Option<String> {
-                // read the file into a buffer for processing
-                if let Ok(buf) = std::fs::read(&self.path) {
-                    Some(blake3::hash(&buf).to_hex().as_str().to_owned())
-                } else {
-                    None
-                }
+                blake3_hash(&self.path).ok()
             }
         }
 
@@ -204,6 +218,7 @@ impl MakeTestImages {
 
                 let parent =
                     Ingredient::from_file_with_options(src_path, &ImageOptions::new(src_path))?;
+
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
                         .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
