@@ -97,6 +97,9 @@ pub use manifest_store::ManifestStore;
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
+mod signing_alg;
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
+
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
