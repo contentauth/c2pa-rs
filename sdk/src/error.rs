@@ -136,6 +136,12 @@ pub enum Error {
     #[error("WASM verifier error")]
     WasmVerifier,
 
+    #[error("WASM RSA-PSS key import error: {0}")]
+    WasmRsaKeyImport(String),
+
+    #[error("WASM RSA-PSS verification error")]
+    WasmRsaVerification,
+
     #[error("WASM crypto key error")]
     WasmKey,
 
