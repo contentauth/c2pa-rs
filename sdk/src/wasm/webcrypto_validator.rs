@@ -293,10 +293,7 @@ async fn async_validate(
 }
 
 pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
-    web_sys::console::debug_2(
-        &"Validating with algorithm".into(),
-        &alg.to_string().into(),
-    );
+    web_sys::console::debug_2(&"Validating with algorithm".into(), &alg.to_string().into());
 
     match alg {
         SigningAlg::Ps256 => {
