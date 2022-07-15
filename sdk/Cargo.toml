@@ -79,7 +79,7 @@ getrandom = { version = "0.2.7", features = ["js"] }
 # to handle certificate timestamp checking correctly.
 instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
-rand = "0.8"
+rand = "0.8.5"
 rsa = "0.6.1"
 serde-wasm-bindgen = "0.4.3"
 spki = "0.6.0"
