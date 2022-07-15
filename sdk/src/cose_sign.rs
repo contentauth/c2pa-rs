@@ -11,14 +11,58 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::time_stamp::{cose_timestamp_countersign, make_cose_timestamp};
-use crate::{Error, Result, Signer}; // enable when TimeStamp Authority is ready
+//! Provides access to COSE signature generation.
+
+#![deny(missing_docs)]
 
 use ciborium::value::Value;
 use coset::{iana, CoseSign1, CoseSign1Builder, HeaderBuilder, Label, TaggedCborSerializable};
 
-/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
+use crate::{
+    claim::Claim,
+    cose_validator::verify_cose,
+    status_tracker::OneShotStatusTracker,
+    time_stamp::{cose_timestamp_countersign, make_cose_timestamp},
+    Error, Result, Signer,
+};
+
+/// Generate a COSE signature for a block of bytes which must be a valid C2PA
+/// claim structure.
+///
+/// Should only be used when the underlying signature mechanism is detached
+/// from the generation of the C2PA manifest (and thus the claim embedded in it).
+///
+/// ## Actions taken
+///
+/// 1. Verifies that the data supplied is a valid C2PA claim. The function will
+///    respond with [`Error::ClaimDecoding`] if not.
+/// 2. Signs the data using the provided [`Signer`] instance. Will ensure that
+///    the signature is padded to match `box_size`, which should be the number of
+///    bytes reserved for the `c2pa.signature` JUMBF box in this claim's manifest.
+///    (If `box_size` is too small for the generated signature, this function
+///    will respond with an error.)
+/// 3. Verifies that the signature is valid COSE. Will respond with an error
+///    if unable to validate.
+pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
+    // must be a valid Claim
+    let label = "dummy_label";
+    let _claim = Claim::from_data(label, claim_bytes)?;
+
+    // generate and verify a CoseSign1 representation of the data
+    cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
+        // Sanity check: Ensure that this signature is valid.
+
+        let mut cose_log = OneShotStatusTracker::new();
+        match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
+            Ok(_) => Ok(sig),
+            Err(err) => Err(err),
+        }
+    })
+}
+
+/// Returns signed Cose_Sign1 bytes for `data`.
+/// The Cose_Sign1 will be signed with the algorithm from [`Signer`].
+pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
     // 13.2.1. X.509 Certificates
     //
     // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
@@ -53,23 +97,6 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
         "ps512" => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS512)
             .build(),
-        /* No longer supported by C2PA
-        "rs256" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS256)
-                .build()
-        }
-        "rs384" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS384)
-                .build()
-        }
-        "rs512" => {
-            HeaderBuilder::new()
-                .algorithm(iana::Algorithm::RS512)
-                .build()
-        }
-        */
         "es256" => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES256)
             .build(),
@@ -85,7 +112,7 @@ pub fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Ve
         _ => return Err(Error::UnsupportedType),
     };
 
-    // Get the public CAs for the Signer
+    // Get the public CAs for the Signer.
     let certs = signer.certs()?;
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()), // single cert
@@ -218,4 +245,29 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
         Value::Bytes(vec![0u8; last_pad - 10]),
     ));
     pad_cose_sig(sign1, end_size)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::sign_claim;
+
+    use crate::{claim::Claim, utils::test::temp_signer};
+
+    #[test]
+    fn test_sign_claim() {
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let box_size = 10000;
+
+        let signer = temp_signer();
+
+        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size).unwrap();
+
+        assert_eq!(cose_sign1.len(), box_size);
+    }
 }
