@@ -26,33 +26,6 @@ use crate::{
     utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, Error, Result, SigningAlg,
 };
 
-pub struct RsaHashedImportParams {
-    name: String,
-    hash: String,
-}
-
-impl RsaHashedImportParams {
-    pub fn new(name: &str, hash: &str) -> Self {
-        RsaHashedImportParams {
-            name: name.to_owned(),
-            hash: hash.to_owned(),
-        }
-    }
-
-    pub fn as_js_object(&self) -> Object {
-        let obj = Object::new();
-        Reflect::set(&obj, &"name".into(), &self.name.clone().into()).expect("not valid name");
-
-        let inner_obj = Object::new();
-        Reflect::set(&inner_obj, &"name".into(), &self.hash.clone().into())
-            .expect("not valid name");
-
-        Reflect::set(&obj, &"hash".into(), &inner_obj).expect("not valid name");
-
-        obj
-    }
-}
-
 pub struct EcKeyImportParams {
     name: String,
     named_curve: String,
