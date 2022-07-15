@@ -11,19 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::convert::TryFrom;
+
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use rsa::{BigUint, PaddingScheme, PublicKey, RsaPublicKey};
 use sha2::{Sha256, Sha384, Sha512};
 use spki::SubjectPublicKeyInfo;
-use std::convert::TryFrom;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
 use crate::{
-    utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, wasm::context::WindowOrWorker,
-    Error, Error, Result, Result, SigningAlg,
+    utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, Error, Result, SigningAlg,
 };
 
 pub struct RsaHashedImportParams {
