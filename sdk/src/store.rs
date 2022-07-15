@@ -2177,8 +2177,7 @@ pub mod tests {
     #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_async() {
-        let signer =
-            crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
