@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.8.1
+_15 July 2022_
+
+* Use rsa crate for RSA-PSS verification in Wasm ([#77](https://github.com/contentauth/c2pa-rs/pull/77))
+
+## 0.8.0
+_15 July 2022_
+
+* Add a new API to provide access to COSE signing logic for external signers ([#75](https://github.com/contentauth/c2pa-rs/pull/75))
+* (MINOR) Move crate-level functions for creating signers to new public `create_signer` mod ([#72](https://github.com/contentauth/c2pa-rs/pull/72))
+
+## 0.7.2
+_14 July 2022_
+
+* Fix broken documentation build ([#74](https://github.com/contentauth/c2pa-rs/pull/74))
+
+## 0.7.1
+_14 July 2022_
+
+* Configure docs.rs to include feature-gated items ([#73](https://github.com/contentauth/c2pa-rs/pull/73))
+* Update XMP Toolkit to 0.5.0 ([#71](https://github.com/contentauth/c2pa-rs/pull/71))
+* Refactor code to limit memory usage and remove data copies during hash generation ([#67](https://github.com/contentauth/c2pa-rs/pull/67))
+
 ## 0.7.0
 _29 June 2022_
 

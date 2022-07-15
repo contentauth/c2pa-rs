@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::assertion::{
@@ -44,6 +45,11 @@ use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
+
+pub enum ClaimAssetData<'a> {
+    PathData(&'a Path),
+    ByteData(&'a [u8]),
+}
 
 #[derive(PartialEq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -710,9 +716,9 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub async fn verify_claim_async(
+    pub async fn verify_claim_async<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_bytes: &'a [u8],
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -750,15 +756,21 @@ impl Claim {
             validation_log,
         )
         .await;
-        Claim::verify_internal(claim, asset_bytes, is_provenance, verified, validation_log)
+        Claim::verify_internal(
+            claim,
+            &ClaimAssetData::ByteData(asset_bytes),
+            is_provenance,
+            verified,
+            validation_log,
+        )
     }
 
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub fn verify_claim(
+    pub fn verify_claim<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -790,12 +802,12 @@ impl Claim {
             validation_log,
         );
 
-        Claim::verify_internal(claim, asset_bytes, is_provenance, verified, validation_log)
+        Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
-    fn verify_internal(
+    fn verify_internal<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         is_provenance: bool,
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
@@ -962,7 +974,16 @@ impl Claim {
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
-                        match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
+                        let hash_result = match asset_data {
+                            ClaimAssetData::PathData(asset_path) => {
+                                dh.verify_hash(asset_path, Some(claim.alg().to_string()))
+                            }
+                            ClaimAssetData::ByteData(asset_bytes) => {
+                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                            }
+                        };
+
+                        match hash_result {
                             Ok(_a) => {
                                 let log_item = log_item!(
                                     claim.assertion_uri(&dh_assertion.label()),
@@ -996,7 +1017,16 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
-                    match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
+                    let hash_result = match asset_data {
+                        ClaimAssetData::PathData(asset_path) => {
+                            dh.verify_hash(asset_path, Some(claim.alg().to_string()))
+                        }
+                        ClaimAssetData::ByteData(asset_bytes) => {
+                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                        }
+                    };
+
+                    match hash_result {
                         Ok(_a) => {
                             let log_item = log_item!(
                                 claim.assertion_uri(&dh_assertion.label()),

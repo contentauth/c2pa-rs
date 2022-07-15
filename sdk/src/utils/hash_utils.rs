@@ -11,7 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::ops::RangeInclusive;
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+    ops::RangeInclusive,
+    path::Path,
+};
 
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
@@ -24,6 +29,10 @@ use range_set::RangeSet;
 
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
+
+use crate::{Error, Result};
+
+const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Exclusion {
@@ -106,7 +115,7 @@ impl Hasher {
     }
 }
 
-// return hash bytes for desired hashing algoritm
+// Return hash bytes for desired hashing algorithm.
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -> Vec<u8> {
     use Hasher::*;
     let mut hasher_enum = match alg {
@@ -123,16 +132,7 @@ pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -
     };
 
     match exclusions {
-        Some(mut e) => {
-            // hash all content
-            if e.is_empty() {
-                // add the data
-                hasher_enum.update(data);
-
-                // return the hash
-                return Hasher::finalize(hasher_enum);
-            }
-
+        Some(mut e) if !e.is_empty() => {
             // hash data skipping excluded regions
             // sort the exclusions
             e.sort_by_key(|a| a.start());
@@ -143,7 +143,7 @@ pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -
             let data_len = data.len();
             let data_end = data_len - 1;
 
-            // if not enough range we will just cacl to the end
+            // if not enough range we will just calc to the end
             if data_len < exclusion_end {
                 debug!("the exclusion range exceed the data length");
                 return Vec::new();
@@ -164,7 +164,7 @@ pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -
             // return the hash
             Hasher::finalize(hasher_enum)
         }
-        None => {
+        _ => {
             // add the data
             hasher_enum.update(data);
 
@@ -174,7 +174,92 @@ pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -
     }
 }
 
-// verify the hash using the specifiied alogrithm
+// Return hash bytes for assset using desired hashing algorithm.
+pub fn hash_asset_by_alg(
+    alg: &str,
+    asset_path: &Path,
+    exclusions: Option<Vec<Exclusion>>,
+) -> Result<Vec<u8>> {
+    use Hasher::*;
+    let mut hasher_enum = match alg {
+        "sha256" => SHA256(Sha256::new()),
+        "sha384" => SHA384(Sha384::new()),
+        "sha512" => SHA512(Sha512::new()),
+        _ => {
+            warn!(
+                "Unsupported hashing algorithm: {}, substituting sha256",
+                alg
+            );
+            SHA256(Sha256::new())
+        }
+    };
+
+    let mut data = File::open(asset_path)?;
+    let data_len = data.seek(SeekFrom::End(0))?;
+    data.seek(SeekFrom::Start(0))?;
+
+    let ranges = match exclusions {
+        Some(mut e) if !e.is_empty() => {
+            // hash data skipping excluded regions
+            // sort the exclusions
+            e.sort_by_key(|a| a.start());
+
+            // verify structure of blocks
+            let num_blocks = e.len();
+            let exclusion_end = e[num_blocks - 1].start() + e[num_blocks - 1].length();
+            let data_end = data_len - 1;
+
+            // if not enough range we will just calc to the end
+            if data_len < exclusion_end as u64 {
+                return Err(Error::BadParam(
+                    "The exclusion range exceed the data length".to_string(),
+                ));
+            }
+
+            //build final ranges
+            let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
+            for exclusion in e {
+                let end = (exclusion.start() + exclusion.length() - 1) as u64;
+                let exclusion_start = exclusion.start() as u64;
+                ranges.remove_range(exclusion_start..=end);
+            }
+
+            ranges
+        }
+        _ => {
+            let data_end = data_len - 1;
+            RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end)
+        }
+    };
+
+    // hash the data for ranges
+    for r in ranges.into_smallvec() {
+        let start = r.start();
+        let end = r.end();
+        let mut chunk_left = end - start + 1;
+
+        // move to start of range
+        data.seek(SeekFrom::Start(*start))?;
+
+        loop {
+            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+
+            data.read_exact(&mut chunk)?;
+
+            hasher_enum.update(&chunk);
+
+            chunk_left -= chunk.len() as u64;
+            if chunk_left == 0 {
+                break;
+            }
+        }
+    }
+
+    // return the hash
+    Ok(Hasher::finalize(hasher_enum))
+}
+
+// verify the hash using the specified alogrithm
 pub fn verify_by_alg(
     alg: &str,
     hash: &[u8],
@@ -186,6 +271,20 @@ pub fn verify_by_alg(
     vec_compare(hash, &data_hash)
 }
 
+// verify the hash using the specified alogrithm
+pub fn verify_asset_by_alg(
+    alg: &str,
+    hash: &[u8],
+    asset_path: &Path,
+    exclusions: Option<Vec<Exclusion>>,
+) -> bool {
+    // hash with the same algorithm as target
+    if let Ok(data_hash) = hash_asset_by_alg(alg, asset_path, exclusions) {
+        vec_compare(hash, &data_hash)
+    } else {
+        false
+    }
+}
 /// Return a multihash (Sha256) of array of bytes
 #[allow(dead_code)]
 pub fn hash256(data: &[u8]) -> String {

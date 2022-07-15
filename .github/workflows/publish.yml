@@ -5,6 +5,7 @@ on:
 
 jobs:
   publish:
+    concurrency: publish-mutex
     runs-on: ubuntu-latest
     steps:
 
