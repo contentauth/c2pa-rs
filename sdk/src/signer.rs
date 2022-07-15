@@ -76,10 +76,29 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
-    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
 
     /// Returns the size in bytes of the largest possible expected signature.
     /// Signing will fail if the result of the `sign` function is larger
     /// than this value.
     fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
 }

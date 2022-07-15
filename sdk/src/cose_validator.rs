@@ -11,31 +11,31 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::error::{Error, Result};
-use crate::status_tracker::{log_item, StatusTracker};
-use crate::time_stamp::gt_to_datetime;
-use crate::validation_status;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::get_validator;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::CoseValidator;
-use crate::validator::ValidationInfo;
-use crate::SigningAlg;
+use std::str::FromStr;
 
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webcrypto_validator::validate_async;
-
-use crate::asn1::rfc3161::TstInfo;
 use ciborium::value::Value;
 use conv::*;
 use coset::{sig_structure_data, Label, TaggedCborSerializable};
 
-use std::str::FromStr;
+use x509_parser::{
+    der_parser::ber::parse_ber_sequence, der_parser::oid, oid_registry::Oid, prelude::*,
+};
 
-use x509_parser::der_parser::ber::parse_ber_sequence;
-use x509_parser::der_parser::oid;
-use x509_parser::oid_registry::Oid;
-use x509_parser::prelude::*;
+use crate::{
+    asn1::rfc3161::TstInfo,
+    error::{Error, Result},
+    status_tracker::{log_item, StatusTracker},
+    time_stamp::gt_to_datetime,
+    validation_status,
+    validator::ValidationInfo,
+    SigningAlg,
+};
+
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::webcrypto_validator::validate_async;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::validator::{get_validator, CoseValidator};
 
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
@@ -944,12 +944,24 @@ async fn validate_with_cert_async(
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn validate_with_cert_async(
-    _signing_alg: SigningAlg,
-    _sig: &[u8],
-    _data: &[u8],
-    _der_bytes: &[u8],
+    signing_alg: SigningAlg,
+    sig: &[u8],
+    data: &[u8],
+    der_bytes: &[u8],
 ) -> Result<String> {
-    Err(Error::CoseSignatureAlgorithmNotSupported)
+    // get the cert in der format
+    let (_rem, signcert) =
+        X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
+    let pk = signcert.public_key();
+    let pk_der = pk.raw;
+
+    let validator = get_validator(signing_alg);
+
+    if validator.validate(sig, data, pk_der)? {
+        Ok(extract_subject_from_cert(&signcert)?)
+    } else {
+        Err(Error::CoseSignature)
+    }
 }
 #[allow(unused_imports)]
 #[cfg(feature = "file_io")]
@@ -957,11 +969,11 @@ async fn validate_with_cert_async(
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use super::*;
+
     use sha2::digest::generic_array::sequence::Shorten;
 
     use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
-
-    use super::*;
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -990,9 +1002,9 @@ pub mod tests {
     fn test_verify_cose_good() {
         let validator = get_validator(SigningAlg::Ps256);
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         assert!(validator
             .validate(sig_bytes, data_bytes, key_bytes)
@@ -1027,9 +1039,9 @@ pub mod tests {
     fn test_verify_cose_bad() {
         let validator = get_validator(SigningAlg::Ps256);
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         let mut bad_bytes = data_bytes.to_vec();
         bad_bytes[0] = b'c';
