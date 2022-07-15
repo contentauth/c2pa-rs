@@ -45,9 +45,9 @@ pub struct ValidationStatus {
 }
 
 impl ValidationStatus {
-    pub(crate) fn new(code: String) -> Self {
+    pub(crate) fn new<S: Into<String>>(code: S) -> Self {
         Self {
-            code,
+            code: code.into(),
             url: None,
             explanation: None,
         }
