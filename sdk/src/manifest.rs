@@ -603,7 +603,7 @@ impl Manifest {
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::User,
-    ///     get_signer_from_files,
+    ///     create_signer,
     ///     Manifest
     /// };
     /// # fn main() -> Result<()> {
@@ -616,7 +616,7 @@ impl Manifest {
     /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
     /// let pkey_path = "tests/fixtures/certs/ps256.pem";
-    /// let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+    /// let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
     ///
     /// // Embed a manifest using the signer.
     /// manifest.embed(&source, &dest, &*signer)?;

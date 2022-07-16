@@ -29,9 +29,16 @@ pub(crate) use ed_signer::EdSigner;
 mod ed_validator;
 pub(crate) use ed_validator::EdValidator;
 
-pub mod signer;
 #[cfg(test)]
 pub(crate) mod temp_signer;
+
+#[cfg(test)]
+pub(crate) mod temp_signer_async;
+
+#[cfg(test)]
+#[allow(unused_imports)]
+#[cfg(feature = "async_signer")]
+pub(crate) use temp_signer_async::AsyncSignerAdapter;
 
 use openssl::x509::X509;
 
@@ -57,31 +64,14 @@ pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
 }
 
 pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
-    if cert_ders.len() > 1 {
-        let mut certs: Vec<X509> = Vec::new();
-        for cert_der in cert_ders {
-            if let Ok(cert) = X509::from_der(cert_der) {
-                certs.push(cert);
-            } else {
-                return false;
-            }
-        }
-
-        for (i, c) in certs.iter().enumerate() {
-            if let Some(next_c) = certs.get(i + 1) {
-                if let Ok(pkey) = next_c.public_key() {
-                    if let Ok(verified) = c.verify(&pkey) {
-                        if !verified {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
+    let mut certs: Vec<X509> = Vec::new();
+    for cert_der in cert_ders {
+        if let Ok(cert) = X509::from_der(cert_der) {
+            certs.push(cert);
+        } else {
+            return false;
         }
     }
-    true
+
+    check_chain_order(&certs)
 }

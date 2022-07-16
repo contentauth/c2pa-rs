@@ -25,8 +25,8 @@ use crate::{
     assertions::labels,
     asset_handlers::bmff_io::bmff_to_jumbf_exclusions,
     cbor_types::UriT,
-    error::{wrap_io_err, Result},
-    utils::hash_utils::{hash_by_alg, verify_by_alg},
+    error::Result,
+    utils::hash_utils::{hash_asset_by_alg, verify_asset_by_alg, verify_by_alg},
     Error,
 };
 
@@ -191,9 +191,6 @@ impl BmffHash {
             ));
         }
 
-        let mut data = fs::read(asset_path).map_err(wrap_io_err)?;
-        let mut data_reader = Cursor::new(data);
-
         let alg = match self.alg {
             Some(ref a) => a.clone(),
             None => "sha256".to_string(),
@@ -202,10 +199,10 @@ impl BmffHash {
         let bmff_exclusions = &self.exclusions;
 
         // convert BMFF exclusion map to flat exclusion list
-        let exclusions = bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions)?;
+        let mut data = fs::File::open(asset_path)?;
+        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
 
-        data = data_reader.into_inner(); // back to buffer
-        let hash = hash_by_alg(&alg, &data, Some(exclusions));
+        let hash = hash_asset_by_alg(&alg, asset_path, Some(exclusions))?;
 
         if hash.is_empty() {
             Err(Error::BadParam("could not generate data hash".to_string()))
@@ -215,10 +212,10 @@ impl BmffHash {
     }
 
     pub fn verify_in_memory_hash(&self, data: &[u8], alg: Option<String>) -> Result<()> {
-        let curr_alg = match alg {
-            Some(a) => a,
-            None => match self.alg {
-                Some(ref a) => a.clone(),
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a,
                 None => "sha256".to_string(),
             },
         };
@@ -231,6 +228,28 @@ impl BmffHash {
         let exclusions = bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions)?;
 
         if verify_by_alg(&curr_alg, &self.hash, data, Some(exclusions)) {
+            Ok(())
+        } else {
+            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+        }
+    }
+
+    pub fn verify_hash(&self, asset_path: &Path, alg: Option<String>) -> Result<()> {
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a,
+                None => "sha256".to_string(),
+            },
+        };
+
+        let bmff_exclusions = &self.exclusions;
+
+        // convert BMFF exclusion map to flat exclusion list
+        let mut data = fs::File::open(asset_path)?;
+        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
+
+        if verify_asset_by_alg(&curr_alg, &self.hash, asset_path, Some(exclusions)) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))

@@ -954,12 +954,25 @@ async fn validate_with_cert_async(
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn validate_with_cert_async(
-    _validator_str: &str,
-    _sig: &[u8],
-    _data: &[u8],
-    _der_bytes: &[u8],
+    validator_str: &str,
+    sig: &[u8],
+    data: &[u8],
+    der_bytes: &[u8],
 ) -> Result<String> {
-    Err(Error::CoseSignatureAlgorithmNotSupported)
+    // get the cert in der format
+    let (_rem, signcert) =
+        X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
+    let pk = signcert.public_key();
+    let pk_der = pk.raw;
+
+    let validator =
+        get_validator(validator_str).ok_or(Error::CoseSignatureAlgorithmNotSupported)?;
+
+    if validator.validate(sig, data, pk_der)? {
+        Ok(extract_subject_from_cert(&signcert)?)
+    } else {
+        Err(Error::CoseSignature)
+    }
 }
 #[allow(unused_imports)]
 #[cfg(feature = "file_io")]
@@ -1000,9 +1013,9 @@ pub mod tests {
     fn test_verify_cose_good() {
         let validator = get_validator("ps256").unwrap();
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         assert!(validator
             .validate(sig_bytes, data_bytes, key_bytes)
@@ -1037,9 +1050,9 @@ pub mod tests {
     fn test_verify_cose_bad() {
         let validator = get_validator("ps256").unwrap();
 
-        let sig_bytes = include_bytes!("../tests/fixtures/sig.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key.data");
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
         let mut bad_bytes = data_bytes.to_vec();
         bad_bytes[0] = b'c';

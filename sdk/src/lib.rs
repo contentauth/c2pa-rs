@@ -15,6 +15,7 @@
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
@@ -45,7 +46,7 @@
 //! # use c2pa::Result;
 //! use c2pa::{
 //!     assertions::User,
-//!     get_signer_from_files,
+//!     create_signer,
 //!     Manifest
 //! };
 //!
@@ -63,7 +64,7 @@
 //! // Create a ps256 signer using certs and key files
 //! let signcert_path = "tests/fixtures/certs/ps256.pub";
 //! let pkey_path = "tests/fixtures/certs/ps256.pem";
-//! let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+//! let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
 //!
 //! // embed a manifest using the signer
 //! manifest.embed(&source, &dest, &*signer)?;
@@ -75,6 +76,9 @@ pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
 pub mod assertions;
 
 mod cose_validator;
+
+#[cfg(feature = "file_io")]
+pub mod create_signer;
 
 mod error;
 pub use error::{Error, Result};
@@ -99,8 +103,6 @@ pub use ingredient::{DefaultOptions, IngredientOptions};
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
 mod openssl;
-#[cfg(feature = "file_io")]
-pub use crate::openssl::signer::{get_signer, get_signer_from_files};
 
 #[cfg(feature = "file_io")]
 mod signer;
@@ -115,8 +117,10 @@ pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod claim;
+
 #[cfg(feature = "file_io")]
-pub(crate) mod cose_sign;
+pub mod cose_sign;
+
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
 pub(crate) mod hashed_uri;
