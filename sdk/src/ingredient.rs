@@ -394,14 +394,14 @@ impl Ingredient {
         }
 
         // if options includes a title, use it
-        if let Some(opt_title) = options.title() {
+        if let Some(opt_title) = options.title(path) {
             ingredient.title = opt_title;
         }
         // read the file into a buffer for processing
         let buf = std::fs::read(path).map_err(wrap_io_err)?;
 
         // optionally generate a hash so we know if the file has changed
-        ingredient.hash = options.hash();
+        ingredient.hash = options.hash(path);
 
         let mut report = DetailedStatusTracker::new();
 
@@ -656,13 +656,15 @@ pub trait IngredientOptions {
     /// This allows setting the title for the ingredient.
     ///
     /// If it returns `None`, then the default behavior is to use the file's name.
-    fn title(&self) -> Option<String> {
+    fn title(&self, _path: &Path) -> Option<String> {
         None
     }
+
     /// Returns an optional hash value for the ingredient
     ///
     /// This can be used to test for duplicate ingredients or if a source file has changed.
-    fn hash(&self) -> Option<String> {
+    /// If hash is_some() Manifest.add_ingredient will dedup matching hashes
+    fn hash(&self, _path: &Path) -> Option<String> {
         None
     }
 
@@ -671,22 +673,18 @@ pub trait IngredientOptions {
     /// The first value is the content type of the thumbnail, i.e. image/jpeg
     /// The second value is bytes of the thumbnail image
     /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
-    #[cfg(feature = "add_thumbnails")]
     fn thumbnail(&self, path: &Path) -> Option<(String, Vec<u8>)> {
-        crate::utils::thumbnail::make_thumbnail(path).ok()
-    }
-    /// Returns an optional thumbnail image representing the asset
-    ///
-    /// The first value is the content type of the thumbnail, i.e. image/jpeg
-    /// The second value is bytes of the thumbnail image
-    /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
-    #[cfg(not(feature = "add_thumbnails"))]
-    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+        #[cfg(feature = "add_thumbnails")]
+        return crate::utils::thumbnail::make_thumbnail(path).ok();
+        #[cfg(not(feature = "add_thumbnails"))]
         None
     }
 }
 
 #[cfg(feature = "file_io")]
+/// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
+///
+/// This can be use with Ingredient::from_file_with_options
 pub struct DefaultOptions {}
 #[cfg(feature = "file_io")]
 impl IngredientOptions for DefaultOptions {}
@@ -781,11 +779,14 @@ mod tests {
     fn test_jpg_options() {
         struct MyOptions {}
         impl IngredientOptions for MyOptions {
-            fn title(&self) -> Option<String> {
+            fn title(&self, _path: &Path) -> Option<String> {
                 Some("MyTitle".to_string())
             }
-            fn hash(&self) -> Option<String> {
+            fn hash(&self, _path: &Path) -> Option<String> {
                 Some("1234568abcdef".to_string())
+            }
+            fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+                Some(("image/foo".to_string(), "bits".as_bytes().to_owned()))
             }
         }
 

@@ -94,7 +94,7 @@ mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
 #[cfg(feature = "file_io")]
-pub use ingredient::IngredientOptions;
+pub use ingredient::{DefaultOptions, IngredientOptions};
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]

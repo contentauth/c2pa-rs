@@ -95,6 +95,7 @@ impl Default for Config {
     }
 }
 
+/// Generate a blake3 hash over the image in path using a fixed buffer
 fn blake3_hash(path: &Path) -> Result<String> {
     use std::fs::File;
     use std::io::Read;
@@ -183,20 +184,16 @@ impl MakeTestImages {
         // keep track of all actions here
         let mut actions = Actions::new();
 
-        struct ImageOptions {
-            path: PathBuf,
-        }
+        struct ImageOptions {}
         impl ImageOptions {
-            fn new(path: &Path) -> Self {
-                ImageOptions {
-                    path: PathBuf::from(path),
-                }
+            fn new() -> Self {
+                ImageOptions {}
             }
         }
 
         impl IngredientOptions for ImageOptions {
-            fn hash(&self) -> Option<String> {
-                blake3_hash(&self.path).ok()
+            fn hash(&self, path: &Path) -> Option<String> {
+                blake3_hash(path).ok()
             }
         }
 
@@ -216,8 +213,7 @@ impl MakeTestImages {
             Some(src) => {
                 let src_path = &self.make_path(src);
 
-                let parent =
-                    Ingredient::from_file_with_options(src_path, &ImageOptions::new(src_path))?;
+                let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
 
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
@@ -280,7 +276,7 @@ impl MakeTestImages {
 
                 // create and add the ingredient
                 let ingredient =
-                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new(ing_path))?;
+                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
                 actions =
                     actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
                         "identifier".to_owned(),
