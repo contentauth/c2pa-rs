@@ -607,7 +607,8 @@ impl Manifest {
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
-        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
+        // set source and dest to same path to avoid an unnecessary copy since we already copied above
+        store.save_to_asset(dest_path.as_ref(), signer, dest_path.as_ref())?;
 
         // todo: update xmp
         Ok(store)
