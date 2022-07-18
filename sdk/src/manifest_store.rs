@@ -138,7 +138,7 @@ impl ManifestStore {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let store = Store::load_from_asset(path.as_ref(), false, &mut validation_log)?;
+        let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store(&store, &mut validation_log))
     }
 
