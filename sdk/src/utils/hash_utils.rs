@@ -292,7 +292,6 @@ pub fn hash_asset_by_alg(
             let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut next_chunk)?;
 
-            println!("waiting for hash");
             hasher_enum = rx.recv().unwrap();
             
             chunk = next_chunk;
