@@ -78,7 +78,7 @@ impl ManifestStoreReport {
     /// Creates a ManifestStoreReport from image bytes and a format
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
-        let store = Store::load_from_memory(format, image_bytes, true, &mut validation_log)?;
+        let store = Store::load_from_memory(format, image_bytes, false, &mut validation_log)?;
         Self::from_store_with_log(&store, &mut validation_log)
     }
 
@@ -86,7 +86,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
-        let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        let store = Store::load_from_asset(path.as_ref(), false, &mut validation_log)?;
         Self::from_store_with_log(&store, &mut validation_log)
     }
 
