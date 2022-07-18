@@ -85,6 +85,7 @@ pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
     }
 }
 
+#[derive(Clone)]
 enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
@@ -232,6 +233,7 @@ pub fn hash_asset_by_alg(
         }
     };
 
+    /* 
     // hash the data for ranges
     for r in ranges.into_smallvec() {
         let start = r.start();
@@ -254,6 +256,49 @@ pub fn hash_asset_by_alg(
             }
         }
     }
+
+    */
+
+
+    // hash the data for ranges
+    for r in ranges.into_smallvec() {
+        let start = r.start();
+        let end = r.end();
+        let mut chunk_left = end - start + 1;
+
+        // move to start of range
+        data.seek(SeekFrom::Start(*start))?;
+
+        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+        data.read_exact(&mut chunk)?;
+
+        loop {
+            let (tx, rx) = std::sync::mpsc::channel();
+
+            chunk_left -= chunk.len() as u64;
+
+            std::thread::spawn(move || { 
+                hasher_enum.update(&chunk);
+                tx.send(hasher_enum).unwrap();
+            });
+
+            // are we done
+            if chunk_left == 0 {
+                hasher_enum = rx.recv().unwrap();
+                break;
+            }
+
+            // read next handle chunk while we wait for hash
+            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            data.read_exact(&mut next_chunk)?;
+
+            println!("waiting for hash");
+            hasher_enum = rx.recv().unwrap();
+            
+            chunk = next_chunk;
+        }
+    }
+
 
     // return the hash
     Ok(Hasher::finalize(hasher_enum))
