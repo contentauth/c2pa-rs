@@ -395,7 +395,9 @@ impl Ingredient {
         }
 
         // generate a hash so we know if the file has changed
-        ingredient.hash = options.make_hash.then(|| blake3_from_asset(path).unwrap_or_default());
+        ingredient.hash = options
+            .make_hash
+            .then(|| blake3_from_asset(path).unwrap_or_default());
 
         let mut report = DetailedStatusTracker::new();
 
@@ -420,8 +422,7 @@ impl Ingredient {
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data =
-                    jumbf_io::load_jumbf_from_file(path).ok();
+                ingredient.manifest_data = jumbf_io::load_jumbf_from_file(path).ok();
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {

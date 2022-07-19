@@ -233,67 +233,73 @@ pub fn hash_asset_by_alg(
         }
     };
 
-    /*
-    // hash the data for ranges
-    for r in ranges.into_smallvec() {
-        let start = r.start();
-        let end = r.end();
-        let mut chunk_left = end - start + 1;
+    if cfg!(feature = "no_interleaved_io")
+    {
+        // hash the data for ranges
+        for r in ranges.into_smallvec() {
+            let start = r.start();
+            let end = r.end();
+            let mut chunk_left = end - start + 1;
 
-        // move to start of range
-        data.seek(SeekFrom::Start(*start))?;
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
 
-        loop {
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            loop {
+                let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
 
-            data.read_exact(&mut chunk)?;
+                data.read_exact(&mut chunk)?;
 
-            hasher_enum.update(&chunk);
+                hasher_enum.update(&chunk);
 
-            chunk_left -= chunk.len() as u64;
-            if chunk_left == 0 {
-                break;
+                chunk_left -= chunk.len() as u64;
+                if chunk_left == 0 {
+                    break;
+                }
             }
         }
-    }
+    } else {
+        // hash the data for ranges
+        for r in ranges.into_smallvec() {
+            let start = r.start();
+            let end = r.end();
+            let mut chunk_left = end - start + 1;
 
-    */
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
 
-    // hash the data for ranges
-    for r in ranges.into_smallvec() {
-        let start = r.start();
-        let end = r.end();
-        let mut chunk_left = end - start + 1;
+            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            data.read_exact(&mut chunk)?;
 
-        // move to start of range
-        data.seek(SeekFrom::Start(*start))?;
+            loop {
+                let (tx, rx) = std::sync::mpsc::channel();
 
-        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        data.read_exact(&mut chunk)?;
+                chunk_left -= chunk.len() as u64;
 
-        loop {
-            let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    hasher_enum.update(&chunk);
+                    tx.send(hasher_enum).unwrap_or_default();
+                });
 
-            chunk_left -= chunk.len() as u64;
+                // are we done
+                if chunk_left == 0 {
+                    hasher_enum = match rx.recv() {
+                        Ok(hasher) => hasher,
+                        Err(_) => return Err(Error::ThreadReceiveError),
+                    };
+                    break;
+                }
 
-            std::thread::spawn(move || {
-                hasher_enum.update(&chunk);
-                tx.send(hasher_enum).unwrap();
-            });
+                // read next handle chunk while we wait for hash
+                let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+                data.read_exact(&mut next_chunk)?;
 
-            // are we done
-            if chunk_left == 0 {
-                hasher_enum = rx.recv().unwrap();
-                break;
+                hasher_enum = match rx.recv() {
+                    Ok(hasher) => hasher,
+                    Err(_) => return Err(Error::ThreadReceiveError),
+                };
+
+                chunk = next_chunk;
             }
-
-            // read next handle chunk while we wait for hash
-            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-            data.read_exact(&mut next_chunk)?;
-
-            hasher_enum = rx.recv().unwrap();
-
-            chunk = next_chunk;
         }
     }
 
@@ -374,39 +380,54 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
 
     let mut chunk_left = data_len;
 
-    let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-    data.read_exact(&mut chunk)?;
+    if cfg!(feature = "no_interleaved_io")
+    {
+        loop {
+            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
 
-    loop {
-        let (tx, rx) = std::sync::mpsc::channel();
+            data.read_exact(&mut chunk)?;
 
-        chunk_left -= chunk.len() as u64;
-
-        std::thread::spawn(move || {
             hasher.update(&chunk);
-            tx.send(hasher).unwrap();
-        });
 
-        // are we done
-        if chunk_left == 0 {
-            hasher = rx.recv().unwrap();
-            break;
+            chunk_left -= chunk.len() as u64;
+            if chunk_left == 0 {
+                break;
+            }
         }
+    } else {
+        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+        data.read_exact(&mut chunk)?;
 
-        // read next handle chunk while we wait for hash
-        let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        data.read_exact(&mut next_chunk)?;
+        loop {
+            let (tx, rx) = std::sync::mpsc::channel();
 
-        hasher = rx.recv().unwrap();
+            chunk_left -= chunk.len() as u64;
 
-        chunk = next_chunk;
+            std::thread::spawn(move || {
+                hasher.update(&chunk);
+                tx.send(hasher).unwrap_or_default();
+            });
+
+            // are we done
+            if chunk_left == 0 {
+                hasher = rx.recv().unwrap_or_default();
+                break;
+            }
+
+            // read next handle chunk while we wait for hash
+            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            data.read_exact(&mut next_chunk)?;
+
+            hasher = rx.recv().unwrap_or_default();
+
+            chunk = next_chunk;
+        }
     }
 
     let hash = hasher.finalize();
 
     Ok(hash.to_hex().as_str().to_owned())
 }
-
 
 /// Return the hash of data in the same hash format in_hash
 pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
