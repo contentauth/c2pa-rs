@@ -772,13 +772,13 @@ mod tests_file_io {
     }
 
     // check for correct thumbnail generation with or without add_thumbnails feature
-    fn test_thumbnail(ingredient: &Ingredient, _format: &str) {
-        #[cfg(not(feature = "add_thumbnails"))]
-        assert!(ingredient.thumbnail().is_none());
-        #[cfg(feature = "add_thumbnails")]
-        assert!(ingredient.thumbnail().is_some());
-        #[cfg(feature = "add_thumbnails")]
-        assert_eq!(ingredient.thumbnail().unwrap().0, _format);
+    fn test_thumbnail(ingredient: &Ingredient, format: &str) {
+        if cfg!(feature = "add_thumbnails") {
+            assert!(ingredient.thumbnail().is_some());
+            assert_eq!(ingredient.thumbnail().unwrap().0, format);
+        } else {
+            assert!(ingredient.thumbnail().is_none());
+        }
     }
 
     #[test]

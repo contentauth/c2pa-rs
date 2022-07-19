@@ -782,11 +782,11 @@ pub(crate) mod tests {
 
         assert_eq!(manifest.format(), "image/jpeg");
         assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
-        #[cfg(feature = "add_thumbnails")]
-        assert!(manifest.thumbnail().is_some());
-        #[cfg(not(feature = "add_thumbnails"))]
-        assert!(manifest.thumbnail().is_none());
-
+        if cfg!(feature = "add_thumbnails") {
+            assert!(manifest.thumbnail().is_some());
+        } else {
+            assert!(manifest.thumbnail().is_none());
+        }
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");
         assert!(ingredient.active_manifest().is_some());
     }
