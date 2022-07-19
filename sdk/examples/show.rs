@@ -11,17 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-#[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+//! Example App that generates a manifest store listing for a given file
+use anyhow::Result;
+use c2pa::ManifestStore;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        let ms = ManifestStore::from_file(&args[1])?;
+        println!("{}", ms);
+    } else {
+        println!("Prints a manifest report (requires a file path argument)")
+    }
+    Ok(())
+}
