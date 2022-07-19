@@ -25,12 +25,15 @@ clippy:
 test-local:
 	cargo test --all-features
 
+test-no-defaults:
+	cd sdk && cargo test --features="file_io" --no-default-features 
+
 test-wasm:
 	cd sdk && wasm-pack test --node
 
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-local test-wasm
+test: check-format check-docs clippy test-local test-no-defaults test-wasm
 
 # Builds and views documentation
 doc:

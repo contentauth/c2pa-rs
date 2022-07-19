@@ -683,9 +683,9 @@ pub trait IngredientOptions {
     /// The first value is the content type of the thumbnail, i.e. image/jpeg
     /// The second value is bytes of the thumbnail image
     /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
-    fn thumbnail(&self, path: &Path) -> Option<(String, Vec<u8>)> {
+    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
         #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail(path).ok();
+        return crate::utils::thumbnail::make_thumbnail(_path).ok();
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }
@@ -752,6 +752,7 @@ mod tests_file_io {
 
     use crate::utils::test::fixture_path;
 
+    const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
@@ -770,6 +771,16 @@ mod tests_file_io {
         ingredient.title().len() + ingredient.instance_id().len() + thumb_size + manifest_data_size
     }
 
+    // check for correct thumbnail generation with or without add_thumbnails feature
+    fn test_thumbnail(ingredient: &Ingredient, _format: &str) {
+        #[cfg(not(feature = "add_thumbnails"))]
+        assert!(ingredient.thumbnail().is_none());
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient.thumbnail().is_some());
+        #[cfg(feature = "add_thumbnails")]
+        assert_eq!(ingredient.thumbnail().unwrap().0, _format);
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_psd() {
@@ -782,13 +793,13 @@ mod tests_file_io {
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), "Purple Square.psd");
         assert_eq!(ingredient.format(), "image/vnd.adobe.photoshop");
-        assert!(ingredient.thumbnail().is_none());
+        assert!(ingredient.thumbnail().is_none()); // should always be none
         assert!(ingredient.manifest_data().is_none());
     }
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpg() {
+    fn test_manifest_jpg() {
         let ap = fixture_path(MANIFEST_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         stats(&ingredient);
@@ -796,9 +807,25 @@ mod tests_file_io {
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
-        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_no_manifest_jpg() {
+        let ap = fixture_path(NO_MANIFEST_JPEG);
+        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        stats(&ingredient);
+
+        println!("ingredient = {}", ingredient);
+        assert_eq!(&ingredient.title, NO_MANIFEST_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        test_thumbnail(&ingredient, "image/jpeg");
+        assert!(ingredient.provenance().is_none());
+        assert!(ingredient.manifest_data().is_none());
         assert!(ingredient.metadata().is_none());
     }
 
@@ -826,7 +853,7 @@ mod tests_file_io {
         assert_eq!(ingredient.title(), "MyTitle");
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.hash().is_some());
-        assert!(ingredient.thumbnail().is_some());
+        assert!(ingredient.thumbnail().is_some()); // always generated
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
@@ -841,10 +868,8 @@ mod tests_file_io {
 
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), "libpng-test.png");
-        #[cfg(feature = "add_thumbnails")]
-        assert!(ingredient.thumbnail().is_some());
-        #[cfg(feature = "add_thumbnails")]
-        assert_eq!(ingredient.thumbnail().unwrap().0, "image/png");
+        test_thumbnail(&ingredient, "image/png");
+        assert!(ingredient.provenance().is_none());
         assert!(ingredient.manifest_data.is_none());
     }
 
@@ -858,8 +883,7 @@ mod tests_file_io {
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
-        #[cfg(feature = "add_thumbnails")]
-        assert!(ingredient.thumbnail().is_some());
+        test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.validation_status().is_some());
@@ -880,8 +904,7 @@ mod tests_file_io {
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), PRERELEASE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
-        #[cfg(feature = "add_thumbnails")]
-        assert!(ingredient.thumbnail().is_some());
+        test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_none());
         assert!(ingredient.validation_status().is_some());

@@ -221,7 +221,7 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
-    #[cfg(feature = "add_thumbnails")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "add_thumbnails"))]
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]
