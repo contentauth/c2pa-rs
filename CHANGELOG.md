@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.1
+_19 July 2022_
+
+* Fix publish workflow ([#82](https://github.com/contentauth/c2pa-rs/pull/82))
+
 ## 0.9.0
 _19 July 2022_
 
