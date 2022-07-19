@@ -568,7 +568,8 @@ impl Manifest {
     /// use c2pa::{
     ///     assertions::User,
     ///     create_signer,
-    ///     Manifest
+    ///     Manifest,
+    ///     SigningAlg,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
@@ -580,7 +581,7 @@ impl Manifest {
     /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
     /// let pkey_path = "tests/fixtures/certs/ps256.pem";
-    /// let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
+    /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
     ///
     /// // Embed a manifest using the signer.
     /// manifest.embed(&source, &dest, &*signer)?;

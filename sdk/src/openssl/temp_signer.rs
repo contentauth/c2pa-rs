@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     openssl::{EcSigner, EdSigner, RsaSigner},
     signer::ConfigurableSigner,
+    SigningAlg,
 };
 
 /// Create an OpenSSL ES256 signer that can be used for testing purposes.
@@ -44,7 +45,7 @@ use crate::{
 ///
 /// * `path` - A directory (which must already exist) to receive the temporary
 ///   private key / certificate pair.
-/// * `alg` - A format for signing. Must be one of (`es256`, `es384`, or `es512`).
+/// * `alg` - A format for signing. Must be one of the `SigningAlg::Es*` variants.
 /// * `tsa_url` - Optional URL for a timestamp authority.
 ///
 /// # Returns
@@ -58,26 +59,26 @@ use crate::{
 /// Can panic if unable to invoke OpenSSL executable properly.
 pub fn get_ec_signer<P: AsRef<Path>>(
     path: P,
-    alg: &str,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> (EcSigner, PathBuf) {
     match alg {
-        "es256" | "es384" | "es512" => (),
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => (),
         _ => {
             panic!("Unknown EC signer alg {:#?}", alg);
         }
     }
 
     let mut sign_cert_path = path.as_ref().to_path_buf();
-    sign_cert_path.push(alg);
+    sign_cert_path.push(alg.to_string());
     sign_cert_path.set_extension("pub");
 
     let mut pem_key_path = path.as_ref().to_path_buf();
-    pem_key_path.push(alg);
+    pem_key_path.push(alg.to_string());
     pem_key_path.set_extension("pem");
 
     (
-        EcSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
+        EcSigner::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
         sign_cert_path,
     )
 }
@@ -102,23 +103,23 @@ pub fn get_ec_signer<P: AsRef<Path>>(
 /// Can panic if unable to invoke OpenSSL executable properly.
 pub fn get_ed_signer<P: AsRef<Path>>(
     path: P,
-    alg: &str,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> (EdSigner, PathBuf) {
-    if alg != "ed25519" {
+    if alg != SigningAlg::Ed25519 {
         panic!("Unknown ED signer alg {:#?}", alg);
     }
 
     let mut sign_cert_path = path.as_ref().to_path_buf();
-    sign_cert_path.push(alg);
+    sign_cert_path.push(alg.to_string());
     sign_cert_path.set_extension("pub");
 
     let mut pem_key_path = path.as_ref().to_path_buf();
-    pem_key_path.push(alg);
+    pem_key_path.push(alg.to_string());
     pem_key_path.set_extension("pem");
 
     (
-        EdSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
+        EdSigner::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
         sign_cert_path,
     )
 }
@@ -129,8 +130,7 @@ pub fn get_ed_signer<P: AsRef<Path>>(
 ///
 /// * `path` - A directory (which must already exist) to receive the temporary
 ///   private key / certificate pair.
-/// * `alg` - A format for signing. Must be one of (`rs256`, `rs384`, `rs512`,
-///   `ps256`, `ps384`, or `ps512`).
+/// * `alg` - A format for signing. Must be one of the `SignerAlg::Ps*` options.
 /// * `tsa_url` - Optional URL for a timestamp authority.
 ///
 /// # Returns
@@ -144,22 +144,22 @@ pub fn get_ed_signer<P: AsRef<Path>>(
 /// Can panic if unable to invoke OpenSSL executable properly.
 pub fn get_rsa_signer<P: AsRef<Path>>(
     path: P,
-    alg: &str,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> (RsaSigner, PathBuf) {
     match alg {
-        "ps256" | "ps384" | "ps512" => (),
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => (),
         _ => {
             panic!("Unknown RSA signer alg {:#?}", alg);
         }
     }
 
     let mut sign_cert_path = path.as_ref().to_path_buf();
-    sign_cert_path.push(alg);
+    sign_cert_path.push(alg.to_string());
     sign_cert_path.set_extension("pub");
 
     let mut pem_key_path = path.as_ref().to_path_buf();
-    pem_key_path.push(alg);
+    pem_key_path.push(alg.to_string());
     pem_key_path.set_extension("pem");
 
     if !sign_cert_path.exists() || !pem_key_path.exists() {
@@ -171,7 +171,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     }
 
     (
-        RsaSigner::from_files(&sign_cert_path, &pem_key_path, alg.to_string(), tsa_url).unwrap(),
+        RsaSigner::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
         sign_cert_path,
     )
 }
