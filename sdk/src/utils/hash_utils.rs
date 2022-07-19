@@ -363,6 +363,53 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
     }
 }
 
+// Fast implementation for Blake3 hashing that can handle large assets
+pub fn blake3_from_asset(path: &Path) -> Result<String> {
+    const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
+
+    let mut data = File::open(path)?;
+    data.seek(SeekFrom::Start(0))?;
+    let data_len = data.seek(SeekFrom::End(0))?;
+    data.seek(SeekFrom::Start(0))?;
+
+    let mut hasher = blake3::Hasher::new();
+
+    let mut chunk_left = data_len;
+
+    let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+    data.read_exact(&mut chunk)?;
+
+    loop {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        chunk_left -= chunk.len() as u64;
+
+        std::thread::spawn(move || {
+            hasher.update(&chunk);
+            tx.send(hasher).unwrap();
+        });
+
+        // are we done
+        if chunk_left == 0 {
+            hasher = rx.recv().unwrap();
+            break;
+        }
+
+        // read next handle chunk while we wait for hash
+        let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+        data.read_exact(&mut next_chunk)?;
+
+        hasher = rx.recv().unwrap();
+
+        chunk = next_chunk;
+    }
+
+    let hash = hasher.finalize();
+
+    Ok(hash.to_hex().as_str().to_owned())
+}
+
+
 /// Return the hash of data in the same hash format in_hash
 pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
     match decode(in_hash) {

@@ -368,59 +368,13 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
-
-    #[cfg(feature = "file_io")]
-    fn chunked_blake3(path: &Path) -> Result<String> {
-        const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
-
-        let mut data = std::fs::File::open(path)?;
-        data.seek(std::io::SeekFrom::Start(0))?;
-        let data_len = data.seek(std::io::SeekFrom::End(0))?;
-        data.seek(std::io::SeekFrom::Start(0))?;
-
-        let mut hasher = blake3::Hasher::new();
-
-        let mut chunk_left = data_len;
-
-        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        std::io::Read::read_exact(&mut data, &mut chunk)?;
-
-        loop {
-            let (tx, rx) = std::sync::mpsc::channel();
-
-            chunk_left -= chunk.len() as u64;
-
-            std::thread::spawn(move || {
-                hasher.update(&chunk);
-                tx.send(hasher).unwrap();
-            });
-
-            // are we done
-            if chunk_left == 0 {
-                hasher = rx.recv().unwrap();
-                break;
-            }
-
-            // read next handle chunk while we wait for hash
-            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-            std::io::Read::read_exact(&mut data, &mut next_chunk)?;
-
-            hasher = rx.recv().unwrap();
-
-            chunk = next_chunk;
-        }
-
-        let hash = hasher.finalize();
-
-        Ok(hash.to_hex().as_str().to_owned())
-    }
-
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
         use crate::jumbf_io;
         use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
+        use crate::utils::hash_utils::blake3_from_asset;
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -441,13 +395,13 @@ impl Ingredient {
         }
 
         // generate a hash so we know if the file has changed
-        ingredient.hash = options.make_hash.then(|| chunked_blake3(path)?);
+        ingredient.hash = options.make_hash.then(|| blake3_from_asset(path).unwrap_or_default());
 
         let mut report = DetailedStatusTracker::new();
 
         // generate a store from the buffer and then validate from the asset path
         // load and verify store in single call - no need to call low level jumbf_io functions
-        match Store::load_from_memory(&ingredient.format, &buf, true, &mut report) {
+        match Store::load_from_asset(path, true, &mut report) {
             Ok(store) => {
                 // generate ValidationStatus from ValidationItems filtering for only errors
                 let statuses = status_for_store(&store, &mut report);
