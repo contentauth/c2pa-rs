@@ -11,18 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{validator::CoseValidator, Error, Result};
+use crate::{validator::CoseValidator, Error, Result, SigningAlg};
 use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa};
 
 pub struct RsaValidator {
-    alg: String,
+    alg: SigningAlg,
 }
 
 impl RsaValidator {
-    pub fn new(alg: &str) -> Self {
-        RsaValidator {
-            alg: alg.to_owned(),
-        }
+    pub fn new(alg: SigningAlg) -> Self {
+        RsaValidator { alg }
     }
 }
 
@@ -31,28 +29,28 @@ impl CoseValidator for RsaValidator {
         let rsa = Rsa::public_key_from_der(pkey)?;
         let pkey = PKey::from_rsa(rsa)?;
 
-        let mut verifier = match self.alg.as_str() {
-            "ps256" => {
+        let mut verifier = match self.alg {
+            SigningAlg::Ps256 => {
                 let mut verifier = openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?;
                 verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 verifier.set_rsa_mgf1_md(MessageDigest::sha256())?;
                 verifier
             }
-            "ps384" => {
+            SigningAlg::Ps384 => {
                 let mut verifier = openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?;
                 verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 verifier.set_rsa_mgf1_md(MessageDigest::sha384())?;
                 verifier
             }
-            "ps512" => {
+            SigningAlg::Ps512 => {
                 let mut verifier = openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?;
                 verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
                 verifier
             }
-            "rs256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?,
-            "rs384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?,
-            "rs512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?,
+            // "rs256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?,
+            // "rs384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?,
+            // "rs512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?,
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -68,7 +66,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{signer::ConfigurableSigner, Signer};
+    use crate::{signer::ConfigurableSigner, Signer, SigningAlg};
 
     #[test]
     fn verify_rsa_signatures() {
@@ -80,88 +78,88 @@ mod tests {
 
         let data = b"some sample content to sign";
 
-        println!("Test RS256");
+        // println!("Test RS256");
+        // let mut signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+        //     cert_bytes,
+        //     key_bytes,
+        //     "rs256".to_string(),
+        //     None,
+        // )
+        // .unwrap();
+
+        // let mut signature = signer.sign(data).unwrap();
+        // println!("signature len = {}", signature.len());
+        // let mut validator = RsaValidator::new("rs256");
+        // assert!(validator.validate(&signature, data, &pkey).unwrap());
+
+        // println!("Test RS384");
+        // signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+        //     cert_bytes,
+        //     key_bytes,
+        //     "rs384".to_string(),
+        //     None,
+        // )
+        // .unwrap();
+
+        // signature = signer.sign(data).unwrap();
+        // println!("signature len = {}", signature.len());
+        // validator = RsaValidator::new("rs384");
+        // assert!(validator.validate(&signature, data, &pkey).unwrap());
+
+        // println!("Test RS512");
+        // signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+        //     cert_bytes,
+        //     key_bytes,
+        //     "rs512".to_string(),
+        //     None,
+        // )
+        // .unwrap();
+
+        // signature = signer.sign(data).unwrap();
+        // println!("signature len = {}", signature.len());
+        // validator = RsaValidator::new("rs512");
+        // assert!(validator.validate(&signature, data, &pkey).unwrap());
+
+        println!("Test PS256");
         let mut signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
             cert_bytes,
             key_bytes,
-            "rs256".to_string(),
+            SigningAlg::Ps256,
             None,
         )
         .unwrap();
 
         let mut signature = signer.sign(data).unwrap();
         println!("signature len = {}", signature.len());
-        let mut validator = RsaValidator::new("rs256");
-        assert!(validator.validate(&signature, data, &pkey).unwrap());
-
-        println!("Test RS384");
-        signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            cert_bytes,
-            key_bytes,
-            "rs384".to_string(),
-            None,
-        )
-        .unwrap();
-
-        signature = signer.sign(data).unwrap();
-        println!("signature len = {}", signature.len());
-        validator = RsaValidator::new("rs384");
-        assert!(validator.validate(&signature, data, &pkey).unwrap());
-
-        println!("Test RS512");
-        signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            cert_bytes,
-            key_bytes,
-            "rs512".to_string(),
-            None,
-        )
-        .unwrap();
-
-        signature = signer.sign(data).unwrap();
-        println!("signature len = {}", signature.len());
-        validator = RsaValidator::new("rs512");
-        assert!(validator.validate(&signature, data, &pkey).unwrap());
-
-        println!("Test PS256");
-        signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            cert_bytes,
-            key_bytes,
-            "ps256".to_string(),
-            None,
-        )
-        .unwrap();
-
-        signature = signer.sign(data).unwrap();
-        println!("signature len = {}", signature.len());
-        validator = RsaValidator::new("ps256");
+        let mut validator = RsaValidator::new(SigningAlg::Ps256);
         assert!(validator.validate(&signature, data, &pkey).unwrap());
 
         println!("Test PS384");
         signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
             cert_bytes,
             key_bytes,
-            "ps384".to_string(),
+            SigningAlg::Ps384,
             None,
         )
         .unwrap();
 
         signature = signer.sign(data).unwrap();
         println!("signature len = {}", signature.len());
-        validator = RsaValidator::new("ps384");
+        validator = RsaValidator::new(SigningAlg::Ps384);
         assert!(validator.validate(&signature, data, &pkey).unwrap());
 
         println!("Test PS512");
         signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
             cert_bytes,
             key_bytes,
-            "ps512".to_string(),
+            SigningAlg::Ps512,
             None,
         )
         .unwrap();
 
         signature = signer.sign(data).unwrap();
         println!("signature len = {}", signature.len());
-        validator = RsaValidator::new("ps512");
+        validator = RsaValidator::new(SigningAlg::Ps512);
         assert!(validator.validate(&signature, data, &pkey).unwrap());
     }
 }

@@ -19,10 +19,10 @@
 use std::path::Path;
 
 use crate::{
-    error::{Error, Result},
+    error::Result,
     openssl::{EcSigner, EdSigner, RsaSigner},
     signer::ConfigurableSigner,
-    Signer,
+    Signer, SigningAlg,
 };
 
 /// Creates a [`Signer`] instance using signing certificate and private key
@@ -35,36 +35,24 @@ use crate::{
 ///
 /// * `signcert` - Signing certificate
 /// * `pkey` - Private key
-/// * `alg` - Format for signing. Must be one of the supported
-///    formats (`rs256`, `rs384`, `rs512`, `ps256`, `ps384`, `ps512`,
-///    `es256`, `es384`, `es512`, or `ed25519`).
+/// * `alg` - Format for signing
 /// * `tsa_url` - Optional URL for a timestamp authority
 pub fn from_keys(
     signcert: &[u8],
     pkey: &[u8],
-    alg: &str,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
     Ok(match alg {
-        "ps256" | "ps384" | "ps512" => Box::new(RsaSigner::from_signcert_and_pkey(
-            signcert,
-            pkey,
-            alg.to_owned(),
-            tsa_url,
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
+            RsaSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
+        ),
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
+            EcSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
+        ),
+        SigningAlg::Ed25519 => Box::new(EdSigner::from_signcert_and_pkey(
+            signcert, pkey, alg, tsa_url,
         )?),
-        "es256" | "es384" | "es512" => Box::new(EcSigner::from_signcert_and_pkey(
-            signcert,
-            pkey,
-            alg.to_owned(),
-            tsa_url,
-        )?),
-        "ed25519" => Box::new(EdSigner::from_signcert_and_pkey(
-            signcert,
-            pkey,
-            alg.to_owned(),
-            tsa_url,
-        )?),
-        _ => return Err(Error::BadParam(alg.to_owned())),
     })
 }
 
@@ -75,35 +63,26 @@ pub fn from_keys(
 ///
 /// * `signcert_path` - Path to the signing certificate file
 /// * `pkey_path` - Path to the private key file
-/// * `alg` - Format for signing. Must be one of the supported
-///    formats (`rs256`, `rs384`, `rs512`, `ps256`, `ps384`, `ps512`,
-///    `es256`, `es384`, `es512`, or `ed25519`).
+/// * `alg` - Format for signing
 /// * `tsa_url` - Optional URL for a timestamp authority
 pub fn from_files<P: AsRef<Path>>(
     signcert_path: P,
     pkey_path: P,
-    alg: &str,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
     Ok(match alg {
-        "ps256" | "ps384" | "ps512" => Box::new(RsaSigner::from_files(
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
+            RsaSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
+        ),
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
+            EcSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
+        ),
+        SigningAlg::Ed25519 => Box::new(EdSigner::from_files(
             &signcert_path,
             &pkey_path,
-            alg.to_owned(),
+            alg,
             tsa_url,
         )?),
-        "es256" | "es384" | "es512" => Box::new(EcSigner::from_files(
-            &signcert_path,
-            &pkey_path,
-            alg.to_owned(),
-            tsa_url,
-        )?),
-        "ed25519" => Box::new(EdSigner::from_files(
-            &signcert_path,
-            &pkey_path,
-            alg.to_owned(),
-            tsa_url,
-        )?),
-        _ => return Err(Error::BadParam(alg.to_owned())),
     })
 }

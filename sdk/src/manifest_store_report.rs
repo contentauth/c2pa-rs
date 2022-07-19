@@ -150,7 +150,7 @@ impl ManifestReport {
 
         let signature = match claim.signature_info() {
             Some(info) => SignatureReport {
-                alg: info.alg,
+                alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
                 time: info.date.map(|d| d.to_rfc3339()),
             },

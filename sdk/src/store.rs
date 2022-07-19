@@ -1928,6 +1928,7 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
             },
         },
+        SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -2074,8 +2075,8 @@ pub mod tests {
             Ok(b"not a valid signature".to_vec())
         }
 
-        fn alg(&self) -> Option<String> {
-            None
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
         }
 
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -2114,7 +2115,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
+        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2128,7 +2129,7 @@ pub mod tests {
         let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
         let pkey_path = fixture_path("rsa-pss256-expired.pem");
         let signer =
-            RsaSigner::from_files(signcert_path, pkey_path, "ps256".to_string(), None).unwrap();
+            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -2176,8 +2177,7 @@ pub mod tests {
     #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_async() {
-        let signer =
-            crate::openssl::temp_signer_async::AsyncSignerAdapter::new("ps256".to_string());
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");

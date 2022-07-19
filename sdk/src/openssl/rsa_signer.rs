@@ -14,7 +14,7 @@
 use crate::{
     ocsp_utils::{get_ocsp_response, OcspData},
     signer::ConfigurableSigner,
-    Error, Result, Signer,
+    Error, Result, Signer, SigningAlg,
 };
 use std::{cell::Cell, fs, path::Path};
 
@@ -38,7 +38,7 @@ pub struct RsaSigner {
     timestamp_size: usize,
     ocsp_size: Cell<usize>,
 
-    alg: String,
+    alg: SigningAlg,
     tsa_url: Option<String>,
     ocsp_rsp: Cell<OcspData>,
 }
@@ -69,7 +69,7 @@ impl ConfigurableSigner for RsaSigner {
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
@@ -81,7 +81,7 @@ impl ConfigurableSigner for RsaSigner {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
@@ -115,8 +115,8 @@ impl ConfigurableSigner for RsaSigner {
 
 impl Signer for RsaSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut signer = match self.alg.as_str() {
-            "ps256" => {
+        let mut signer = match self.alg {
+            SigningAlg::Ps256 => {
                 let mut signer = openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)
                     .map_err(wrap_openssl_err)?;
 
@@ -125,7 +125,7 @@ impl Signer for RsaSigner {
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
-            "ps384" => {
+            SigningAlg::Ps384 => {
                 let mut signer = openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)
                     .map_err(wrap_openssl_err)?;
 
@@ -134,7 +134,7 @@ impl Signer for RsaSigner {
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
-            "ps512" => {
+            SigningAlg::Ps512 => {
                 let mut signer = openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)
                     .map_err(wrap_openssl_err)?;
 
@@ -143,12 +143,12 @@ impl Signer for RsaSigner {
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
-            "rs256" => openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)
-                .map_err(wrap_openssl_err)?,
-            "rs384" => openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)
-                .map_err(wrap_openssl_err)?,
-            "rs512" => openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)
-                .map_err(wrap_openssl_err)?,
+            // "rs256" => openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)
+            //     .map_err(wrap_openssl_err)?,
+            // "rs384" => openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)
+            //     .map_err(wrap_openssl_err)?,
+            // "rs512" => openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)
+            //     .map_err(wrap_openssl_err)?,
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -174,8 +174,8 @@ impl Signer for RsaSigner {
         Ok(certs)
     }
 
-    fn alg(&self) -> Option<String> {
-        Some(self.alg.to_owned())
+    fn alg(&self) -> SigningAlg {
+        self.alg
     }
 
     fn time_authority_url(&self) -> Option<String> {
@@ -214,7 +214,7 @@ mod tests {
 
     use crate::{
         utils::test::{fixture_path, temp_signer},
-        Signer,
+        Signer, SigningAlg,
     };
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
 
         let signer =
-            RsaSigner::from_signcert_and_pkey(cert_bytes, key_bytes, "ps256".to_string(), None)
+            RsaSigner::from_signcert_and_pkey(cert_bytes, key_bytes, SigningAlg::Ps256, None)
                 .unwrap();
 
         let data = b"some sample content to sign";
@@ -243,19 +243,19 @@ mod tests {
         assert!(signature.len() <= signer.reserve_size());
     }
 
-    #[test]
-    fn sign_rs256() {
-        let cert_bytes = include_bytes!("../../tests/fixtures/temp_cert.data");
-        let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
+    // #[test]
+    // fn sign_rs256() {
+    //     let cert_bytes = include_bytes!("../../tests/fixtures/temp_cert.data");
+    //     let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
 
-        let signer =
-            RsaSigner::from_signcert_and_pkey(cert_bytes, key_bytes, "rs256".to_string(), None)
-                .unwrap();
+    //     let signer =
+    //         RsaSigner::from_signcert_and_pkey(cert_bytes, key_bytes, "rs256".to_string(), None)
+    //             .unwrap();
 
-        let data = b"some sample content to sign";
+    //     let data = b"some sample content to sign";
 
-        let signature = signer.sign(data).unwrap();
-        println!("signature len = {}", signature.len());
-        assert!(signature.len() <= signer.reserve_size());
-    }
+    //     let signature = signer.sign(data).unwrap();
+    //     println!("signature len = {}", signature.len());
+    //     assert!(signature.len() <= signer.reserve_size());
+    // }
 }

@@ -25,79 +25,8 @@ use crate::{
     cose_validator::verify_cose,
     status_tracker::OneShotStatusTracker,
     time_stamp::{cose_timestamp_countersign, make_cose_timestamp},
-    Error, Result, Signer,
+    Error, Result, Signer, SigningAlg,
 };
-fn build_unprotected_header(
-    data: &[u8],
-    alg: &str,
-    certs: Vec<Vec<u8>>,
-    ta_url: Option<String>,
-    ocsp_val: Option<Vec<u8>>,
-) -> Result<(Header, Header)> {
-    let alg_id = match alg {
-        "ps256" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS256)
-            .build(),
-        "ps384" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS384)
-            .build(),
-        "ps512" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS512)
-            .build(),
-        "es256" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES256)
-            .build(),
-        "es384" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES384)
-            .build(),
-        "es512" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES512)
-            .build(),
-        "ed25519" => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::EdDSA)
-            .build(),
-        _ => return Err(Error::UnsupportedType),
-    };
-
-    let sc_der_array_or_bytes = match certs.len() {
-        1 => Value::Bytes(certs[0].clone()), // single cert
-        _ => {
-            let mut sc_der_array: Vec<Value> = Vec::new();
-            for cert in certs {
-                sc_der_array.push(Value::Bytes(cert));
-            }
-            Value::Array(sc_der_array) // provide vec of certs when required
-        }
-    };
-
-    let mut unprotected = if let Some(url) = ta_url {
-        let cts = cose_timestamp_countersign(data, alg, &url)?;
-        let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
-        let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
-
-        HeaderBuilder::new()
-            .text_value("x5chain".to_string(), sc_der_array_or_bytes)
-            .text_value("sigTst".to_string(), sigtst_cbor)
-    } else {
-        HeaderBuilder::new().text_value("x5chain".to_string(), sc_der_array_or_bytes)
-    };
-
-    // set the ocsp responder response if available
-    if let Some(ocsp) = ocsp_val {
-        let mut ocsp_vec: Vec<Value> = Vec::new();
-        let mut r_vals: Vec<(Value, Value)> = vec![];
-
-        ocsp_vec.push(Value::Bytes(ocsp));
-        r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
-
-        unprotected = unprotected.text_value("rVals".to_string(), Value::Map(r_vals));
-    }
-
-    // build complete header
-    let unprotected_header = unprotected.build();
-
-    Ok((alg_id, unprotected_header))
-}
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
 /// claim structure.
@@ -117,15 +46,15 @@ fn build_unprotected_header(
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
 ///    if unable to validate.
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
-    // must be a valid Claim
+    // Must be a valid claim.
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
-    // generate and verify a CoseSign1 representation of the data
+    // Generate and verify a CoseSign1 representation of the data.
     cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
         // Sanity check: Ensure that this signature is valid.
-
         let mut cose_log = OneShotStatusTracker::new();
+
         match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
             Ok(_) => Ok(sig),
             Err(err) => Err(err),
@@ -158,12 +87,12 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
            string.
     */
 
-    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
+    let alg = signer.alg();
 
     // build complete header
     let (alg_id, unprotected_header) = build_unprotected_header(
         data,
-        &alg,
+        alg,
         signer.certs()?,
         signer.time_authority_url(),
         signer.ocsp_val(),
@@ -216,12 +145,12 @@ pub async fn cose_sign_async(
            string.
     */
 
-    let alg = signer.alg().ok_or(Error::UnsupportedType)?;
+    let alg = signer.alg();
 
     // build complete header
     let (alg_id, unprotected_header) = build_unprotected_header(
         data,
-        &alg,
+        alg,
         signer.certs()?,
         signer.time_authority_url(),
         signer.ocsp_val(),
@@ -252,6 +181,77 @@ pub async fn cose_sign_async(
     // println!("sig: {}", Hexlify(&c2pa_sig_data));
 
     Ok(c2pa_sig_data)
+}
+
+fn build_unprotected_header(
+    data: &[u8],
+    alg: SigningAlg,
+    certs: Vec<Vec<u8>>,
+    ta_url: Option<String>,
+    ocsp_val: Option<Vec<u8>>,
+) -> Result<(Header, Header)> {
+    let alg_id = match alg {
+        SigningAlg::Ps256 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::PS256)
+            .build(),
+        SigningAlg::Ps384 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::PS384)
+            .build(),
+        SigningAlg::Ps512 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::PS512)
+            .build(),
+        SigningAlg::Es256 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ES256)
+            .build(),
+        SigningAlg::Es384 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ES384)
+            .build(),
+        SigningAlg::Es512 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ES512)
+            .build(),
+        SigningAlg::Ed25519 => HeaderBuilder::new()
+            .algorithm(iana::Algorithm::EdDSA)
+            .build(),
+    };
+
+    let sc_der_array_or_bytes = match certs.len() {
+        1 => Value::Bytes(certs[0].clone()), // single cert
+        _ => {
+            let mut sc_der_array: Vec<Value> = Vec::new();
+            for cert in certs {
+                sc_der_array.push(Value::Bytes(cert));
+            }
+            Value::Array(sc_der_array) // provide vec of certs when required
+        }
+    };
+
+    let mut unprotected = if let Some(url) = ta_url {
+        let cts = cose_timestamp_countersign(data, alg, &url)?;
+        let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
+        let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
+
+        HeaderBuilder::new()
+            .text_value("x5chain".to_string(), sc_der_array_or_bytes)
+            .text_value("sigTst".to_string(), sigtst_cbor)
+    } else {
+        HeaderBuilder::new().text_value("x5chain".to_string(), sc_der_array_or_bytes)
+    };
+
+    // set the ocsp responder response if available
+    if let Some(ocsp) = ocsp_val {
+        let mut ocsp_vec: Vec<Value> = Vec::new();
+        let mut r_vals: Vec<(Value, Value)> = vec![];
+
+        ocsp_vec.push(Value::Bytes(ocsp));
+        r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
+
+        unprotected = unprotected.text_value("rVals".to_string(), Value::Map(r_vals));
+    }
+
+    // build complete header
+    let unprotected_header = unprotected.build();
+
+    Ok((alg_id, unprotected_header))
 }
 
 const PAD: &str = "pad";

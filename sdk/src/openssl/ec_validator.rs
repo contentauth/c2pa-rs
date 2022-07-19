@@ -11,20 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{validator::CoseValidator, Error, Result};
+use crate::{validator::CoseValidator, Error, Result, SigningAlg};
 use openssl::ec::EcKey;
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 
 pub struct EcValidator {
-    alg: String,
+    alg: SigningAlg,
 }
 
 impl EcValidator {
-    pub fn new(alg: &str) -> Self {
-        EcValidator {
-            alg: alg.to_owned(),
-        }
+    pub fn new(alg: SigningAlg) -> Self {
+        EcValidator { alg }
     }
 }
 
@@ -33,19 +31,19 @@ impl CoseValidator for EcValidator {
         let public_key = EcKey::public_key_from_der(pkey).map_err(|_err| Error::CoseSignature)?;
         let key = PKey::from_ec_key(public_key).map_err(wrap_openssl_err)?;
 
-        let mut verifier = match self.alg.as_ref() {
-            "es256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &key)?,
-            "es384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &key)?,
-            "es512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &key)?,
+        let mut verifier = match self.alg {
+            SigningAlg::Es256 => openssl::sign::Verifier::new(MessageDigest::sha256(), &key)?,
+            SigningAlg::Es384 => openssl::sign::Verifier::new(MessageDigest::sha384(), &key)?,
+            SigningAlg::Es512 => openssl::sign::Verifier::new(MessageDigest::sha512(), &key)?,
             _ => return Err(Error::UnsupportedType),
         };
 
         // is this an expected P1363 sig size
         if sig.len()
-            != match self.alg.as_ref() {
-                "es256" => 64,
-                "es384" => 96,
-                "es512" => 132,
+            != match self.alg {
+                SigningAlg::Es256 => 64,
+                SigningAlg::Es384 => 96,
+                SigningAlg::Es512 => 132,
                 _ => return Err(Error::UnsupportedType),
             }
         {
@@ -79,13 +77,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
-    use crate::{openssl::temp_signer, utils::test::fixture_path, Signer};
+    use crate::{openssl::temp_signer, utils::test::fixture_path, Signer, SigningAlg};
 
     #[test]
     fn sign_and_validate_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -100,7 +98,7 @@ mod tests {
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
-        let validator = EcValidator::new("es256");
+        let validator = EcValidator::new(SigningAlg::Es256);
         assert!(validator.validate(&signature, data, &pub_key).unwrap());
     }
 
@@ -108,7 +106,7 @@ mod tests {
     fn sign_and_validate_es384() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -123,7 +121,7 @@ mod tests {
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
-        let validator = EcValidator::new("es384");
+        let validator = EcValidator::new(SigningAlg::Es384);
         assert!(validator.validate(&signature, data, &pub_key).unwrap());
     }
 
@@ -131,7 +129,7 @@ mod tests {
     fn sign_and_validate_es512() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -146,7 +144,7 @@ mod tests {
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
-        let validator = EcValidator::new("es512");
+        let validator = EcValidator::new(SigningAlg::Es512);
         assert!(validator.validate(&signature, data, &pub_key).unwrap());
     }
 
@@ -154,7 +152,7 @@ mod tests {
     fn bad_sig_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -166,7 +164,7 @@ mod tests {
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
-        let validator = EcValidator::new("es256");
+        let validator = EcValidator::new(SigningAlg::Es256);
         let validated = validator.validate(&signature, data, &pub_key);
         assert!(validated.is_err());
     }
@@ -175,7 +173,7 @@ mod tests {
     fn bad_data_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
 
         let mut data = b"some sample content to sign".to_vec();
         println!("data len = {}", data.len());
@@ -188,7 +186,7 @@ mod tests {
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
-        let validator = EcValidator::new("es256");
+        let validator = EcValidator::new(SigningAlg::Es256);
         assert!(!validator.validate(&signature, &data, &pub_key).unwrap());
     }
 }

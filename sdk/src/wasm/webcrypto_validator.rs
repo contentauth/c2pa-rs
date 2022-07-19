@@ -11,18 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::utils::hash_utils::hash_by_alg;
-use crate::wasm::context::WindowOrWorker;
-use crate::{Error, Result};
+use std::convert::TryFrom;
+
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use rsa::{BigUint, PaddingScheme, PublicKey, RsaPublicKey};
 use sha2::{Sha256, Sha384, Sha512};
 use spki::SubjectPublicKeyInfo;
-use std::convert::TryFrom;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
+
+use crate::{
+    utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, Error, Result, SigningAlg,
+};
+
 pub struct EcKeyImportParams {
     name: String,
     named_curve: String,
@@ -204,14 +207,11 @@ async fn async_validate(
     }
 }
 
-pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
-    web_sys::console::debug_2(
-        &"Validating with algorithm".into(),
-        &String::from(alg).into(),
-    );
+pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+    web_sys::console::debug_2(&"Validating with algorithm".into(), &alg.to_string().into());
 
     match alg {
-        "ps256" => {
+        SigningAlg::Ps256 => {
             async_validate(
                 "RSA-PSS".to_string(),
                 "SHA-256".to_string(),
@@ -222,7 +222,7 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "ps384" => {
+        SigningAlg::Ps384 => {
             async_validate(
                 "RSA-PSS".to_string(),
                 "SHA-384".to_string(),
@@ -233,7 +233,7 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "ps512" => {
+        SigningAlg::Ps512 => {
             async_validate(
                 "RSA-PSS".to_string(),
                 "SHA-512".to_string(),
@@ -244,7 +244,40 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "es256" => {
+        // "rs256" => {
+        //     async_validate(
+        //         "RSASSA-PKCS1-v1_5".to_string(),
+        //         "SHA-256".to_string(),
+        //         0,
+        //         pkey.to_vec(),
+        //         sig.to_vec(),
+        //         data.to_vec(),
+        //     )
+        //     .await
+        // }
+        // "rs384" => {
+        //     async_validate(
+        //         "RSASSA-PKCS1-v1_5".to_string(),
+        //         "SHA-384".to_string(),
+        //         0,
+        //         pkey.to_vec(),
+        //         sig.to_vec(),
+        //         data.to_vec(),
+        //     )
+        //     .await
+        // }
+        // "rs512" => {
+        //     async_validate(
+        //         "RSASSA-PKCS1-v1_5".to_string(),
+        //         "SHA-512".to_string(),
+        //         0,
+        //         pkey.to_vec(),
+        //         sig.to_vec(),
+        //         data.to_vec(),
+        //     )
+        //     .await
+        // }
+        SigningAlg::Es256 => {
             async_validate(
                 "ECDSA".to_string(),
                 "SHA-256".to_string(),
@@ -255,7 +288,7 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "es384" => {
+        SigningAlg::Es384 => {
             async_validate(
                 "ECDSA".to_string(),
                 "SHA-384".to_string(),
@@ -266,7 +299,7 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
-        "es512" => {
+        SigningAlg::Es512 => {
             async_validate(
                 "ECDSA".to_string(),
                 "SHA-512".to_string(),
@@ -277,6 +310,7 @@ pub async fn validate_async(alg: &str, sig: &[u8], data: &[u8], pkey: &[u8]) -> 
             )
             .await
         }
+        // TODO: Can we cover Ed25519?
         _ => return Err(Error::UnsupportedType),
     }
 }
@@ -286,6 +320,8 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    use crate::SigningAlg;
 
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
@@ -302,7 +338,7 @@ pub mod tests {
         let data_bytes = include_bytes!("../../tests/fixtures/data_ps256.data");
         let key_bytes = include_bytes!("../../tests/fixtures/key_ps256.data");
 
-        let validated = validate_async("ps256", sig_bytes, data_bytes, key_bytes)
+        let validated = validate_async(SigningAlg::Ps256, sig_bytes, data_bytes, key_bytes)
             .await
             .unwrap();
 
@@ -318,10 +354,14 @@ pub mod tests {
         let data_es384_bytes = include_bytes!("../../tests/fixtures/data_es384.data");
         let key_es384_bytes = include_bytes!("../../tests/fixtures/key_es384.data");
 
-        let mut validated =
-            validate_async("es384", sig_es384_bytes, data_es384_bytes, key_es384_bytes)
-                .await
-                .unwrap();
+        let mut validated = validate_async(
+            SigningAlg::Es384,
+            sig_es384_bytes,
+            data_es384_bytes,
+            key_es384_bytes,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(validated, true);
 
@@ -329,9 +369,14 @@ pub mod tests {
         let data_es512_bytes = include_bytes!("../../tests/fixtures/data_es512.data");
         let key_es512_bytes = include_bytes!("../../tests/fixtures/key_es512.data");
 
-        validated = validate_async("es512", sig_es512_bytes, data_es512_bytes, key_es512_bytes)
-            .await
-            .unwrap();
+        validated = validate_async(
+            SigningAlg::Es512,
+            sig_es512_bytes,
+            data_es512_bytes,
+            key_es512_bytes,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(validated, true);
 
@@ -339,9 +384,14 @@ pub mod tests {
         let data_es256_bytes = include_bytes!("../../tests/fixtures/data_es256.data");
         let key_es256_bytes = include_bytes!("../../tests/fixtures/key_es256.data");
 
-        let validated = validate_async("es256", sig_es256_bytes, data_es256_bytes, key_es256_bytes)
-            .await
-            .unwrap();
+        let validated = validate_async(
+            SigningAlg::Es256,
+            sig_es256_bytes,
+            data_es256_bytes,
+            key_es256_bytes,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(validated, true);
     }
@@ -361,7 +411,7 @@ pub mod tests {
         bad_bytes[2] = b'p';
         bad_bytes[3] = b'a';
 
-        let validated = validate_async("ps256", sig_bytes, &bad_bytes, key_bytes)
+        let validated = validate_async(SigningAlg::Ps256, sig_bytes, &bad_bytes, key_bytes)
             .await
             .unwrap();
 

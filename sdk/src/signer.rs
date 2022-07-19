@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::Result;
+use crate::{Result, SigningAlg};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -21,7 +21,7 @@ pub trait Signer {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
 
     /// Returns the algorithm of the Signer.
-    fn alg(&self) -> Option<String>;
+    fn alg(&self) -> SigningAlg;
 
     /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
     fn certs(&self) -> Result<Vec<Vec<u8>>>;
@@ -51,7 +51,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     fn from_files<P: AsRef<std::path::Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self>;
 
@@ -59,7 +59,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self>;
 }
@@ -79,7 +79,7 @@ pub trait AsyncSigner: Sync {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
 
     /// Returns the algorithm of the Signer.
-    fn alg(&self) -> Option<String>;
+    fn alg(&self) -> SigningAlg;
 
     /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
     fn certs(&self) -> Result<Vec<Vec<u8>>>;

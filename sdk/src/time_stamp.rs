@@ -22,6 +22,7 @@ use crate::error::{Error, Result};
 use crate::hash_utils::vec_compare;
 
 use crate::asn1::rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO};
+use crate::SigningAlg;
 
 use bcder::decode::Constructed;
 use x509_certificate::DigestAlgorithm::{self};
@@ -29,31 +30,28 @@ use x509_certificate::DigestAlgorithm::{self};
 use coset::{iana, sig_structure_data, HeaderBuilder, ProtectedHeader};
 
 #[allow(dead_code)]
-pub(crate) fn cose_countersign_data(data: &[u8], alg: &str) -> Vec<u8> {
+pub(crate) fn cose_countersign_data(data: &[u8], alg: SigningAlg) -> Vec<u8> {
     let alg_id = match alg {
-        "ps256" => HeaderBuilder::new()
+        SigningAlg::Ps256 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS256)
             .build(),
-        "ps384" => HeaderBuilder::new()
+        SigningAlg::Ps384 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS384)
             .build(),
-        "ps512" => HeaderBuilder::new()
+        SigningAlg::Ps512 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::PS512)
             .build(),
-        "es256" => HeaderBuilder::new()
+        SigningAlg::Es256 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES256)
             .build(),
-        "es384" => HeaderBuilder::new()
+        SigningAlg::Es384 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES384)
             .build(),
-        "es512" => HeaderBuilder::new()
+        SigningAlg::Es512 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::ES512)
             .build(),
-        "ed25519" => HeaderBuilder::new()
+        SigningAlg::Ed25519 => HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
-            .build(),
-        _ => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS256)
             .build(),
     };
 
@@ -74,7 +72,11 @@ pub(crate) fn cose_countersign_data(data: &[u8], alg: &str) -> Vec<u8> {
 }
 
 #[allow(dead_code)]
-pub(crate) fn cose_timestamp_countersign(data: &[u8], alg: &str, tsa_url: &str) -> Result<Vec<u8>> {
+pub(crate) fn cose_timestamp_countersign(
+    data: &[u8],
+    alg: SigningAlg,
+    tsa_url: &str,
+) -> Result<Vec<u8>> {
     // create countersignature with TimeStampReq parameters
     // payload: data
     // context "CounterSigner"
@@ -91,7 +93,7 @@ pub(crate) fn cose_timestamp_countersign(data: &[u8], alg: &str, tsa_url: &str) 
 pub(crate) fn cose_sigtst_to_tstinfos(
     sigtst_cbor: &[u8],
     data: &[u8],
-    alg: &str,
+    alg: SigningAlg,
 ) -> Result<Vec<TstInfo>> {
     let tst_container: TstContainer =
         serde_cbor::from_slice(sigtst_cbor).map_err(|_err| Error::CoseTimeStampGeneration)?;

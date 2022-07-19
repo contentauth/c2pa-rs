@@ -15,6 +15,7 @@
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
+    SigningAlg,
 };
 
 use anyhow::{Context, Result};
@@ -36,6 +37,7 @@ fn get_signer_with_alg(alg: &str) -> c2pa::Result<Box<dyn Signer>> {
     signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", alg));
     let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+    let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
     create_signer::from_files(signcert_path, pkey_path, alg, None)
 }
 
