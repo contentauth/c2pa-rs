@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.1
+_19 July 2022_
+
+* Fix publish workflow ([#82](https://github.com/contentauth/c2pa-rs/pull/82))
+
+## 0.9.0
+_19 July 2022_
+
+* (MINOR) Introduce a new `SigningAlg` enum ([#76](https://github.com/contentauth/c2pa-rs/pull/76))
+* Support for asynchronous signing of claims ([#57](https://github.com/contentauth/c2pa-rs/pull/57))
+* Adds an add_validation_status method to Ingredient ([#68](https://github.com/contentauth/c2pa-rs/pull/68))
+
 ## 0.8.1
 _15 July 2022_
 

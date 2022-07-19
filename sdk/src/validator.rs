@@ -13,27 +13,16 @@
 
 #[cfg(feature = "file_io")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
-use crate::Result;
+use crate::{Result, SigningAlg};
 
 use chrono::{DateTime, Utc};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ValidationInfo {
-    pub alg: String, // validation algorithm
+    pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
     pub issuer_org: Option<String>,
     pub validated: bool, // claim signature is valid
-}
-
-impl Default for ValidationInfo {
-    fn default() -> Self {
-        ValidationInfo {
-            alg: "".to_owned(),
-            date: None,
-            issuer_org: None,
-            validated: false,
-        }
-    }
 }
 
 /// Trait to support validating a signature against the provided data
@@ -64,24 +53,23 @@ impl CoseValidator for DummyValidator {
 
 /// return validator for supported C2PA  algorthms
 #[cfg(feature = "file_io")]
-pub(crate) fn get_validator(alg: &str) -> Option<Box<dyn CoseValidator>> {
-    match alg.to_lowercase().as_str() {
-        "es256" => Some(Box::new(EcValidator::new("es256"))),
-        "es384" => Some(Box::new(EcValidator::new("es384"))),
-        "es512" => Some(Box::new(EcValidator::new("es512"))),
-        "ps256" => Some(Box::new(RsaValidator::new("ps256"))),
-        "ps384" => Some(Box::new(RsaValidator::new("ps384"))),
-        "ps512" => Some(Box::new(RsaValidator::new("ps512"))),
-        "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
-        "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
-        "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
-        "ed25519" => Some(Box::new(EdValidator::new("ed25519"))),
-        _ => None,
+pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            Box::new(EcValidator::new(alg))
+        }
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
+            Box::new(RsaValidator::new(alg))
+        }
+        // "rs256" => Some(Box::new(RsaValidator::new("rs256"))),
+        // "rs384" => Some(Box::new(RsaValidator::new("rs384"))),
+        // "rs512" => Some(Box::new(RsaValidator::new("rs512"))),
+        SigningAlg::Ed25519 => Box::new(EdValidator::new(alg)),
     }
 }
 
 #[cfg(not(feature = "file_io"))]
 #[allow(dead_code)]
-pub(crate) fn get_validator(_alg: &str) -> Option<Box<dyn CoseValidator>> {
-    Some(Box::new(DummyValidator))
+pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
+    Box::new(DummyValidator)
 }

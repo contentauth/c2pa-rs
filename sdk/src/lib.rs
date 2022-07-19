@@ -47,7 +47,8 @@
 //! use c2pa::{
 //!     assertions::User,
 //!     create_signer,
-//!     Manifest
+//!     Manifest,
+//!     SigningAlg,
 //! };
 //!
 //! use std::path::PathBuf;
@@ -64,7 +65,7 @@
 //! // Create a ps256 signer using certs and key files
 //! let signcert_path = "tests/fixtures/certs/ps256.pub";
 //! let pkey_path = "tests/fixtures/certs/ps256.pem";
-//! let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
+//! let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 //!
 //! // embed a manifest using the signer
 //! manifest.embed(&source, &dest, &*signer)?;
@@ -96,6 +97,9 @@ pub use manifest_store::ManifestStore;
 
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
+
+mod signing_alg;
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
