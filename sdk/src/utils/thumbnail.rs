@@ -12,7 +12,7 @@
 // each license.
 
 use crate::Result;
-use image::{GenericImageView, ImageFormat};
+use image::ImageFormat;
 
 ///  utility to generate a thumbnail from a file at path
 /// returns Result (format, image_bits) if successful, otherwise Error
@@ -40,9 +40,10 @@ pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
             "image/jpeg",
         ),
     };
-    let mut thumbnail_bits = Vec::new();
-    img.write_to(&mut thumbnail_bits, output_format)?;
+    let thumbnail_bits = Vec::new();
+    let mut cursor = std::io::Cursor::new(thumbnail_bits);
+    img.write_to(&mut cursor, output_format)?;
 
     let format = content_type.to_owned();
-    Ok((format, thumbnail_bits))
+    Ok((format, cursor.into_inner()))
 }

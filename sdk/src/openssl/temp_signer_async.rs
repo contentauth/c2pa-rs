@@ -19,6 +19,7 @@
 //! the asynchronous signing of claims.
 //! This module should be used only for testing purposes.
 
+#[cfg(feature = "async_signer")]
 use crate::SigningAlg;
 
 #[cfg(feature = "async_signer")]
