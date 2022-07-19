@@ -233,7 +233,7 @@ pub fn hash_asset_by_alg(
         }
     };
 
-    /* 
+    /*
     // hash the data for ranges
     for r in ranges.into_smallvec() {
         let start = r.start();
@@ -259,7 +259,6 @@ pub fn hash_asset_by_alg(
 
     */
 
-
     // hash the data for ranges
     for r in ranges.into_smallvec() {
         let start = r.start();
@@ -277,7 +276,7 @@ pub fn hash_asset_by_alg(
 
             chunk_left -= chunk.len() as u64;
 
-            std::thread::spawn(move || { 
+            std::thread::spawn(move || {
                 hasher_enum.update(&chunk);
                 tx.send(hasher_enum).unwrap();
             });
@@ -293,11 +292,10 @@ pub fn hash_asset_by_alg(
             data.read_exact(&mut next_chunk)?;
 
             hasher_enum = rx.recv().unwrap();
-            
+
             chunk = next_chunk;
         }
     }
-
 
     // return the hash
     Ok(Hasher::finalize(hasher_enum))
