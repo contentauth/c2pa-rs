@@ -421,7 +421,7 @@ impl Ingredient {
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
                 ingredient.manifest_data =
-                    jumbf_io::load_jumbf_from_memory(&ingredient.format, &buf).ok();
+                    jumbf_io::load_jumbf_from_file(path).ok();
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {
