@@ -106,8 +106,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ubuntu-latest
-        rust_version: stable
+        os: [ubuntu-latest]
+        rust_version: [stable]
 
     steps:
       - name: Checkout repository
