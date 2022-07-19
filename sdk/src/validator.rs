@@ -70,6 +70,6 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
 
 #[cfg(not(feature = "file_io"))]
 #[allow(dead_code)]
-pub(crate) fn get_validator(_alg: &str) -> Option<Box<dyn CoseValidator>> {
-    Some(Box::new(DummyValidator))
+pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
+    Box::new(DummyValidator)
 }
