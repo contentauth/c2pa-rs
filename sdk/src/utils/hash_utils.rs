@@ -365,8 +365,6 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
 
 // Fast implementation for Blake3 hashing that can handle large assets
 pub fn blake3_from_asset(path: &Path) -> Result<String> {
-    const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
-
     let mut data = File::open(path)?;
     data.seek(SeekFrom::Start(0))?;
     let data_len = data.seek(SeekFrom::End(0))?;
