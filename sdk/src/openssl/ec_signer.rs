@@ -16,7 +16,7 @@ use std::{fs, path::Path};
 use crate::{
     error::{wrap_io_err, wrap_openssl_err, Error, Result},
     signer::ConfigurableSigner,
-    Signer,
+    Signer, SigningAlg,
 };
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
@@ -37,7 +37,7 @@ pub struct EcSigner {
     certs_size: usize,
     timestamp_size: usize,
 
-    alg: String,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 }
 
@@ -45,7 +45,7 @@ impl ConfigurableSigner for EcSigner {
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
@@ -57,7 +57,7 @@ impl ConfigurableSigner for EcSigner {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let certs_size = signcert.len();
@@ -86,21 +86,21 @@ impl Signer for EcSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         let key = PKey::from_ec_key(self.pkey.clone()).map_err(wrap_openssl_err)?;
 
-        let mut signer = match self.alg.as_ref() {
-            "es256" => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
-            "es384" => openssl::sign::Signer::new(MessageDigest::sha384(), &key)?,
-            "es512" => openssl::sign::Signer::new(MessageDigest::sha512(), &key)?,
+        let mut signer = match self.alg {
+            SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
+            SigningAlg::Es384 => openssl::sign::Signer::new(MessageDigest::sha384(), &key)?,
+            SigningAlg::Es512 => openssl::sign::Signer::new(MessageDigest::sha512(), &key)?,
             _ => return Err(Error::UnsupportedType),
         };
 
         signer.update(data).map_err(wrap_openssl_err)?;
         let der_sig = signer.sign_to_vec().map_err(wrap_openssl_err)?;
 
-        der_to_p1363(&der_sig, &self.alg)
+        der_to_p1363(&der_sig, self.alg)
     }
 
-    fn alg(&self) -> Option<String> {
-        Some(self.alg.to_owned())
+    fn alg(&self) -> SigningAlg {
+        self.alg
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -145,7 +145,7 @@ fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
     })(data)
 }
 
-fn der_to_p1363(data: &[u8], alg: &str) -> Result<Vec<u8>> {
+fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
     // P1363 format: r | s
 
     let (_, p) = parse_ec_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
@@ -154,9 +154,9 @@ fn der_to_p1363(data: &[u8], alg: &str) -> Result<Vec<u8>> {
     let mut s = extfmt::Hexlify(p.s).to_string();
 
     let sig_len: usize = match alg {
-        "es256" => 64,
-        "es384" => 96,
-        "es512" => 132,
+        SigningAlg::Es256 => 64,
+        SigningAlg::Es384 => 96,
+        SigningAlg::Es512 => 132,
         _ => return Err(Error::UnsupportedType),
     };
 
@@ -208,12 +208,13 @@ mod tests {
 
     use super::*;
 
-    use crate::{openssl::temp_signer, utils::test::fixture_path};
+    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
+
     #[test]
     fn es256_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es256", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -228,7 +229,7 @@ mod tests {
     fn es384_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es384", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -243,7 +244,7 @@ mod tests {
     fn es512_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, "es512", None);
+        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
