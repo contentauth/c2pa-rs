@@ -15,6 +15,7 @@
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
+    SigningAlg,
 };
 
 use anyhow::{Context, Result};
@@ -36,6 +37,7 @@ fn get_signer_with_alg(alg: &str) -> c2pa::Result<Box<dyn Signer>> {
     signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", alg));
     let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+    let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
     create_signer::from_files(signcert_path, pkey_path, alg, None)
 }
 
@@ -91,6 +93,26 @@ impl Default for Config {
             recipes: Vec::new(),
         }
     }
+}
+
+/// Generate a blake3 hash over the image in path using a fixed buffer
+fn blake3_hash(path: &Path) -> Result<String> {
+    use std::fs::File;
+    use std::io::Read;
+    // Hash an input incrementally.
+    let mut hasher = blake3::Hasher::new();
+    const BUFFER_LEN: usize = 1024 * 1024;
+    let mut buffer = [0u8; BUFFER_LEN];
+    let mut file = File::open(path)?;
+    loop {
+        let read_count = file.read(&mut buffer)?;
+        hasher.update(&buffer[..read_count]);
+        if read_count != BUFFER_LEN {
+            break;
+        }
+    }
+    let hash = hasher.finalize();
+    Ok(hash.to_hex().as_str().to_owned())
 }
 
 /// Tool for building test case images for C2PA
@@ -162,10 +184,18 @@ impl MakeTestImages {
         // keep track of all actions here
         let mut actions = Actions::new();
 
-        let options = IngredientOptions {
-            make_hash: true,
-            title: None,
-        };
+        struct ImageOptions {}
+        impl ImageOptions {
+            fn new() -> Self {
+                ImageOptions {}
+            }
+        }
+
+        impl IngredientOptions for ImageOptions {
+            fn hash(&self, path: &Path) -> Option<String> {
+                blake3_hash(path).ok()
+            }
+        }
 
         let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         let mut manifest = Manifest::new(generator);
@@ -183,7 +213,8 @@ impl MakeTestImages {
             Some(src) => {
                 let src_path = &self.make_path(src);
 
-                let parent = Ingredient::from_file_with_options(src_path, &options)?;
+                let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
+
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
                         .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -244,7 +275,8 @@ impl MakeTestImages {
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
                 // create and add the ingredient
-                let ingredient = Ingredient::from_file_with_options(ing_path, &options)?;
+                let ingredient =
+                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
                 actions =
                     actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
                         "identifier".to_owned(),

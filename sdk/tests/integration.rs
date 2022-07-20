@@ -18,7 +18,7 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, Ingredient, Manifest, ManifestStore, Result, Signer,
+        create_signer, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -31,7 +31,7 @@ mod integration_1 {
         signcert_path.push("tests/fixtures/certs/ps256.pub");
         let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         pkey_path.push("tests/fixtures/certs/ps256.pem");
-        create_signer::from_files(signcert_path, pkey_path, "ps256", None)
+        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
             .expect("get_signer_from_files")
     }
 
@@ -64,21 +64,12 @@ mod integration_1 {
         // set the parent ingredient
         manifest.set_parent(parent)?;
 
-        // edit our image
-        let mut img = image::open(&parent_path)?;
-        img = img.brighten(50); // brighten the image
-
         actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
         // add an ingredient
         let ingredient = Ingredient::from_file(&ingredient_path)?;
-
-        // now place an image in the image
-        let img_ingredient = image::open(&ingredient_path)?;
-        let img_small = img_ingredient.thumbnail(500, 500);
-        image::imageops::overlay(&mut img, &img_small, 0, 0);
 
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
@@ -92,17 +83,9 @@ mod integration_1 {
 
         manifest.add_assertion(&actions)?;
 
-        // now place an image in the image
-        let img_ingredient = image::open(&ingredient_path)?;
-        let img_small = img_ingredient.thumbnail(500, 500);
-        image::imageops::overlay(&mut img, &img_small, 0, 0);
-
-        // save the edited image to our output path
-        img.save(&output_path)?;
-
         // sign and embed into the target file
         let signer = get_temp_signer();
-        manifest.embed(&output_path, &output_path, &*signer)?;
+        manifest.embed(&parent_path, &output_path, &*signer)?;
 
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;

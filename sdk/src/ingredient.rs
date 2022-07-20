@@ -32,8 +32,8 @@ use serde::{Deserialize, Serialize};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
-pub fn skip_serializing_thumbnails(_value: &Option<(String, Vec<u8>)>) -> bool {
-    !cfg!(feature = "serialize_thumbnails")
+fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
+    !cfg!(feature = "serialize_thumbnails") || value.is_none()
 }
 
 #[cfg(feature = "file_io")]
@@ -168,7 +168,7 @@ impl Ingredient {
             .map(|(format, image)| (format.as_str(), image.deref()))
     }
 
-    /// Returns an optional Blake3 hash made from the bits of the original image.
+    /// Returns an optional hash to uniquely identify this asset
     pub fn hash(&self) -> Option<&str> {
         self.hash.as_deref()
     }
@@ -300,9 +300,24 @@ impl Ingredient {
             "psd" => "image/vnd.adobe.photoshop",
             "tiff" => "image/tiff",
             "svg" => "image/svg+xml",
-            "ico" => "image/vnd.microsoft.icon",
+            "ico" => "image/x-icon",
             "bmp" => "image/bmp",
             "webp" => "image/webp",
+            "dng" => "image/dng",
+            "heic" => "image/heic",
+            "heif" => "image/heif",
+            "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
+            "mp4" => "video/mp4",
+            "avif" => "image/avif",
+            "mov" | "qt" => "video/quicktime",
+            "m4a" => "audio/mp4",
+            "mid" | "rmi" => "audio/mid",
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/vnd.wav",
+            "aif" | "aifc" | "aiff" => "audio/aiff",
+            "ogg" => "audio/ogg",
+            "pdf" => "application/pdf",
+            "ai" => "application/postscript",
             _ => "application/octet-stream",
         }
         .to_owned();
@@ -346,8 +361,7 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     /// Creates an `Ingredient` from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let options = IngredientOptions::default();
-        Self::from_file_with_options(path.as_ref(), &options)
+        Self::from_file_with_options(path.as_ref(), &DefaultOptions {})
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
@@ -364,17 +378,16 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
-        options: &IngredientOptions,
+        options: &dyn IngredientOptions,
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
-    fn from_file_impl(path: &Path, options: &IngredientOptions) -> Result<Self> {
+    fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
         use crate::jumbf_io;
         use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
-        use crate::utils::hash_utils::blake3_from_asset;
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -390,14 +403,12 @@ impl Ingredient {
         }
 
         // if options includes a title, use it
-        if let Some(opt_title) = options.title {
-            ingredient.title = opt_title.to_string();
+        if let Some(opt_title) = options.title(path) {
+            ingredient.title = opt_title;
         }
 
-        // generate a hash so we know if the file has changed
-        ingredient.hash = options
-            .make_hash
-            .then(|| blake3_from_asset(path).unwrap_or_default());
+        // optionally generate a hash so we know if the file has changed
+        ingredient.hash = options.hash(path);
 
         let mut report = DetailedStatusTracker::new();
 
@@ -451,10 +462,9 @@ impl Ingredient {
             }
         }
 
-        // create a thumbnail if we don't already have a claim with a thumb we can use
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
-            use crate::utils::thumbnail::make_thumbnail;
-            if let Ok((format, image)) = make_thumbnail(path) {
+            if let Some((format, image)) = options.thumbnail(path) {
                 ingredient.set_thumbnail(format, image);
             }
         }
@@ -524,6 +534,7 @@ impl Ingredient {
         Ok(ingredient)
     }
 
+    /// Converts a higher level Ingredient into the appropriate components in a claim
     pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
@@ -645,16 +656,44 @@ impl std::fmt::Display for Ingredient {
     }
 }
 
-#[derive(Default)]
-/// This defines optional actions when creating [`Ingredient`]s from files.
-pub struct IngredientOptions {
-    /// This allows setting the title for the ingredient. (If `None`, then the default behavior is to use the file's name.)
-    pub title: Option<&'static str>,
+/// This defines optional operations when creating [`Ingredient`] structs from files.
+#[cfg(feature = "file_io")]
+pub trait IngredientOptions {
+    /// This allows setting the title for the ingredient.
+    ///
+    /// If it returns `None`, then the default behavior is to use the file's name.
+    fn title(&self, _path: &Path) -> Option<String> {
+        None
+    }
 
-    /// If `true`, then generate a Blake3 hash over the source asset and store it in the ingredient.
+    /// Returns an optional hash value for the ingredient
+    ///
     /// This can be used to test for duplicate ingredients or if a source file has changed.
-    pub make_hash: bool,
+    /// If hash is_some() Manifest.add_ingredient will dedup matching hashes
+    fn hash(&self, _path: &Path) -> Option<String> {
+        None
+    }
+
+    /// Returns an optional thumbnail image representing the asset
+    ///
+    /// The first value is the content type of the thumbnail, i.e. image/jpeg
+    /// The second value is bytes of the thumbnail image
+    /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
+    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+        #[cfg(feature = "add_thumbnails")]
+        return crate::utils::thumbnail::make_thumbnail(_path).ok();
+        #[cfg(not(feature = "add_thumbnails"))]
+        None
+    }
 }
+
+#[cfg(feature = "file_io")]
+/// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
+///
+/// This can be use with Ingredient::from_file_with_options
+pub struct DefaultOptions {}
+#[cfg(feature = "file_io")]
+impl IngredientOptions for DefaultOptions {}
 
 #[cfg(test)]
 mod tests {
@@ -709,6 +748,7 @@ mod tests_file_io {
 
     use crate::utils::test::fixture_path;
 
+    const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
@@ -727,6 +767,16 @@ mod tests_file_io {
         ingredient.title().len() + ingredient.instance_id().len() + thumb_size + manifest_data_size
     }
 
+    // check for correct thumbnail generation with or without add_thumbnails feature
+    fn test_thumbnail(ingredient: &Ingredient, format: &str) {
+        if cfg!(feature = "add_thumbnails") {
+            assert!(ingredient.thumbnail().is_some());
+            assert_eq!(ingredient.thumbnail().unwrap().0, format);
+        } else {
+            assert!(ingredient.thumbnail().is_none());
+        }
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_psd() {
@@ -737,48 +787,72 @@ mod tests_file_io {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, "Purple Square.psd");
-        assert_eq!(&ingredient.format, "image/vnd.adobe.photoshop");
-        assert!(ingredient.thumbnail.is_none());
-        assert!(ingredient.manifest_data.is_none());
+        assert_eq!(ingredient.title(), "Purple Square.psd");
+        assert_eq!(ingredient.format(), "image/vnd.adobe.photoshop");
+        assert!(ingredient.thumbnail().is_none()); // should always be none
+        assert!(ingredient.manifest_data().is_none());
     }
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpg() {
+    fn test_manifest_jpg() {
         let ap = fixture_path(MANIFEST_JPEG);
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.metadata.is_none());
+        assert_eq!(ingredient.format(), "image/jpeg");
+        assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_no_manifest_jpg() {
+        let ap = fixture_path(NO_MANIFEST_JPEG);
+        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        stats(&ingredient);
+
+        println!("ingredient = {}", ingredient);
+        assert_eq!(&ingredient.title, NO_MANIFEST_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        test_thumbnail(&ingredient, "image/jpeg");
+        assert!(ingredient.provenance().is_none());
+        assert!(ingredient.manifest_data().is_none());
+        assert!(ingredient.metadata().is_none());
     }
 
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_options() {
-        let options = IngredientOptions {
-            make_hash: true,
-            title: Some("MyTitle"),
-        };
+        struct MyOptions {}
+        impl IngredientOptions for MyOptions {
+            fn title(&self, _path: &Path) -> Option<String> {
+                Some("MyTitle".to_string())
+            }
+            fn hash(&self, _path: &Path) -> Option<String> {
+                Some("1234568abcdef".to_string())
+            }
+            fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+                Some(("image/foo".to_string(), "bits".as_bytes().to_owned()))
+            }
+        }
 
         let ap = fixture_path(MANIFEST_JPEG);
-        let ingredient = Ingredient::from_file_with_options(&ap, &options).expect("from_file");
+        let ingredient = Ingredient::from_file_with_options(&ap, &MyOptions {}).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, "MyTitle");
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.hash.is_some());
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.metadata.is_none());
+        assert_eq!(ingredient.title(), "MyTitle");
+        assert_eq!(ingredient.format(), "image/jpeg");
+        assert!(ingredient.hash().is_some());
+        assert!(ingredient.thumbnail().is_some()); // always generated
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
     }
 
     #[test]
@@ -790,8 +864,8 @@ mod tests_file_io {
 
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), "libpng-test.png");
-        assert!(ingredient.thumbnail().is_some());
-        assert_eq!(ingredient.thumbnail().unwrap().0, "image/png");
+        test_thumbnail(&ingredient, "image/png");
+        assert!(ingredient.provenance().is_none());
         assert!(ingredient.manifest_data.is_none());
     }
 
@@ -803,14 +877,14 @@ mod tests_file_io {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, BAD_SIGNATURE_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_some());
-        assert!(ingredient.validation_status.is_some());
+        assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        test_thumbnail(&ingredient, "image/jpeg");
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.validation_status().is_some());
         assert!(ingredient
-            .validation_status
+            .validation_status()
             .unwrap()
             .iter()
             .any(|s| s.code() == validation_status::CLAIM_SIGNATURE_MISMATCH));
@@ -824,14 +898,14 @@ mod tests_file_io {
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
-        assert_eq!(&ingredient.title, PRERELEASE_JPEG);
-        assert_eq!(&ingredient.format, "image/jpeg");
-        assert!(ingredient.thumbnail.is_some());
-        assert!(ingredient.provenance.is_some());
-        assert!(ingredient.manifest_data.is_none());
-        assert!(ingredient.validation_status.is_some());
+        assert_eq!(ingredient.title(), PRERELEASE_JPEG);
+        assert_eq!(ingredient.format(), "image/jpeg");
+        test_thumbnail(&ingredient, "image/jpeg");
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_none());
+        assert!(ingredient.validation_status().is_some());
         assert_eq!(
-            ingredient.validation_status.unwrap()[0].code(),
+            ingredient.validation_status().unwrap()[0].code(),
             validation_status::STATUS_PRERELEASE
         );
     }
@@ -842,6 +916,6 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         println!("ingredient = {}", ingredient);
-        assert_eq!(ingredient.validation_status, None);
+        assert_eq!(ingredient.validation_status(), None);
     }
 }

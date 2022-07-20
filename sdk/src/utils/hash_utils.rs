@@ -233,8 +233,7 @@ pub fn hash_asset_by_alg(
         }
     };
 
-    if cfg!(feature = "no_interleaved_io")
-    {
+    if cfg!(feature = "no_interleaved_io") {
         // hash the data for ranges
         for r in ranges.into_smallvec() {
             let start = r.start();
@@ -380,8 +379,7 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
 
     let mut chunk_left = data_len;
 
-    if cfg!(feature = "no_interleaved_io")
-    {
+    if cfg!(feature = "no_interleaved_io") {
         loop {
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
 
@@ -410,7 +408,10 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
 
             // are we done
             if chunk_left == 0 {
-                hasher = rx.recv().unwrap_or_default();
+                hasher = match rx.recv() {
+                    Ok(hasher) => hasher,
+                    Err(_) => return Err(Error::ThreadReceiveError),
+                };
                 break;
             }
 
@@ -418,7 +419,10 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
             let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut next_chunk)?;
 
-            hasher = rx.recv().unwrap_or_default();
+            hasher = match rx.recv() {
+                Ok(hasher) => hasher,
+                Err(_) => return Err(Error::ThreadReceiveError),
+            };
 
             chunk = next_chunk;
         }

@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use crate::utils::thumbnail::make_thumbnail;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
@@ -32,6 +30,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
+use uuid::Uuid;
+
+/// Function that is used by serde to determine whether or not we should serialize
+/// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
+fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
+    !cfg!(feature = "serialize_thumbnails") || value.is_none()
+}
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Deserialize, Serialize)]
@@ -45,12 +50,20 @@ pub struct Manifest {
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
     pub claim_generator: String,
 
+    /// A human-readable title, generally source filename.
+    title: Option<String>,
+
+    /// The format of the source file as a MIME type.
+    format: String,
+
+    /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+    instance_id: String,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    /// Information about the asset associated with this manifest
-    #[serde(skip_serializing_if = "Option::is_none")]
-    asset: Option<Ingredient>,
+    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
+    thumbnail: Option<(String, Vec<u8>)>,
 
     /// A List of ingredients
     ingredients: Vec<Ingredient>,
@@ -77,9 +90,12 @@ impl Manifest {
     pub fn new<S: Into<String>>(claim_generator: S) -> Self {
         Self {
             vendor: None,
+            title: None,
+            format: "application/octet-stream".to_owned(),
+            instance_id: format!("xmp:iid:{}", Uuid::new_v4()),
             claim_generator: claim_generator.into(),
             claim_generator_hints: None,
-            asset: None,
+            thumbnail: None,
             ingredients: Vec::new(),
             assertions: Vec::new(),
             redactions: None,
@@ -94,29 +110,24 @@ impl Manifest {
 
     /// Returns a MIME content_type for the asset associated with this manifest.
     pub fn format(&self) -> &str {
-        self.asset().map(|asset| asset.format()).unwrap_or_default()
+        &self.format
     }
 
     /// Returns the instance identifier.
     pub fn instance_id(&self) -> &str {
-        self.asset()
-            .map(|asset| asset.instance_id())
-            .unwrap_or_default()
+        &self.instance_id
     }
 
     /// Returns a user-displayable title for this manifest
     pub fn title(&self) -> Option<&str> {
-        self.asset().map(|asset| asset.title())
+        self.title.as_deref()
     }
 
     /// Returns a tuple with thumbnail format and image bytes or `None`.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
-        self.asset().and_then(|asset| asset.thumbnail())
-    }
-
-    /// Returns an [Ingredient] reference to the asset associated with this manifest
-    pub(crate) fn asset(&self) -> Option<&Ingredient> {
-        self.asset.as_ref()
+        self.thumbnail
+            .as_ref()
+            .map(|(format, image)| (format.as_str(), image.as_ref()))
     }
 
     /// Returns the [Ingredient]s used by this Manifest
@@ -149,9 +160,27 @@ impl Manifest {
         self
     }
 
-    /// Sets an ingredient as the container asset
-    pub fn set_asset(&mut self, ingredient: Ingredient) -> &mut Self {
-        self.asset = Some(ingredient);
+    /// Sets a human-readable title for this ingredient.
+    pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
+        self.format = format.into();
+        self
+    }
+
+    /// Sets a human-readable title for this ingredient.
+    pub fn set_instance_id<S: Into<String>>(&mut self, instance_id: S) -> &mut Self {
+        self.instance_id = instance_id.into();
+        self
+    }
+
+    /// Sets a human-readable title for this ingredient.
+    pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Sets the thumbnail format and image data.
+    pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
+        self.thumbnail = Some((format.into(), thumbnail));
         self
     }
 
@@ -351,16 +380,18 @@ impl Manifest {
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
-        manifest.credentials = Some(
-            claim
-                .get_verifiable_credentials()
-                .iter()
-                .filter_map(|d| match d {
-                    AssertionData::Json(s) => serde_json::from_str(s).ok(),
-                    _ => None,
-                })
-                .collect(),
-        );
+        let credentials: Vec<Value> = claim
+            .get_verifiable_credentials()
+            .iter()
+            .filter_map(|d| match d {
+                AssertionData::Json(s) => serde_json::from_str(s).ok(),
+                _ => None,
+            })
+            .collect();
+
+        if !credentials.is_empty() {
+            manifest.credentials = Some(credentials);
+        }
 
         manifest.redactions = claim.redactions().map(|rs| {
             rs.iter()
@@ -368,11 +399,16 @@ impl Manifest {
                 .collect()
         });
 
-        let title = claim.title().map_or("".to_owned(), |s| s.to_owned());
-        let format = claim.format().to_owned();
-        let instance_id = claim.instance_id().to_owned();
+        // let title = claim.title().map_or("".to_owned(), |s| s.to_owned());
+        // let format = claim.format().to_owned();
+        // let instance_id = claim.instance_id().to_owned();
+        if let Some(title) = claim.title() {
+            manifest.set_title(title);
+        }
+        manifest.set_format(claim.format());
+        manifest.set_instance_id(claim.instance_id());
 
-        let mut asset = Ingredient::new(&title, &format, &instance_id);
+        //let mut asset = Ingredient::new(&title, &format, &instance_id);
 
         for claim_assertion in claim.claim_assertion_store().iter() {
             let assertion = claim_assertion.assertion();
@@ -387,7 +423,7 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    asset.set_thumbnail(thumbnail.content_type, thumbnail.data);
+                    manifest.set_thumbnail(thumbnail.content_type, thumbnail.data);
                 }
                 _ => {
                     // inject assertions for all other assertions
@@ -414,7 +450,7 @@ impl Manifest {
             }
         }
 
-        manifest.set_asset(asset);
+        // manifest.set_asset(asset);
 
         let issuer = claim.signing_issuer();
         let signing_time = claim
@@ -439,19 +475,20 @@ impl Manifest {
     #[cfg(feature = "file_io")]
     pub fn set_asset_from_path<P: AsRef<Path>>(&mut self, path: P) {
         // Gather the information we need from the target path
-        let mut ingredient = Ingredient::from_file_info(path.as_ref());
+        let ingredient = Ingredient::from_file_info(path.as_ref());
 
-        if let Ok((format, image)) = make_thumbnail(path.as_ref()) {
-            ingredient.set_thumbnail(format, image);
-        }
+        self.set_format(ingredient.format());
+        self.set_instance_id(ingredient.instance_id());
 
         // if there is already an asset title preserve it
-        if let Some(title) = self.asset.as_ref().map(|i| i.title()) {
-            ingredient.set_title(title.to_string());
-        };
+        if self.title().is_none() {
+            self.set_title(ingredient.title());
+        }
 
-        // set asset to newly created ingredient
-        self.asset = Some(ingredient);
+        #[cfg(feature = "add_thumbnails")]
+        if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+            self.set_thumbnail(format, image);
+        }
     }
 
     // Convert a Manifest into a Store
@@ -465,6 +502,18 @@ impl Manifest {
         );
         let mut claim = Claim::new(&generator, self.vendor.as_deref());
 
+        if let Some(title) = self.title() {
+            claim.set_title(Some(title.to_owned()));
+        }
+        claim.format = self.format().to_owned();
+        claim.instance_id = self.instance_id().to_owned();
+        if let Some((format, image)) = self.thumbnail() {
+            claim.add_assertion(&Thumbnail::new(
+                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
+                image.to_vec(),
+            ))?;
+        }
+
         // add any verified credentials - needs to happen early so we can reference them
         let mut vc_table = HashMap::new();
         if let Some(verified_credentials) = self.credentials.as_ref() {
@@ -472,19 +521,6 @@ impl Manifest {
                 let vc_str = &vc.to_string();
                 let id = Claim::vc_id(vc_str)?;
                 vc_table.insert(id, claim.add_verifiable_credential(vc_str)?);
-            }
-        }
-
-        // if the Manifest has an asset field use it to set these claim fields
-        if let Some(asset) = self.asset.as_ref() {
-            claim.set_title(Some(asset.title().to_owned()));
-            claim.format = asset.format().to_owned();
-            claim.instance_id = asset.instance_id().to_owned();
-            if let Some((format, image)) = asset.thumbnail() {
-                claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
-                    image.to_vec(),
-                ))?;
             }
         }
 
@@ -568,7 +604,8 @@ impl Manifest {
     /// use c2pa::{
     ///     assertions::User,
     ///     create_signer,
-    ///     Manifest
+    ///     Manifest,
+    ///     SigningAlg,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
@@ -580,7 +617,7 @@ impl Manifest {
     /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
     /// let pkey_path = "tests/fixtures/certs/ps256.pem";
-    /// let signer = create_signer::from_files(signcert_path, pkey_path, "ps256", None)?;
+    /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
     ///
     /// // Embed a manifest using the signer.
     /// manifest.embed(&source, &dest, &*signer)?;
@@ -747,8 +784,11 @@ pub(crate) mod tests {
 
         assert_eq!(manifest.format(), "image/jpeg");
         assert_eq!(manifest.title(), Some("wc_embed_test.jpg"));
-        assert!(manifest.thumbnail().is_some());
-
+        if cfg!(feature = "add_thumbnails") {
+            assert!(manifest.thumbnail().is_some());
+        } else {
+            assert!(manifest.thumbnail().is_none());
+        }
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");
         assert!(ingredient.active_manifest().is_some());
     }
