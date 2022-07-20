@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.10.0
+_20 July 2022_
+
+* Add Unicode license to allow-list ([#85](https://github.com/contentauth/c2pa-rs/pull/85))
+* (MINOR) `IngredientOptions` allow override of hash and thumbnail generation; image library is now a default feature ([#79](https://github.com/contentauth/c2pa-rs/pull/79))
+
 ## 0.9.1
 _19 July 2022_
 
