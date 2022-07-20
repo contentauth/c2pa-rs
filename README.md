@@ -4,7 +4,7 @@
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust SDK was created by Adobe and other contributors as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022. 
 
-## Key Features
+## Key features
 
 The C2PA Rust SDK implements a subset of the [C2PA 1.0 technical specification](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html). 
 
@@ -15,7 +15,7 @@ The SDK enables a desktop, mobile, or embedded application to:
 
 The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_hard_bindings).
 
-## State of the Project
+## State of the project
 
 This project is an early pre-release version and has unimplemented features and may have outstanding issues or bugs. While in prerelease form, the minor version number (0.x.0) will be incremented when there are breaking API changes, which may happen frequently.
 
@@ -23,7 +23,7 @@ The SDK:
 * Currently supports only still image formats (JPEG and PNG).
 * Does not parse identity structures (verifiable credentials).
 
-### Contributions and Feedback
+### Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-js/blob/main/CONTRIBUTING.md).
 
@@ -31,7 +31,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 The SDK requires **Rust version 1.58.0** or newer.
 
-### Supported Platforms
+### Supported platforms
 
 The SDK has been tested on the following operating systems:
 
@@ -49,7 +49,7 @@ Add this to your `Cargo.toml`:
 c2pa = "0.9.1"
 ```
 
-## Crate Features
+## Crate features
 
 The Rust SDK crate provides:
 
