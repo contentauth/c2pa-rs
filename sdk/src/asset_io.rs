@@ -62,15 +62,15 @@ pub trait AssetIO {
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
-    // Returns AssetPatch trait if this io handler supports patching
+    // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
 }
 
-// AssetPatch optimizes output generation for asset_io handlers that
-// are able to patch blocks of data without changing any other data.  The
-// resultant file must still be a valid asset.  This saves having to rewrite
+// `AssetPatch` optimizes output generation for asset_io handlers that
+// are able to patch blocks of data without changing any other data. The
+// resultant file must still be a valid asset. This saves having to rewrite
 // assets since only the patched bytes are modified.
 pub trait AssetPatch {
     // Patches an existing manifest store with new manifest store.
