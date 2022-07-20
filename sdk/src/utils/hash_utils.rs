@@ -288,7 +288,7 @@ pub fn hash_asset_by_alg(
                     break;
                 }
 
-                // read next handle chunk while we wait for hash
+                // read next chunk while we wait for hash
                 let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
                 data.read_exact(&mut next_chunk)?;
 
@@ -415,7 +415,7 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
                 break;
             }
 
-            // read next handle chunk while we wait for hash
+            // read next chunk while we wait for hash
             let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut next_chunk)?;
 
