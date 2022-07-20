@@ -617,13 +617,13 @@ impl Manifest {
     /// Embed a signed manifest into the target file using a supplied AsyncSigner
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
-    pub async fn embed_async<P: AsRef<Path>>(
+    pub async fn embed_async_signed<P: AsRef<Path>>(
         &mut self,
-        target_path: &P,
+        target_path: P,
         signer: &dyn crate::signer::AsyncSigner,
     ) -> Result<Store> {
         // first add the information about the target file
-        self.set_asset_from_path(target_path);
+        self.set_asset_from_path(target_path.as_ref());
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
@@ -637,13 +637,13 @@ impl Manifest {
 
     /// Embed a signed manifest into the target file using a supplied RemoteSigner
     #[cfg(all(feature = "file_io", feature = "async_signer"))]
-    pub async fn embed_remotely_signed<P: AsRef<Path>>(
+    pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
-        target_path: &P,
+        target_path: P,
         signer: &dyn crate::signer::RemoteSigner,
     ) -> Result<Store> {
         // first add the information about the target file
-        self.set_asset_from_path(target_path);
+        self.set_asset_from_path(target_path.as_ref());
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
@@ -929,5 +929,69 @@ pub(crate) mod tests {
         let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
         assert!(action2.is_ok());
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
+    }
+
+    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[actix::test]
+    async fn test_embed_async_sign() {
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let async_signer =
+            crate::openssl::temp_signer_async::AsyncSignerAdapter::new(crate::SigningAlg::Ps256);
+
+        let mut manifest = test_manifest();
+        manifest
+            .embed_async_signed(&output, &async_signer)
+            .await
+            .expect("embed");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        assert!(manifest_store.active_label().is_some());
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
+    }
+
+    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[actix::test]
+    async fn test_embed_remote_sign() {
+        struct MyRemoteSigner {}
+
+        #[async_trait::async_trait]
+        impl crate::signer::RemoteSigner for MyRemoteSigner {
+            async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+                let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(
+                    crate::SigningAlg::Ps256,
+                );
+
+                // this would happen on some remote server
+                let cose_sign1_box =
+                    crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size())
+                        .await;
+
+                cose_sign1_box
+            }
+            fn reserve_size(&self) -> usize {
+                10000
+            }
+        }
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let remote_signer = MyRemoteSigner {};
+
+        let mut manifest = test_manifest();
+        manifest
+            .embed_remote_signed(&output, &remote_signer)
+            .await
+            .expect("embed");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        assert!(manifest_store.active_label().is_some());
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
     }
 }
