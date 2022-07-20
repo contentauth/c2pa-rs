@@ -53,7 +53,7 @@ c2pa = "0.9.1"
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
-* `no_interleaved_io` the SDK uses threaded io for some operations to improve performance. This will be disabled by this feature.
+* `no_interleaved_io` the SDK uses threaded I/O for some operations to improve performance. Using this feature will force fully synchronous I/O.
 
 ## Rust version requirements
 
