@@ -23,24 +23,10 @@ c2patool is a command line tool for working with C2PA [manifests](https://c2pa.o
 
 ## Installation
 
-If you have [Rust](https://www.rust-lang.org/tools/install) installed, you can install c2patool using:
+If you have [Rust](https://www.rust-lang.org/tools/install) installed, you can install or update c2patool using:
 
 ```shell
 cargo install c2patool
-```
-
-Or you can clone the repo and build:
-
-```shell
-git clone git@github.com:contentauth/c2patool.git
-cargo build
-```
-
-Or you can use [Homebrew](https://brew.sh/) on MacOS or Linux to install everything you need:
-
-```shell
-brew tap contentauth/tools
-brew install c2patool
 ```
 
 ## Usage
@@ -59,7 +45,6 @@ The `-d` option will print a detailed report describing the internal C2PA format
 ```shell
 c2patool image.jpg -d
 ```
-
 
 ### Adding a manifest to a file
 
