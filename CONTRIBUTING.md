@@ -4,7 +4,7 @@ We welcome contributions to this project!
 
 Before you start, we ask that you understand the following guidelines.
 
-## Code of Conduct
+## Code of conduct
 
 This project adheres to the Adobe [code of conduct](../CODE_OF_CONDUCT.md). By participating,
 you are expected to uphold this code. Please report unacceptable behavior to
@@ -15,6 +15,29 @@ you are expected to uphold this code. Please report unacceptable behavior to
 Start by filing an issue. The existing committers on this project work to reach
 consensus around project direction and issue solutions within issue threads
 (when appropriate).
+
+### Current Areas of Work
+
+The Adobe CAI team has been using this crate as the foundation of Adobe's Content Authenticity Initiative-related products and services since late 2020. As we shift toward making this crate available for open usage, we're aware that there is quite a bit of work to do to create what we'd feel comfortable calling a 1.0 release. We've decided to err on the side of releasing earlier so that people can experiment with it and give us feedback.
+
+We expect to do work on a number of areas in the next few months while we remain in prerelease (0.x) versions. Some broad categories of work (and thus things you might expect to change) are:
+
+* We'll be reviewing and refining our APIs for ease of use and comprehension. We'd appreciate feedback on areas that you find confusing or unnecessarily difficult.
+* We'll also be reviewing our APIs for compliance with Rust community best practices. There are some areas (for example, use of public fields and how we take ownership vs references) where we know some work is required.
+* Our documentation is incomplete. We'll be working on refining the documentation.
+* Our testing infrastructure is incomplete. We'll be working on improving test coverage, memory efficiency, and performance benchmarks.
+
+### Desired Feedback
+
+We welcome feedback on:
+
+* API design
+* Prioritization of upcoming development, especially:
+  * File format support
+  * Assertion support
+* Optimizations and performance concerns
+* Bugs or non-compliance with the C2PA spec
+* Additional platform support
 
 ## Contributor License Agreement
 
