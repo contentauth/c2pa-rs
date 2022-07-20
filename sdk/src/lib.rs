@@ -108,10 +108,10 @@ mod openssl;
 
 #[cfg(feature = "file_io")]
 mod signer;
-#[cfg(feature = "async_signer")]
-pub use signer::AsyncSigner;
 #[cfg(feature = "file_io")]
 pub use signer::Signer;
+#[cfg(feature = "async_signer")]
+pub use signer::{AsyncSigner, RemoteSigner};
 /// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;

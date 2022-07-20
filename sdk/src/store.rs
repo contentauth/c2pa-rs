@@ -1451,7 +1451,7 @@ impl Store {
         let jumbf_bytes = self.start_save(asset_path, output_path, remote_signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = remote_signer.sign_remote(pc.data()?).await?;
+        let sig = remote_signer.sign_remote(&pc.data()?).await?;
 
         let sig_placeholder = self.sign_claim_placeholder(pc, remote_signer.reserve_size());
 
@@ -2120,13 +2120,13 @@ pub mod tests {
     #[cfg(feature = "async_signer")]
     #[async_trait::async_trait]
     impl crate::signer::RemoteSigner for MyRemoteSigner {
-        async fn sign_remote(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+        async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
             let signer =
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
             let cose_sign1_box =
-                crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await;
+                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await;
 
             cose_sign1_box
         }

@@ -110,7 +110,7 @@ pub trait RemoteSigner: Sync {
     /// Vec must match the value returned by reserve_size.  This data will be embedded
     /// in the JUMBF c2pa.signature box of the manifest.  data are the bytes of
     /// the claim to be remotely signed
-    async fn sign_remote(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
 
     /// Returns the size in bytes of the largest possible expected signature.
     /// Signing will fail if the result of the `sign` function is larger

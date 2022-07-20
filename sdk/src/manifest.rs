@@ -614,7 +614,7 @@ impl Manifest {
         Ok(store)
     }
 
-    /// Embed a signed manifest into the target file using a supplied async signer
+    /// Embed a signed manifest into the target file using a supplied AsyncSigner
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
     pub async fn embed_async<P: AsRef<Path>>(
@@ -629,6 +629,26 @@ impl Manifest {
         // sign and write our store to to the output image file
         store
             .save_to_asset_async(target_path.as_ref(), signer, target_path.as_ref())
+            .await?;
+
+        // todo: update xmp
+        Ok(store)
+    }
+
+    /// Embed a signed manifest into the target file using a supplied RemoteSigner
+    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    pub async fn embed_remotely_signed<P: AsRef<Path>>(
+        &mut self,
+        target_path: &P,
+        signer: &dyn crate::signer::RemoteSigner,
+    ) -> Result<Store> {
+        // first add the information about the target file
+        self.set_asset_from_path(target_path);
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+        // sign and write our store to to the output image file
+        store
+            .save_to_asset_remotely_signed(target_path.as_ref(), signer, target_path.as_ref())
             .await?;
 
         // todo: update xmp
