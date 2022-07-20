@@ -155,9 +155,6 @@ pub enum Error {
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
 
-    #[error("thread send error")]
-    ThreadSendError,
-
     #[error("thread receive error")]
     ThreadReceiveError,
 
