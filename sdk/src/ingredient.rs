@@ -382,7 +382,6 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
-
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
@@ -407,8 +406,6 @@ impl Ingredient {
         if let Some(opt_title) = options.title(path) {
             ingredient.title = opt_title;
         }
-        // read the file into a buffer for processing
-        let buf = std::fs::read(path).map_err(wrap_io_err)?;
 
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
@@ -417,7 +414,7 @@ impl Ingredient {
 
         // generate a store from the buffer and then validate from the asset path
         // load and verify store in single call - no need to call low level jumbf_io functions
-        match Store::load_from_memory(&ingredient.format, &buf, true, &mut report) {
+        match Store::load_from_asset(path, true, &mut report) {
             Ok(store) => {
                 // generate ValidationStatus from ValidationItems filtering for only errors
                 let statuses = status_for_store(&store, &mut report);
@@ -436,8 +433,7 @@ impl Ingredient {
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data =
-                    jumbf_io::load_jumbf_from_memory(&ingredient.format, &buf).ok();
+                ingredient.manifest_data = jumbf_io::load_jumbf_from_file(path).ok();
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {
