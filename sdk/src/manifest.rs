@@ -705,7 +705,7 @@ impl Manifest {
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
         store
-            .save_to_asset_remotely_signed(source_path.as_ref(), signer, dest_path.as_ref())
+            .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await?;
 
         // todo: update xmp

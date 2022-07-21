@@ -1442,7 +1442,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into an asset using an CoseSign box generated remotely. Updates XMP with provenance record.
     #[cfg(feature = "async_signer")]
-    pub async fn save_to_asset_remotely_signed(
+    pub async fn save_to_asset_remote_signed(
         &mut self,
         asset_path: &Path,
         remote_signer: &dyn crate::signer::RemoteSigner,
@@ -2297,7 +2297,7 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
         store
-            .save_to_asset_remotely_signed(&ap, &remote_signer, &op)
+            .save_to_asset_remote_signed(&ap, &remote_signer, &op)
             .await
             .unwrap();
 
