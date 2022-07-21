@@ -24,6 +24,9 @@ use crate::{
 
 #[cfg(feature = "file_io")]
 use crate::Signer;
+#[cfg(all(feature = "async_signer", feature = "file_io"))]
+use crate::{AsyncSigner, RemoteSigner};
+
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -676,7 +679,7 @@ impl Manifest {
         &mut self,
         source_path: P,
         dest_path: P,
-        signer: &dyn crate::signer::AsyncSigner,
+        signer: &dyn AsyncSigner,
     ) -> Result<Store> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
@@ -697,7 +700,7 @@ impl Manifest {
         &mut self,
         source_path: P,
         dest_path: P,
-        signer: &dyn crate::signer::RemoteSigner,
+        signer: &dyn RemoteSigner,
     ) -> Result<Store> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
