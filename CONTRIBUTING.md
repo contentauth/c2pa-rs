@@ -59,6 +59,15 @@ These include such things as Rust code format, Clippy/lint checks, and unit test
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
 
+### Pull request titles
+
+The build process automatically adds a pull request (PR) to the [CHANGELOG](CHANGELOG.md) unless the title of the PR begins with `(IGNORE)`, which 
+is appropriate for minor documentation updates and other trivial fixes that you want to specifically exclude from the CHANGELOG.
+
+Additionally, the build process takes specific actions if the title of a PR begins with certain special strings:
+- `MINOR`: Increments the minor version, per [semantic versioning](https://semver.org/) convention.
+- `MAJOR`: Increments the major version number, per [semantic versioning](https://semver.org/) convention.
+
 ## From contributor to committer
 
 We love contributions from our community! If you'd like to go a step beyond contributor
