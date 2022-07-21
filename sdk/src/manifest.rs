@@ -36,7 +36,8 @@ use std::path::Path;
 use uuid::Uuid;
 
 /// Function that is used by serde to determine whether or not we should serialize
-/// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
+/// thumbnail data based on the `serialize_thumbnails` flag.
+/// (Serialization is disabled by default.)
 fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
     !cfg!(feature = "serialize_thumbnails") || value.is_none()
 }
