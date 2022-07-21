@@ -1440,6 +1440,32 @@ impl Store {
         }
     }
 
+    /// Embed the claims store as jumbf into an asset using an CoseSign box generated remotely. Updates XMP with provenance record.
+    #[cfg(feature = "async_signer")]
+    pub async fn save_to_asset_remote_signed(
+        &mut self,
+        asset_path: &Path,
+        remote_signer: &dyn crate::signer::RemoteSigner,
+        output_path: &Path,
+    ) -> Result<()> {
+        let jumbf_bytes = self.start_save(asset_path, output_path, remote_signer.reserve_size())?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = remote_signer.sign_remote(&pc.data()?).await?;
+
+        let sig_placeholder = self.sign_claim_placeholder(pc, remote_signer.reserve_size());
+
+        match self.finish_save(jumbf_bytes, output_path, sig, &sig_placeholder) {
+            Ok(v) => {
+                // save sig so store is up to date
+                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc_mut.set_signature_val(v);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     #[cfg(feature = "file_io")]
     fn start_save(
         &mut self,
@@ -2088,6 +2114,27 @@ pub mod tests {
         }
     }
 
+    #[cfg(feature = "async_signer")]
+    struct MyRemoteSigner {}
+
+    #[cfg(feature = "async_signer")]
+    #[async_trait::async_trait]
+    impl crate::signer::RemoteSigner for MyRemoteSigner {
+        async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+            let signer =
+                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+            // this would happen on some remote server
+            let cose_sign1_box =
+                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await;
+
+            cose_sign1_box
+        }
+        fn reserve_size(&self) -> usize {
+            10000
+        }
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
@@ -2225,6 +2272,34 @@ pub mod tests {
 
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        // make sure we can read from new file
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+    }
+
+    #[cfg(feature = "async_signer")]
+    #[actix::test]
+    async fn test_jumbf_generation_remote() {
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-async.jpg");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // create my remote signer to map the CoseSign1 data back into the asset
+        let remote_signer = MyRemoteSigner {};
+
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_asset_remote_signed(&ap, &remote_signer, &op)
+            .await
+            .unwrap();
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();

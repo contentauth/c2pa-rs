@@ -102,3 +102,20 @@ pub trait AsyncSigner: Sync {
         None
     }
 }
+
+#[cfg(feature = "async_signer")]
+#[async_trait]
+pub trait RemoteSigner: Sync {
+    /// Returns the `CoseSign1` bytes signed by the [`RemoteSigner`].
+    ///
+    /// The size of returned `Vec` must match the value returned by `reserve_size`.
+    /// This data will be embedded in the JUMBF `c2pa.signature` box of the manifest.
+    /// `data` are the bytes of the claim to be remotely signed.
+    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    ///
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+}
