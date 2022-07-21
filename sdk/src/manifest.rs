@@ -559,6 +559,31 @@ impl Manifest {
         Ok(store)
     }
 
+    // factor out this code to set up the destination path with a file
+    // so we can use set_asset_from_path to initialize the right fields in Manifest
+    #[cfg(feature = "file_io")]
+    fn embed_prep<P: AsRef<Path>>(&mut self, source_path: P, dest_path: P) -> Result<P> {
+        let mut copied = false;
+
+        if !source_path.as_ref().exists() {
+            let path = source_path.as_ref().to_string_lossy().into_owned();
+            return Err(Error::FileNotFound(path));
+        }
+        // we need to copy the source to target before setting the asset info
+        if !dest_path.as_ref().exists() {
+            std::fs::copy(&source_path, &dest_path)?;
+            copied = true;
+        }
+        // first add the information about the target file
+        self.set_asset_from_path(dest_path.as_ref());
+
+        if copied {
+            Ok(dest_path)
+        } else {
+            Ok(source_path)
+        }
+    }
+
     /// Embed a signed manifest into the target file using a supplied signer.
     ///
     /// # Example: Embed a manifest in a file
@@ -595,16 +620,8 @@ impl Manifest {
         dest_path: P,
         signer: &dyn Signer,
     ) -> Result<Store> {
-        if !source_path.as_ref().exists() {
-            let path = source_path.as_ref().to_string_lossy().into_owned();
-            return Err(Error::FileNotFound(path));
-        }
-        // we need to copy the source to target before setting the asset info
-        if !dest_path.as_ref().exists() {
-            std::fs::copy(&source_path, &dest_path)?;
-        }
-        // first add the information about the target file
-        self.set_asset_from_path(dest_path.as_ref());
+        // Add manifest info for this target file
+        let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
@@ -619,16 +636,17 @@ impl Manifest {
     #[cfg(feature = "async_signer")]
     pub async fn embed_async_signed<P: AsRef<Path>>(
         &mut self,
-        target_path: P,
+        source_path: P,
+        dest_path: P,
         signer: &dyn crate::signer::AsyncSigner,
     ) -> Result<Store> {
-        // first add the information about the target file
-        self.set_asset_from_path(target_path.as_ref());
+        // Add manifest info for this target file
+        let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
         store
-            .save_to_asset_async(target_path.as_ref(), signer, target_path.as_ref())
+            .save_to_asset_async(source_path.as_ref(), signer, dest_path.as_ref())
             .await?;
 
         // todo: update xmp
@@ -639,16 +657,17 @@ impl Manifest {
     #[cfg(all(feature = "file_io", feature = "async_signer"))]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
-        target_path: P,
+        source_path: P,
+        dest_path: P,
         signer: &dyn crate::signer::RemoteSigner,
     ) -> Result<Store> {
-        // first add the information about the target file
-        self.set_asset_from_path(target_path.as_ref());
+        // Add manifest info for this target file
+        let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
         store
-            .save_to_asset_remotely_signed(target_path.as_ref(), signer, target_path.as_ref())
+            .save_to_asset_remotely_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await?;
 
         // todo: update xmp
@@ -942,7 +961,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest
-            .embed_async_signed(&output, &async_signer)
+            .embed_async_signed(&output, &output, &async_signer)
             .await
             .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -984,7 +1003,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest
-            .embed_remote_signed(&output, &remote_signer)
+            .embed_remote_signed(&output, &output, &remote_signer)
             .await
             .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
