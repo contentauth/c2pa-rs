@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::convert::{From, TryFrom};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -26,7 +26,7 @@ use atree::{Arena, Token};
 use tempfile::{Builder, NamedTempFile};
 
 use crate::assertions::ExclusionsMap;
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions};
+use crate::asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions};
 use crate::error::{Error, Result};
 use crate::utils::hash_utils::{vec_compare, Exclusion};
 
@@ -904,6 +904,10 @@ impl CAILoader for BmffIO {
 }
 
 impl AssetIO for BmffIO {
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
+
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
@@ -1060,9 +1064,11 @@ impl AssetIO for BmffIO {
             _ => (), // todo: handle more patching cases as necessary
         }
 
-        std::fs::copy(temp_file.path(), asset_path)?;
-
-        Ok(())
+        // copy temp file to asset
+        std::fs::rename(&temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(&temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 
     fn get_object_locations(
@@ -1074,9 +1080,93 @@ impl AssetIO for BmffIO {
     }
 }
 
+impl AssetPatch for BmffIO {
+    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        let mut asset = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(asset_path)?;
+        let size = asset.seek(SeekFrom::End(0))?;
+        asset.seek(SeekFrom::Start(0))?;
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: size as u64,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        // build layout of the BMFF structure
+        build_bmff_tree(
+            &mut asset,
+            size as u64,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+        )?;
+
+        // get position to insert c2pa
+        let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
+            let uuid_info = &bmff_tree[uuid_tokens[0]].data;
+
+            // is this a C2PA manifest
+            let is_c2pa = if let Some(uuid) = &uuid_info.user_type {
+                // make sure it is a C2PA box
+                vec_compare(&C2PA_UUID, uuid)
+            } else {
+                false
+            };
+
+            if is_c2pa {
+                (uuid_info.offset, Some(uuid_info.size))
+            } else {
+                (0, None)
+            }
+        } else {
+            return Err(Error::BadParam(
+                "patch_cai_store found no manifest store to patch.".to_string(),
+            ));
+        };
+
+        if let Some(manifest_length) = c2pa_length {
+            let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
+            let merkle_data: &[u8] = &[]; // not yet supported
+            write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
+            let new_c2pa_box_size = new_c2pa_box.len();
+
+            if new_c2pa_box_size as u64 == manifest_length {
+                asset.seek(SeekFrom::Start(c2pa_start as u64))?;
+                asset.write_all(&new_c2pa_box)?;
+                Ok(())
+            } else {
+                Err(Error::BadParam(
+                    "patch_cai_store store size mismatch.".to_string(),
+                ))
+            }
+        } else {
+            Err(Error::BadParam(
+                "patch_cai_store store size mismatch.".to_string(),
+            ))
+        }
+    }
+}
+
 #[cfg(feature = "bmff")]
 #[cfg(test)]
 pub mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
     use tempfile::tempdir;
 
     use super::*;
@@ -1145,6 +1235,35 @@ pub mod tests {
                             success = true;
                         }
                     }
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_patch_c2pa_write_mp4() {
+        let test_data = "some test data".as_bytes();
+        let source = fixture_path("video1.mp4");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let bmff = BmffIO::new("mp4");
+
+                if let Ok(source_data) = bmff.read_cai_store(&output) {
+                    // create replacement data of same size
+                    let mut new_data = vec![0u8; source_data.len()];
+                    new_data[..test_data.len()].copy_from_slice(test_data);
+                    bmff.patch_cai_store(&output, &new_data).unwrap();
+
+                    let replaced = bmff.read_cai_store(&output).unwrap();
+
+                    assert_eq!(new_data, replaced);
+
+                    success = true;
                 }
             }
         }

@@ -155,6 +155,9 @@ pub enum Error {
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
 
+    #[error("thread receive error")]
+    ThreadReceiveError,
+
     /// No JUMBF data found.
     /// TODO before merging PR: Does this error case need to be part of the public API?
     #[error("no JUMBF data found")]

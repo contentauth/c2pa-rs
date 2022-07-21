@@ -636,15 +636,23 @@ impl Manifest {
             return Err(Error::FileNotFound(path));
         }
         // we need to copy the source to target before setting the asset info
+        let mut copied = false;
         if !dest_path.as_ref().exists() {
             std::fs::copy(&source_path, &dest_path)?;
+            copied = true;
         }
         // first add the information about the target file
         self.set_asset_from_path(dest_path.as_ref());
         // convert the manifest to a store
         let mut store = self.to_store()?;
         // sign and write our store to to the output image file
-        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
+        if copied {
+            // set source and dest to same path to avoid an unnecessary copy since we already copied above
+            store.save_to_asset(dest_path.as_ref(), signer, dest_path.as_ref())?;
+        } else {
+            // save to asset will do the copy
+            store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
+        }
 
         // todo: update xmp
         Ok(store)

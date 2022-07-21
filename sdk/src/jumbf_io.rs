@@ -133,7 +133,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
-    let img_out_path: PathBuf = match out_path {
+    let asset_out_path: PathBuf = match out_path {
         Some(p) => p.to_owned(),
         None => {
             let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
@@ -145,12 +145,22 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
     };
 
     // clone output to be overwritten
-    if in_path != img_out_path {
-        fs::copy(&in_path, &img_out_path).map_err(Error::IoError)?;
+    if in_path != asset_out_path {
+        fs::copy(&in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.save_cai_store(&img_out_path, data),
+        Some(asset_handler) => {
+            // patch if possible to save time and resources
+            if let Some(patch_handler) = asset_handler.asset_patch_ref() {
+                if patch_handler.patch_cai_store(&asset_out_path, data).is_ok() {
+                    return Ok(());
+                }
+            }
+
+            // couldn't patch so just save
+            asset_handler.save_cai_store(&asset_out_path, data)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
