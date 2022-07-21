@@ -155,6 +155,9 @@ pub enum Error {
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
 
+    #[error("thread receive error")]
+    ThreadReceiveError,
+
     /// No JUMBF data found.
     /// TODO before merging PR: Does this error case need to be part of the public API?
     #[error("no JUMBF data found")]
@@ -221,6 +224,7 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "add_thumbnails"))]
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]

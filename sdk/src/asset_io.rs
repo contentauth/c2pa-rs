@@ -56,9 +56,25 @@ pub trait AssetIO {
     // Write the CAI block to an asset
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
 
-    /// List of standard object offests
+    /// List of standard object offsets
     /// If the offsets exist return the start of those locations other it should
     /// return the calculated location of when it should start.  There may still be a
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
+
+    // Returns [`AssetPatch`] trait if this I/O handler supports patching.
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        None
+    }
+}
+
+// `AssetPatch` optimizes output generation for asset_io handlers that
+// are able to patch blocks of data without changing any other data. The
+// resultant file must still be a valid asset. This saves having to rewrite
+// assets since only the patched bytes are modified.
+pub trait AssetPatch {
+    // Patches an existing manifest store with new manifest store.
+    // Only existing manifest stores of the same size may be patched
+    // since any other changes will invalidate asset hashes.
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
 }

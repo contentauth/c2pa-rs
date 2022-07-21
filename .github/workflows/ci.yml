@@ -99,6 +99,33 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
+  publish-preflight:
+    name: Preflight crate publish
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust_version: [stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+          override: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Dry-run of crate publish
+        run: cargo publish -p c2pa --dry-run
+
   clippy_check:
     name: Clippy
     runs-on: ubuntu-latest
