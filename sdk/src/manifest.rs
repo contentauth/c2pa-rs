@@ -669,7 +669,7 @@ impl Manifest {
         Ok(store)
     }
 
-    /// Embed a signed manifest into the target file using a supplied AsyncSigner
+    /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
     pub async fn embed_async_signed<P: AsRef<Path>>(
@@ -691,7 +691,7 @@ impl Manifest {
         Ok(store)
     }
 
-    /// Embed a signed manifest into the target file using a supplied RemoteSigner
+    /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
     #[cfg(all(feature = "file_io", feature = "async_signer"))]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
