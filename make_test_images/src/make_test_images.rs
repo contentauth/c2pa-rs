@@ -31,16 +31,6 @@ use twoway::find_bytes;
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
-fn get_signer_with_alg(alg: &str) -> c2pa::Result<Box<dyn Signer>> {
-    // sign and embed into the target file
-    let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", alg));
-    let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
-    let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
-    create_signer::from_files(signcert_path, pkey_path, alg, None)
-}
-
 /// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +69,19 @@ pub struct Config {
     pub author: Option<String>,
     /// A list of recipes for test files
     pub recipes: Vec<Recipe>,
+}
+
+impl Config {
+    pub fn get_signer(&self) -> c2pa::Result<Box<dyn Signer>> {
+        // sign and embed into the target file
+        let alg: SigningAlg = self.alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
+        let tsa_url = self.tsa_url.as_ref().map(|s| s.to_owned());
+        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", self.alg));
+        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+        create_signer::from_files(signcert_path, pkey_path, alg, tsa_url)
+    }
 }
 
 // Defaults for Config
@@ -297,7 +300,7 @@ impl MakeTestImages {
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
         // now sign manifest and embed in target
-        let signer = get_signer_with_alg(&self.config.alg)?;
+        let signer = self.config.get_signer()?;
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 
