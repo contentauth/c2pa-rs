@@ -794,9 +794,15 @@ impl Claim {
             validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
         }
 
+        let data = if let Some(ref original_bytes) = claim.original_bytes {
+            original_bytes
+        } else {
+           return Err(Error::ClaimDecoding);
+        };
+
         let verified = verify_cose(
             sig,
-            &claim.data()?,
+            data,
             &additional_bytes,
             !is_provenance,
             validation_log,
