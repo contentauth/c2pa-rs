@@ -61,12 +61,11 @@ This will give us an opportunity to discuss API design and avoid duplicate effor
 
 ### Pull request titles
 
-The build process automatically adds a pull request (PR) to the [CHANGELOG](CHANGELOG.md) unless the title of the PR begins with `(IGNORE)`, which 
-is appropriate for minor documentation updates and other trivial fixes that you want to specifically exclude from the CHANGELOG.
+The build process automatically adds a pull request (PR) to the [CHANGELOG](CHANGELOG.md) unless the title of the PR begins with `(IGNORE)`. Start PR titles with `(IGNORE)` for minor documentation updates and other trivial fixes that you want to specifically exclude from the CHANGELOG.
 
 Additionally, the build process takes specific actions if the title of a PR begins with certain special strings:
-- `MINOR`: Increments the minor version, per [semantic versioning](https://semver.org/) convention.
-- `MAJOR`: Increments the major version number, per [semantic versioning](https://semver.org/) convention.
+- `(MINOR)`: Increments the minor version, per [semantic versioning](https://semver.org/) convention.
+- `(MAJOR)`: Increments the major version number, per [semantic versioning](https://semver.org/) convention.
 
 ## From contributor to committer
 
