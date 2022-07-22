@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.11.0
+_21 July 2022_
+
+* (MINOR) Add support for remotely generated CoseSign1 signatures ([#87](https://github.com/contentauth/c2pa-rs/pull/87))
+* Optimize performance of large assets ([#84](https://github.com/contentauth/c2pa-rs/pull/84))
+
 ## 0.10.0
 _20 July 2022_
 
