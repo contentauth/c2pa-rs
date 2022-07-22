@@ -15,7 +15,7 @@ use crate::{config::Config, fix_relative_path};
 use anyhow::{Context, Result};
 /// Provides a method to read configured certs and generate a singer
 ///
-use c2pa::{get_signer, Signer};
+use c2pa::{create_signer, Signer, SigningAlg};
 use std::{env, path::Path};
 
 pub fn get_ta_url() -> Option<String> {
@@ -28,6 +28,7 @@ const DEFAULT_KEY: &[u8] = include_bytes!("../sample/es256_private.key");
 
 pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Signer>> {
     let alg = config.alg.as_deref().unwrap_or("es256").to_lowercase();
+    let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
     let tsa_url = config.ta_url.clone().or_else(get_ta_url);
 
     let mut private_key = None;
@@ -58,7 +59,7 @@ pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Sign
 
     if let Some(private_key) = private_key {
         if let Some(sign_cert) = sign_cert {
-            let signer = get_signer(&sign_cert, &private_key, &alg, tsa_url)
+            let signer = create_signer::from_keys(&sign_cert, &private_key, alg, tsa_url)
                 .context("Invalid certification data")?;
             return Ok(signer);
         }
@@ -69,7 +70,7 @@ pub fn get_c2pa_signer(config: &Config, base_path: &Path) -> Result<Box<dyn Sign
         Note: Using default private key and signing certificate. This is only valid for development.\n\
         A permanent key and cert should be provided in the manifest definition or in the environment variables.\n");
 
-    let signer = get_signer(DEFAULT_CERTS, DEFAULT_KEY, &alg, tsa_url)
+    let signer = create_signer::from_keys(DEFAULT_CERTS, DEFAULT_KEY, alg, tsa_url)
         .context("Invalid certification data")?;
 
     Ok(signer)
