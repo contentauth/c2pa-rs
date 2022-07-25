@@ -1066,4 +1066,26 @@ pub mod tests {
             assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
         }
     }
+
+    #[test]
+    fn test_no_timestamp() {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let box_size = 10000;
+
+        let signer = crate::utils::test::temp_signer();
+
+        let cose_bytes = crate::cose_sign::sign_claim(&claim_bytes, &signer, box_size).unwrap();
+
+        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+
+        let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
+
+        assert_eq!(signing_time, None);
+    }
 }

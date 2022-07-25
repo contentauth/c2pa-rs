@@ -797,16 +797,10 @@ impl Claim {
         let data = if let Some(ref original_bytes) = claim.original_bytes {
             original_bytes
         } else {
-           return Err(Error::ClaimDecoding);
+            return Err(Error::ClaimDecoding);
         };
 
-        let verified = verify_cose(
-            sig,
-            data,
-            &additional_bytes,
-            !is_provenance,
-            validation_log,
-        );
+        let verified = verify_cose(sig, data, &additional_bytes, !is_provenance, validation_log);
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
