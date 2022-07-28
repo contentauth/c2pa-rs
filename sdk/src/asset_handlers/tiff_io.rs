@@ -12,15 +12,16 @@
 // each license.
 
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-use conv::*;
+//use conv::*;
 
 use std::collections::HashMap;
-use std::io::{SeekFrom, Write, Seek};
+use std::io::{SeekFrom, Write, Seek, Read};
 
 use crate::asset_io::{CAILoader, CAIRead};
 use crate::error::{Error, Result};
 
 const C2PA_TAG: u16 = 0xCd41;
+#[allow(dead_code)]
 const C2PA_FIELD_TYPE: u16 = 1;
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ pub(crate) enum Endianess {
     LittleEndian,
 }
 
+#[allow(dead_code)]
 struct EndianReader {
     byte_order: Endianess,
 }
@@ -41,7 +43,10 @@ impl EndianReader {
     }
 
     #[inline]
-    pub fn read_u16(&self, r: &mut dyn CAIRead) -> Result<u16> {
+    pub fn read_u16<R: ?Sized>(&self, r: &mut R) -> Result<u16> 
+    where
+    R: Read + Seek
+    {
         match self.byte_order {
             Endianess::BigEndian => r.read_u16::<BigEndian>().map_err(crate::error::wrap_io_err),
             Endianess::LittleEndian => r
@@ -51,7 +56,10 @@ impl EndianReader {
     }
 
     #[inline]
-    pub fn read_u32(&self, r: &mut dyn CAIRead) -> Result<u32> {
+    pub fn read_u32<R: ?Sized>(&self, r: &mut R) -> Result<u32> 
+    where
+    R: Read + Seek
+    {
         match self.byte_order {
             Endianess::BigEndian => r.read_u32::<BigEndian>().map_err(crate::error::wrap_io_err),
             Endianess::LittleEndian => r
@@ -61,7 +69,10 @@ impl EndianReader {
     }
 
     #[inline]
-    pub fn read_u64(&self, r: &mut dyn CAIRead) -> Result<u64> {
+    pub fn read_u64<R: ?Sized>(&self, r: &mut R) -> Result<u64> 
+    where
+    R: Read + Seek
+    {
         match self.byte_order {
             Endianess::BigEndian => r.read_u64::<BigEndian>().map_err(crate::error::wrap_io_err),
             Endianess::LittleEndian => r
@@ -87,6 +98,7 @@ pub struct Ifd {
 }
 
 impl Ifd {
+    #[allow(dead_code)]
     pub fn get_tag(&self, tag_id: u16) -> Option<&IfdEntry> {
         self.entries.get(&tag_id)
     }
@@ -100,11 +112,17 @@ pub(crate) struct TiffStructure {
     first_ifd: Option<Ifd>,
 }
 
+#[allow(dead_code)]
 const II: [u8; 2] = *b"II";
+#[allow(dead_code)]
 const MM: [u8; 2] = *b"MM";
 
 impl TiffStructure {
-    pub fn load(reader: &mut dyn CAIRead) -> Result<Self> {
+    #[allow(dead_code)]
+    pub fn load<R: ?Sized>(reader: &mut R) -> Result<Self> 
+    where
+        R: Read + Seek
+    {
         let mut endianess = [0u8, 2];
         reader.read_exact(&mut endianess)?;
 
@@ -153,7 +171,11 @@ impl TiffStructure {
         Ok(ts)
     }
 
-    fn read_ifd(reader: &mut dyn CAIRead, byte_order: Endianess, big_tiff: bool) -> Result<Ifd> {
+    #[allow(dead_code)]
+    fn read_ifd<R: ?Sized>(reader: &mut R, byte_order: Endianess, big_tiff: bool) -> Result<Ifd> 
+    where
+        R: Read + Seek
+    {
         let byte_reader = EndianReader::new(byte_order);
 
         let ifd_offset = reader.seek(SeekFrom::Current(0))?;
@@ -218,7 +240,12 @@ impl TiffStructure {
     }
 }
 
-pub fn map_tiff(input: &mut dyn CAIRead) -> Result<Ifd> {
+
+#[allow(dead_code)]
+pub fn map_tiff<R: ?Sized>(input: &mut R) -> Result<Ifd> 
+where
+  R: Read + Seek
+{
     let _size = input.seek(SeekFrom::End(0))?;
     input.seek(SeekFrom::Start(0))?;
 
@@ -228,11 +255,32 @@ pub fn map_tiff(input: &mut dyn CAIRead) -> Result<Ifd> {
         .ok_or(Error::BadParam("Could not parse TIFF/DNG".to_string()))
 }
 
-fn get_cai_data(asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-    let first_idf = map_tiff(asset_reader)?;
+fn get_cai_data<R: ?Sized>(asset_reader: &mut R) -> Result<Vec<u8>> 
+where
+  R: Read + Seek
+{
+    //let first_idf = map_tiff(asset_reader)?;
 
-    let cai_ifd_entry = first_idf.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
+    //let cai_ifd_entry = first_idf.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
 
+    //let e = tiff::decoder::ifd::Entry::new_u64(tiff::tags::Type::BYTE, 
+    //    cai_ifd_entry.value_count, cai_ifd_entry.value_offset.to_ne_bytes());
+
+
+    //let sr =  SmartReader::wrap(asset_reader, ByteOrder::LittleEndian);
+
+    //let v = e.val(&tiff::decoder::Limits::unlimited(), false, asset_reader).unwrap();
+
+    let mut d = tiff::decoder::Decoder::new(asset_reader).unwrap();
+
+    let v = d.find_tag(tiff::tags::Tag::Unknown(C2PA_TAG)).unwrap();
+
+    if let Some(val) = v {
+        let output = val.into_u8_vec().unwrap();
+        return Ok(output) 
+    }
+
+    /*
     // make sure data type is for unstructured data
     if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
         return Err(Error::BadParam(
@@ -251,8 +299,10 @@ fn get_cai_data(asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     asset_reader
         .read_exact(&mut data[..])
         .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+    */
+    Err(Error::JumbfBoxNotFound)
 
-    Ok(data)
+    //Ok(data)
 }
 
 
@@ -351,6 +401,7 @@ pub mod tests {
 
         let tiff_io = TiffIO{};
 
+        c.seek(SeekFrom::Start(0)).unwrap();
         let c2pa_data = tiff_io.read_cai(&mut c).unwrap();
 
         assert_eq!(&c2pa_data, data);
