@@ -15,13 +15,13 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use conv::*;
 
 use std::collections::HashMap;
-use std::io::SeekFrom;
+use std::io::{SeekFrom, Write, Seek};
 
 use crate::asset_io::{CAILoader, CAIRead};
 use crate::error::{Error, Result};
 
 const C2PA_TAG: u16 = 0xCd41;
-const C2PA_FIELD_TYPE: u16 = 7;
+const C2PA_FIELD_TYPE: u16 = 1;
 
 #[derive(Clone)]
 pub(crate) enum Endianess {
@@ -228,8 +228,6 @@ pub fn map_tiff(input: &mut dyn CAIRead) -> Result<Ifd> {
         .ok_or(Error::BadParam("Could not parse TIFF/DNG".to_string()))
 }
 
-pub struct TiffIO {}
-
 fn get_cai_data(asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let first_idf = map_tiff(asset_reader)?;
 
@@ -257,6 +255,61 @@ fn get_cai_data(asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     Ok(data)
 }
 
+
+#[allow(dead_code)]
+fn write_manifest<W>(w: &mut W, _assert_reader: &dyn CAIRead, data: &[u8]) -> Result<u64> 
+where 
+    W: Write + Seek, 
+{
+    use tiff::{encoder::*, tags::*};
+
+    let mut image_data = Vec::new();
+    for x in 0..100 {
+        for y in 0..100u8 {
+            let val = x + y;
+            image_data.push(val);
+            image_data.push(val);
+            image_data.push(val);
+        }
+    }
+
+    {
+        let mut tiff = TiffEncoder::new(w).unwrap();
+
+        let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
+        image
+            .encoder()
+            .write_tag(Tag::Artist, "Image-tiff")
+            .unwrap();
+            image
+            .encoder()
+            .write_tag(Tag::Unknown(C2PA_TAG), data)
+            .unwrap();
+        image.write_data(&image_data).unwrap();
+    }
+   
+    /*
+   impl TiffValue for [u8] {
+    const BYTE_LEN: u8 = 1;
+    const FIELD_TYPE: Type = Type::BYTE;
+
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn data(&self) -> Cow<[u8]> {
+        Cow::Borrowed(self)
+    }
+}
+
+
+    */
+    
+    Ok(0)
+}
+
+pub struct TiffIO {}
+
 impl CAILoader for TiffIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
@@ -283,6 +336,24 @@ pub mod tests {
 
         let mut in_file = std::fs::File::open(&source).unwrap();
 
-        map_tiff(&mut in_file).unwrap();
+        let _ifd = map_tiff(&mut in_file).unwrap();
+
+
+        // make a new tiff
+        let data = "some test data".as_bytes();
+
+        let output: Vec<u8> = Vec::new();
+        let mut c = std::io::Cursor::new(output);
+
+        write_manifest(&mut c, &mut in_file, data).unwrap();
+
+        let data = "some test data".as_bytes();
+
+        let tiff_io = TiffIO{};
+
+        let c2pa_data = tiff_io.read_cai(&mut c).unwrap();
+
+        assert_eq!(&c2pa_data, data);
+
     }
 }
