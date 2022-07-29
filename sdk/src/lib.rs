@@ -21,7 +21,7 @@
 //! with JPEG and PNG images.
 //!
 //! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
-//! EXCEPTION: If you are building for WASM, do not add this dependency. 
+//! EXCEPTION: If you are building for WASM, do not add this dependency.
 //! For example:
 //!
 //! ```text
