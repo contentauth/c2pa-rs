@@ -49,6 +49,13 @@ Add this to your `Cargo.toml`:
 c2pa = "0.11.0"
 ```
 
+If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`, for example:
+```
+c2pa = {version="0.11.0", features=["file_io"]}
+```
+
+NOTE: If you are building for WASM. omit the `file_io` dependency.
+
 ## Crate features
 
 The Rust SDK crate provides:
