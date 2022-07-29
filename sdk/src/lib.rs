@@ -24,7 +24,7 @@
 //! EXCEPTION: If you are building for WASM, do not add this dependency. 
 //! For example:
 //!
-//! ```
+//! ```text
 //! c2pa = {version="0.11.0", features=["file_io"]}
 //! ```
 //!
