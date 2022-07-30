@@ -20,6 +20,14 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
 //!
+//! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
+//! EXCEPTION: If you are building for WASM, do not add this dependency.
+//! For example:
+//!
+//! ```text
+//! c2pa = {version="0.11.0", features=["file_io"]}
+//! ```
+//!
 //! # Example: Reading a ManifestStore
 //!
 //! ```
