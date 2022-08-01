@@ -422,9 +422,11 @@ impl Ingredient {
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
                     if statuses.is_empty() {
-                        //todo: need a better test here
-                        if let Some(claim_assertion) =
-                            claim.get_claim_assertion(labels::JPEG_CLAIM_THUMBNAIL, 0)
+                        // search claim to find a claim thumbnail assertion without knowing the format
+                        if let Some(claim_assertion) = claim
+                            .claim_assertion_store()
+                            .iter()
+                            .find(|ca| ca.label_raw().starts_with(labels::CLAIM_THUMBNAIL))
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
@@ -497,8 +499,12 @@ impl Ingredient {
             .and_then(|hash_url| jumbf::labels::manifest_label_from_uri(&hash_url.url()));
 
         let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
-            // if we have a relative thumbnail pass in URI and Claim to search
-            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), ingredient_uri) {
+            // This could be a relative or absolute thumbnail reference to another manifest
+            let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
+                Some(label) => label,              // use the manifest from the thumbnail uri
+                None => ingredient_uri.to_owned(), // relative so use the whole url from the thumbnail assertion
+            };
+            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
                 Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
                 None => {
                     error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
@@ -529,7 +535,9 @@ impl Ingredient {
 
         ingredient.is_parent = is_parent;
         ingredient.active_manifest = active_manifest;
-        ingredient.validation_status = ingredient_assertion.validation_status;
+        if !validation_status.is_empty() {
+            ingredient.validation_status = Some(validation_status)
+        }
         ingredient.metadata = ingredient_assertion.metadata;
         Ok(ingredient)
     }
