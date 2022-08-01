@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.11.1
+_01 August 2022_
+
+* Bug fix: Ingredients with valid claims not reporting correct thumbnails ([#94](https://github.com/contentauth/c2pa-rs/pull/94))
+* Update `make_test_images` to use timestamp authority ([#90](https://github.com/contentauth/c2pa-rs/pull/90))
+* Fix bad response for case when there is no timestamp ([#89](https://github.com/contentauth/c2pa-rs/pull/89))
+
 ## 0.11.0
 _21 July 2022_
 
