@@ -44,7 +44,7 @@ use crate::{
 ///    (If `box_size` is too small for the generated signature, this function
 ///    will respond with an error.)
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
-///    if unable to validate.
+///    [`Error::CoseSignature`] if unable to validate.
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
@@ -56,7 +56,13 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         let mut cose_log = OneShotStatusTracker::new();
 
         match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
-            Ok(_) => Ok(sig),
+            Ok(r) => {
+                if !r.validated {
+                    Err(Error::CoseSignature)
+                } else {
+                    Ok(sig)
+                }
+            }
             Err(err) => Err(err),
         }
     })
@@ -332,7 +338,7 @@ mod tests {
 
     use super::sign_claim;
 
-    use crate::{claim::Claim, utils::test::temp_signer};
+    use crate::{claim::Claim, openssl::RsaSigner, utils::test::temp_signer};
 
     #[test]
     fn test_sign_claim() {
@@ -348,5 +354,51 @@ mod tests {
         let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size).unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
+    }
+
+    struct BogusSigner {
+        signer: RsaSigner,
+    }
+
+    impl BogusSigner {
+        pub fn new() -> Self {
+            BogusSigner {
+                signer: temp_signer(),
+            }
+        }
+    }
+    impl crate::Signer for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
+            eprintln!("Canary, canary, please cause this deploy to fail!");
+            Ok(b"totally bogus signature".to_vec())
+        }
+
+        fn alg(&self) -> crate::SigningAlg {
+            self.signer.alg()
+        }
+
+        fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
+            self.signer.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.signer.reserve_size()
+        }
+    }
+
+    #[test]
+    fn test_bogus_signer() {
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let box_size = 10000;
+
+        let signer = BogusSigner::new();
+
+        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+
+        assert!(cose_sign1.is_err());
     }
 }
