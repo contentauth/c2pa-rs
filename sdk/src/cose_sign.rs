@@ -364,8 +364,7 @@ mod tests {
 
         fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
             let certs = vec![0u8; 1024];
-            let mut out = Vec::new();
-            out.push(certs);
+            let out: Vec<Vec<u8>> = vec![certs];
             Ok(out)
         }
 
@@ -387,6 +386,6 @@ mod tests {
 
         let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        assert_eq!(cose_sign1.is_err(), true);
+        assert!(cose_sign1.is_err());
     }
 }
