@@ -367,6 +367,7 @@ mod tests {
             }
         }
     }
+
     impl crate::Signer for BogusSigner {
         fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
             eprintln!("Canary, canary, please cause this deploy to fail!");
