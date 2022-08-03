@@ -349,4 +349,44 @@ mod tests {
 
         assert_eq!(cose_sign1.len(), box_size);
     }
+
+    struct BogusSigner {}
+
+    impl crate::Signer for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
+            eprintln!("Canary, canary, please cause this deploy to fail!");
+            Ok(b"totally bogus signature".to_vec())
+        }
+
+        fn alg(&self) -> crate::SigningAlg {
+            crate::SigningAlg::Ps256
+        }
+
+        fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
+            let certs = vec![0u8; 1024];
+            let mut out = Vec::new();
+            out.push(certs);
+            Ok(out)
+        }
+
+        fn reserve_size(&self) -> usize {
+            10000
+        }
+    }
+
+    #[test]
+    fn test_bogus_signer() {
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let box_size = 10000;
+
+        let signer = BogusSigner {};
+
+        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+
+        assert_eq!(cose_sign1.is_err(), true);
+    }
 }
