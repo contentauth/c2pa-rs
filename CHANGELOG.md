@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 1.0.0
+_03 August 2022_
+
+* Treat 'meta' box as standard container ([#95](https://github.com/contentauth/c2pa-rs/pull/95))
+* Fix for `sign_claim` masking error ([#96](https://github.com/contentauth/c2pa-rs/pull/96))
+
 ## 0.11.1
 _01 August 2022_
 
