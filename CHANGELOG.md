@@ -10,7 +10,6 @@ Do not manually edit this file. It will be automatically updated when a new rele
 _03 August 2022_
 
 * Remove inadvertent 1.0.0 release from changelog ([#97](https://github.com/contentauth/c2pa-rs/pull/97))
-
 * Treat 'meta' box as standard container ([#95](https://github.com/contentauth/c2pa-rs/pull/95))
 * Fix for `sign_claim` masking error ([#96](https://github.com/contentauth/c2pa-rs/pull/96))
 
