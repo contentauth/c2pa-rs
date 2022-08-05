@@ -17,6 +17,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+use url::Url;
 use uuid::Uuid;
 
 use crate::assertion::{
@@ -154,6 +155,10 @@ impl fmt::Debug for ClaimAssertion {
 /// that hash is signed to produce the claim signature.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Claim {
+    // external manifest
+    #[serde(skip_deserializing, skip_serializing)]
+    remote_manifest: RemoteManifest,
+
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
     update_manifest: bool,
@@ -227,6 +232,20 @@ pub enum AssertionStoreJsonFormat {
     OrderedListNoBinary, // list of Assertions as json objects omitting binaries results
 }
 
+// Remote manifest options
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RemoteManifest {
+    NoRemote,       // No external manifest
+    SideCar,        // manifest will be saved as side car file. Output asset is untouched.
+    Remote(String), // manifest will be saved as side car file. Output asset will contain remote reference.
+}
+
+impl Default for RemoteManifest {
+    fn default() -> Self {
+        Self::NoRemote
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JsonOrderedAssertionData {
     label: String,
@@ -261,11 +280,44 @@ impl Claim {
         };
 
         Claim {
+            remote_manifest: RemoteManifest::NoRemote,
             box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
             label: l,
+            signature: "".to_string(),
+
+            claim_generator: claim_generator.to_string(),
+            assertion_store: Vec::new(),
+            vc_store: Vec::new(),
+            assertions: Vec::new(),
+            original_bytes: None,
+            redacted_assertions: None,
+            alg: Some(BUILD_HASH_ALG.to_string()),
+            alg_soft: None,
+            claim_generator_hints: None,
+
+            title: None,
+            format: "".to_string(),
+            instance_id: "".to_string(),
+
+            update_manifest: false,
+        }
+    }
+
+    /// Create a new claim with a user supplied GUID.
+    /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
+    /// claim_generator: User agent see c2pa spec for format
+    // #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_with_user_guid(claim_generator: &str, user_guid: &str) -> Self {
+        Claim {
+            remote_manifest: RemoteManifest::NoRemote,
+            box_prefix: "self#jumbf".to_string(),
+            root: jumbf::labels::MANIFEST_STORE.to_string(),
+            signature_val: Vec::new(),
+            ingredients_store: HashMap::new(),
+            label: user_guid.to_string(), // todo figure out how to validate this
             signature: "".to_string(),
 
             claim_generator: claim_generator.to_string(),
@@ -377,6 +429,22 @@ impl Claim {
     /// Is this an update manifest
     pub fn update_manifest(&self) -> bool {
         self.update_manifest
+    }
+
+    pub(crate) fn set_remote_manifest(&mut self, remote_url: Option<&str>) -> Result<()> {
+        if let Some(u) = remote_url {
+            let parsed = Url::parse(u)
+                .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+            self.remote_manifest = RemoteManifest::Remote(parsed.to_string());
+        } else {
+            self.remote_manifest = RemoteManifest::SideCar;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn remote_manifest(&self) -> RemoteManifest {
+        self.remote_manifest.clone()
     }
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {

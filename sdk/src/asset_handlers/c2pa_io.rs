@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions};
+use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
 use crate::error::{Error, Result};
 use std::fs::File;
 use std::path::Path;
@@ -51,7 +51,13 @@ impl AssetIO for C2paIO {
         &self,
         _asset_path: &std::path::Path,
     ) -> Result<Vec<HashObjectPositions>> {
-        Ok(Vec::new())
+        let hop = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
+        Ok(vec![hop])
     }
 }
 
