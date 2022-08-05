@@ -11,32 +11,34 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{collections::HashMap, fmt, path::Path};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
-use std::fmt;
-use std::path::Path;
 use uuid::Uuid;
 
-use crate::assertion::{
-    get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion, AssertionBase,
-    AssertionData,
+use crate::{
+    assertion::{
+        get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
+        AssertionBase, AssertionData,
+    },
+    assertions::{self, labels, BmffHash, DataHash},
+    cose_validator::{get_signing_info, verify_cose, verify_cose_async},
+    error::{Error, Result},
+    hashed_uri::HashedUri,
+    jumbf::{
+        self,
+        boxes::{
+            CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
+        },
+    },
+    salt::{SaltGenerator, NO_SALT},
+    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    validation_status,
+    validator::ValidationInfo,
 };
-use crate::assertions::{self, labels, BmffHash, DataHash};
-use crate::cose_validator::{get_signing_info, verify_cose, verify_cose_async};
-use crate::hashed_uri::HashedUri;
-use crate::jumbf::{
-    self,
-    boxes::{CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox},
-};
-use crate::salt::{SaltGenerator, NO_SALT};
-use crate::utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg};
-
-use crate::error::{Error, Result};
-use crate::status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
-use crate::validation_status;
-use crate::validator::ValidationInfo;
 
 const BUILD_HASH_ALG: &str = "sha256";
 

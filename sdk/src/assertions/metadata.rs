@@ -11,17 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
+use chrono::{SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     error::Result,
     hashed_uri::HashedUri,
 };
-
-use chrono::{SecondsFormat, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 

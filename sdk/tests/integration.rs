@@ -16,11 +16,12 @@
 #[cfg(feature = "file_io")]
 mod integration_1 {
 
+    use std::path::PathBuf;
+
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
         create_signer, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
-    use std::path::PathBuf;
     use tempfile::tempdir;
 
     const GENERATOR: &str = "app";
