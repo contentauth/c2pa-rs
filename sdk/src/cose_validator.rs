@@ -14,11 +14,16 @@
 use ciborium::value::Value;
 use conv::*;
 use coset::{sig_structure_data, Label, TaggedCborSerializable};
-
 use x509_parser::{
-    der_parser::ber::parse_ber_sequence, der_parser::oid, oid_registry::Oid, prelude::*,
+    der_parser::{ber::parse_ber_sequence, oid},
+    oid_registry::Oid,
+    prelude::*,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::validator::{get_validator, CoseValidator};
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
@@ -28,12 +33,6 @@ use crate::{
     validator::ValidationInfo,
     SigningAlg,
 };
-
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webcrypto_validator::validate_async;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::{get_validator, CoseValidator};
 
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
@@ -940,10 +939,9 @@ async fn validate_with_cert_async(
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-
     use sha2::digest::generic_array::sequence::Shorten;
 
+    use super::*;
     use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
 
     #[test]

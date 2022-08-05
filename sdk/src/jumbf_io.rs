@@ -11,16 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
-    asset_io::{AssetIO, CAILoader, HashObjectPositions},
-    error::{Error, Result},
-};
-
 use std::{
     fs::{self, File},
     io::Cursor,
     path::{Path, PathBuf},
+};
+
+use crate::{
+    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
+    asset_io::{AssetIO, CAILoader, HashObjectPositions},
+    error::{Error, Result},
 };
 
 static SUPPORTED_TYPES: [&str; 18] = [

@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use serde::Serialize;
+
 use crate::{
     assertion::{
         get_thumbnail_image_type, Assertion, AssertionBase, AssertionData, AssertionDecodeError,
@@ -18,8 +20,6 @@ use crate::{
     assertions::labels,
     error::Result,
 };
-
-use serde::Serialize;
 
 /// A Thumbnail assertion
 #[derive(Serialize)]
@@ -88,7 +88,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertions::labels;
 
     // a binary assertion  ('deadbeefadbeadbe')

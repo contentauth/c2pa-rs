@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::error::{Error, Result};
-
 use std::fmt;
+
+use crate::error::{Error, Result};
 
 #[derive(Debug)]
 pub struct LogItem {

@@ -11,8 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// Hashed Uri stucture as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization

@@ -13,6 +13,10 @@
 
 #![allow(clippy::unwrap_used)]
 
+use std::path::PathBuf;
+
+use tempfile::TempDir;
+
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     claim::Claim,
@@ -20,7 +24,6 @@ use crate::{
     store::Store,
     Result,
 };
-
 #[cfg(feature = "file_io")]
 use crate::{
     create_signer,
@@ -28,9 +31,6 @@ use crate::{
     signer::{ConfigurableSigner, Signer},
     SigningAlg,
 };
-
-use std::path::PathBuf;
-use tempfile::TempDir;
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 

@@ -11,16 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    asset_io::CAIRead, jumbf_io::get_cailoader_handler, utils::hash_utils::vec_compare, Error,
-    Result,
-};
+use std::io::Cursor;
+
 use log::error;
 use quick_xml::{
     events::{BytesEnd, BytesStart, Event},
     Reader, Writer,
 };
-use std::io::Cursor;
+
+use crate::{
+    asset_io::CAIRead, jumbf_io::get_cailoader_handler, utils::hash_utils::vec_compare, Error,
+    Result,
+};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 

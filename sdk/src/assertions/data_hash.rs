@@ -247,7 +247,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::{
         assertion::{Assertion, AssertionData},
         utils::test::fixture_path,

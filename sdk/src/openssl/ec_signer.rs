@@ -13,20 +13,23 @@
 
 use std::{fs, path::Path};
 
-use crate::{
-    error::{wrap_io_err, wrap_openssl_err, Error, Result},
-    signer::ConfigurableSigner,
-    Signer, SigningAlg,
+use openssl::{
+    ec::EcKey,
+    hash::MessageDigest,
+    pkey::{PKey, Private},
+    x509::X509,
 };
-use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
-use openssl::{ec::EcKey, pkey::Private, x509::X509};
 use x509_parser::der_parser::{
     self,
     der::{parse_der_integer, parse_der_sequence_defined_g},
 };
 
 use super::check_chain_order;
+use crate::{
+    error::{wrap_io_err, wrap_openssl_err, Error, Result},
+    signer::ConfigurableSigner,
+    Signer, SigningAlg,
+};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// ECDSA encryption.
@@ -207,7 +210,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
 
     #[test]

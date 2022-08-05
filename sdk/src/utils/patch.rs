@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::error::{Error, Result};
 use twoway::find_bytes;
 
 #[cfg(all(test, feature = "file_io"))]
 use crate::error::wrap_io_err;
+use crate::error::{Error, Result};
+
 /**
 Patch a sequence bytes with a new set of bytes - the search_bytes are erased and replaced with replace_bytes
 This function only patches the first occurance

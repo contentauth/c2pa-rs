@@ -11,8 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use log::info;
 use std::time::Instant;
+
+use log::info;
 
 // (Internal debugging tool.)
 // Measure and log the time from the creation of this struct until it is dropped.

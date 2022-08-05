@@ -11,17 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+#[cfg(feature = "file_io")]
+use std::path::Path;
+
+use serde::Serialize;
+
 use crate::{
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     validation_status::{status_for_store, ValidationStatus},
     Manifest, Result,
 };
-use serde::Serialize;
-use std::collections::HashMap;
-
-#[cfg(feature = "file_io")]
-use std::path::Path;
 
 #[derive(Serialize)]
 /// A Container for a set of Manifests and a ValidationStatus list
@@ -215,11 +216,11 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-    use crate::{status_tracker::OneShotStatusTracker, utils::test::create_test_store};
-
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
+
+    use super::*;
+    use crate::{status_tracker::OneShotStatusTracker, utils::test::create_test_store};
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

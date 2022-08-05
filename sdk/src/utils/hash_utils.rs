@@ -19,14 +19,11 @@ use std::{
 };
 
 use log::{debug, warn};
-use serde::{Deserialize, Serialize};
-
 // multihash versions
 use multibase::{decode, encode};
 use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
-
 use range_set::RangeSet;
-
+use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 

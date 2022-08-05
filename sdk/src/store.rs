@@ -11,19 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
-    assertions::{labels, Ingredient, Relationship},
-    claim::{Claim, ClaimAssertion, ClaimAssetData},
-    error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
-    jumbf::{self, boxes::*},
-    jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
-    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    validation_status,
-    xmp_inmemory_utils::extract_provenance,
-};
+use std::{collections::HashMap, io::Cursor};
+#[cfg(feature = "file_io")]
+use std::{fs, path::Path};
 
+#[cfg(feature = "file_io")]
+use log::error;
+
+#[cfg(all(feature = "xmp_write", feature = "file_io"))]
+use crate::embedded_xmp;
+#[cfg(feature = "async_signer")]
+use crate::AsyncSigner;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionData,
@@ -41,18 +39,19 @@ use crate::{
     },
     Signer,
 };
-
-#[cfg(all(feature = "xmp_write", feature = "file_io"))]
-use crate::embedded_xmp;
-
-#[cfg(feature = "async_signer")]
-use crate::AsyncSigner;
-use crate::ManifestStoreReport;
-#[cfg(feature = "file_io")]
-use log::error;
-use std::{collections::HashMap, io::Cursor};
-#[cfg(feature = "file_io")]
-use std::{fs, path::Path};
+use crate::{
+    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
+    assertions::{labels, Ingredient, Relationship},
+    claim::{Claim, ClaimAssertion, ClaimAssetData},
+    error::{Error, Result},
+    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    jumbf::{self, boxes::*},
+    jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
+    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    validation_status,
+    xmp_inmemory_utils::extract_provenance,
+    ManifestStoreReport,
+};
 
 /// A `Store` maintains a list of `Claim` structs.
 ///
@@ -360,8 +359,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::cose_sign::cose_sign_async;
-        use crate::cose_validator::verify_cose_async;
+        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
 
         let claim_bytes = claim.data()?;
 
@@ -1937,12 +1935,11 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-
     use tempfile::tempdir;
     use thiserror::private::PathAsDisplay;
     use twoway::find_bytes;
 
+    use super::*;
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},

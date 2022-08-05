@@ -43,7 +43,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::{openssl::temp_signer, utils::test::fixture_path, Signer, SigningAlg};
 
     #[test]

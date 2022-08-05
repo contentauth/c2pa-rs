@@ -11,11 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    ocsp_utils::{get_ocsp_response, OcspData},
-    signer::ConfigurableSigner,
-    Error, Result, Signer, SigningAlg,
-};
 use std::{cell::Cell, fs, path::Path};
 
 //use extfmt::Hexlify;
@@ -27,6 +22,11 @@ use openssl::{
 };
 
 use super::check_chain_order;
+use crate::{
+    ocsp_utils::{get_ocsp_response, OcspData},
+    signer::ConfigurableSigner,
+    Error, Result, Signer, SigningAlg,
+};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// SHA256 + RSA encryption.
@@ -211,7 +211,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::{
         utils::test::{fixture_path, temp_signer},
         Signer, SigningAlg,

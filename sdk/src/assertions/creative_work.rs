@@ -11,15 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::ops::Deref;
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionJson},
     assertions::{labels, SchemaDotOrg, SchemaDotOrgPerson},
     error::Result,
 };
-use serde_json::json;
-use std::ops::Deref;
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 const CW_AUTHOR: &str = "author";

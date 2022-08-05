@@ -11,8 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{validator::CoseValidator, Error, Result, SigningAlg};
 use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa};
+
+use crate::{validator::CoseValidator, Error, Result, SigningAlg};
 
 pub struct RsaValidator {
     alg: SigningAlg,

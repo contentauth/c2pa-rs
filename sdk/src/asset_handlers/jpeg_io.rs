@@ -11,18 +11,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fs::{read, File};
-use std::io::Cursor;
-use std::path::*;
+use std::{
+    fs::{read, File},
+    io::Cursor,
+    path::*,
+};
 
 use byteorder::{BigEndian, ReadBytesExt};
+use img_parts::{
+    jpeg::{markers, Jpeg, JpegSegment},
+    Bytes, DynImage,
+};
 
-use img_parts::jpeg::{markers, Jpeg, JpegSegment};
-use img_parts::Bytes;
-use img_parts::DynImage;
-
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
-use crate::error::{wrap_io_err, Error, Result};
+use crate::{
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    error::{wrap_io_err, Error, Result},
+};
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
@@ -397,8 +401,9 @@ impl AssetIO for JpegIO {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
     use img_parts::Bytes;
+
+    use super::*;
 
     #[test]
     fn test_extract_xmp() {

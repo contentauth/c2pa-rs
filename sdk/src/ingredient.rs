@@ -13,6 +13,11 @@
 
 #![deny(missing_docs)]
 
+use std::ops::Deref;
+
+use log::{debug, error};
+use serde::{Deserialize, Serialize};
+
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
@@ -23,12 +28,8 @@ use crate::{
     store::Store,
     validation_status::{self, ValidationStatus},
 };
-use std::ops::Deref;
-
 #[cfg(feature = "file_io")]
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
-use log::{debug, error};
-use serde::{Deserialize, Serialize};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
@@ -386,8 +387,10 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
-        use crate::jumbf_io;
-        use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
+        use crate::{
+            jumbf_io,
+            status_tracker::{DetailedStatusTracker, StatusTracker},
+        };
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -709,8 +712,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertions::Metadata;
+
     #[test]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
@@ -753,7 +756,6 @@ mod tests_file_io {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::utils::test::fixture_path;
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";

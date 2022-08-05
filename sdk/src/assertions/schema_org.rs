@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionJson},
@@ -19,8 +22,6 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
 };
-use serde_json::{json, Value};
-use std::collections::HashMap;
 
 const ASSERTION_CREATION_VERSION: usize = 1;
 

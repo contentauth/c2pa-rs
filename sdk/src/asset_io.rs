@@ -11,10 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek};
+use std::{
+    fmt,
+    io::{Read, Seek},
+    path::Path,
+};
 
 use crate::error::Result;
-use std::{fmt, path::Path};
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum HashBlockObjectType {
     Cai,

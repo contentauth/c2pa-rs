@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use serde::Serialize;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     error::{Error, Result},
 };
-use serde::Serialize;
 
 /// Helper class to create User assertion
 #[derive(Debug, Default, Serialize)]

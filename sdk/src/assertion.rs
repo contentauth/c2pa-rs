@@ -11,17 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt;
+
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_bytes::ByteBuf;
+use serde_json::Value;
+use thiserror::Error;
+
 use crate::{
     assertions::labels,
     error::{Error, Result},
 };
-use std::fmt;
-
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
-use serde_json::Value;
-use thiserror::Error;
 
 /// Check to see if this a label whose string can vary, if so return the root of the label and version if available
 fn get_mutable_label(var_label: &str) -> (String, Option<usize>) {
@@ -611,7 +611,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertions::{Action, Actions};
 
     #[test]

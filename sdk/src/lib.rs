@@ -107,10 +107,9 @@ mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
 mod signing_alg;
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
@@ -144,9 +143,7 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-pub(crate) use utils::cbor_types;
-pub(crate) use utils::hash_utils;
-pub(crate) use utils::xmp_inmemory_utils;
+pub(crate) use utils::{cbor_types, hash_utils, xmp_inmemory_utils};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
