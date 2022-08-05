@@ -881,7 +881,7 @@ pub(crate) mod tests {
     #[test]
     fn test_assertion_user_cbor() {
         use crate::{assertions::UserCbor, Manifest};
-        
+
         const LABEL: &str = "org.cai.test";
         const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
         let json: serde_json::Value = serde_json::from_str(DATA).unwrap();

@@ -713,7 +713,7 @@ mod tests {
 
     use super::*;
     use crate::assertions::Metadata;
-    
+
     #[test]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
