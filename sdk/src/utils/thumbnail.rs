@@ -11,8 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::Result;
 use image::ImageFormat;
+
+use crate::Result;
 
 ///  utility to generate a thumbnail from a file at path
 /// returns Result (format, image_bits) if successful, otherwise Error

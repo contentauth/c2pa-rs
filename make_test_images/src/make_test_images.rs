@@ -12,20 +12,20 @@
 // each license.
 
 //! Constructs a set of test images using a configuration script
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, Result};
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
     SigningAlg,
 };
-
-use anyhow::{Context, Result};
 use image::GenericImageView;
 use nom::AsBytes;
 use serde::Deserialize;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
 use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
@@ -100,8 +100,7 @@ impl Default for Config {
 
 /// Generate a blake3 hash over the image in path using a fixed buffer
 fn blake3_hash(path: &Path) -> Result<String> {
-    use std::fs::File;
-    use std::io::Read;
+    use std::{fs::File, io::Read};
     // Hash an input incrementally.
     let mut hasher = blake3::Hasher::new();
     const BUFFER_LEN: usize = 1024 * 1024;

@@ -11,10 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use openssl::{ec::EcKey, hash::MessageDigest, pkey::PKey};
+
 use crate::{validator::CoseValidator, Error, Result, SigningAlg};
-use openssl::ec::EcKey;
-use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
 
 pub struct EcValidator {
     alg: SigningAlg,
@@ -76,7 +75,6 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-
     use crate::{openssl::temp_signer, utils::test::fixture_path, Signer, SigningAlg};
 
     #[test]

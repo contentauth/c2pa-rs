@@ -11,24 +11,27 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-use std::convert::{From, TryFrom};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    convert::{From, TryFrom},
+    fs::{File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::Path,
+};
 
+use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-
-use atree::{Arena, Token};
 use tempfile::{Builder, NamedTempFile};
 
-use crate::assertions::ExclusionsMap;
-use crate::asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions};
-use crate::error::{Error, Result};
-use crate::utils::hash_utils::{vec_compare, Exclusion};
+use crate::{
+    assertions::ExclusionsMap,
+    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions},
+    error::{Error, Result},
+    utils::hash_utils::{vec_compare, Exclusion},
+};
 
 pub struct BmffIO {
     #[allow(dead_code)]

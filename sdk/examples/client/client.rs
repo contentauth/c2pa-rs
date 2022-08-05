@@ -13,13 +13,13 @@
 
 //! Example C2PA client application
 
-use anyhow::Result;
+use std::path::PathBuf;
 
+use anyhow::Result;
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     create_signer, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
-use std::path::PathBuf;
 
 const GENERATOR: &str = "test_app/0.1";
 const INDENT_SPACE: usize = 2;

@@ -18,9 +18,8 @@ use openssl::{
     x509::X509,
 };
 
-use crate::{signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
-
 use super::check_chain_order;
+use crate::{signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// Edwards Curve encryption.
@@ -126,7 +125,6 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-
     use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
 
     #[test]

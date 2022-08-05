@@ -337,7 +337,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::sign_claim;
-
     use crate::{claim::Claim, openssl::RsaSigner, utils::test::temp_signer};
 
     #[test]

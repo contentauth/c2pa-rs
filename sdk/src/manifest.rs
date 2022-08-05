@@ -11,6 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+#[cfg(feature = "file_io")]
+use std::path::Path;
+
+use log::{debug, error, warn};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+#[cfg(feature = "file_io")]
+use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
@@ -21,19 +32,8 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
-
-#[cfg(feature = "file_io")]
-use crate::Signer;
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
 use crate::{AsyncSigner, RemoteSigner};
-
-use log::{debug, error, warn};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-#[cfg(feature = "file_io")]
-use std::path::Path;
-use uuid::Uuid;
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the `serialize_thumbnails` flag.
@@ -738,12 +738,14 @@ pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(feature = "file_io")]
+    use tempfile::tempdir;
+
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         utils::test::TEST_VC,
         Manifest, Result,
     };
-
     #[cfg(feature = "file_io")]
     use crate::{
         status_tracker::{DetailedStatusTracker, StatusTracker},
@@ -753,9 +755,6 @@ pub(crate) mod tests {
         },
         Ingredient,
     };
-
-    #[cfg(feature = "file_io")]
-    use tempfile::tempdir;
 
     // example of random data structure as an assertion
     #[derive(serde::Serialize)]
@@ -881,8 +880,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_assertion_user_cbor() {
-        use crate::assertions::UserCbor;
-        use crate::Manifest;
+        use crate::{assertions::UserCbor, Manifest};
+        
         const LABEL: &str = "org.cai.test";
         const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
         let json: serde_json::Value = serde_json::from_str(DATA).unwrap();
