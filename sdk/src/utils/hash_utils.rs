@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{Error, Result};
 
-const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
+const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256GB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Exclusion {
