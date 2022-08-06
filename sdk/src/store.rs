@@ -1407,15 +1407,23 @@ impl Store {
         &mut self,
         asset_path: &Path,
         signer: &dyn Signer,
-        output_path: &Path,
+        dest_path: &Path,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save(asset_path, output_path, signer.reserve_size())?;
+        let jumbf_bytes = self.start_save(asset_path, dest_path, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = self.sign_claim_placeholder(pc, signer.reserve_size());
 
-        match self.finish_save(jumbf_bytes, output_path, sig, &sig_placeholder) {
+        // get correct output path for remote manifest
+        let output_path = match pc.remote_manifest() {
+            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
+            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+                dest_path.with_extension(MANIFEST_STORE)
+            }
+        };
+
+        match self.finish_save(jumbf_bytes, &output_path, sig, &sig_placeholder) {
             Ok((s, m)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1607,8 +1615,7 @@ impl Store {
             };
 
             // patch existing claim hash with updated data
-            for mut hash in updated_hashes {
-                hash.gen_hash(&output_path)?; // generate
+            for hash in updated_hashes {
                 pc.update_data_hash(hash)?;
             }
         }
@@ -2777,12 +2784,16 @@ pub mod tests {
         let signer = temp_signer();
 
         store.commit_claim_external(claim, None).unwrap();
-        // or None for just an external manifest without embedding.
-        //store.commit_claim_external(claim, None).unwrap();
-
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+       
+        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
         assert!(sidecar.exists());
+
+        // load external manifest
+        let loaded_manifest = std::fs::read(sidecar).unwrap();
+
+        // compare returned to external
+        assert_eq!(saved_manifest, loaded_manifest);
     }
 
     #[test]
@@ -2805,20 +2816,43 @@ pub mod tests {
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
-        let mut url = url::Url::parse(&fp).unwrap();
-        // build the url
-        url = url.join(claim.label()).unwrap();
-
+        let url = url::Url::parse(&fp).unwrap();
+        
         let url_string: String = url.into();
         store
             .commit_claim_external(claim, Some(&url_string))
             .unwrap();
-        // or None for just an external manifest without embedding.
-        //store.commit_claim_external(claim, None).unwrap();
-
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        
+        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
         assert!(sidecar.exists());
+
+        // load external manifest
+        let loaded_manifest = std::fs::read(sidecar).unwrap();
+
+        // compare returned to external
+        assert_eq!(saved_manifest, loaded_manifest);
+
+         // load the jumbf back into a store
+         let mut validation_log = OneShotStatusTracker::default();
+         let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
+         let pc = restored_store.provenance_claim().unwrap();
+
+         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
+         let handler = get_cailoader_handler("png").unwrap();
+         let xmp = handler.read_xmp(&mut asset_reader).unwrap();
+         let ext_ref = extract_provenance(&xmp).unwrap();
+
+         assert_eq!(ext_ref, url_string);
+
+         // make sure this manifest goes with this asset
+         for dh_assertion in pc.data_hash_assertions() {
+            if dh_assertion.label_root() == DataHash::LABEL {
+                let dh = DataHash::from_assertion(dh_assertion).unwrap();
+
+                dh.verify_hash(&op.clone(), Some(pc.alg().to_string())).unwrap();
+            }
+        }
     }
 
     #[test]
@@ -2841,19 +2875,21 @@ pub mod tests {
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
-        let mut url = url::Url::parse(&fp).unwrap();
-        // build the url
-        url = url.join(claim.label()).unwrap();
-
+        let url = url::Url::parse(&fp).unwrap();
+        
         let url_string: String = url.into();
         store
             .commit_claim_external(claim, Some(&url_string))
             .unwrap();
-        // or None for just an external manifest without embedding.
-        //store.commit_claim_external(claim, None).unwrap();
 
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
         assert!(sidecar.exists());
+
+        // load external manifest
+        let loaded_manifest = std::fs::read(sidecar).unwrap();
+
+        // compare returned to external
+        assert_eq!(saved_manifest, loaded_manifest);
     }
 }
