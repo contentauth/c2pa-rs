@@ -14,7 +14,7 @@
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, Ingredient, Relationship},
-    claim::{Claim, ClaimAssertion, ClaimAssetData},
+    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{self, boxes::*, labels::MANIFEST_STORE},
@@ -1401,6 +1401,33 @@ impl Store {
 
         Ok(hashes)
     }
+
+    // move or copy data from source to dest
+    fn move_or_copy(source: &Path, dest: &Path) -> Result<()> {
+        // copy temp file to asset
+        std::fs::rename(source, dest)
+            // if rename fails, try to copy in case we are on different volumes or output does not exist
+            .or_else(|_| std::fs::copy(source, dest).and(Ok(())))
+            .map_err(Error::IoError)
+    }
+
+    // copy output and possibly the external manifest to final destination
+    fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
+        match remote_type {
+            crate::claim::RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
+            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+                // make correct path names
+                let source_asset = source;
+                let source_cai = source_asset.with_extension(MANIFEST_STORE);
+                let dest_cai = dest.with_extension(MANIFEST_STORE);
+
+                Store::move_or_copy(&source_cai, &dest_cai)?; // copy manifest
+                Store::move_or_copy(source_asset, dest)?; // copy asset
+            }
+        }
+        Ok(())
+    }
+
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
     #[cfg(feature = "file_io")]
     pub fn save_to_asset(
@@ -1409,7 +1436,16 @@ impl Store {
         signer: &dyn Signer,
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save(asset_path, dest_path, signer.reserve_size())?;
+        // set up temp dir, contents auto deleted
+        let td = tempfile::TempDir::new()?;
+        let temp_path = td.into_path();
+        let temp_file = temp_path.join(
+            dest_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("invalid destination path".to_string()))?,
+        );
+
+        let jumbf_bytes = self.start_save(asset_path, &temp_file, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
@@ -1417,9 +1453,9 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                dest_path.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE)
             }
         };
 
@@ -1428,6 +1464,10 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // copy the correct files upon completion
+                Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
+
                 Ok(m)
             }
             Err(e) => Err(e),
@@ -1442,7 +1482,16 @@ impl Store {
         signer: &dyn AsyncSigner,
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save(asset_path, dest_path, signer.reserve_size())?;
+        // set up temp dir, contents auto deleted
+        let td = tempfile::TempDir::new()?;
+        let temp_path = td.into_path();
+        let temp_file = temp_path.join(
+            dest_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("invalid destination path".to_string()))?,
+        );
+
+        let jumbf_bytes = self.start_save(asset_path, &temp_file, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
@@ -1452,9 +1501,9 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                dest_path.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE)
             }
         };
 
@@ -1463,6 +1512,10 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // copy the correct files upon completion
+                Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
+
                 Ok(m)
             }
             Err(e) => Err(e),
@@ -1477,7 +1530,16 @@ impl Store {
         remote_signer: &dyn crate::signer::RemoteSigner,
         dest_path: &Path,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save(asset_path, dest_path, remote_signer.reserve_size())?;
+        // set up temp dir, contents auto deleted
+        let td = tempfile::TempDir::new()?;
+        let temp_path = td.into_path();
+        let temp_file = temp_path.join(
+            dest_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("invalid destination path".to_string()))?,
+        );
+
+        let jumbf_bytes = self.start_save(asset_path, &temp_file, remote_signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = remote_signer.sign_remote(&pc.data()?).await?;
@@ -1486,9 +1548,9 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                dest_path.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE)
             }
         };
 
@@ -1497,6 +1559,10 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // copy the correct files upon completion
+                Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
+
                 Ok(m)
             }
             Err(e) => Err(e),
@@ -2784,7 +2850,7 @@ pub mod tests {
         let signer = temp_signer();
 
         store.commit_claim_external(claim, None).unwrap();
-       
+
         let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
         assert!(sidecar.exists());
@@ -2817,12 +2883,12 @@ pub mod tests {
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
         let url = url::Url::parse(&fp).unwrap();
-        
+
         let url_string: String = url.into();
         store
             .commit_claim_external(claim, Some(&url_string))
             .unwrap();
-        
+
         let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
         assert!(sidecar.exists());
@@ -2833,24 +2899,25 @@ pub mod tests {
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
 
-         // load the jumbf back into a store
-         let mut validation_log = OneShotStatusTracker::default();
-         let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
-         let pc = restored_store.provenance_claim().unwrap();
+        // load the jumbf back into a store
+        let mut validation_log = OneShotStatusTracker::default();
+        let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
 
-         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
-         let handler = get_cailoader_handler("png").unwrap();
-         let xmp = handler.read_xmp(&mut asset_reader).unwrap();
-         let ext_ref = extract_provenance(&xmp).unwrap();
+        let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
+        let handler = get_cailoader_handler("png").unwrap();
+        let xmp = handler.read_xmp(&mut asset_reader).unwrap();
+        let ext_ref = extract_provenance(&xmp).unwrap();
 
-         assert_eq!(ext_ref, url_string);
+        assert_eq!(ext_ref, url_string);
 
-         // make sure this manifest goes with this asset
-         for dh_assertion in pc.data_hash_assertions() {
+        // make sure this manifest goes with this asset
+        for dh_assertion in pc.data_hash_assertions() {
             if dh_assertion.label_root() == DataHash::LABEL {
                 let dh = DataHash::from_assertion(dh_assertion).unwrap();
 
-                dh.verify_hash(&op.clone(), Some(pc.alg().to_string())).unwrap();
+                dh.verify_hash(&op.clone(), Some(pc.alg().to_string()))
+                    .unwrap();
             }
         }
     }
@@ -2876,7 +2943,7 @@ pub mod tests {
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
         let url = url::Url::parse(&fp).unwrap();
-        
+
         let url_string: String = url.into();
         store
             .commit_claim_external(claim, Some(&url_string))
