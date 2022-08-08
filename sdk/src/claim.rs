@@ -16,7 +16,6 @@ use std::{collections::HashMap, fmt, path::Path};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use url::Url;
 use uuid::Uuid;
 
 use crate::{
@@ -435,7 +434,7 @@ impl Claim {
 
     pub(crate) fn set_remote_manifest(&mut self, remote_url: Option<&str>) -> Result<()> {
         if let Some(u) = remote_url {
-            let parsed = Url::parse(u)
+            let parsed = url::Url::parse(u)
                 .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
             self.remote_manifest = RemoteManifest::Remote(parsed.to_string());
         } else {
@@ -445,6 +444,7 @@ impl Claim {
         Ok(())
     }
 
+    #[cfg(feature = "file_io")]
     pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }

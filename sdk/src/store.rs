@@ -27,8 +27,10 @@ use crate::{
     assertion::AssertionData,
     assertions::{BmffHash, DataHash, DataMap, ExclusionsMap, SubsetMap},
     asset_io::{HashBlockObjectType, HashObjectPositions},
+    claim::RemoteManifest,
     cose_sign::cose_sign,
     cose_validator::verify_cose,
+    jumbf::labels::MANIFEST_STORE,
     jumbf_io::{
         get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
         save_jumbf_to_file,
@@ -42,10 +44,10 @@ use crate::{
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, Ingredient, Relationship},
-    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
+    claim::{Claim, ClaimAssertion, ClaimAssetData},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
-    jumbf::{self, boxes::*, labels::MANIFEST_STORE},
+    jumbf::{self, boxes::*},
     jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     validation_status,
@@ -1401,6 +1403,7 @@ impl Store {
     }
 
     // move or copy data from source to dest
+    #[cfg(feature = "file_io")]
     fn move_or_copy(source: &Path, dest: &Path) -> Result<()> {
         // copy temp file to asset
         std::fs::rename(source, dest)
@@ -1410,6 +1413,7 @@ impl Store {
     }
 
     // copy output and possibly the external manifest to final destination
+    #[cfg(feature = "file_io")]
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
             crate::claim::RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
