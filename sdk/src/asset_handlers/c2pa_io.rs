@@ -14,7 +14,7 @@
 use std::{fs::File, path::Path};
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions, HashBlockObjectType},
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
 /// Supports working with ".c2pa" files containing only manifest store data

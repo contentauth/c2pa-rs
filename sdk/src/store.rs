@@ -2857,6 +2857,21 @@ pub mod tests {
 
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
+
+        // load the jumbf back into a store
+        let mut validation_log = OneShotStatusTracker::default();
+        let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
+
+        // make sure this manifest goes with this asset
+        for dh_assertion in pc.data_hash_assertions() {
+            if dh_assertion.label_root() == DataHash::LABEL {
+                let dh = DataHash::from_assertion(dh_assertion).unwrap();
+
+                dh.verify_hash(&op.clone(), Some(pc.alg().to_string()))
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

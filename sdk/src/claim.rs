@@ -238,8 +238,8 @@ pub enum AssertionStoreJsonFormat {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum RemoteManifest {
     NoRemote,       // No external manifest
-    SideCar,        // manifest will be saved as side car file. Output asset is untouched.
-    Remote(String), // manifest will be saved as side car file. Output asset will contain remote reference.
+    SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
+    Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
 }
 
 impl Default for RemoteManifest {
