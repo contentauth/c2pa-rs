@@ -319,12 +319,11 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-
-    use crate::SigningAlg;
-
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
+
+    use super::*;
+    use crate::SigningAlg;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

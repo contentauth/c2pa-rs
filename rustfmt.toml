@@ -1,1 +1,4 @@
 edition = "2018"
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+unstable_features = true

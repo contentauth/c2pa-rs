@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use chrono::{DateTime, Utc};
+
 #[cfg(feature = "file_io")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
-
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Default)]
 pub struct ValidationInfo {
