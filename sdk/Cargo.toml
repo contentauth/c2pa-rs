@@ -25,7 +25,6 @@ file_io = ["openssl"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
-external_manifest = ["xmp_write", "file_io"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

@@ -186,8 +186,8 @@ impl Store {
         Ok(claim_label)
     }
 
-    /// Add a new Claim to this Store. [`remote_manifest_path`] will be embedded in the
-    /// final asset once saved.  If [`remote_manifest_path`] is None an external side car file
+    /// Add a new Claim to this Store. `remote_manifest_path` will be embedded in the
+    /// final asset once saved.  If `remote_manifest_path` is None an external side car file
     /// will be generated instead. The function will return the label of the claim.
     pub fn commit_claim_external(
         &mut self,

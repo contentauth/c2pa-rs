@@ -265,7 +265,6 @@ impl Claim {
     /// Create a new claim.
     /// vendor: name used to label the claim (unique instance number is automatically calculated)
     /// claim_generator: User agent see c2pa spec for format
-    // #[cfg(not(target_arch = "wasm32"))]
     pub fn new(claim_generator: &str, vendor: Option<&str>) -> Self {
         let urn = Uuid::new_v4();
         let l = match vendor {
@@ -310,7 +309,6 @@ impl Claim {
     /// Create a new claim with a user supplied GUID.
     /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
     /// claim_generator: User agent see c2pa spec for format
-    // #[cfg(not(target_arch = "wasm32"))]
     pub fn new_with_user_guid(claim_generator: &str, user_guid: &str) -> Self {
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
