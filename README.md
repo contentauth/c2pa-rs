@@ -38,7 +38,7 @@ The SDK has been tested on the following operating systems:
 * Windows
 * MacOS (Intel and Apple silicon)
 * Ubuntu Linux
-* WebAssembly (Wasm); NOTE: claim _generation_ is not available on Wasm.
+* WebAssembly (Wasm); NOTE: claim _generation_ is not available on WASM.
 
 ## Usage
 
@@ -49,12 +49,12 @@ Add this to your `Cargo.toml`:
 c2pa = "0.11.3"
 ```
 
-If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
+If you want to read or write a manifest file, add the `file_io` feature to your `Cargo.toml`. For example:
 ```
 c2pa = { version = "0.11.0", features = ["file_io"] }
 ```
 
-NOTE: If you are building for WASM, omit the `file_io` dependency.
+NOTE: If you are building for WASM, you can not use the `file_io` feature. (It relies on other crates that are not currently available on WASM.)
 
 ## Crate features
 
