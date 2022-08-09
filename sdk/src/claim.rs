@@ -233,10 +233,10 @@ pub enum AssertionStoreJsonFormat {
     OrderedListNoBinary, // list of Assertions as json objects omitting binaries results
 }
 
-// Remote manifest options
+/// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum RemoteManifest {
-    NoRemote,       // No external manifest
+pub enum RemoteManifest {
+    NoRemote,       // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
     Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
 }
@@ -430,15 +430,17 @@ impl Claim {
         self.update_manifest
     }
 
-    pub(crate) fn set_remote_manifest(&mut self, remote_url: Option<&str>) -> Result<()> {
-        if let Some(u) = remote_url {
-            let parsed = url::Url::parse(u)
-                .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
-            self.remote_manifest = RemoteManifest::Remote(parsed.to_string());
-        } else {
-            self.remote_manifest = RemoteManifest::SideCar;
+    pub fn set_remote_manifest(&mut self, remote_manifest: RemoteManifest) -> Result<()> {
+        match remote_manifest {
+            RemoteManifest::NoRemote | RemoteManifest::SideCar => {
+                self.remote_manifest = remote_manifest
+            }
+            RemoteManifest::Remote(r) => {
+                url::Url::parse(&r)
+                    .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+                self.remote_manifest = RemoteManifest::Remote(r)
+            }
         }
-
         Ok(())
     }
 

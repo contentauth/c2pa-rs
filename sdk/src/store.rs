@@ -30,7 +30,6 @@ use crate::{
     claim::RemoteManifest,
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    jumbf::labels::MANIFEST_STORE,
     jumbf_io::{
         get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
         save_jumbf_to_file,
@@ -54,6 +53,8 @@ use crate::{
     xmp_inmemory_utils::extract_provenance,
     ManifestStoreReport,
 };
+
+const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
 /// A `Store` maintains a list of `Claim` structs.
 ///
@@ -94,7 +95,7 @@ impl Default for Store {
 impl Store {
     /// Create a new, empty claims store.
     pub fn new() -> Self {
-        Self::new_with_label(jumbf::labels::MANIFEST_STORE)
+        Self::new_with_label(MANIFEST_STORE_EXT)
     }
 
     /// Create a new, empty claims store with a custom label.
@@ -184,20 +185,6 @@ impl Store {
         self.claims_map.insert(claim_label.clone(), index);
 
         Ok(claim_label)
-    }
-
-    /// Add a new Claim to this Store. `remote_manifest_path` will be embedded in the
-    /// final asset once saved.  If `remote_manifest_path` is None an external side car file
-    /// will be generated instead. The function will return the label of the claim.
-    pub fn commit_claim_external(
-        &mut self,
-        mut claim: Claim,
-        remote_manifest_path: Option<&str>,
-    ) -> Result<String> {
-        // set remote url to embed
-        claim.set_remote_manifest(remote_manifest_path)?;
-
-        self.commit_claim(claim)
     }
 
     /// Add a new update manifest to this Store. The manifest label
@@ -1420,8 +1407,8 @@ impl Store {
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
                 // make correct path names
                 let source_asset = source;
-                let source_cai = source_asset.with_extension(MANIFEST_STORE);
-                let dest_cai = dest.with_extension(MANIFEST_STORE);
+                let source_cai = source_asset.with_extension(MANIFEST_STORE_EXT);
+                let dest_cai = dest.with_extension(MANIFEST_STORE_EXT);
 
                 Store::move_or_copy(&source_cai, &dest_cai)?; // copy manifest
                 Store::move_or_copy(source_asset, dest)?; // copy asset
@@ -1457,7 +1444,7 @@ impl Store {
         let output_path = match pc.remote_manifest() {
             crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                temp_file.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
 
@@ -1505,7 +1492,7 @@ impl Store {
         let output_path = match pc.remote_manifest() {
             crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                temp_file.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
 
@@ -1552,7 +1539,7 @@ impl Store {
         let output_path = match pc.remote_manifest() {
             crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
-                temp_file.with_extension(MANIFEST_STORE)
+                temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
 
@@ -1601,9 +1588,9 @@ impl Store {
                 }
                 dest_path.to_path_buf()
             }
-            crate::claim::RemoteManifest::SideCar => dest_path.with_extension(MANIFEST_STORE),
+            crate::claim::RemoteManifest::SideCar => dest_path.with_extension(MANIFEST_STORE_EXT),
             crate::claim::RemoteManifest::Remote(url) => {
-                let d = dest_path.with_extension(MANIFEST_STORE);
+                let d = dest_path.with_extension(MANIFEST_STORE_EXT);
                 embedded_xmp::add_manifest_uri_to_file(dest_path, &url)?;
                 d
             }
@@ -2839,18 +2826,21 @@ pub mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
-        let sidecar = op.with_extension(MANIFEST_STORE);
+        let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
         // Create claims store.
         let mut store = Store::new();
 
         // Create a new claim.
-        let claim = create_test_claim().unwrap();
+        let mut claim = create_test_claim().unwrap();
+
+        // set claim for side car generation
+        claim.set_remote_manifest(RemoteManifest::SideCar).unwrap();
 
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        store.commit_claim_external(claim, None).unwrap();
+        store.commit_claim(claim).unwrap();
 
         let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
@@ -2885,13 +2875,13 @@ pub mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
-        let sidecar = op.with_extension(MANIFEST_STORE);
+        let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
         // Create claims store.
         let mut store = Store::new();
 
         // Create a new claim.
-        let claim = create_test_claim().unwrap();
+        let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -2901,9 +2891,13 @@ pub mod tests {
         let url = url::Url::parse(&fp).unwrap();
 
         let url_string: String = url.into();
-        store
-            .commit_claim_external(claim, Some(&url_string))
+
+        // set claim for side car with remote manifest embedding generation
+        claim
+            .set_remote_manifest(RemoteManifest::Remote(url_string.clone()))
             .unwrap();
+
+        store.commit_claim(claim).unwrap();
 
         let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
@@ -2945,13 +2939,13 @@ pub mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
-        let sidecar = op.with_extension(MANIFEST_STORE);
+        let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
         // Create claims store.
         let mut store = Store::new();
 
         // Create a new claim.
-        let claim = Claim::new_with_user_guid("store unit test", "my guid");
+        let mut claim = Claim::new_with_user_guid("store unit test", "my guid");
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -2961,9 +2955,12 @@ pub mod tests {
         let url = url::Url::parse(&fp).unwrap();
 
         let url_string: String = url.into();
-        store
-            .commit_claim_external(claim, Some(&url_string))
+        // set claim for side car with remote manifest embedding generation
+        claim
+            .set_remote_manifest(RemoteManifest::Remote(url_string))
             .unwrap();
+
+        store.commit_claim(claim).unwrap();
 
         let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
 
