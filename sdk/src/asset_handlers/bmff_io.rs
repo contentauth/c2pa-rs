@@ -942,11 +942,11 @@ impl AssetIO for BmffIO {
         )?;
 
         // get ftyp location
-         // start after ftyp
-         let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
-         let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-         let ftyp_offset = ftyp_info.offset;
-         let ftyp_size = ftyp_info.size;
+        // start after ftyp
+        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
+        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+        let ftyp_offset = ftyp_info.offset;
+        let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {

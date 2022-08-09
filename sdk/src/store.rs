@@ -2701,7 +2701,6 @@ pub mod tests {
         println!("store = {}", store);
     }
 
-    
     #[test]
     #[cfg(feature = "file_io")]
     fn test_bmff_jumbf_generation() {
@@ -2718,14 +2717,13 @@ pub mod tests {
 
         let signer = temp_signer();
 
-        // Move the claim to claims list. 
+        // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, &signer, &op).unwrap();
-       
+
         let mut report = DetailedStatusTracker::new();
 
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
-
 }
