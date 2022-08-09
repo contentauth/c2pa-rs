@@ -2820,18 +2820,29 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "bmff")]
-    fn test_bmff() {
+    #[cfg(feature = "file_io")]
+    fn test_bmff_jumbf_generation() {
+        // test adding to actual image
         let ap = fixture_path("video1.mp4");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "video1.mp4");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = temp_signer();
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, &signer, &op).unwrap();
+
         let mut report = DetailedStatusTracker::new();
-        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
 
-        let errors = report_split_errors(report.get_log_mut());
-
-        println!("Error report for {}: {:?}", ap.as_display(), errors);
-        assert!(errors.is_empty());
-
-        println!("store = {}", store);
+        // can we read back in
+        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
 
     #[test]
