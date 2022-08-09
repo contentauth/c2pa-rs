@@ -2716,21 +2716,16 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. 
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, &signer, &op).unwrap();
        
-        // write to new file
-        println!("Provenance: {}\n", store.provenance_path().unwrap());
-
         let mut report = DetailedStatusTracker::new();
 
-        // read from new file
+        // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-
     }
 
 }
