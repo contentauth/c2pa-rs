@@ -14,10 +14,9 @@
 use std::{fs::File, path::Path};
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
-
 /// Supports working with ".c2pa" files containing only manifest store data
 pub struct C2paIO {}
 
@@ -53,7 +52,13 @@ impl AssetIO for C2paIO {
         &self,
         _asset_path: &std::path::Path,
     ) -> Result<Vec<HashObjectPositions>> {
-        Ok(Vec::new())
+        let hop = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
+        Ok(vec![hop])
     }
 }
 
