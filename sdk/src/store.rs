@@ -595,6 +595,13 @@ impl Store {
     }
 
     /// Convert this claims store to a JUMBF box.
+    #[cfg(feature = "file_io")]
+    pub(crate) fn to_signed_jumbf(&self) -> Result<Vec<u8>> {
+        // todo: add check for fully signed store
+        self.to_jumbf_internal(0)
+    }
+
+    /// Convert this claims store to a JUMBF box.
     #[cfg(feature = "async_signer")]
     pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())

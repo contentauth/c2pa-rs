@@ -48,7 +48,7 @@ pub struct Manifest {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vendor: Option<String>,
+    vendor: Option<String>,
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
@@ -86,6 +86,9 @@ pub struct Manifest {
     /// Signature data (only used for reporting)
     #[serde(skip_serializing_if = "Option::is_none")]
     signature_info: Option<SignatureInfo>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 impl Manifest {
@@ -105,11 +108,34 @@ impl Manifest {
             redactions: None,
             credentials: None,
             signature_info: None,
+            label: None,
         }
     }
 
+    /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
+    }
+
+    /// returns the manifest label for this Manifest, as referenced in a ManifestStore
+    /// This will generate a label if one is not yet defined.
+    pub fn label(&mut self) -> Option<&str> {
+        if self.label.is_none() {
+            let urn = Uuid::new_v4();
+            let label = match self.vendor.as_deref() {
+                Some(v) => format!(
+                    "{}:{}",
+                    v.to_lowercase(),
+                    urn.to_urn().encode_lower(&mut Uuid::encode_buffer())
+                ),
+                None => urn
+                    .to_urn()
+                    .encode_lower(&mut Uuid::encode_buffer())
+                    .to_string(),
+            };
+            self.label = Some(label);
+        }
+        self.label.as_deref()
     }
 
     /// Returns a MIME content_type for the asset associated with this manifest.
@@ -155,6 +181,14 @@ impl Manifest {
     /// This is typically a lower case Internet domain name for the vendor (i.e. `adobe`)
     pub fn set_vendor<S: Into<String>>(&mut self, vendor: S) -> &mut Self {
         self.vendor = Some(vendor.into());
+        self
+    }
+
+    /// Sets the label for this manifest
+    /// A label will be generated if this is not called
+    /// This is needed if embedding a URL that references the manifest label
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.label = Some(label.into());
         self
     }
 
@@ -495,8 +529,8 @@ impl Manifest {
         }
     }
 
-    // Convert a Manifest into a Store
-    pub(crate) fn to_store(&self) -> Result<Store> {
+    // Convert a Manifest into a Claim
+    pub(crate) fn to_claim(&self) -> Result<Claim> {
         // add library identifier to claim_generator
         let generator = format!(
             "{} {}/{}",
@@ -592,10 +626,15 @@ impl Manifest {
             }?;
         }
 
+        Ok(claim)
+    }
+
+    // Convert a Manifest into a Store
+    pub(crate) fn to_store(&self) -> Result<Store> {
+        let claim = self.to_claim()?;
         // commit the claim
         let mut store = Store::new();
         let _provenance = store.commit_claim(claim)?;
-
         Ok(store)
     }
 
@@ -659,7 +698,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn Signer,
-    ) -> Result<Store> {
+    ) -> Result<Ingredient> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
 
@@ -670,7 +709,7 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
 
         // todo: update xmp
-        Ok(store)
+        Ingredient::from_store(&store)
     }
 
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
@@ -681,7 +720,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn AsyncSigner,
-    ) -> Result<Store> {
+    ) -> Result<Ingredient> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -692,7 +731,7 @@ impl Manifest {
             .await?;
 
         // todo: update xmp
-        Ok(store)
+        Ingredient::from_store(&store)
     }
 
     /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
@@ -702,7 +741,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn RemoteSigner,
-    ) -> Result<Store> {
+    ) -> Result<Ingredient> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -713,7 +752,7 @@ impl Manifest {
             .await?;
 
         // todo: update xmp
-        Ok(store)
+        Ingredient::from_store(&store)
     }
 }
 
@@ -931,7 +970,8 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let store1 = manifest.embed(&output, &output, &signer).expect("embed");
+        let ingredient = manifest.embed(&output, &output, &signer).expect("embed");
+        let store1 = ingredient.to_store().unwrap();
         let claim1_label = store1.provenance_label().unwrap();
         let claim = store1.provenance_claim().unwrap();
         assert!(claim.get_claim_assertion(ASSERTION_LABEL, 0).is_some()); // verify the assertion is there
