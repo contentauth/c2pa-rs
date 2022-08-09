@@ -2928,9 +2928,10 @@ pub mod tests {
         let pc = restored_store.provenance_claim().unwrap();
 
         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
-        let handler = get_cailoader_handler("png").unwrap();
-        let xmp = handler.read_xmp(&mut asset_reader).unwrap();
-        let ext_ref = extract_provenance(&xmp).unwrap();
+        let ext_ref =
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
+                .provenance
+                .unwrap();
 
         assert_eq!(ext_ref, url_string);
 
