@@ -14,7 +14,7 @@ else
 endif
 
 check-format:
-	cargo fmt -- --check
+	cargo +nightly fmt -- --check
 
 check-docs:
 	cargo doc --no-deps --workspace --all-features
@@ -34,6 +34,10 @@ test-wasm:
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-no-defaults test-wasm
+
+# Auto format code according to standards
+fmt: 
+	cargo +nightly fmt
 
 # Builds and views documentation
 doc:
