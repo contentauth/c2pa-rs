@@ -12,7 +12,6 @@
 // each license.
 
 use chrono::{DateTime, Utc};
-use core::convert::AsRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, fmt, path::Path};
