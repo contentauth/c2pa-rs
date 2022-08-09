@@ -11,11 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::de::{Deserialize, Deserializer};
-use serde::ser::{Serialize, Serializer};
+use std::fmt;
+
+use serde::{
+    de::{Deserialize, Deserializer},
+    ser::{Serialize, Serializer},
+};
 use serde_bytes::ByteBuf;
 use serde_cbor::tags::Tagged;
-use std::fmt;
 
 // New types for C2PA that will serialize to the correct
 // CBOR type specified in the C2PA spec.

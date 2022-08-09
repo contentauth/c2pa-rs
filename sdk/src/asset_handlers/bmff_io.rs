@@ -11,24 +11,27 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-use std::convert::{From, TryFrom};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    convert::{From, TryFrom},
+    fs::{File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::Path,
+};
 
+use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-
-use atree::{Arena, Token};
 use tempfile::{Builder, NamedTempFile};
 
-use crate::assertions::ExclusionsMap;
-use crate::asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions};
-use crate::error::{Error, Result};
-use crate::utils::hash_utils::{vec_compare, Exclusion};
+use crate::{
+    assertions::ExclusionsMap,
+    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions},
+    error::{Error, Result},
+    utils::hash_utils::{vec_compare, Exclusion},
+};
 
 pub struct BmffIO {
     #[allow(dead_code)]
@@ -43,7 +46,6 @@ impl BmffIO {
 }
 
 const HEADER_SIZE: u64 = 8;
-const HEADER_EXT_SIZE: u64 = 4;
 
 const C2PA_UUID: [u8; 16] = [
     0xD8, 0xFE, 0xC3, 0xD6, 0x1B, 0x0E, 0x48, 0x3C, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7E, 0xC4, 0x81,
@@ -112,6 +114,7 @@ boxtype! {
     EdtsBox => 0x65647473,
     MdiaBox => 0x6d646961,
     ElstBox => 0x656c7374,
+    MfraBox => 0x6d667261,
     MdhdBox => 0x6d646864,
     HdlrBox => 0x68646c72,
     MinfBox => 0x6d696e66,
@@ -127,6 +130,8 @@ boxtype! {
     Co64Box => 0x636F3634,
     TrakBox => 0x7472616b,
     TrafBox => 0x74726166,
+    TrefBox => 0x74726566,
+    TregBox => 0x74726567,
     TrunBox => 0x7472756E,
     UdtaBox => 0x75647461,
     DinfBox => 0x64696e66,
@@ -142,7 +147,8 @@ boxtype! {
     Tx3gBox => 0x74783367,
     VpccBox => 0x76706343,
     Vp09Box => 0x76703039,
-    MetaBox => 0x6D657461
+    MetaBox => 0x6D657461,
+    SchiBox => 0x73636869
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -182,8 +188,7 @@ impl BoxHeaderLite {
         // Get box type string.
         let mut t = [0u8; 4];
         t.clone_from_slice(&buf[4..8]);
-        let fourcc = String::from_utf8(buf[4..8].to_vec())
-            .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+        let fourcc = String::from_utf8_lossy(&buf[4..8].to_vec()).to_string();
         let typ = u32::from_be_bytes(t);
 
         // Get largesize if size is 1
@@ -251,7 +256,7 @@ fn box_start(reader: &mut dyn CAIRead) -> Result<u64> {
     Ok(reader.seek(SeekFrom::Current(0))? - HEADER_SIZE)
 }
 
-fn skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
+fn _skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
     reader.seek(SeekFrom::Current(size as i64))?;
     Ok(())
 }
@@ -665,18 +670,41 @@ pub(crate) fn build_bmff_tree(
             | BoxType::MinfBox
             | BoxType::StblBox
             | BoxType::MoofBox
-            | BoxType::TrafBox => {
+            | BoxType::TrafBox
+            | BoxType::EdtsBox
+            | BoxType::UdtaBox
+            | BoxType::DinfBox
+            | BoxType::TrefBox
+            | BoxType::TregBox
+            | BoxType::MvexBox
+            | BoxType::MfraBox
+            | BoxType::MetaBox
+            | BoxType::SchiBox => {
                 let start = box_start(reader)?;
 
-                let b = BoxInfo {
-                    path: header.fourcc.clone(),
-                    offset: start,
-                    size: s,
-                    box_type: header.name,
-                    parent: Some(*current_node),
-                    user_type: None,
-                    version: None,
-                    flags: None,
+                let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
+                    let (version, flags) = read_box_header_ext(reader)?; // box extensions
+                    BoxInfo {
+                        path: header.fourcc.clone(),
+                        offset: start,
+                        size: s,
+                        box_type: header.name,
+                        parent: Some(*current_node),
+                        user_type: None,
+                        version: Some(version),
+                        flags: Some(flags),
+                    }
+                } else {
+                    BoxInfo {
+                        path: header.fourcc.clone(),
+                        offset: start,
+                        size: s,
+                        box_type: header.name,
+                        parent: Some(*current_node),
+                        user_type: None,
+                        version: None,
+                        flags: None,
+                    }
                 };
 
                 let new_token = bmff_tree.new_node(b);
@@ -694,71 +722,6 @@ pub(crate) fn build_bmff_tree(
                     build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
                     current = reader.seek(SeekFrom::Current(0))?;
                 }
-
-                // position seek pointer
-                skip_bytes_to(reader, start + s)?;
-            }
-            // handle the meta box since it is explicitly listed in the spec
-            BoxType::MetaBox => {
-                let start = box_start(reader)?;
-
-                let b = BoxInfo {
-                    path: header.fourcc.clone(),
-                    offset: start,
-                    size: s,
-                    box_type: header.name,
-                    parent: Some(*current_node),
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
-
-                let new_token = current_node.append(bmff_tree, b);
-
-                let path = path_from_token(bmff_tree, &new_token)?;
-                add_token_to_cache(bmff_path_map, path, new_token);
-
-                // parse 'hdlr' box
-                let _handler = {
-                    let header = BoxHeaderLite::read(reader)
-                        .map_err(|_err| Error::BadParam("Bad BMFF".to_string()))?;
-
-                    // Break if size zero BoxHeader, which can result in dead-loop.
-                    let handler_size = header.size;
-
-                    let start = box_start(reader)?;
-
-                    let (_version, _flags) = read_box_header_ext(reader)?;
-
-                    let _pre_defined = reader.read_u32::<BigEndian>()?; // pre-defined
-                    let _handler = reader.read_u32::<BigEndian>()?;
-
-                    skip_bytes(reader, 12)?; // reserved
-
-                    let buf_size = handler_size - HEADER_SIZE - HEADER_EXT_SIZE - 20 - 1;
-                    let mut buf = vec![0u8; buf_size as usize];
-                    reader.read_exact(&mut buf)?;
-
-                    let handler_string = match String::from_utf8(buf) {
-                        Ok(t) => {
-                            if t.len() != buf_size as usize {
-                                return Err(Error::BadParam(
-                                    "string size does not match buffer".to_string(),
-                                ));
-                            }
-                            t
-                        }
-                        _ => String::from("null"),
-                    };
-
-                    skip_bytes_to(reader, start + handler_size)?;
-
-                    handler_string
-                };
-
-                // consume enclosed boxes
-                let end = current + s;
-                build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
 
                 // position seek pointer
                 skip_bytes_to(reader, start + s)?;

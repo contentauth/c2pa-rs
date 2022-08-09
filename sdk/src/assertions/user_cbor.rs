@@ -75,7 +75,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertion::Assertion;
 
     const LABEL: &str = "user_test_assertion";

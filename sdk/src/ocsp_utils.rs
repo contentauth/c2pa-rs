@@ -11,14 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::error::{Error, Result};
-use crate::openssl::check_chain_order_der;
-use crate::status_tracker::{log_item, StatusTracker};
-use crate::validation_status;
+use std::io::Read;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use conv::ConvUtil;
 use openssl::ocsp::{self, OcspBasicResponse, OcspCertStatus, OcspRevokedStatus};
-use std::io::Read;
+
+use crate::{
+    error::{Error, Result},
+    openssl::check_chain_order_der,
+    status_tracker::{log_item, StatusTracker},
+    validation_status,
+};
 
 const DATE_FMT: &str = "%b %d %H:%M:%S %Y %Z";
 

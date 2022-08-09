@@ -19,20 +19,17 @@ use std::{
 };
 
 use log::{debug, warn};
-use serde::{Deserialize, Serialize};
-
 // multihash versions
 use multibase::{decode, encode};
 use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
-
 use range_set::RangeSet;
-
+use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{Error, Result};
 
-const MAX_HASH_BUF: usize = 1024 * 1024 * 1024; // cap memory usage to 1GB
+const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Exclusion {

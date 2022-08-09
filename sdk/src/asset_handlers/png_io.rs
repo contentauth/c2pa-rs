@@ -11,15 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fs::File;
-use std::io::{Cursor, SeekFrom};
-use std::path::*;
+use std::{
+    fs::File,
+    io::{Cursor, SeekFrom},
+    path::*,
+};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
-use crate::error::{Error, Result};
+use crate::{
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    error::{Error, Result},
+};
 
 const PNG_ID: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 const CAI_CHUNK: [u8; 4] = *b"caBX";

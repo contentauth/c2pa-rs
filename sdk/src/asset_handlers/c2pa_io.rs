@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashObjectPositions};
-use crate::error::{Error, Result};
-use std::fs::File;
-use std::path::Path;
+use std::{fs::File, path::Path};
 
+use crate::{
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    error::{Error, Result},
+};
 /// Supports working with ".c2pa" files containing only manifest store data
 pub struct C2paIO {}
 
@@ -51,7 +52,13 @@ impl AssetIO for C2paIO {
         &self,
         _asset_path: &std::path::Path,
     ) -> Result<Vec<HashObjectPositions>> {
-        Ok(Vec::new())
+        let hop = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
+        Ok(vec![hop])
     }
 }
 
@@ -61,10 +68,9 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::{AssetIO, C2paIO};
-
     use tempfile::tempdir;
 
+    use super::{AssetIO, C2paIO};
     use crate::{
         status_tracker::OneShotStatusTracker,
         store::Store,

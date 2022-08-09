@@ -2233,11 +2233,11 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
+    use std::io::Cursor;
 
     use extfmt::*;
 
-    use std::io::Cursor;
+    use super::*;
 
     // base_len = size (u32) + type (u32)
     // desc_len = base + 16 (UUID type) + 1 (TOGGLE)
