@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, fmt, path::Path};
-
 use chrono::{DateTime, Utc};
+use core::convert::AsRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::{collections::HashMap, fmt, path::Path};
 use uuid::Uuid;
 
 use crate::{
@@ -265,7 +265,7 @@ impl Claim {
     /// Create a new claim.
     /// vendor: name used to label the claim (unique instance number is automatically calculated)
     /// claim_generator: User agent see c2pa spec for format
-    pub fn new(claim_generator: &str, vendor: Option<&str>) -> Self {
+    pub fn new<S: Into<String>>(claim_generator: S, vendor: Option<&str>) -> Self {
         let urn = Uuid::new_v4();
         let l = match vendor {
             Some(v) => format!(
@@ -288,7 +288,7 @@ impl Claim {
             label: l,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.to_string(),
+            claim_generator: claim_generator.into(),
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
@@ -309,23 +309,23 @@ impl Claim {
     /// Create a new claim with a user supplied GUID.
     /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
     /// claim_generator: User agent see c2pa spec for format
-    pub fn new_with_user_guid(claim_generator: &str, user_guid: &str) -> Self {
+    pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
             box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
-            label: user_guid.to_string(), // todo figure out how to validate this
+            label: user_guid.into(), // todo figure out how to validate this
             signature: "".to_string(),
 
-            claim_generator: claim_generator.to_string(),
+            claim_generator: claim_generator.into(),
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
             redacted_assertions: None,
-            alg: Some(BUILD_HASH_ALG.to_string()),
+            alg: Some(BUILD_HASH_ALG.into()),
             alg_soft: None,
             claim_generator_hints: None,
 
@@ -430,18 +430,19 @@ impl Claim {
         self.update_manifest
     }
 
-    pub fn set_remote_manifest(&mut self, remote_manifest: RemoteManifest) -> Result<()> {
-        match remote_manifest {
-            RemoteManifest::NoRemote | RemoteManifest::SideCar => {
-                self.remote_manifest = remote_manifest
-            }
-            RemoteManifest::Remote(r) => {
-                url::Url::parse(&r)
-                    .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
-                self.remote_manifest = RemoteManifest::Remote(r)
-            }
-        }
+    pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(
+        &mut self,
+        remote_url: S,
+    ) -> Result<()> {
+        url::Url::parse(remote_url.as_ref())
+            .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+        self.remote_manifest = RemoteManifest::Remote(remote_url.into());
+
         Ok(())
+    }
+
+    pub fn set_external_manifest(&mut self) {
+        self.remote_manifest = RemoteManifest::SideCar;
     }
 
     #[cfg(feature = "file_io")]

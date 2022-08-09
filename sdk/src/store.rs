@@ -1577,22 +1577,37 @@ impl Store {
 
         // 1) Add DC provenance XMP
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => {
-                // update XMP info & add xmp hash to provenance claim
-                #[cfg(feature = "xmp_write")]
-                if let Some(provenance) = self.provenance_path() {
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
-                } else {
-                    return Err(Error::XmpWriteError);
+        let output_path = if cfg!(feature = "xmp_write") {
+            match pc.remote_manifest() {
+                crate::claim::RemoteManifest::NoRemote => {
+                    // update XMP info & add xmp hash to provenance claim
+                    #[cfg(feature = "xmp_write")]
+                    if let Some(provenance) = self.provenance_path() {
+                        embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
+                    } else {
+                        return Err(Error::XmpWriteError);
+                    }
+                    dest_path.to_path_buf()
                 }
-                dest_path.to_path_buf()
+                crate::claim::RemoteManifest::SideCar => {
+                    dest_path.with_extension(MANIFEST_STORE_EXT)
+                }
+                crate::claim::RemoteManifest::Remote(url) => {
+                    let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                    embedded_xmp::add_manifest_uri_to_file(dest_path, &url)?;
+                    d
+                }
             }
-            crate::claim::RemoteManifest::SideCar => dest_path.with_extension(MANIFEST_STORE_EXT),
-            crate::claim::RemoteManifest::Remote(url) => {
-                let d = dest_path.with_extension(MANIFEST_STORE_EXT);
-                embedded_xmp::add_manifest_uri_to_file(dest_path, &url)?;
-                d
+        } else {
+            // only side car and embedded supported without feature "xmp_write"
+            match pc.remote_manifest() {
+                crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
+                crate::claim::RemoteManifest::SideCar => {
+                    dest_path.with_extension(MANIFEST_STORE_EXT)
+                }
+                crate::claim::RemoteManifest::Remote(_) => {
+                    return Err(Error::BadParam("requires 'xmp_writte' feature".to_string()))
+                }
             }
         };
 
@@ -2835,7 +2850,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // set claim for side car generation
-        claim.set_remote_manifest(RemoteManifest::SideCar).unwrap();
+        claim.set_external_manifest();
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -2893,9 +2908,7 @@ pub mod tests {
         let url_string: String = url.into();
 
         // set claim for side car with remote manifest embedding generation
-        claim
-            .set_remote_manifest(RemoteManifest::Remote(url_string.clone()))
-            .unwrap();
+        claim.set_remote_manifest(url_string.clone()).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -2956,9 +2969,7 @@ pub mod tests {
 
         let url_string: String = url.into();
         // set claim for side car with remote manifest embedding generation
-        claim
-            .set_remote_manifest(RemoteManifest::Remote(url_string))
-            .unwrap();
+        claim.set_remote_manifest(url_string).unwrap();
 
         store.commit_claim(claim).unwrap();
 
