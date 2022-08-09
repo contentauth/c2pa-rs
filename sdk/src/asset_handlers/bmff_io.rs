@@ -941,6 +941,13 @@ impl AssetIO for BmffIO {
             &mut bmff_map,
         )?;
 
+        // get ftyp location
+         // start after ftyp
+         let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
+         let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+         let ftyp_offset = ftyp_info.offset;
+         let ftyp_size = ftyp_info.size;
+
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
             let uuid_info = &bmff_tree[uuid_tokens[0]].data;
@@ -956,13 +963,10 @@ impl AssetIO for BmffIO {
             if is_c2pa {
                 (uuid_info.offset, Some(uuid_info.size))
             } else {
-                (0, None)
+                ((ftyp_offset + ftyp_size), None)
             }
         } else {
-            // start after ftyp
-            let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
-            let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-            ((ftyp_info.offset + ftyp_info.size), None)
+            ((ftyp_offset + ftyp_size), None)
         };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
