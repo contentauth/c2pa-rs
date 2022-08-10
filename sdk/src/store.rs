@@ -1587,9 +1587,11 @@ impl Store {
         let output_path = if cfg!(feature = "xmp_write") {
             match pc.remote_manifest() {
                 crate::claim::RemoteManifest::NoRemote => {
-                    // update XMP info & add xmp hash to provenance claim
+                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
+                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
                     if let Some(provenance) = self.provenance_path() {
+                        // update XMP info & add xmp hash to provenance claim
                         embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
                     } else {
                         return Err(Error::XmpWriteError);
@@ -1601,6 +1603,8 @@ impl Store {
                 }
                 crate::claim::RemoteManifest::Remote(_url) => {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
+                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
                     embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
                     d
@@ -2828,7 +2832,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
@@ -2903,6 +2907,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
     fn test_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -2966,6 +2971,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
