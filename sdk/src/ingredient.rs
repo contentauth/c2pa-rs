@@ -478,6 +478,7 @@ impl Ingredient {
     }
 
     /// Creates an Ingredient from a store using the active manifest
+    #[cfg(feature = "file_io")]
     pub(crate) fn from_store(store: &Store) -> Result<Self> {
         if let Some(claim) = store.provenance_claim() {
             let mut ingredient = Ingredient::new(
