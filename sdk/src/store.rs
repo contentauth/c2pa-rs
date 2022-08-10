@@ -1580,9 +1580,11 @@ impl Store {
         let output_path = if cfg!(feature = "xmp_write") {
             match pc.remote_manifest() {
                 crate::claim::RemoteManifest::NoRemote => {
-                    // update XMP info & add xmp hash to provenance claim
+                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
+                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
                     if let Some(provenance) = self.provenance_path() {
+                        // update XMP info & add xmp hash to provenance claim
                         embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
                     } else {
                         return Err(Error::XmpWriteError);
@@ -1592,9 +1594,12 @@ impl Store {
                 crate::claim::RemoteManifest::SideCar => {
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
-                crate::claim::RemoteManifest::Remote(url) => {
+                crate::claim::RemoteManifest::Remote(_url) => {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &url)?;
+                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
+                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
+                    #[cfg(feature = "xmp_write")]
+                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
                     d
                 }
             }
