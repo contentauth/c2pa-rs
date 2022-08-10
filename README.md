@@ -49,12 +49,12 @@ Add this to your `Cargo.toml`:
 c2pa = "0.11.3"
 ```
 
-If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`, for example:
+If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
 ```
-c2pa = {version="0.11.0", features=["file_io"]}
+c2pa = { version = "0.11.0", features = ["file_io"] }
 ```
 
-NOTE: If you are building for WASM. omit the `file_io` dependency.
+NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 ## Crate features
 
@@ -65,7 +65,7 @@ The Rust SDK crate provides:
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
-* `no_interleaved_io` forces fully-synchronous I/O; Otherwise, the SDK uses threaded I/O for some operations to improve performance.
+* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
 
 ## License
 
