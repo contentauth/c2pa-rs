@@ -1956,12 +1956,8 @@ impl Store {
             crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut buf_reader, asset_type)
                 .provenance
         {
-            let link = match ext_ref.strip_prefix("self#jumbf=") {
-                Some(s) => s,
-                None => &ext_ref,
-            };
             // make sure it parses
-            let _u = url::Url::parse(link).ok()?;
+            let _u = url::Url::parse(&ext_ref).ok()?;
             Some(ext_ref)
         } else {
             None
