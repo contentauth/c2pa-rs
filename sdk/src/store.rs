@@ -1866,7 +1866,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        if cfg!(feature = "fetch_remote_manifest") {
+                        if cfg!(feature = "fetch_remote_manifests") {
                             let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
                             Store::from_jumbf(&remote_manifest_bytes, validation_log)
                         } else {
