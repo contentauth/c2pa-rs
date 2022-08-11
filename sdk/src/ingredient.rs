@@ -658,17 +658,6 @@ impl Ingredient {
         ingredient_assertion.validation_status = self.validation_status.clone();
         claim.add_assertion(&ingredient_assertion)
     }
-
-    /// Generates a Store from an Ingredient, if it has manifest_data
-    pub fn to_store(&self) -> Result<Store> {
-        use crate::status_tracker::OneShotStatusTracker;
-        if let Some(data) = self.manifest_data() {
-            let mut validation_log = OneShotStatusTracker::default();
-            Store::from_jumbf(data, &mut validation_log)
-        } else {
-            Err(Error::ProvenanceMissing)
-        }
-    }
 }
 
 impl std::fmt::Display for Ingredient {
