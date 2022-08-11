@@ -708,7 +708,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn Signer,
-    ) -> Result<Ingredient> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
 
@@ -716,10 +716,7 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
-
-        // todo: update xmp
-        Ingredient::from_store(&store)
+        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
@@ -730,7 +727,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn AsyncSigner,
-    ) -> Result<Ingredient> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -738,10 +735,7 @@ impl Manifest {
         // sign and write our store to to the output image file
         store
             .save_to_asset_async(source_path.as_ref(), signer, dest_path.as_ref())
-            .await?;
-
-        // todo: update xmp
-        Ingredient::from_store(&store)
+            .await
     }
 
     /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
@@ -751,7 +745,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn RemoteSigner,
-    ) -> Result<Ingredient> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -759,10 +753,7 @@ impl Manifest {
         // sign and write our store to to the output image file
         store
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
-            .await?;
-
-        // todo: update xmp
-        Ingredient::from_store(&store)
+            .await
     }
 }
 
@@ -980,8 +971,11 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let ingredient = manifest.embed(&output, &output, &signer).expect("embed");
-        let store1 = ingredient.to_store().unwrap();
+        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
+            .expect("load from memory");
         let claim1_label = store1.provenance_label().unwrap();
         let claim = store1.provenance_claim().unwrap();
         assert!(claim.get_claim_assertion(ASSERTION_LABEL, 0).is_some()); // verify the assertion is there
@@ -1141,9 +1135,11 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
         manifest.set_remote_url(url);
-        manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
 
-        let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
+        //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
+        let manifest_store =
+            crate::ManifestStore::from_bytes("c2pa", c2pa_data, true).expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),

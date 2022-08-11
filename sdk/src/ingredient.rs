@@ -477,33 +477,6 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an Ingredient from a store using the active manifest
-    #[cfg(feature = "file_io")]
-    pub(crate) fn from_store(store: &Store) -> Result<Self> {
-        if let Some(claim) = store.provenance_claim() {
-            let mut ingredient = Ingredient::new(
-                &claim.title().unwrap_or(&"".to_owned()).to_owned(),
-                &claim.format().to_owned(),
-                &claim.instance_id().to_owned(),
-            );
-            // search claim to find a claim thumbnail assertion without knowing the format
-            if let Some(claim_assertion) = claim
-                .claim_assertion_store()
-                .iter()
-                .find(|ca| ca.label_raw().starts_with(labels::CLAIM_THUMBNAIL))
-            {
-                let (format, image) = Self::thumbnail_from_assertion(claim_assertion.assertion());
-                ingredient.set_thumbnail(format, image);
-            };
-            ingredient.active_manifest = Some(claim.label().to_string());
-            ingredient.manifest_data = Some(store.to_signed_jumbf()?);
-            ingredient.validation_status = None;
-            Ok(ingredient)
-        } else {
-            Err(Error::ProvenanceMissing)
-        }
-    }
-
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
     pub(crate) fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
         let assertion =
