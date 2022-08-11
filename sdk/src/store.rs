@@ -1801,7 +1801,9 @@ impl Store {
                         .into_reader()
                         .take(len64)
                         .read_to_end(&mut response_bytes)
-                        .map_err(|_err| Error::CoseTimeStampGeneration)?;
+                        .map_err(|_err| {
+                            Error::RemoteManifestFetch("error reading content stream".to_string())
+                        })?;
 
                     Ok(response_bytes)
                 } else {
