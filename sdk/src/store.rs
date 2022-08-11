@@ -31,8 +31,8 @@ use crate::{
     cose_sign::cose_sign,
     cose_validator::verify_cose,
     jumbf_io::{
-        get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
-        save_jumbf_to_file, get_file_extension
+        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
+        object_locations, save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
