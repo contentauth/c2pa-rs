@@ -32,7 +32,7 @@ use crate::{
     cose_validator::verify_cose,
     jumbf_io::{
         get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
-        save_jumbf_to_file,
+        save_jumbf_to_file, get_file_extension
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -1859,9 +1859,10 @@ impl Store {
                 } else {
                     // check for remote manifest
                     let mut asset_reader = std::fs::File::open(in_path)?;
+                    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
                     if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
                         &mut asset_reader,
-                        "png",
+                        &ext,
                     )
                     .provenance
                     {
