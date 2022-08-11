@@ -192,22 +192,16 @@ impl DataHash {
 
     ///  Used to verify a DataHash against an asset.
     #[allow(dead_code)] // used in tests
-    pub fn verify_hash(&self, asset_path: &Path, alg: Option<String>) -> Result<()> {
+    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> Result<()> {
         if self.is_remote_hash() {
             return Err(Error::BadParam("asset hash is remote".to_owned()));
         }
 
-        let curr_alg = match &self.alg {
-            Some(a) => a.clone(),
-            None => match alg {
-                Some(a) => a,
-                None => "sha256".to_string(),
-            },
-        };
+        let curr_alg = alg.unwrap_or("sha256");
 
         let exclusions = self.exclusions.as_ref().cloned();
 
-        if verify_asset_by_alg(&curr_alg, &self.hash, asset_path, exclusions) {
+        if verify_asset_by_alg(curr_alg, &self.hash, asset_path, exclusions) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))

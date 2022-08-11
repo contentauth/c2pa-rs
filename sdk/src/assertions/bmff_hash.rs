@@ -234,14 +234,8 @@ impl BmffHash {
         }
     }
 
-    pub fn verify_hash(&self, asset_path: &Path, alg: Option<String>) -> Result<()> {
-        let curr_alg = match &self.alg {
-            Some(a) => a.clone(),
-            None => match alg {
-                Some(a) => a,
-                None => "sha256".to_string(),
-            },
-        };
+    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> Result<()> {
+        let curr_alg = alg.unwrap_or("sha256");
 
         let bmff_exclusions = &self.exclusions;
 
@@ -249,7 +243,7 @@ impl BmffHash {
         let mut data = fs::File::open(asset_path)?;
         let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
 
-        if verify_asset_by_alg(&curr_alg, &self.hash, asset_path, Some(exclusions)) {
+        if verify_asset_by_alg(curr_alg, &self.hash, asset_path, Some(exclusions)) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))

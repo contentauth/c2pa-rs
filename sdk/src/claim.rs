@@ -236,9 +236,10 @@ pub enum AssertionStoreJsonFormat {
 /// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RemoteManifest {
-    NoRemote,       // No external manifest (default)
+    NoRemote,                // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
     Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
+    EmbedWithRemote(String), // Manifest will be embedded with a remote reference, sidecar will be generated
 }
 
 impl Default for RemoteManifest {
@@ -434,13 +435,25 @@ impl Claim {
         &mut self,
         remote_url: S,
     ) -> Result<()> {
-        url::Url::parse(remote_url.as_ref())
+        let url = url::Url::parse(remote_url.as_ref())
             .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
-        self.remote_manifest = RemoteManifest::Remote(remote_url.into());
+        let jumbf_uri = format!("self#jumbf={}", url);
+        self.remote_manifest = RemoteManifest::Remote(jumbf_uri);
 
         Ok(())
     }
 
+    pub fn set_embed_remote_manifest<S: Into<String> + AsRef<str>>(
+        &mut self,
+        remote_url: S,
+    ) -> Result<()> {
+        let url = url::Url::parse(remote_url.as_ref())
+            .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+        let jumbf_uri = format!("self#jumbf={}", url);
+        self.remote_manifest = RemoteManifest::EmbedWithRemote(jumbf_uri);
+
+        Ok(())
+    }
     pub fn set_external_manifest(&mut self) {
         self.remote_manifest = RemoteManifest::SideCar;
     }
@@ -1047,7 +1060,7 @@ impl Claim {
                         // only verify local hashes here
                         let hash_result = match asset_data {
                             ClaimAssetData::PathData(asset_path) => {
-                                dh.verify_hash(asset_path, Some(claim.alg().to_string()))
+                                dh.verify_hash(asset_path, Some(claim.alg()))
                             }
                             ClaimAssetData::ByteData(asset_bytes) => {
                                 dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
@@ -1090,7 +1103,7 @@ impl Claim {
 
                     let hash_result = match asset_data {
                         ClaimAssetData::PathData(asset_path) => {
-                            dh.verify_hash(asset_path, Some(claim.alg().to_string()))
+                            dh.verify_hash(asset_path, Some(claim.alg()))
                         }
                         ClaimAssetData::ByteData(asset_bytes) => {
                             dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
