@@ -1778,6 +1778,7 @@ impl Store {
     #[cfg(not(target_arch = "wasm32"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use std::io::Read;
+        
         use conv::ValueFrom;
 
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
