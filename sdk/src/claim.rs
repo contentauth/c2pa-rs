@@ -53,7 +53,7 @@ pub enum ClaimAssetData<'a> {
     ByteData(&'a [u8]),
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Eq, PartialEq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
@@ -234,7 +234,7 @@ pub enum AssertionStoreJsonFormat {
 }
 
 /// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemoteManifest {
     NoRemote,       // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.

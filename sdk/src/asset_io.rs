@@ -19,7 +19,7 @@ use std::{
 
 use crate::error::Result;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HashBlockObjectType {
     Cai,
     Xmp,

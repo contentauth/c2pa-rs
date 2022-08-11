@@ -26,7 +26,7 @@ use serde_cbor::tags::Tagged;
 // Based on samples from cbor rust git repository.
 //
 // https://tools.ietf.org/html/rfc7049#section-2.4.1
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DateT(pub String);
 
 impl Serialize for DateT {
@@ -58,7 +58,7 @@ impl fmt::Display for DateT {
 }
 
 // https://tools.ietf.org/html/rfc7049#section-2.4.4.3
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UriT(pub String);
 
 impl Serialize for UriT {
@@ -89,7 +89,7 @@ impl fmt::Display for UriT {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BytesT(pub Vec<u8>);
 
 impl Serialize for BytesT {

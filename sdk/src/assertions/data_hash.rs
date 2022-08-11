@@ -27,7 +27,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// Helper class to create DataHash assertion
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct DataHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclusions: Option<Vec<Exclusion>>,

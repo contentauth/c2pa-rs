@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Assertions in C2PA can be stored in several formats
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq)]
 pub enum ManifestAssertionKind {
     Cbor,
     Json,

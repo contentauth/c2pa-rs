@@ -1747,7 +1747,7 @@ pub fn unread_bytes<S: Seek>(seeker: &mut S, size: u64) -> JumbfParseResult<()> 
 /// macro for dealing with the type of a BMFF/JUMBF box
 macro_rules! boxtype {
     ($( $name:ident => $value:expr ),*) => {
-        #[derive(Debug, Clone, Copy, PartialEq)]
+        #[derive(Debug, Clone, Copy, Eq, PartialEq)]
         pub enum BoxType {
             $( $name, )*
             UnknownBox(u32),
