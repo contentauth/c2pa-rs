@@ -1865,13 +1865,12 @@ impl Store {
                     )
                     .provenance
                     {
-                        let link = match ext_ref.strip_prefix("self#jumbf=") {
-                            Some(s) => s,
-                            None => &ext_ref,
-                        };
-
-                        let remote_manifest_bytes = Store::fetch_remote_manifest(link)?;
-                        Store::from_jumbf(&remote_manifest_bytes, validation_log)
+                        if cfg!(feature = "fetch_remote_manifest") {
+                            let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
+                            Store::from_jumbf(&remote_manifest_bytes, validation_log)
+                        } else {
+                            Err(Error::JumbfNotFound)
+                        }
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -2978,7 +2977,7 @@ pub mod tests {
                 .provenance
                 .unwrap();
 
-        assert_eq!(ext_ref, format!("self#jumbf={}", url_string));
+        assert_eq!(ext_ref, url_string);
 
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
@@ -3030,7 +3029,7 @@ pub mod tests {
                 .provenance
                 .unwrap();
 
-        assert_eq!(ext_ref, format!("self#jumbf={}", url_string));
+        assert_eq!(ext_ref, url_string);
 
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();

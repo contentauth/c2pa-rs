@@ -437,8 +437,7 @@ impl Claim {
     ) -> Result<()> {
         let url = url::Url::parse(remote_url.as_ref())
             .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
-        let jumbf_uri = format!("self#jumbf={}", url);
-        self.remote_manifest = RemoteManifest::Remote(jumbf_uri);
+        self.remote_manifest = RemoteManifest::Remote(url.to_string());
 
         Ok(())
     }
@@ -449,8 +448,7 @@ impl Claim {
     ) -> Result<()> {
         let url = url::Url::parse(remote_url.as_ref())
             .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
-        let jumbf_uri = format!("self#jumbf={}", url);
-        self.remote_manifest = RemoteManifest::EmbedWithRemote(jumbf_uri);
+        self.remote_manifest = RemoteManifest::EmbedWithRemote(url.to_string());
 
         Ok(())
     }
