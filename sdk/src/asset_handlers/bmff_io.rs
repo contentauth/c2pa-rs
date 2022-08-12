@@ -69,7 +69,7 @@ impl CAIRead for NamedTempFile {}
 
 macro_rules! boxtype {
     ($( $name:ident => $value:expr ),*) => {
-        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum BoxType {
             $( $name, )*
             UnknownBox(u32),
@@ -188,7 +188,7 @@ impl BoxHeaderLite {
         // Get box type string.
         let mut t = [0u8; 4];
         t.clone_from_slice(&buf[4..8]);
-        let fourcc = String::from_utf8_lossy(&buf[4..8].to_vec()).to_string();
+        let fourcc = String::from_utf8_lossy(&buf[4..8]).to_string();
         let typ = u32::from_be_bytes(t);
 
         // Get largesize if size is 1

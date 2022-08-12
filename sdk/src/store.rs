@@ -31,8 +31,8 @@ use crate::{
     cose_sign::cose_sign,
     cose_validator::verify_cose,
     jumbf_io::{
-        get_supported_file_extension, is_bmff_format, load_jumbf_from_file, object_locations,
-        save_jumbf_to_file,
+        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
+        object_locations, save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -49,9 +49,7 @@ use crate::{
     jumbf::{self, boxes::*},
     jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    validation_status,
-    xmp_inmemory_utils::extract_provenance,
-    ManifestStoreReport,
+    validation_status, ManifestStoreReport,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -116,7 +114,7 @@ impl Store {
     }
 
     /// Get the provenance if available.
-    /// If loaded from an existing asset it will be provenance from that XMP
+    /// If loaded from an existing asset it will be provenance from the last claim.
     /// If a new claim is committed that will be the provenance claim
     pub fn provenance_path(&self) -> Option<String> {
         if self.provenance_path.is_none() {
@@ -142,6 +140,12 @@ impl Store {
     /// Add a new Claim to this Store. The function
     /// will return the label of the claim.
     pub fn commit_claim(&mut self, mut claim: Claim) -> Result<String> {
+        // make sure there is no pending unsigned claim
+        if let Some(pc) = self.provenance_claim() {
+            if pc.signature_val().is_empty() {
+                return Err(Error::ClaimUnsigned);
+            }
+        }
         // verify the claim is valid
         claim.build()?;
 
@@ -699,6 +703,10 @@ impl Store {
     }
 
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut impl StatusTracker) -> Result<Store> {
+        if buffer.is_empty() {
+            return Err(Error::JumbfNotFound);
+        }
+
         let mut store = Store::new();
 
         // setup a cursor for reading the buffer...
@@ -968,45 +976,6 @@ impl Store {
         }
     }
 
-    // verify the provenance of the claim
-    fn provenance_checks<'a>(
-        store: &'a Store,
-        xmp_opt: Option<String>,
-        validation_log: &mut impl StatusTracker,
-    ) -> Result<&'a Claim> {
-        #[cfg(feature = "diagnostics")]
-        let _t = crate::utils::time_it::TimeIt::new("verify_store");
-
-        // look for the active manifest in xmp if available
-        let provenance_claim = match xmp_opt {
-            Some(xmp_str) => match extract_provenance(&xmp_str) {
-                Some(c) => c,
-                None => store.provenance_path().unwrap_or_else(|| "".to_string()), // if not explicitly set use active manifest
-            },
-            None => store.provenance_path().unwrap_or_else(|| "".to_string()), // if not explicitly set use active manifest
-        };
-
-        // get claim that matches the provenance label
-        let claim_label = Store::manifest_label_from_path(&provenance_claim);
-        let claim = match store.get_claim(&claim_label) {
-            Some(c) => c,
-            None => {
-                let log_item = log_item!(
-                    &claim_label,
-                    "could not find active manifest",
-                    "verify_store"
-                )
-                .error(Error::ProvenanceMissing)
-                .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
-
-                return Err(Error::ProvenanceMissing);
-            }
-        };
-
-        Ok(claim)
-    }
-
     // wake the ingredients and validate
     fn ingredient_checks<'a>(
         store: &Store,
@@ -1190,11 +1159,21 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub async fn verify_store_async(
         store: &Store,
-        xmp_opt: Option<String>,
         asset_bytes: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let claim = Store::provenance_checks(store, xmp_opt, validation_log)?;
+        let claim = match store.provenance_claim() {
+            Some(c) => c,
+            None => {
+                let log_item =
+                    log_item!("Unknown", "could not find active manifest", "verify_store")
+                        .error(Error::ProvenanceMissing)
+                        .validation_status(validation_status::CLAIM_MISSING);
+                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+
+                return Err(Error::ProvenanceMissing);
+            }
+        };
 
         // verify the provenance claim
         Claim::verify_claim_async(claim, asset_bytes, true, validation_log).await?;
@@ -1211,11 +1190,21 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub fn verify_store<'a>(
         store: &Store,
-        xmp_opt: Option<String>,
         asset_data: &ClaimAssetData<'a>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let claim = Store::provenance_checks(store, xmp_opt, validation_log)?;
+        let claim = match store.provenance_claim() {
+            Some(c) => c,
+            None => {
+                let log_item =
+                    log_item!("Unknown", "could not find active manifest", "verify_store")
+                        .error(Error::ProvenanceMissing)
+                        .validation_status(validation_status::CLAIM_MISSING);
+                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+
+                return Err(Error::ProvenanceMissing);
+            }
+        };
 
         // verify the provenance claim
         Claim::verify_claim(claim, asset_data, true, validation_log)?;
@@ -1404,7 +1393,9 @@ impl Store {
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
             crate::claim::RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            crate::claim::RemoteManifest::SideCar
+            | crate::claim::RemoteManifest::Remote(_)
+            | crate::claim::RemoteManifest::EmbedWithRemote(_) => {
                 // make correct path names
                 let source_asset = source;
                 let source_cai = source_asset.with_extension(MANIFEST_STORE_EXT);
@@ -1442,7 +1433,8 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote
+            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
@@ -1453,6 +1445,14 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // do we need to make a C2PA file in addtion to standard embedded output
+                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
+                    pc_mut.remote_manifest()
+                {
+                    let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
+                    std::fs::write(c2pa, &m)?;
+                }
 
                 // copy the correct files upon completion
                 Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
@@ -1490,7 +1490,8 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote
+            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
@@ -1501,6 +1502,14 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // do we need to make a C2PA file in addtion to standard embedded output
+                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
+                    pc_mut.remote_manifest()
+                {
+                    let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
+                    std::fs::write(c2pa, &m)?;
+                }
 
                 // copy the correct files upon completion
                 Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
@@ -1537,7 +1546,8 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => temp_file.to_path_buf(),
+            crate::claim::RemoteManifest::NoRemote
+            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
             crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
@@ -1548,6 +1558,14 @@ impl Store {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
+
+                // do we need to make a C2PA file in addtion to standard embedded output
+                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
+                    pc_mut.remote_manifest()
+                {
+                    let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
+                    std::fs::write(c2pa, &m)?;
+                }
 
                 // copy the correct files upon completion
                 Store::copy_c2pa_to_output(&temp_file, dest_path, pc_mut.remote_manifest())?;
@@ -1602,6 +1620,14 @@ impl Store {
                     embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
                     d
                 }
+                crate::claim::RemoteManifest::EmbedWithRemote(_url) => {
+                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
+                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
+                    #[cfg(feature = "xmp_write")]
+                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
+
+                    dest_path.to_path_buf()
+                }
             }
         } else {
             // only side car and embedded supported without feature "xmp_write"
@@ -1610,7 +1636,8 @@ impl Store {
                 crate::claim::RemoteManifest::SideCar => {
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
-                crate::claim::RemoteManifest::Remote(_) => {
+                crate::claim::RemoteManifest::Remote(_)
+                | crate::claim::RemoteManifest::EmbedWithRemote(_) => {
                     return Err(Error::BadParam("requires 'xmp_write' feature".to_string()))
                 }
             }
@@ -1734,69 +1761,71 @@ impl Store {
         asset_path: &'a Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let ext = get_supported_file_extension(asset_path).ok_or(Error::UnsupportedType)?;
-
-        let cai_loader = get_cailoader_handler(&ext).ok_or(Error::UnsupportedType)?;
-
-        let mut asset_reader = fs::File::open(asset_path)?;
-
-        // read xmp if available
-        let xmp_opt = cai_loader.read_xmp(&mut asset_reader);
-
-        let xmp_copy = xmp_opt.clone();
-
-        Store::verify_store(
-            self,
-            xmp_opt,
-            &ClaimAssetData::PathData(asset_path),
-            validation_log,
-        )?;
-
-        // set the provenance if there is xmp otherwise it will default to active manifest
-        if let Some(xmp) = xmp_copy {
-            if let Some(xmp_provenance) = extract_provenance(&xmp) {
-                let claim_label = Store::manifest_label_from_path(&xmp_provenance);
-                self.set_provenance_path(&claim_label);
-            }
-        }
-
-        Ok(())
+        Store::verify_store(self, &ClaimAssetData::PathData(asset_path), validation_log)
     }
 
     // verify from a buffer without file i/o
     pub fn verify_from_buffer(
         &mut self,
         buf: &[u8],
-        asset_type: &str,
+        _asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let mut buf_reader = Cursor::new(buf);
+        Store::verify_store(self, &ClaimAssetData::ByteData(buf), validation_log)
+    }
 
-        let cai_loader = get_cailoader_handler(asset_type).ok_or(Error::UnsupportedType)?;
+    // fetch remote manifest if possible
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
+    fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use std::io::Read;
 
-        // read xmp if available
-        let xmp_opt = cai_loader.read_xmp(&mut buf_reader);
+        use conv::ValueFrom;
+        use ureq::Error as uError;
 
-        let xmp_copy = xmp_opt.clone();
+        //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+        const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
-        let buf = buf_reader.into_inner();
+        match ureq::get(url).call() {
+            Ok(response) => {
+                if response.status() == 200 {
+                    let len = response
+                        .header("Content-Length")
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE); // todo figure out good max to accept
 
-        Store::verify_store(
-            self,
-            xmp_opt,
-            &ClaimAssetData::ByteData(buf),
-            validation_log,
-        )?;
+                    let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
 
-        // set the provenance if there is xmp otherwise it will default to active manifest
-        if let Some(xmp) = xmp_copy {
-            if let Some(xmp_provenance) = extract_provenance(&xmp) {
-                let claim_label = Store::manifest_label_from_path(&xmp_provenance);
-                self.set_provenance_path(&claim_label);
+                    let len64 = u64::value_from(len)
+                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+
+                    response
+                        .into_reader()
+                        .take(len64)
+                        .read_to_end(&mut response_bytes)
+                        .map_err(|_err| {
+                            Error::RemoteManifestFetch("error reading content stream".to_string())
+                        })?;
+
+                    Ok(response_bytes)
+                } else {
+                    Err(Error::RemoteManifestFetch(format!(
+                        "fetch failed: code: {}, status: {}",
+                        response.status(),
+                        response.status_text()
+                    )))
+                }
             }
+            Err(uError::Status(code, resp)) => Err(Error::RemoteManifestFetch(format!(
+                "code: {}, response: {}",
+                code,
+                resp.status_text()
+            ))),
+            Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(format!(
+                "fetch failed: url: {}",
+                url
+            ))),
         }
-
-        Ok(())
     }
 
     /// Return Store from in memory asset
@@ -1816,19 +1845,44 @@ impl Store {
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
-    pub fn load_cai_from_file(
+    fn load_cai_from_file(
         in_path: &Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        // get jumbf block
-        load_jumbf_from_file(in_path).and_then(|buffer| {
-            if buffer.is_empty() {
-                return Err(Error::JumbfNotFound);
-            }
+        let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
 
-            // load and validate with CAI toolkit and dump if desired
-            Store::from_jumbf(&buffer, validation_log)
-        })
+        match load_jumbf_from_file(in_path) {
+            Ok(manifest_bytes) => {
+                // load and validate with CAI toolkit and dump if desired
+                Store::from_jumbf(&manifest_bytes, validation_log)
+            }
+            Err(Error::JumbfNotFound) => {
+                if external_manifest.exists() {
+                    let external_manifest_bytes = std::fs::read(external_manifest)?;
+                    Store::from_jumbf(&external_manifest_bytes, validation_log)
+                } else {
+                    // check for remote manifest
+                    let mut asset_reader = std::fs::File::open(in_path)?;
+                    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
+                    if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
+                        &mut asset_reader,
+                        &ext,
+                    )
+                    .provenance
+                    {
+                        if cfg!(feature = "fetch_remote_manifests") {
+                            let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
+                            Store::from_jumbf(&remote_manifest_bytes, validation_log)
+                        } else {
+                            Err(Error::JumbfNotFound)
+                        }
+                    } else {
+                        Err(Error::JumbfNotFound)
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Load Store from claims in an existing asset
@@ -1896,6 +1950,24 @@ impl Store {
             })
     }
 
+    /// Returns embedded remote manifest URL if available
+    /// asset_type: extentions or mime type of the data
+    /// data: byte array containing the asset
+    pub fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
+        let mut buf_reader = Cursor::new(data);
+
+        if let Some(ext_ref) =
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut buf_reader, asset_type)
+                .provenance
+        {
+            // make sure it parses
+            let _u = url::Url::parse(&ext_ref).ok()?;
+            Some(ext_ref)
+        } else {
+            None
+        }
+    }
+
     /// Load Store from a in-memory asset
     /// asset_type: asset extension or mime type
     /// data: reference to bytes of the the file
@@ -1908,26 +1980,11 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         Store::get_store_from_memory(asset_type, data, validation_log).and_then(
-            |(mut store, xmp_opt)| {
+            |(store, _xmp_opt)| {
                 // verify the store
                 if verify {
-                    let xmp_copy = xmp_opt.clone();
-
                     // verify store and claims
-                    Store::verify_store(
-                        &store,
-                        xmp_opt,
-                        &ClaimAssetData::ByteData(data),
-                        validation_log,
-                    )?;
-
-                    // set the provenance if checks pass & has xmp, otherwise default to active manifest
-                    if let Some(xmp) = xmp_copy {
-                        if let Some(xmp_provenance) = extract_provenance(&xmp) {
-                            let claim_label = Store::manifest_label_from_path(&xmp_provenance);
-                            store.set_provenance_path(&claim_label);
-                        }
-                    }
+                    Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
                 }
 
                 Ok(store)
@@ -1946,25 +2003,12 @@ impl Store {
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        let (mut store, xmp_opt) = Store::get_store_from_memory(asset_type, data, validation_log)?;
-
-        let buf_reader = Cursor::new(data);
+        let (store, _xmp_opt) = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
         // verify the store
         if verify {
-            let xmp_copy = xmp_opt.clone();
-
             // verify store and claims
-            Store::verify_store_async(&store, xmp_opt, buf_reader.get_ref(), validation_log)
-                .await?;
-
-            // set the provenance if checks pass & has xmp, otherwise default to active manifest
-            if let Some(xmp) = xmp_copy {
-                if let Some(xmp_provenance) = extract_provenance(&xmp) {
-                    let claim_label = Store::manifest_label_from_path(&xmp_provenance);
-                    store.set_provenance_path(&claim_label);
-                }
-            }
+            Store::verify_store_async(&store, data, validation_log).await?;
         }
 
         Ok(store)
@@ -2248,10 +2292,7 @@ pub mod tests {
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            let cose_sign1_box =
-                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await;
-
-            cose_sign1_box
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
         fn reserve_size(&self) -> usize {
             10000
@@ -2883,24 +2924,12 @@ pub mod tests {
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
 
-        // load the jumbf back into a store
+        // test auto loading of sidecar with validation
         let mut validation_log = OneShotStatusTracker::default();
-        let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
-        let pc = restored_store.provenance_claim().unwrap();
-
-        // make sure this manifest goes with this asset
-        for dh_assertion in pc.data_hash_assertions() {
-            if dh_assertion.label_root() == DataHash::LABEL {
-                let dh = DataHash::from_assertion(dh_assertion).unwrap();
-
-                dh.verify_hash(&op.clone(), Some(pc.alg().to_string()))
-                    .unwrap();
-            }
-        }
+        Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
     #[test]
-    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
     fn test_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -2940,10 +2969,6 @@ pub mod tests {
         assert_eq!(saved_manifest, loaded_manifest);
 
         // load the jumbf back into a store
-        let mut validation_log = OneShotStatusTracker::default();
-        let restored_store = Store::from_jumbf(&loaded_manifest, &mut validation_log).unwrap();
-        let pc = restored_store.provenance_claim().unwrap();
-
         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
         let ext_ref =
             crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
@@ -2952,19 +2977,12 @@ pub mod tests {
 
         assert_eq!(ext_ref, url_string);
 
-        // make sure this manifest goes with this asset
-        for dh_assertion in pc.data_hash_assertions() {
-            if dh_assertion.label_root() == DataHash::LABEL {
-                let dh = DataHash::from_assertion(dh_assertion).unwrap();
-
-                dh.verify_hash(&op.clone(), Some(pc.alg().to_string()))
-                    .unwrap();
-            }
-        }
+        // make sure it validates
+        let mut validation_log = OneShotStatusTracker::default();
+        Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
     #[test]
-    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
@@ -2977,7 +2995,7 @@ pub mod tests {
         let mut store = Store::new();
 
         // Create a new claim.
-        let mut claim = Claim::new_with_user_guid("store unit test", "my guid");
+        let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -2987,8 +3005,9 @@ pub mod tests {
         let url = url::Url::parse(&fp).unwrap();
 
         let url_string: String = url.into();
+
         // set claim for side car with remote manifest embedding generation
-        claim.set_remote_manifest(url_string).unwrap();
+        claim.set_embed_remote_manifest(url_string.clone()).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -3001,5 +3020,17 @@ pub mod tests {
 
         // compare returned to external
         assert_eq!(saved_manifest, loaded_manifest);
+
+        let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
+        let ext_ref =
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
+                .provenance
+                .unwrap();
+
+        assert_eq!(ext_ref, url_string);
+
+        // make sure it validates
+        let mut validation_log = OneShotStatusTracker::default();
+        Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 }

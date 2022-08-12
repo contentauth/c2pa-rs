@@ -106,7 +106,7 @@ pub(crate) fn to_relative_uri(uri: &str) -> String {
     let parts: Vec<&str> = raw_uri.split('/').collect();
 
     if parts.len() > 4 && parts[1] == MANIFEST_STORE {
-        return format!("{}={}", JUMBF_PREFIX, parts[3..].join("/"));
+        format!("{}={}", JUMBF_PREFIX, parts[3..].join("/"))
     } else {
         // Doesn't look like an absolute URI, so we'll return it as-is.
         uri.to_string()

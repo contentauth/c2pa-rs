@@ -25,7 +25,7 @@ use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
-    claim::Claim,
+    claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
     salt::DefaultSalt,
@@ -90,8 +90,8 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remote_url: Option<String>,
+    #[serde(skip_deserializing, skip_serializing)]
+    remote_manifest: Option<RemoteManifest>,
 }
 
 impl Manifest {
@@ -112,7 +112,7 @@ impl Manifest {
             credentials: None,
             signature_info: None,
             label: None,
-            remote_url: None,
+            remote_manifest: None,
         }
     }
 
@@ -207,6 +207,30 @@ impl Manifest {
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
         self.thumbnail = Some((format.into(), thumbnail));
+        self
+    }
+
+    /// If set, the embed calls will create a sidecar .c2pa manifest file next to the output file
+    /// No change will be made to the output file
+    pub fn set_sidecar_manifest(&mut self) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::SideCar);
+        self
+    }
+
+    /// If set, the embed calls will put the remote url into the output file xmp provenance
+    /// and create a c2pa manifest file next to the output file
+    pub fn set_remote_manifest<S: Into<String>>(&mut self, remote_url: S) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::Remote(remote_url.into()));
+        self
+    }
+
+    /// If set, the embed calls will put the remote url into the output file xmp provenance
+    /// and will embed the manifest into the output file
+    pub fn set_embedded_manifest_with_remote_ref<S: Into<String>>(
+        &mut self,
+        remote_url: S,
+    ) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::EmbedWithRemote(remote_url.into()));
         self
     }
 
@@ -381,18 +405,6 @@ impl Manifest {
         self
     }
 
-    // Sets an optional remote url referencing a signed cloud manifest for this manifest
-    pub fn remote_url(&self) -> Option<&str> {
-        self.remote_url.as_deref()
-    }
-
-    /// Sets a remote url referencing a signed cloud manifest for this manifest
-    /// If xmp_write is enabled, this will be written to the assets xmp dcterms::provenance field
-    pub fn set_remote_url<S: Into<String>>(&mut self, url: S) -> &mut Self {
-        self.remote_url = Some(url.into());
-        self
-    }
-
     /// Returns the name of the signature issuer
     pub fn issuer(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.issuer)
@@ -545,6 +557,15 @@ impl Manifest {
             None => Claim::new(&generator, self.vendor.as_deref()),
         };
 
+        if let Some(remote_op) = &self.remote_manifest {
+            match remote_op {
+                RemoteManifest::NoRemote => (),
+                RemoteManifest::SideCar => claim.set_external_manifest(),
+                RemoteManifest::Remote(r) => claim.set_remote_manifest(r)?,
+                RemoteManifest::EmbedWithRemote(r) => claim.set_embed_remote_manifest(r)?,
+            };
+        }
+
         if let Some(title) = self.title() {
             claim.set_title(Some(title.to_owned()));
         }
@@ -555,11 +576,6 @@ impl Manifest {
                 &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
                 image.to_vec(),
             ))?;
-        }
-
-        if let Some(url) = self.remote_url() {
-            // set claim for side car with remote manifest embedding generation
-            claim.set_remote_manifest(url)?;
         }
 
         // add any verified credentials - needs to happen early so we can reference them
@@ -1073,11 +1089,7 @@ pub(crate) mod tests {
                 );
 
                 // this would happen on some remote server
-                let cose_sign1_box =
-                    crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size())
-                        .await;
-
-                cose_sign1_box
+                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
             }
             fn reserve_size(&self) -> usize {
                 10000
@@ -1134,7 +1146,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
-        manifest.set_remote_url(url);
+        manifest.set_remote_manifest(url);
         let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
