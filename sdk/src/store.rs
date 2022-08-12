@@ -13,7 +13,7 @@
 
 use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
-use std::{fs, io::Read, path::Path};
+use std::{fs, path::Path};
 
 #[cfg(not(target_arch = "wasm32"))]
 use conv::ValueFrom;
@@ -1779,6 +1779,8 @@ impl Store {
     // fetch remote manifest if possible
     #[cfg(not(target_arch = "wasm32"))]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
+        use std::io::Read;
+
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
         const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
         use ureq::Error as uError;
