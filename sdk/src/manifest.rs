@@ -25,7 +25,7 @@ use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
-    claim::Claim,
+    claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
     salt::DefaultSalt,
@@ -86,6 +86,9 @@ pub struct Manifest {
     /// Signature data (only used for reporting)
     #[serde(skip_serializing_if = "Option::is_none")]
     signature_info: Option<SignatureInfo>,
+
+    #[serde(skip_deserializing, skip_serializing)]
+    remote_manifest: Option<RemoteManifest>,
 }
 
 impl Manifest {
@@ -105,6 +108,7 @@ impl Manifest {
             redactions: None,
             credentials: None,
             signature_info: None,
+            remote_manifest: None,
         }
     }
 
@@ -185,6 +189,23 @@ impl Manifest {
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
         self.thumbnail = Some((format.into(), thumbnail));
+        self
+    }
+    pub fn set_sidecar_manifest(&mut self) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::SideCar);
+        self
+    }
+
+    pub fn set_remote_manifest<S: Into<String>>(&mut self, remote_url: S) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::Remote(remote_url.into()));
+        self
+    }
+
+    pub fn set_embedded_manifest_with_remote_ref<S: Into<String>>(
+        &mut self,
+        remote_url: S,
+    ) -> &mut Self {
+        self.remote_manifest = Some(RemoteManifest::EmbedWithRemote(remote_url.into()));
         self
     }
 
@@ -505,6 +526,15 @@ impl Manifest {
             crate::VERSION
         );
         let mut claim = Claim::new(&generator, self.vendor.as_deref());
+
+        if let Some(remote_op) = &self.remote_manifest {
+            match remote_op {
+                RemoteManifest::NoRemote => (),
+                RemoteManifest::SideCar => claim.set_external_manifest(),
+                RemoteManifest::Remote(r) => claim.set_remote_manifest(r)?,
+                RemoteManifest::EmbedWithRemote(r) => claim.set_embed_remote_manifest(r)?,
+            };
+        }
 
         if let Some(title) = self.title() {
             claim.set_title(Some(title.to_owned()));
@@ -1029,11 +1059,7 @@ pub(crate) mod tests {
                 );
 
                 // this would happen on some remote server
-                let cose_sign1_box =
-                    crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size())
-                        .await;
-
-                cose_sign1_box
+                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
             }
             fn reserve_size(&self) -> usize {
                 10000

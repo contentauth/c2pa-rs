@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// Hashed Uri stucture as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HashedUri {
     url: String, // URI stored as tagged cbor
     #[serde(skip_serializing_if = "Option::is_none")]

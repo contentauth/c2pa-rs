@@ -331,7 +331,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     h.update(data);
     let digest = h.finish();
 
-    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes().to_vec()) {
+    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
         return Err(Error::CoseTimeStampMismatch);
     }
 
@@ -373,13 +373,13 @@ pub fn get_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse> {
     Ok(ts)
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct TstToken {
     #[serde(with = "serde_bytes")]
     pub val: Vec<u8>,
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct TstContainer {
     #[serde(rename = "tstTokens")]
     pub tst_tokens: Vec<TstToken>,

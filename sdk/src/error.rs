@@ -54,6 +54,9 @@ pub enum Error {
     #[error("claim already signed, no further changes allowed")]
     ClaimAlreadySigned,
 
+    #[error("attempt to add new claim without signing last claim")]
+    ClaimUnsigned,
+
     #[error("missing signature box link")]
     ClaimMissingSignatureBox,
 
@@ -165,6 +168,9 @@ pub enum Error {
 
     #[error("required JUMBF box not found")]
     JumbfBoxNotFound,
+
+    #[error("could not fetch the remote manifest")]
+    RemoteManifestFetch(String),
 
     #[error("stopped because of logged error")]
     LogStop,
