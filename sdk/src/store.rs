@@ -15,8 +15,6 @@ use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
-#[cfg(not(target_arch = "wasm32"))]
-use conv::ValueFrom;
 #[cfg(feature = "file_io")]
 use log::error;
 
@@ -1782,6 +1780,7 @@ impl Store {
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use std::io::Read;
 
+        use conv::ValueFrom;
         use ureq::Error as uError;
 
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
