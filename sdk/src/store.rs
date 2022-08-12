@@ -15,11 +15,10 @@ use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs, io::Read, path::Path};
 
-#[cfg(feature = "file_io")]
-use log::error;
-
 #[cfg(not(target_arch = "wasm32"))]
 use conv::ValueFrom;
+#[cfg(feature = "file_io")]
+use log::error;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 use crate::embedded_xmp;
