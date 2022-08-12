@@ -27,7 +27,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// The Metadata structure can be used as part of other assertions or on its own to reference others
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
@@ -155,7 +155,7 @@ pub mod c2pa_source {
 }
 
 /// A description of the source for assertion data
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DataSource {
     /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
@@ -193,7 +193,7 @@ impl DataSource {
 }
 
 /// Identifies a person responsible for an action.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Actor {
     /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]

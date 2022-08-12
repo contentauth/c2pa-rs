@@ -53,7 +53,7 @@ pub enum ClaimAssetData<'a> {
     ByteData(&'a [u8]),
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also

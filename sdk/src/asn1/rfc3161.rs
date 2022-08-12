@@ -192,7 +192,7 @@ impl PkiStatusInfo {
 
     pub fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
-            (&self.status).encode(),
+            self.status.encode(),
             self.status_string
                 .as_ref()
                 .map(|status_string| status_string.encode_ref()),
