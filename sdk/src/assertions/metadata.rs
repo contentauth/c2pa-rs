@@ -213,7 +213,7 @@ impl Actor {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ReviewCode {
     #[serde(rename(serialize = "actions.unknownActionsPerformed"))]
     ActionsUnknown,
@@ -241,7 +241,7 @@ pub enum ReviewCode {
 /// A rating on an [`Assertion`].
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub struct ReviewRating {
     pub explanation: String,
     #[serde(skip_serializing_if = "Option::is_none")]

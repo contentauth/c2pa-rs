@@ -57,7 +57,7 @@ impl ExclusionsMap {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct MerkleMap {
     #[serde(rename = "uniqueId")]
     pub unique_id: u32,
@@ -76,14 +76,14 @@ pub struct MerkleMap {
     pub hashes: Vec<ByteBuf>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct DataMap {
     pub offset: u32,
     #[serde(with = "serde_bytes")]
     pub value: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SubsetMap {
     pub offset: u32,
     pub length: u32,

@@ -1059,11 +1059,7 @@ pub(crate) mod tests {
                 );
 
                 // this would happen on some remote server
-                let cose_sign1_box =
-                    crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size())
-                        .await;
-
-                cose_sign1_box
+                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
             }
             fn reserve_size(&self) -> usize {
                 10000
