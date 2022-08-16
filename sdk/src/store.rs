@@ -2866,7 +2866,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
@@ -2930,7 +2930,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_external_manifest_embedded_url() {
+    fn test_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
         let temp_dir = tempdir().expect("temp dir");
@@ -2983,7 +2983,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_external_manifest_embedded_manifest_embedded_url() {
+    fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
         let ap = fixture_path("libpng-test.png");
         let temp_dir = tempdir().expect("temp dir");

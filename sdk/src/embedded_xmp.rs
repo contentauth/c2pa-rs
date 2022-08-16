@@ -14,7 +14,7 @@
 use std::path::Path;
 
 use log::error;
-use xmp_toolkit::{OpenFileOptions, XmpError, XmpFile, XmpMeta};
+use xmp_toolkit::{OpenFileOptions, XmpError, XmpErrorType, XmpFile, XmpMeta};
 
 use crate::{Error, Result};
 
@@ -49,5 +49,11 @@ pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(path: P, manifest_uri: &s
 
 fn xmp_write_err(err: XmpError) -> crate::Error {
     error!("Unable to add manifest URI to file: {:?}", err);
-    Error::XmpWriteError
+    match err.error_type {
+        // convert to OS permission error code so we can detect it correctly upstream
+        XmpErrorType::FilePermission => Error::IoError(std::io::Error::from_raw_os_error(13)),
+        XmpErrorType::NoFile => Error::NotFound,
+        XmpErrorType::NoFileHandler => Error::UnsupportedType,
+        _ => Error::XmpWriteError,
+    }
 }
