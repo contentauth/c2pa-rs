@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.12.0
+_16 August 2022_
+
+* Update C2PA manifest store mime type ([#112](https://github.com/contentauth/c2pa-rs/pull/112))
+* Updates Manifest API to support remote and external manifests ([#107](https://github.com/contentauth/c2pa-rs/pull/107))
+* Support validating remote and external manifest stores ([#108](https://github.com/contentauth/c2pa-rs/pull/108))
+* Fix build error when xmp_write is not defined ([#105](https://github.com/contentauth/c2pa-rs/pull/105))
+* Fix box order for BMFF ([#104](https://github.com/contentauth/c2pa-rs/pull/104))
+* Added support for external manifests ([#101](https://github.com/contentauth/c2pa-rs/pull/101))
+
 ## 0.11.3
 _03 August 2022_
 
