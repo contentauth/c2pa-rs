@@ -26,7 +26,7 @@ test-local:
 	cargo test --all-features
 
 test-no-defaults:
-	cd sdk && cargo test --features="file_io" --no-default-features 
+	cd sdk && cargo test --features="file_io, xmp_write, bmff" --no-default-features 
 
 test-wasm:
 	cd sdk && wasm-pack test --node
