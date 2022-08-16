@@ -48,7 +48,7 @@ pub struct Manifest {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vendor: Option<String>,
+    vendor: Option<String>,
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
@@ -87,6 +87,9 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     signature_info: Option<SignatureInfo>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+
     #[serde(skip_deserializing, skip_serializing)]
     remote_manifest: Option<RemoteManifest>,
 }
@@ -108,12 +111,19 @@ impl Manifest {
             redactions: None,
             credentials: None,
             signature_info: None,
+            label: None,
             remote_manifest: None,
         }
     }
 
+    /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
+    }
+
+    /// returns the manifest label for this Manifest, as referenced in a ManifestStore
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Returns a MIME content_type for the asset associated with this manifest.
@@ -162,6 +172,14 @@ impl Manifest {
         self
     }
 
+    /// Sets the label for this manifest
+    /// A label will be generated if this is not called
+    /// This is needed if embedding a URL that references the manifest label
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.label = Some(label.into());
+        self
+    }
+
     /// Sets a human readable name for the product that created this manifest
     pub fn set_claim_generator<S: Into<String>>(&mut self, generator: S) -> &mut Self {
         self.claim_generator = generator.into();
@@ -191,16 +209,23 @@ impl Manifest {
         self.thumbnail = Some((format.into(), thumbnail));
         self
     }
+
+    /// If set, the embed calls will create a sidecar .c2pa manifest file next to the output file
+    /// No change will be made to the output file
     pub fn set_sidecar_manifest(&mut self) -> &mut Self {
         self.remote_manifest = Some(RemoteManifest::SideCar);
         self
     }
 
+    /// If set, the embed calls will put the remote url into the output file xmp provenance
+    /// and create a c2pa manifest file next to the output file
     pub fn set_remote_manifest<S: Into<String>>(&mut self, remote_url: S) -> &mut Self {
         self.remote_manifest = Some(RemoteManifest::Remote(remote_url.into()));
         self
     }
 
+    /// If set, the embed calls will put the remote url into the output file xmp provenance
+    /// and will embed the manifest into the output file
     pub fn set_embedded_manifest_with_remote_ref<S: Into<String>>(
         &mut self,
         remote_url: S,
@@ -402,6 +427,7 @@ impl Manifest {
         let claim_generator = claim.claim_generator().to_owned();
         let mut manifest = Manifest::new(claim_generator);
 
+        manifest.set_label(claim.label());
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
@@ -516,8 +542,8 @@ impl Manifest {
         }
     }
 
-    // Convert a Manifest into a Store
-    pub(crate) fn to_store(&self) -> Result<Store> {
+    // Convert a Manifest into a Claim
+    pub(crate) fn to_claim(&self) -> Result<Claim> {
         // add library identifier to claim_generator
         let generator = format!(
             "{} {}/{}",
@@ -525,7 +551,11 @@ impl Manifest {
             crate::NAME,
             crate::VERSION
         );
-        let mut claim = Claim::new(&generator, self.vendor.as_deref());
+
+        let mut claim = match self.label() {
+            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string()),
+            None => Claim::new(&generator, self.vendor.as_deref()),
+        };
 
         if let Some(remote_op) = &self.remote_manifest {
             match remote_op {
@@ -622,10 +652,15 @@ impl Manifest {
             }?;
         }
 
+        Ok(claim)
+    }
+
+    // Convert a Manifest into a Store
+    pub(crate) fn to_store(&self) -> Result<Store> {
+        let claim = self.to_claim()?;
         // commit the claim
         let mut store = Store::new();
         let _provenance = store.commit_claim(claim)?;
-
         Ok(store)
     }
 
@@ -689,7 +724,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn Signer,
-    ) -> Result<Store> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
 
@@ -697,10 +732,7 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())?;
-
-        // todo: update xmp
-        Ok(store)
+        store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
@@ -711,7 +743,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn AsyncSigner,
-    ) -> Result<Store> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -719,10 +751,7 @@ impl Manifest {
         // sign and write our store to to the output image file
         store
             .save_to_asset_async(source_path.as_ref(), signer, dest_path.as_ref())
-            .await?;
-
-        // todo: update xmp
-        Ok(store)
+            .await
     }
 
     /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
@@ -732,7 +761,7 @@ impl Manifest {
         source_path: P,
         dest_path: P,
         signer: &dyn RemoteSigner,
-    ) -> Result<Store> {
+    ) -> Result<Vec<u8>> {
         // Add manifest info for this target file
         let source_path = self.embed_prep(source_path.as_ref(), dest_path.as_ref())?;
         // convert the manifest to a store
@@ -740,10 +769,7 @@ impl Manifest {
         // sign and write our store to to the output image file
         store
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
-            .await?;
-
-        // todo: update xmp
-        Ok(store)
+            .await
     }
 }
 
@@ -961,7 +987,11 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let store1 = manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
+            .expect("load from memory");
         let claim1_label = store1.provenance_label().unwrap();
         let claim = store1.provenance_claim().unwrap();
         assert!(claim.get_claim_assertion(ASSERTION_LABEL, 0).is_some()); // verify the assertion is there
@@ -1078,6 +1108,51 @@ pub(crate) mod tests {
             .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         assert!(manifest_store.active_label().is_some());
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
+    }
+
+    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[actix::test]
+    async fn test_embed_user_label() {
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = test_manifest();
+        manifest.set_label("MyLabel");
+        manifest.embed(&output, &output, &signer).expect("embed");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        assert_eq!(manifest_store.active_label(), Some("MyLabel"));
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
+    }
+
+    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[actix::test]
+    async fn test_embed_sidecar_user_label() {
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+        let sidecar = output.with_extension("c2pa");
+        let fp = format!("file:/{}", sidecar.to_str().unwrap());
+        let url = url::Url::parse(&fp).unwrap();
+
+        let signer = temp_signer();
+
+        let mut manifest = test_manifest();
+        manifest.set_label("MyLabel");
+        manifest.set_remote_manifest(url);
+        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+
+        //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
+        let manifest_store =
+            crate::ManifestStore::from_bytes("c2pa", c2pa_data, true).expect("from_bytes");
+        assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
