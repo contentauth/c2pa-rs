@@ -93,7 +93,9 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
 pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
     let asset_type = asset_type.to_lowercase();
     match asset_type.as_ref() {
-        "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
+        "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
+            Some(Box::new(C2paIO {}))
+        }
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
