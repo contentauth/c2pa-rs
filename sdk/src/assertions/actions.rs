@@ -66,7 +66,7 @@ pub mod c2pa_action {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -229,7 +229,7 @@ impl Action {
 /// other information such as what software performed the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,

@@ -25,6 +25,7 @@ file_io = ["openssl"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
+fetch_remote_manifests = ["file_io"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -79,13 +80,13 @@ tempfile = "3.1.0"
 thiserror = ">= 1.0.20, < 1.0.32"
 time = ">= 0.2.23"
 twoway = "0.2.1"
+url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.11.0"
 x509-certificate = "0.12.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ring = "0.16.20"
-url = "2.2.2"
 ureq = "2.4.0"
 image = { version = "0.24.2", optional = true }
 instant = "0.1.0"
