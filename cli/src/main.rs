@@ -107,6 +107,11 @@ fn handle_config(
         manifest.set_vendor(vendor);
     }
 
+    // set the new manifest title if specified
+    if let Some(ref t) = config.title {
+        manifest.set_title(t);
+    };
+
     if let Some(credentials) = config.credentials.as_ref() {
         for credential in credentials {
             manifest.add_verifiable_credential(credential)?;
@@ -163,7 +168,7 @@ fn handle_config(
             }
         };
         // check for valid extension and do special extension handling
-        let _extension = match output.extension().and_then(|s| s.to_str()) {
+        let extension = match output.extension().and_then(|s| s.to_str()) {
             Some(ext) => ext,
             None => {
                 eprintln!("Missing or invalid extension on output");
@@ -171,13 +176,16 @@ fn handle_config(
             }
         };
 
-        // Predefine the manifest asset if we need to set a title
-        // Todo: find a better way to set the title
-        if let Some(t) = config.title.as_ref() {
-            let mut asset = Ingredient::from_file_info(output);
-            asset.set_title(t.to_owned());
-            manifest.set_asset(asset);
-        };
+        // set the format field (for preview)
+        match extension {
+            "jpg" | "jpeg" => {
+                manifest.set_format("image/jpeg");
+            }
+            "png" => {
+                manifest.set_format("image/png");
+            }
+            _ => (),
+        }
 
         // The source path points to the image we want to sign.
         // If a file already exists at the output location, we will treat that as the source
