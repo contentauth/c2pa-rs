@@ -45,7 +45,7 @@ name = "custom_assertion"
 
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["lib"]
 
 [dependencies]
 async-trait = { version = "0.1.48", optional = true }
