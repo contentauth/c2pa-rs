@@ -57,11 +57,14 @@ fn tool_jpeg_no_report() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn tool_embed_jpeg_report() -> Result<(), Box<dyn std::error::Error>> {
     Command::cargo_bin("c2patool")?
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-m")
         .arg("sample/test.json")
         .arg("-p")
         .arg(fixture_path(TEST_IMAGE))
         .arg("-o")
         .arg(temp_path("out.jpg"))
+        .arg("-f")
         .assert()
         .success() // should this be a failure?
         .stdout(predicate::str::contains("My Title"));
