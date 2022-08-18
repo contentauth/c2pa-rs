@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.3.0
+_18 August 2022_
+
+* (MINOR) Rework c2patool parameters ([contentauth/c2patool#53](https://github.com/contentauth/c2patool/pull/53))
+* Update to 0.11.0 c2pa-rs ([contentauth/c2patool#38](https://github.com/contentauth/c2patool/pull/38))
+* Remove Homebrew, Git installation methods, and add "update" wording ([contentauth/c2patool#33](https://github.com/contentauth/c2patool/pull/33))
+
 ## 0.2.1
 _29 June 2022_
 
