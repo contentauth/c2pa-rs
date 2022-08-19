@@ -36,14 +36,14 @@ cargo install c2patool
 Invoking the tool with a path to an asset will print a report describing the manifests contained in the file in JSON format to stdout.
 
 ```shell
-c2patool image.jpg
+c2patool sample/C.jpg
 ```
 
 ### Detailed manifest report
 
 The `-d` or `--detailed` option will print a detailed report describing the internal C2PA format of manifests contained in the file in JSON format to stdout.
 ```shell
-c2patool image.jpg -d
+c2patool sample/C.jpg -d
 ```
 
 ### Adding a manifest to a file
@@ -57,13 +57,13 @@ The output file is specified on the command line via the `-o` or `--output` flag
 The generated manifest store will also be reported in JSON format to stdout.
 
 ```shell
-c2patool image.jpg -m sample/test.json -o signed_image.jpg
+c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
 ```
 
 A parent file can be specified with the `-p` or `--parent` option or in the manifest definition. The parent file represents the state of the asset before any edits were made. 
 
 ```shell
-c2patool image.jpg -m sample/test.json -p parent.jpg -o signed_image.jpg
+c2patool sample/image.jpg -m sample/test.json -p sample/c.jpg -o signed_image.jpg
 ```
 
 #### Forced overwrite
@@ -93,7 +93,7 @@ c2patool image.jpg -s -m sample/test.json -o signed_image.jpg
 The `-r` or `--remote` option places an http reference to manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a ".c2pa" extension. The manifest should then be placed at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched. 
 
 ```shell
-c2patool image.jpg -r http://my_server/myasset.c2pa -m sample/test.json -o signed_image.jpg
+c2patool sample/image.jpg -r http://my_server/myasset.c2pa -m sample/test.json -o signed_image.jpg
 ```
 
 In the example above c2patool will try to fetch the manifest for new_manifest.jpg from http://my_server/myasset.c2pa during validation.
@@ -133,7 +133,7 @@ The [manifest definition](#manifest-definition-format) can also be passed on the
 In this example we are adding a custom assertion called "org.contentauth.test".
 
 ```shell
-c2patool image.json -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
+c2patool sample/image.json -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
 ```
 
 ### Manifest definition format
