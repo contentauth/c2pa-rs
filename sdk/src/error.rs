@@ -81,6 +81,9 @@ pub enum Error {
     #[error("update manifest is invalid")]
     UpdateManifestInvalid,
 
+    #[error("more than one manifest store detected")]
+    TooManyManifestStores,
+
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {
