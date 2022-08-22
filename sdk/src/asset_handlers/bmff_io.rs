@@ -769,6 +769,28 @@ pub(crate) fn build_bmff_tree(
     Ok(())
 }
 
+fn get_manifest_token(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_map: &HashMap<String, Vec<Token>>,
+) -> Option<Token> {
+    if let Some(uuid_list) = bmff_map.get("/uuid") {
+        for uuid_token in uuid_list {
+            let box_info = &bmff_tree[*uuid_token];
+
+            // make sure it is UUID box
+            if box_info.data.box_type == BoxType::UuidBox {
+                if let Some(uuid) = &box_info.data.user_type {
+                    // make sure it is a C2PA ContentProvenanceBox box
+                    if vec_compare(&C2PA_UUID, uuid) {
+                        return Some(*uuid_token);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl CAILoader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let start = reader.seek(SeekFrom::Current(0))?;
@@ -793,7 +815,7 @@ impl CAILoader for BmffIO {
         // build layout of the BMFF structure
         build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
-        let mut output: Vec<u8> = Vec::new();
+        let mut output: Option<Vec<u8>> = None;
 
         // grab top level (for now) C2PA box
         if let Some(uuid_list) = bmff_map.get("/uuid") {
@@ -841,14 +863,15 @@ impl CAILoader for BmffIO {
 
                                 // if no offset this contains the manifest
                                 if offset == 0 {
-                                    if manifest_store_cnt == 1 {
+                                    if manifest_store_cnt == 0 {
+                                        let mut manifest = vec![0u8; data_len as usize];
+                                        reader.read_exact(&mut manifest)?;
+                                        output = Some(manifest);
+
+                                        manifest_store_cnt += 1;
+                                    } else {
                                         return Err(Error::TooManyManifestStores);
                                     }
-
-                                    output = vec![0u8; data_len as usize];
-                                    reader.read_exact(&mut buf)?;
-
-                                    manifest_store_cnt += 1;
                                 } else {
                                     // handle aux uuids
                                     let mut buf = vec![0u8; data_len as usize];
@@ -866,11 +889,7 @@ impl CAILoader for BmffIO {
             }
         }
 
-        if output.is_empty() {
-            Err(Error::JumbfNotFound)
-        } else {
-            Ok(output)
-        }
+        output.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
@@ -925,25 +944,14 @@ impl AssetIO for BmffIO {
         let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa
-        let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
-            let uuid_info = &bmff_tree[uuid_tokens[0]].data;
+        let (c2pa_start, c2pa_length) =
+            if let Some(c2pa_token) = get_manifest_token(&bmff_tree, &bmff_map) {
+                let uuid_info = &bmff_tree[c2pa_token].data;
 
-            // is this a C2PA manifest
-            let is_c2pa = if let Some(uuid) = &uuid_info.user_type {
-                // make sure it is a C2PA box
-                vec_compare(&C2PA_UUID, uuid)
-            } else {
-                false
-            };
-
-            if is_c2pa {
                 (uuid_info.offset, Some(uuid_info.size))
             } else {
                 ((ftyp_offset + ftyp_size), None)
-            }
-        } else {
-            ((ftyp_offset + ftyp_size), None)
-        };
+            };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
