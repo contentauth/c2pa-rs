@@ -187,6 +187,7 @@ impl CAILoader for JpegIO {
 
                                 cai_seg_cnt += 1;
                             } else if raw_vec.len() > 28 {
+                                // must be at least 28 bytes for this to be a valid JUMBF box
                                 // check if this is a CAI JUMBF block
                                 let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
                                 let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
