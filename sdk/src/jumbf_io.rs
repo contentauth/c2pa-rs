@@ -61,8 +61,14 @@ static BMFF_TYPES: [&str; 12] = [
 ];
 
 #[cfg(feature = "file_io")]
+static VIDEO_TYPES: [&str; 4] = ["mp4", "mov", "application/mp4", "video/mp4"];
+
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    BMFF_TYPES.contains(&asset_type)
+    BMFF_TYPES.contains(&asset_type.to_lowercase().as_str())
+}
+
+pub(crate) fn is_video_format(asset_type: &str) -> bool {
+    VIDEO_TYPES.contains(&asset_type.to_lowercase().as_str())
 }
 
 /// Return jumbf block from in memory asset

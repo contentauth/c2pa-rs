@@ -928,4 +928,14 @@ mod tests_file_io {
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_mp4_thumbnail() {
+        let ap = fixture_path("video1.mp4");
+        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        println!("ingredient = {}", ingredient);
+        assert_eq!(ingredient.validation_status(), None);
+        assert!(ingredient.thumbnail().is_some());
+    }
 }
