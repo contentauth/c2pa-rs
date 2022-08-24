@@ -110,6 +110,16 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
 fn get_cai_data(f: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let ps = get_png_chunk_positions(f)?;
 
+    if ps
+        .clone()
+        .into_iter()
+        .filter(|pcp| pcp.name == CAI_CHUNK)
+        .count()
+        > 1
+    {
+        return Err(Error::TooManyManifestStores);
+    }
+
     let pcp = ps
         .into_iter()
         .find(|pcp| pcp.name == CAI_CHUNK)

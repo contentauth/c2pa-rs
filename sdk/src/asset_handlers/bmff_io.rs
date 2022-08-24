@@ -769,6 +769,28 @@ pub(crate) fn build_bmff_tree(
     Ok(())
 }
 
+fn get_manifest_token(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_map: &HashMap<String, Vec<Token>>,
+) -> Option<Token> {
+    if let Some(uuid_list) = bmff_map.get("/uuid") {
+        for uuid_token in uuid_list {
+            let box_info = &bmff_tree[*uuid_token];
+
+            // make sure it is UUID box
+            if box_info.data.box_type == BoxType::UuidBox {
+                if let Some(uuid) = &box_info.data.user_type {
+                    // make sure it is a C2PA ContentProvenanceBox box
+                    if vec_compare(&C2PA_UUID, uuid) {
+                        return Some(*uuid_token);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl CAILoader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let start = reader.seek(SeekFrom::Current(0))?;
@@ -793,71 +815,81 @@ impl CAILoader for BmffIO {
         // build layout of the BMFF structure
         build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
+        let mut output: Option<Vec<u8>> = None;
+
         // grab top level (for now) C2PA box
         if let Some(uuid_list) = bmff_map.get("/uuid") {
-            let uuid_token = &uuid_list[0];
-            let box_info = &bmff_tree[*uuid_token];
+            let mut manifest_store_cnt = 0;
 
-            // make sure it is UUID box
-            if box_info.data.box_type == BoxType::UuidBox {
-                if let Some(uuid) = &box_info.data.user_type {
-                    // make sure it is a C2PA ContentProvenanceBox box
-                    if vec_compare(&C2PA_UUID, uuid) {
-                        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+            for uuid_token in uuid_list {
+                let box_info = &bmff_tree[*uuid_token];
 
-                        // set reader to start of box contents
-                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+                // make sure it is UUID box
+                if box_info.data.box_type == BoxType::UuidBox {
+                    if let Some(uuid) = &box_info.data.user_type {
+                        // make sure it is a C2PA ContentProvenanceBox box
+                        if vec_compare(&C2PA_UUID, uuid) {
+                            let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
 
-                        // Fullbox => 8 bits for version 24 bits for flags
-                        let (_version, _flags) = read_box_header_ext(reader)?;
-                        data_len -= 4;
+                            // set reader to start of box contents
+                            skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
-                        // get the purpose
-                        let mut purpose = Vec::with_capacity(64);
-                        loop {
-                            let mut buf = [0; 1];
-                            reader.read_exact(&mut buf)?;
-                            data_len -= 1;
-                            if buf[0] == 0x00 {
-                                break;
-                            } else {
-                                purpose.push(buf[0]);
-                            }
-                        }
+                            // Fullbox => 8 bits for version 24 bits for flags
+                            let (_version, _flags) = read_box_header_ext(reader)?;
+                            data_len -= 4;
 
-                        // is the purpose manifest?
-                        if vec_compare(&purpose, MANIFEST.as_bytes()) {
-                            // offset to first aux uuid with purpose merkle
-                            let mut buf = [0u8; 8];
-                            reader.read_exact(&mut buf)?;
-                            data_len -= 8;
-
-                            // offset to first aux uuid
-                            let offset = u64::from_be_bytes(buf);
-
-                            // if no offset this contains the manifest
-                            if offset == 0 {
-                                let mut buf = vec![0u8; data_len as usize];
+                            // get the purpose
+                            let mut purpose = Vec::with_capacity(64);
+                            loop {
+                                let mut buf = [0; 1];
                                 reader.read_exact(&mut buf)?;
-
-                                return Ok(buf);
-                            } else {
-                                // handle aux uuids
-                                let mut buf = vec![0u8; data_len as usize];
-                                reader.read_exact(&mut buf)?;
-
-                                let _mm: BmffMerkleMap = serde_cbor::from_slice(&buf)?;
+                                data_len -= 1;
+                                if buf[0] == 0x00 {
+                                    break;
+                                } else {
+                                    purpose.push(buf[0]);
+                                }
                             }
-                        } else if vec_compare(&purpose, MERKLE.as_bytes()) {
-                            // handle merkle boxes not yet handled
-                            return Err(Error::UnsupportedType);
+
+                            // is the purpose manifest?
+                            if vec_compare(&purpose, MANIFEST.as_bytes()) {
+                                // offset to first aux uuid with purpose merkle
+                                let mut buf = [0u8; 8];
+                                reader.read_exact(&mut buf)?;
+                                data_len -= 8;
+
+                                // offset to first aux uuid
+                                let offset = u64::from_be_bytes(buf);
+
+                                // if no offset this contains the manifest
+                                if offset == 0 {
+                                    if manifest_store_cnt == 0 {
+                                        let mut manifest = vec![0u8; data_len as usize];
+                                        reader.read_exact(&mut manifest)?;
+                                        output = Some(manifest);
+
+                                        manifest_store_cnt += 1;
+                                    } else {
+                                        return Err(Error::TooManyManifestStores);
+                                    }
+                                } else {
+                                    // handle aux uuids
+                                    let mut buf = vec![0u8; data_len as usize];
+                                    reader.read_exact(&mut buf)?;
+
+                                    let _mm: BmffMerkleMap = serde_cbor::from_slice(&buf)?;
+                                }
+                            } else if vec_compare(&purpose, MERKLE.as_bytes()) {
+                                // handle merkle boxes not yet handled
+                                return Err(Error::UnsupportedType);
+                            }
                         }
                     }
                 }
             }
         }
 
-        Err(Error::JumbfNotFound)
+        output.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
@@ -912,25 +944,14 @@ impl AssetIO for BmffIO {
         let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa
-        let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
-            let uuid_info = &bmff_tree[uuid_tokens[0]].data;
+        let (c2pa_start, c2pa_length) =
+            if let Some(c2pa_token) = get_manifest_token(&bmff_tree, &bmff_map) {
+                let uuid_info = &bmff_tree[c2pa_token].data;
 
-            // is this a C2PA manifest
-            let is_c2pa = if let Some(uuid) = &uuid_info.user_type {
-                // make sure it is a C2PA box
-                vec_compare(&C2PA_UUID, uuid)
-            } else {
-                false
-            };
-
-            if is_c2pa {
                 (uuid_info.offset, Some(uuid_info.size))
             } else {
                 ((ftyp_offset + ftyp_size), None)
-            }
-        } else {
-            ((ftyp_offset + ftyp_size), None)
-        };
+            };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
