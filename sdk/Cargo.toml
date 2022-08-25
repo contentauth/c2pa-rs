@@ -60,6 +60,7 @@ ciborium = "0.2.0"
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
+flate2 = "1.0.24"
 hex = "0.4.3"
 img-parts = "0.2.3"
 log = "0.4.8"
@@ -92,6 +93,7 @@ image = { version = "0.24.2", optional = true }
 instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "0.5.1", optional = true }
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "0.2", features = ["color"] }
