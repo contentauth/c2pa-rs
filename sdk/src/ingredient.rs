@@ -930,7 +930,7 @@ mod tests_file_io {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "add_video_thumbnails", feature = "file_io"))]
     fn test_mp4_thumbnail() {
         let ap = fixture_path("video1.mp4");
         let ingredient = Ingredient::from_file(&ap).expect("from_file");

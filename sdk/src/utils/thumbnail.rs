@@ -11,11 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{path::{PathBuf}, cmp::min};
+use std::path::PathBuf;
 
-use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+use image::{DynamicImage, ImageFormat, RgbImage};
+
+#[cfg(feature = "add_video_thumbnails")]
 extern crate ffmpeg_next as ffmpeg;
 
+#[cfg(feature = "add_video_thumbnails")]
 use ffmpeg::{
     format::{input, Pixel},
     media::Type,
@@ -28,7 +31,6 @@ use crate::{jumbf_io::is_video_format, Error, Result};
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
 const THUMBNAIL_JPEG_QUALITY: u8 = 80; // JPEG quality 1-100
-const THUMBNAIL_MAX_FRAME_SEARCH: i64  =  60 * 30;  // 60 seconds at 30 fps
 
 ///  utility to generate a thumbnail from a file at path
 /// returns Result (format, image_bits) if successful, otherwise Error
@@ -77,72 +79,79 @@ pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
     Ok((format, cursor.into_inner()))
 }
 
+#[allow(unused_variables)]
 fn extract_frame_from_video(path: PathBuf) -> Option<RgbImage> {
-    ffmpeg::init().ok()?;
+    #[cfg(feature = "add_video_thumbnails")]
+    {
+        const THUMBNAIL_MAX_FRAME_SEARCH: i64 = 60 * 30; // 60 seconds at 30 fps
 
-    if let Ok(mut ictx) = input(&path) {
-        let input = ictx.streams().best(Type::Video)?;
-        let video_stream_index = input.index();
-        let context_decoder =
-            ffmpeg::codec::context::Context::from_parameters(input.parameters()).ok()?;
-        let mut decoder = context_decoder.decoder().video().ok()?;
+        ffmpeg::init().ok()?;
 
-        // set size of out
-        let longest_edge = THUMBNAIL_LONGEST_EDGE;
+        if let Ok(mut ictx) = input(&path) {
+            let input = ictx.streams().best(Type::Video)?;
+            let video_stream_index = input.index();
+            let context_decoder =
+                ffmpeg::codec::context::Context::from_parameters(input.parameters()).ok()?;
+            let mut decoder = context_decoder.decoder().video().ok()?;
 
-        // generate a thumbnail image scaled down and in jpeg format
-        let mut output_width = decoder.width();
-        let mut output_height = decoder.height();
-        let aspect_ratio = output_width as f32 / output_height as f32;
+            // set size of out
+            let longest_edge = THUMBNAIL_LONGEST_EDGE;
 
-        // use longest edge or thumbnail max but keep aspect ratio
-        if decoder.width() > longest_edge || decoder.height() > longest_edge {
-            if output_height > output_width {
-                output_width = (longest_edge as f32 * aspect_ratio) as u32;
-                output_height = longest_edge;
-            } else {
-                output_height = (longest_edge as f32 / aspect_ratio) as u32;
-                output_width = longest_edge;
-            }
-        }
+            // generate a thumbnail image scaled down and in jpeg format
+            let mut output_width = decoder.width();
+            let mut output_height = decoder.height();
+            let aspect_ratio = output_width as f32 / output_height as f32;
 
-        let mut scaler = Context::get(
-            decoder.format(),
-            decoder.width(),
-            decoder.height(),
-            Pixel::RGB24,
-            output_width,
-            output_height,
-            Flags::BILINEAR,
-        )
-        .ok()?;
-
-        let mut frame_index: i64 = 0;
-
-        for (stream, packet) in ictx.packets() {
-            if stream.index() == video_stream_index {
-                let frames = stream.frames();
-                // todo: allow users to select by time 
-                let save_frame = min(frames / 2, THUMBNAIL_MAX_FRAME_SEARCH); // grab a frame in the middle of the stream or max search
-
-                decoder.send_packet(&packet).ok()?;
-
-                let mut decoded = Video::empty();
-                while decoder.receive_frame(&mut decoded).is_ok() {
-                    if frame_index == save_frame {
-                        let mut rgb_frame = Video::empty();
-                        scaler.run(&decoded, &mut rgb_frame).ok()?;
-                        return Some(frame_to_rgb(&rgb_frame));
-                    }
-                    frame_index += 1;
+            // use longest edge or thumbnail max but keep aspect ratio
+            if decoder.width() > longest_edge || decoder.height() > longest_edge {
+                if output_height > output_width {
+                    output_width = (longest_edge as f32 * aspect_ratio) as u32;
+                    output_height = longest_edge;
+                } else {
+                    output_height = (longest_edge as f32 / aspect_ratio) as u32;
+                    output_width = longest_edge;
                 }
             }
+
+            let mut scaler = Context::get(
+                decoder.format(),
+                decoder.width(),
+                decoder.height(),
+                Pixel::RGB24,
+                output_width,
+                output_height,
+                Flags::BILINEAR,
+            )
+            .ok()?;
+
+            let mut frame_index: i64 = 0;
+
+            for (stream, packet) in ictx.packets() {
+                if stream.index() == video_stream_index {
+                    let frames = stream.frames();
+                    // todo: allow users to select by time
+                    let save_frame = std::cmp::min(frames / 2, THUMBNAIL_MAX_FRAME_SEARCH); // grab a frame in the middle of the stream or max search
+
+                    decoder.send_packet(&packet).ok()?;
+
+                    let mut decoded = Video::empty();
+                    while decoder.receive_frame(&mut decoded).is_ok() {
+                        if frame_index == save_frame {
+                            let mut rgb_frame = Video::empty();
+                            scaler.run(&decoded, &mut rgb_frame).ok()?;
+                            return Some(frame_to_rgb(&rgb_frame));
+                        }
+                        frame_index += 1;
+                    }
+                }
+            }
+            decoder.send_eof().ok()?;
         }
-        decoder.send_eof().ok()?;
     }
     None
 }
 
+#[cfg(feature = "add_video_thumbnails")]
 fn frame_to_rgb(frame: &Video) -> RgbImage {
     let height = frame.height();
     let width = frame.width();
@@ -158,7 +167,7 @@ fn frame_to_rgb(frame: &Video) -> RgbImage {
             let r = source_data[src_index];
             let g = source_data[src_index + 1];
             let b = source_data[src_index + 2];
-            img.put_pixel(w, h, Rgb([r, g, b]));
+            img.put_pixel(w, h, image::Rgb([r, g, b]));
         }
     }
 

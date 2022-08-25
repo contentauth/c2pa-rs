@@ -19,6 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["add_thumbnails"]
 add_thumbnails = ["image"]
+add_video_thumbnails = ["add_thumbnails"]
 async_signer = ["async-trait", "file_io"]
 bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
@@ -60,7 +61,6 @@ ciborium = "0.2.0"
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
-ffmpeg-next = "5.1.1"
 hex = "0.4.3"
 img-parts = "0.2.3"
 log = "0.4.8"
@@ -92,6 +92,7 @@ ureq = "2.4.0"
 image = { version = "0.24.2", optional = true }
 instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
+ffmpeg-next = { version ="5.1.1", optional = true }
 xmp_toolkit = { version = "0.5.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

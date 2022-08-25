@@ -44,7 +44,7 @@ static SUPPORTED_TYPES: [&str; 18] = [
     "video/mp4",
 ];
 
-#[cfg(feature = "file_io")]
+#[allow(dead_code)]
 static BMFF_TYPES: [&str; 12] = [
     "avif",
     "heif",
@@ -60,13 +60,15 @@ static BMFF_TYPES: [&str; 12] = [
     "video/mp4",
 ];
 
-#[cfg(feature = "file_io")]
+#[allow(dead_code)]
 static VIDEO_TYPES: [&str; 4] = ["mp4", "mov", "application/mp4", "video/mp4"];
 
+#[allow(dead_code)]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     BMFF_TYPES.contains(&asset_type.to_lowercase().as_str())
 }
 
+#[allow(dead_code)]
 pub(crate) fn is_video_format(asset_type: &str) -> bool {
     VIDEO_TYPES.contains(&asset_type.to_lowercase().as_str())
 }
