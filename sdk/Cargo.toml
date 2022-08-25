@@ -9,7 +9,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2018"
-rust-version = "1.58.0"
+rust-version = "1.59.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -94,6 +94,7 @@ instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
 ffmpeg-next = { version ="5.1.1", optional = true }
 xmp_toolkit = { version = "0.5.1", optional = true }
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "0.2", features = ["color"] }

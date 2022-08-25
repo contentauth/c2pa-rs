@@ -148,6 +148,28 @@ fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
         }
     }
 }
+
+fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> {
+    let mut bytes_read: u32 = 0;
+    let mut s: Vec<u8> = Vec::with_capacity(80);
+
+    loop {
+        let c = asset_reader.read_u8()?;
+        if c == 0 {
+            break;
+        }
+
+        s.push(c);
+
+        bytes_read += 1;
+
+        if bytes_read == max_read {
+            break;
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&s).to_string())
+}
 pub struct PngIO {}
 
 impl CAILoader for PngIO {
@@ -158,15 +180,93 @@ impl CAILoader for PngIO {
 
     // Get XMP block
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let chunks = png_pong::Decoder::new(asset_reader).ok()?.into_chunks();
-        for chunk_r in chunks.flatten() {
-            if let png_pong::chunk::Chunk::InternationalText(c) = chunk_r {
-                if c.key == XMP_KEY {
-                    return Some(c.val);
+        const ITXT_CHUNK: [u8; 4] = *b"iTXt";
+
+        let ps = get_png_chunk_positions(asset_reader).ok()?;
+        let mut xmp_str: Option<String> = None;
+
+        ps.into_iter().find(|pcp| {
+            if pcp.name == ITXT_CHUNK {
+                // seek to start of chunk
+                if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                    // move +8 to get past header
+                    return false;
                 }
+
+                // parse the iTxt block
+                if let Ok(key) = read_string(asset_reader, pcp.length) {
+                    if key.is_empty() || key.len() > 79 {
+                        return false;
+                    }
+
+                    // is this an XMP key
+                    if key != XMP_KEY {
+                        return false;
+                    }
+
+                    // parse rest of iTxt to get the xmp value
+                    let compressed = match asset_reader.read_u8() {
+                        Ok(c) => c != 0,
+                        Err(_) => return false,
+                    };
+
+                    let _compression_method = match asset_reader.read_u8() {
+                        Ok(c) => c != 0,
+                        Err(_) => return false,
+                    };
+
+                    let _langtag = match read_string(asset_reader, pcp.length) {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+
+                    let _transkey = match read_string(asset_reader, pcp.length) {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+
+                    // read iTxt data
+                    let mut data = vec![
+                        0u8;
+                        pcp.length as usize
+                            - (key.len() + _langtag.len() + _transkey.len() + 5)
+                                as usize
+                    ]; // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
+                    if asset_reader.read_exact(&mut data).is_err() {
+                        return false;
+                    }
+
+                    // convert to string, decompress if needed
+                    let val = if compressed {
+                        /*  should not be needed for current XMP
+                        use flate2::read::GzDecoder;
+
+                        let cursor = Cursor::new(data);
+
+                        let mut d = GzDecoder::new(cursor);
+                        let mut s = String::new();
+                        if d.read_to_string(&mut s).is_err() {
+                            return false;
+                        }
+                        s
+                        */
+                        return false;
+                    } else {
+                        String::from_utf8_lossy(&data).to_string()
+                    };
+
+                    xmp_str = Some(val);
+
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             }
-        }
-        None
+        });
+
+        xmp_str
     }
 }
 
@@ -295,6 +395,20 @@ pub mod tests {
 
     use super::*;
 
+    #[test]
+    fn test_png_xmp() {
+        let ap = crate::utils::test::fixture_path("libpng-test_with_url.png");
+
+        let png_io = PngIO {};
+        let xmp = png_io
+            .read_xmp(&mut std::fs::File::open(&ap).unwrap())
+            .unwrap();
+
+        // make sure we can parse it
+        let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
+
+        assert!(provenance.contains("libpng-test"));
+    }
     #[test]
     fn test_png_parse() {
         let ap = crate::utils::test::fixture_path("libpng-test.png");
