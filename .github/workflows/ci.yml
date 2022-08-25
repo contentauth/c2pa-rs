@@ -69,7 +69,7 @@ jobs:
         uses: Swatinem/rust-cache@v1
 
       # Note that we do not run code coverage because
-      # it was not stabilized as of 1.58.0.
+      # it was not stabilized as of 1.59.0.
 
       - name: Run self tests
         uses: actions-rs/cargo@v1
