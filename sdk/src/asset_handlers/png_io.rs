@@ -180,18 +180,6 @@ impl CAILoader for PngIO {
 
     // Get XMP block
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        /*
-        let chunks = png_pong::Decoder::new(asset_reader).ok()?.into_chunks();
-        for chunk_r in chunks.flatten() {
-            if let png_pong::chunk::Chunk::InternationalText(c) = chunk_r {
-                if c.key == XMP_KEY {
-                    return Some(c.val);
-                }
-            }
-        }
-        None
-        */
-
         const ITXT_CHUNK: [u8; 4] = *b"iTXt";
 
         let ps = get_png_chunk_positions(asset_reader).ok()?;
@@ -250,6 +238,7 @@ impl CAILoader for PngIO {
 
                     // convert to string, decompress if needed
                     let val = if compressed {
+                        /*  should not be needed for current XMP
                         use flate2::read::GzDecoder;
 
                         let cursor = Cursor::new(data);
@@ -260,6 +249,8 @@ impl CAILoader for PngIO {
                             return false;
                         }
                         s
+                        */
+                        return false;
                     } else {
                         String::from_utf8_lossy(&data).to_string()
                     };
