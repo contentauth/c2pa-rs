@@ -1913,6 +1913,7 @@ impl Store {
                         Error::FileNotFound(asset_path.to_string_lossy().to_string())
                     }
                     Error::UnsupportedType => Error::UnsupportedType,
+                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
                     _ => Error::LogStop,
                 };
                 let log_item = log_item!("asset", "error loading file", "load_from_asset").error(e);
@@ -1941,6 +1942,7 @@ impl Store {
                     Error::PrereleaseError => Error::PrereleaseError,
                     Error::JumbfNotFound => Error::JumbfNotFound,
                     Error::UnsupportedType => Error::UnsupportedType,
+                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
                     _ => Error::LogStop,
                 };
                 let log_item =
