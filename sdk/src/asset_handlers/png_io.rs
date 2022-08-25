@@ -13,7 +13,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, Read, SeekFrom},
+    io::{Cursor, SeekFrom},
     path::*,
 };
 
