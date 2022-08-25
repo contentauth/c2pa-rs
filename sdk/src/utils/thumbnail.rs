@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::{PathBuf};
+use std::{path::{PathBuf}, cmp::min};
 
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 extern crate ffmpeg_next as ffmpeg;
@@ -28,6 +28,7 @@ use crate::{jumbf_io::is_video_format, Error, Result};
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
 const THUMBNAIL_JPEG_QUALITY: u8 = 80; // JPEG quality 1-100
+const THUMBNAIL_MAX_FRAME_SEARCH: i64  =  60 * 30;  // 60 seconds at 30 fps
 
 ///  utility to generate a thumbnail from a file at path
 /// returns Result (format, image_bits) if successful, otherwise Error
@@ -100,7 +101,7 @@ fn extract_frame_from_video(path: PathBuf) -> Option<RgbImage> {
                 output_width = (longest_edge as f32 * aspect_ratio) as u32;
                 output_height = longest_edge;
             } else {
-                output_height = (longest_edge as f32 * aspect_ratio) as u32;
+                output_height = (longest_edge as f32 / aspect_ratio) as u32;
                 output_width = longest_edge;
             }
         }
@@ -121,7 +122,8 @@ fn extract_frame_from_video(path: PathBuf) -> Option<RgbImage> {
         for (stream, packet) in ictx.packets() {
             if stream.index() == video_stream_index {
                 let frames = stream.frames();
-                let save_frame = frames / 2; // grab a frame in the middle of the stream
+                // todo: allow users to select by time 
+                let save_frame = min(frames / 2, THUMBNAIL_MAX_FRAME_SEARCH); // grab a frame in the middle of the stream or max search
 
                 decoder.send_packet(&packet).ok()?;
 
