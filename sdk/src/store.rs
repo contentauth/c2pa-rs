@@ -1906,18 +1906,16 @@ impl Store {
                 Ok(store)
             })
             .map_err(|e| {
-                let err = match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::IoError(_) => {
-                        Error::FileNotFound(asset_path.to_string_lossy().to_string())
-                    }
-                    Error::UnsupportedType => Error::UnsupportedType,
+                validation_log.log_silent(
+                    log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
+                );
+                match e {
+                    Error::PrereleaseError
+                    | Error::JumbfNotFound
+                    | Error::IoError(_)
+                    | Error::UnsupportedType => e,
                     _ => Error::LogStop,
-                };
-                let log_item = log_item!("asset", "error loading file", "load_from_asset").error(e);
-                validation_log.log_silent(log_item);
-                err
+                }
             })
     }
 
@@ -1937,16 +1935,14 @@ impl Store {
         Self::load_cai_from_memory(asset_type, data, validation_log)
             .map(|store| (store, xmp))
             .map_err(|e| {
-                let err = match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::UnsupportedType => Error::UnsupportedType,
+                validation_log.log_silent(
+                    log_item!("asset", "error loading asset", "get_store_from_memory")
+                        .set_error(&e),
+                );
+                match e {
+                    Error::PrereleaseError | Error::JumbfNotFound | Error::UnsupportedType => e,
                     _ => Error::LogStop,
-                };
-                let log_item =
-                    log_item!("asset", "error loading asset", "get_store_from_memory").error(e);
-                validation_log.log_silent(log_item);
-                err
+                }
             })
     }
 

@@ -47,6 +47,14 @@ impl LogItem {
         }
     }
 
+    // add an error value
+    pub fn set_error(self, err: &Error) -> Self {
+        LogItem {
+            err_val: Some(format!("{:?}", err)),
+            ..self
+        }
+    }
+
     /// returns a reference to the error string if there is one
     pub fn error_str(&self) -> Option<&str> {
         self.err_val.as_deref()
