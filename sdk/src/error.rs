@@ -164,8 +164,6 @@ pub enum Error {
     #[error("thread receive error")]
     ThreadReceiveError,
 
-    /// No JUMBF data found.
-    /// TODO before merging PR: Does this error case need to be part of the public API?
     #[error("no JUMBF data found")]
     JumbfNotFound,
 
@@ -174,6 +172,9 @@ pub enum Error {
 
     #[error("could not fetch the remote manifest")]
     RemoteManifestFetch(String),
+
+    #[error("must fetch remote manifests from url")]
+    RemoteManifestUrl(String),
 
     #[error("stopped because of logged error")]
     LogStop,

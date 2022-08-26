@@ -1834,10 +1834,27 @@ impl Store {
         data: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        load_jumbf_from_memory(asset_type, data).and_then(|cai_block| {
-            // load and validate with CAI toolkit and dump if desired
-            Store::from_jumbf(&cai_block, validation_log)
-        })
+        match load_jumbf_from_memory(asset_type, data) {
+            Ok(manifest_bytes) => {
+                // load and validate with CAI toolkit and dump if desired
+                Store::from_jumbf(&manifest_bytes, validation_log)
+            }
+            Err(Error::JumbfNotFound) => {
+                let mut buf_reader = Cursor::new(data);
+                if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
+                    &mut buf_reader,
+                    asset_type,
+                )
+                .provenance
+                {
+                    // return an error with the url that should be read
+                    Err(Error::RemoteManifestUrl(ext_ref))
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// load a CAI store from  a file
@@ -1874,7 +1891,8 @@ impl Store {
                             let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
                             Store::from_jumbf(&remote_manifest_bytes, validation_log)
                         } else {
-                            Err(Error::JumbfNotFound)
+                            // return an error with the url that should be read
+                            Err(Error::RemoteManifestUrl(ext_ref))
                         }
                     } else {
                         Err(Error::JumbfNotFound)
@@ -2736,11 +2754,6 @@ pub mod tests {
             .error_str()
             .unwrap()
             .starts_with("ClaimDecoding"))
-        // assert!(matches!(
-        //     report.get_log()[0].err_val,
-        //     Some(Error::ClaimDecoding)
-        // ));
-        //assert_eq!(report[0].validation_status.as_deref(), Some(???));  // what validation status should we have for this?
     }
 
     #[test]
@@ -3005,5 +3018,65 @@ pub mod tests {
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
+    }
+
+    #[test]
+    fn test_external_manifest_from_memory() {
+        // test adding to actual image
+        let ap = fixture_path("libpng-test.png");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+
+        let sidecar = op.with_extension(MANIFEST_STORE_EXT);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // start with base url
+        let fp = format!("file:/{}", sidecar.to_str().unwrap());
+        let url = url::Url::parse(&fp).unwrap();
+
+        let url_string: String = url.into();
+
+        // set claim for side car with remote manifest embedding generation
+        claim.set_remote_manifest(url_string.clone()).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+
+        // delete the sidecar so we can test for url only rea
+        // std::fs::remove_file(sidecar);
+
+        assert!(sidecar.exists());
+
+        // load external manifest
+        let loaded_manifest = std::fs::read(sidecar).unwrap();
+
+        // compare returned to external
+        assert_eq!(saved_manifest, loaded_manifest);
+
+        // Load the exported file into a buffer
+        let file_buffer = std::fs::read(&op).unwrap();
+
+        let mut validation_log = OneShotStatusTracker::default();
+        let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
+
+        assert!(result.is_err());
+
+        // verify that we got  RemoteManifestUrl error with the expected url
+        match result {
+            Ok(_store) => panic!("did not expect to have a store"),
+            Err(e) => match e {
+                Error::RemoteManifestUrl(url) => assert_eq!(url, url_string),
+                _ => panic!("unexepected error"),
+            },
+        }
     }
 }
