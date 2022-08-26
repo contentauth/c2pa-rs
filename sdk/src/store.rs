@@ -47,7 +47,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{self, boxes::*},
-    jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
+    jumbf_io::load_jumbf_from_memory,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     validation_status, ManifestStoreReport,
 };
@@ -1909,14 +1909,7 @@ impl Store {
                 validation_log.log_silent(
                     log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
                 );
-                match e {
-                    Error::PrereleaseError
-                    | Error::JumbfNotFound
-                    | Error::IoError(_)
-                    | Error::RemoteManifestFetch(_)
-                    | Error::UnsupportedType => e,
-                    _ => Error::LogStop,
-                }
+                e
             })
     }
 
@@ -1924,30 +1917,14 @@ impl Store {
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
-    ) -> Result<(Store, Option<String>)> {
-        let cai_loader = get_cailoader_handler(asset_type).ok_or(Error::UnsupportedType)?;
-
-        let mut buf_reader = Cursor::new(data);
-
-        // check for xmp, error if not present
-        let xmp = cai_loader.read_xmp(&mut buf_reader);
-
+    ) -> Result<Store> {
         // load jumbf if available
-        Self::load_cai_from_memory(asset_type, data, validation_log)
-            .map(|store| (store, xmp))
-            .map_err(|e| {
-                validation_log.log_silent(
-                    log_item!("asset", "error loading asset", "get_store_from_memory")
-                        .set_error(&e),
-                );
-                match e {
-                    Error::PrereleaseError
-                    | Error::JumbfNotFound
-                    | Error::RemoteManifestFetch(_)
-                    | Error::UnsupportedType => e,
-                    _ => Error::LogStop,
-                }
-            })
+        Self::load_cai_from_memory(asset_type, data, validation_log).map_err(|e| {
+            validation_log.log_silent(
+                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(&e),
+            );
+            e
+        })
     }
 
     /// Returns embedded remote manifest URL if available
@@ -1979,17 +1956,15 @@ impl Store {
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        Store::get_store_from_memory(asset_type, data, validation_log).and_then(
-            |(store, _xmp_opt)| {
-                // verify the store
-                if verify {
-                    // verify store and claims
-                    Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
-                }
+        Store::get_store_from_memory(asset_type, data, validation_log).and_then(|store| {
+            // verify the store
+            if verify {
+                // verify store and claims
+                Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
+            }
 
-                Ok(store)
-            },
-        )
+            Ok(store)
+        })
     }
 
     /// Load Store from a in-memory asset asychronously validating
@@ -2003,7 +1978,7 @@ impl Store {
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        let (store, _xmp_opt) = Store::get_store_from_memory(asset_type, data, validation_log)?;
+        let store = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
         // verify the store
         if verify {
