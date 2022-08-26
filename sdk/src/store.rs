@@ -2617,10 +2617,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::IoError(_err))
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("IoError"));
     }
 
     #[test]
@@ -2636,10 +2633,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::PrereleaseError)
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
     }
 
     #[test]
@@ -2763,10 +2757,14 @@ pub mod tests {
         // modify a required field label in the claim - causes failure to read claim from cbor
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
-        assert!(matches!(
-            report.get_log()[0].err_val,
-            Some(Error::ClaimDecoding)
-        ));
+        assert!(report.get_log()[0]
+            .error_str()
+            .unwrap()
+            .starts_with("ClaimDecoding"))
+        // assert!(matches!(
+        //     report.get_log()[0].err_val,
+        //     Some(Error::ClaimDecoding)
+        // ));
         //assert_eq!(report[0].validation_status.as_deref(), Some(???));  // what validation status should we have for this?
     }
 
@@ -2781,7 +2779,7 @@ pub mod tests {
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
-        assert!(matches!(errors[0].err_val, Some(Error::HashMismatch(_))));
+        assert!(errors[0].error_str().unwrap().starts_with("HashMismatch"));
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_DATAHASH_MISMATCH)
