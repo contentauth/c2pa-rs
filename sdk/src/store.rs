@@ -1913,6 +1913,7 @@ impl Store {
                     Error::PrereleaseError
                     | Error::JumbfNotFound
                     | Error::IoError(_)
+                    | Error::RemoteManifestFetch(_)
                     | Error::UnsupportedType => e,
                     _ => Error::LogStop,
                 }
@@ -1940,7 +1941,10 @@ impl Store {
                         .set_error(&e),
                 );
                 match e {
-                    Error::PrereleaseError | Error::JumbfNotFound | Error::UnsupportedType => e,
+                    Error::PrereleaseError
+                    | Error::JumbfNotFound
+                    | Error::RemoteManifestFetch(_)
+                    | Error::UnsupportedType => e,
                     _ => Error::LogStop,
                 }
             })
