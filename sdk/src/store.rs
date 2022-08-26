@@ -1914,32 +1914,21 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
-        match Self::load_cai_from_file(asset_path, validation_log) {
-            Ok(mut store) => {
+        Self::load_cai_from_file(asset_path, validation_log)
+            .and_then(|mut store| {
                 // verify the store
                 if verify {
                     store.verify_from_path(asset_path, validation_log)?;
                 }
 
                 Ok(store)
-            }
-            Err(e) => {
-                let err = match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::IoError(_) => {
-                        Error::FileNotFound(asset_path.to_string_lossy().to_string())
-                    }
-                    Error::UnsupportedType => Error::UnsupportedType,
-                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
-                    Error::RemoteManifestUrl(url) => return Err(Error::RemoteManifestUrl(url)),
-                    _ => Error::LogStop,
-                };
-                let log_item = log_item!("asset", "error loading file", "load_from_asset").error(e);
-                validation_log.log_silent(log_item);
-                Err(err)
-            }
-        }
+            })
+            .map_err(|e| {
+                validation_log.log_silent(
+                    log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
+                );
+                e
+            })
     }
 
     fn get_store_from_memory(
@@ -1948,23 +1937,12 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
-        match Self::load_cai_from_memory(asset_type, data, validation_log) {
-            Ok(store) => Ok(store),
-            Err(e) => {
-                let err = Err(match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::UnsupportedType => Error::UnsupportedType,
-                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
-                    Error::RemoteManifestUrl(url) => return Err(Error::RemoteManifestUrl(url)),
-                    _ => Error::LogStop,
-                });
-                let log_item =
-                    log_item!("asset", "error loading asset", "get_store_from_memory").error(e);
-                validation_log.log_silent(log_item);
-                err
-            }
-        }
+        Self::load_cai_from_memory(asset_type, data, validation_log).map_err(|e| {
+            validation_log.log_silent(
+                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(&e),
+            );
+            e
+        })
     }
 
     /// Returns embedded remote manifest URL if available
@@ -2632,10 +2610,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::IoError(_err))
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("IoError"));
     }
 
     #[test]
@@ -2651,10 +2626,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::PrereleaseError)
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
     }
 
     #[test]
@@ -2778,11 +2750,10 @@ pub mod tests {
         // modify a required field label in the claim - causes failure to read claim from cbor
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
-        assert!(matches!(
-            report.get_log()[0].err_val,
-            Some(Error::ClaimDecoding)
-        ));
-        //assert_eq!(report[0].validation_status.as_deref(), Some(???));  // what validation status should we have for this?
+        assert!(report.get_log()[0]
+            .error_str()
+            .unwrap()
+            .starts_with("ClaimDecoding"))
     }
 
     #[test]
@@ -2796,7 +2767,7 @@ pub mod tests {
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
-        assert!(matches!(errors[0].err_val, Some(Error::HashMismatch(_))));
+        assert!(errors[0].error_str().unwrap().starts_with("HashMismatch"));
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_DATAHASH_MISMATCH)
