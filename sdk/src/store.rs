@@ -1931,6 +1931,7 @@ impl Store {
                         Error::FileNotFound(asset_path.to_string_lossy().to_string())
                     }
                     Error::UnsupportedType => Error::UnsupportedType,
+                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
                     Error::RemoteManifestUrl(url) => return Err(Error::RemoteManifestUrl(url)),
                     _ => Error::LogStop,
                 };
@@ -1954,6 +1955,7 @@ impl Store {
                     Error::PrereleaseError => Error::PrereleaseError,
                     Error::JumbfNotFound => Error::JumbfNotFound,
                     Error::UnsupportedType => Error::UnsupportedType,
+                    Error::RemoteManifestFetch(_) => Error::RemoteManifestFetch("".to_string()),
                     Error::RemoteManifestUrl(url) => return Err(Error::RemoteManifestUrl(url)),
                     _ => Error::LogStop,
                 });
