@@ -1,6 +1,6 @@
 [package]
 name = "make_test_images"
-version = "0.12.0"
+version = "0.13.0"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
