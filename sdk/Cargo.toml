@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["add_thumbnails"]
 add_thumbnails = ["image"]
-add_video_thumbnails = ["add_thumbnails"]
+add_video_thumbnails = ["add_thumbnails", "ffmpeg-next"]
 async_signer = ["async-trait", "file_io"]
 bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
