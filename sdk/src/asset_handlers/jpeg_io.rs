@@ -404,6 +404,29 @@ impl AssetIO for JpegIO {
 
         Ok(positions)
     }
+
+    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+        let input = read(asset_path).map_err(wrap_io_err)?;
+
+        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
+
+        // save updated file
+        let output = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        jpeg.encoder()
+            .write_to(output)
+            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -430,5 +453,28 @@ pub mod tests {
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempfile::tempdir() {
+            let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let jpeg_io = JpegIO {};
+
+                if let Ok(()) = jpeg_io.remove_cai_store(&output) {
+                    match jpeg_io.read_cai_store(&output) {
+                        Ok(_) => success = false,
+                        Err(Error::JumbfNotFound) => success = true,
+                        _ => success = false,
+                    }
+                }
+            }
+        }
+        assert!(success)
     }
 }

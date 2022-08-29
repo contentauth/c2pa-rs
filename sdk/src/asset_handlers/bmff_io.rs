@@ -992,7 +992,7 @@ impl AssetIO for BmffIO {
         let offset_adjust: i32 = if end == 0 {
             new_c2pa_box_size as i32
         } else {
-            // value could be negative is box is truncated
+            // value could be negative if box is truncated
             let existing_c2pa_box_size = end - start;
             let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
             pad_size
@@ -1065,6 +1065,135 @@ impl AssetIO for BmffIO {
     ) -> Result<Vec<HashObjectPositions>> {
         let vec: Vec<HashObjectPositions> = Vec::new();
         Ok(vec)
+    }
+
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+        let mut input = File::open(asset_path)?;
+        let size = input.seek(SeekFrom::End(0))?;
+        input.seek(SeekFrom::Start(0))?;
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: size as u64,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        // build layout of the BMFF structure
+        build_bmff_tree(
+            &mut input,
+            size as u64,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+        )?;
+
+        // get position of c2pa manifest
+        let (c2pa_start, c2pa_length) =
+            if let Some(c2pa_token) = get_manifest_token(&bmff_tree, &bmff_map) {
+                let uuid_info = &bmff_tree[c2pa_token].data;
+
+                (uuid_info.offset, Some(uuid_info.size))
+            } else {
+                return Ok(()); // no box to remove
+            };
+
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
+
+        let (start, end) = if let Some(c2pa_length) = c2pa_length {
+            let start = usize::value_from(c2pa_start)
+                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::value_from(c2pa_start + c2pa_length)
+                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+
+            (start, end)
+        } else {
+            return Err(Error::BadParam("value out of range".to_string()));
+        };
+
+        // write content before ContentProvenanceBox
+        input.seek(SeekFrom::Start(0))?;
+        let mut b = vec![0u8; start];
+        input.read_exact(&mut b)?;
+        temp_file.write_all(&b)?;
+
+        // calc offset adjustments
+        // value will be negative sibce the box is truncated
+        let new_c2pa_box_size: i32 = 0;
+        let existing_c2pa_box_size = end - start;
+        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+
+        // write content after ContentProvenanceBox
+        input.seek(SeekFrom::Start(end as u64))?;
+        let mut chunk = vec![0u8; 1024 * 1024];
+        loop {
+            let len = match input.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(len) => len,
+                Err(e) => return Err(Error::IoError(e)),
+            };
+
+            temp_file.write_all(&chunk[0..len])?;
+        }
+        temp_file.flush()?;
+
+        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+        match self.bmff_format.as_ref() {
+            "m4a" | "mp4" | "mov" => {
+                // create root node
+                let root_box = BoxInfo {
+                    path: "".to_string(),
+                    offset: 0,
+                    size: size as u64,
+                    box_type: BoxType::Empty,
+                    parent: None,
+                    user_type: None,
+                    version: None,
+                    flags: None,
+                };
+
+                // rebuild box layout for output file
+                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+                let size = temp_file.seek(SeekFrom::End(0))?;
+                temp_file.seek(SeekFrom::Start(0))?;
+                build_bmff_tree(
+                    &mut temp_file,
+                    size as u64,
+                    &mut output_bmff_tree,
+                    &root_token,
+                    &mut output_bmff_map,
+                )?;
+
+                // adjust based on current layyout
+                adjust_stco_and_co64(
+                    &mut temp_file,
+                    &output_bmff_tree,
+                    &output_bmff_map,
+                    offset_adjust,
+                )?;
+            }
+            _ => (), // todo: handle more patching cases as necessary
+        }
+
+        // copy temp file to asset
+        std::fs::rename(&temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(&temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 }
 
@@ -1252,6 +1381,29 @@ pub mod tests {
                     assert_eq!(new_data, replaced);
 
                     success = true;
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = fixture_path("video1.mp4");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let bmff = BmffIO::new("mp4");
+
+                if let Ok(()) = bmff.remove_cai_store(&output) {
+                    match bmff.read_cai_store(&output) {
+                        Ok(_) => success = false,
+                        Err(Error::JumbfNotFound) => success = true,
+                        _ => success = false,
+                    }
                 }
             }
         }

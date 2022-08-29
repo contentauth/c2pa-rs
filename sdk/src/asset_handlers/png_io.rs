@@ -303,7 +303,7 @@ impl AssetIO for PngIO {
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
                 chunk identifier (4 byte character sequence)
-                chunk data (0 - n bytes of chunck data)
+                chunk data (0 - n bytes of chunk data)
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
@@ -384,6 +384,44 @@ impl AssetIO for PngIO {
 
         Ok(positions)
     }
+
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+        // get png byte
+        let mut png_buf = std::fs::read(asset_path).map_err(|_err| Error::EmbeddingError)?;
+
+        let mut cursor = Cursor::new(png_buf);
+        let ps = get_png_chunk_positions(&mut cursor)?;
+
+        // get back buffer
+        png_buf = cursor.into_inner();
+
+        /*  splice in new chunk.  Each PNG chunk has the following format:
+                chunk data length (4 bytes big endian)
+                chunk identifier (4 byte character sequence)
+                chunk data (0 - n bytes of chunk data)
+                chunk crc (4 bytes in crc in format defined in PNG spec)
+        */
+
+        // erase existing
+        let empty_buf = Vec::new();
+        let mut iter = ps.into_iter();
+        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
+            // replace existing CAI
+            let start = usize::value_from(existing_cai.start)
+                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::value_from(existing_cai.end())
+                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+
+            png_buf.splice(start..end, empty_buf.iter().cloned());
+        }
+
+        // save png data
+        std::fs::write(asset_path, png_buf)
+            .map_err(|_err| Error::BadParam("PNG write error".to_owned()))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -432,5 +470,28 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempfile::tempdir() {
+            let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
+
+            if let Ok(_size) = std::fs::copy(&source, &output) {
+                let png_io = PngIO {};
+
+                if let Ok(()) = png_io.remove_cai_store(&output) {
+                    match png_io.read_cai_store(&output) {
+                        Ok(_) => success = false,
+                        Err(Error::JumbfNotFound) => success = true,
+                        _ => success = false,
+                    }
+                }
+            }
+        }
+        assert!(success)
     }
 }
