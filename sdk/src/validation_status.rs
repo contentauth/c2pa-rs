@@ -92,6 +92,18 @@ impl ValidationStatus {
     }
 
     // Maps errors into validation_status codes.
+    fn code_from_error_str(error: &str) -> &str {
+        match error {
+            e if e.starts_with("ClaimMissing") => CLAIM_MISSING,
+            e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
+            e if e.starts_with("AssertionDecoding") => STATUS_ASSERTION_MALFORMED, // todo: no code for invalid assertion format
+            e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
+            e if e.starts_with("PrereleaseError") => STATUS_PRERELEASE,
+            _ => STATUS_OTHER,
+        }
+    }
+
+    // Maps errors into validation_status codes.
     fn code_from_error(error: &Error) -> &str {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
@@ -121,8 +133,8 @@ impl ValidationStatus {
             ),
             // If we don't have a validation_status, then make one from the err_val
             // using the description plus error text explanation.
-            None => item.err_val.as_ref().map(|e| {
-                let code = Self::code_from_error(e);
+            None => item.error_str().as_ref().map(|e| {
+                let code = Self::code_from_error_str(e);
                 Self::new(code.to_string())
                     .set_url(item.label.to_string())
                     .set_explanation(format!("{}: {}", item.description, e))

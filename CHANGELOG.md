@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.13.0
+_26 August 2022_
+
+* Add RemoteManifestUrl Error, returning url ([#120](https://github.com/contentauth/c2pa-rs/pull/120))
+* Convert status_log error val to a string so that we can return full errors ([#121](https://github.com/contentauth/c2pa-rs/pull/121))
+* Report failures from remote manifest fetch ([#116](https://github.com/contentauth/c2pa-rs/pull/116))
+* Fast XMP extraction from PNG ([#117](https://github.com/contentauth/c2pa-rs/pull/117))
+* Bump MSRV to 1.59.0 ([#118](https://github.com/contentauth/c2pa-rs/pull/118))
+* Make sure there is  a single manifest store in the asset ([#114](https://github.com/contentauth/c2pa-rs/pull/114))
+* (MINOR) Switch to "lib" for crate-type ([#113](https://github.com/contentauth/c2pa-rs/pull/113))
+
 ## 0.12.0
 _16 August 2022_
 
