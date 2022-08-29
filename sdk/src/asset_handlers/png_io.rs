@@ -476,7 +476,6 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
-        let mut success = false;
         if let Ok(temp_dir) = tempfile::tempdir() {
             let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
 
@@ -484,14 +483,13 @@ pub mod tests {
                 let png_io = PngIO {};
 
                 if let Ok(()) = png_io.remove_cai_store(&output) {
-                    match png_io.read_cai_store(&output) {
-                        Ok(_) => success = false,
-                        Err(Error::JumbfNotFound) => success = true,
-                        _ => success = false,
+                    // read back in asset, JumbfNotFound is expected since it was removed
+                    if let Err(Error::JumbfNotFound) = png_io.read_cai_store(&output) {
+                        return;
                     }
                 }
             }
         }
-        assert!(success)
+        unreachable!()
     }
 }
