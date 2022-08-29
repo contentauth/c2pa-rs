@@ -1041,7 +1041,7 @@ impl AssetIO for BmffIO {
                     &mut output_bmff_map,
                 )?;
 
-                // adjust based on current layyout
+                // adjust based on current layout
                 adjust_stco_and_co64(
                     &mut temp_file,
                     &output_bmff_tree,
