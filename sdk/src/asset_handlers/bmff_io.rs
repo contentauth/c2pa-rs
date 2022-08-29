@@ -1130,7 +1130,7 @@ impl AssetIO for BmffIO {
         temp_file.write_all(&b)?;
 
         // calc offset adjustments
-        // value will be negative sibce the box is truncated
+        // value will be negative since the box is truncated
         let new_c2pa_box_size: i32 = 0;
         let existing_c2pa_box_size = end - start;
         let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
