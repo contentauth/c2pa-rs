@@ -13,7 +13,7 @@
 
 use std::{
     fmt,
-    io::{Read, Seek},
+    io::{Read, Seek, Write},
     path::Path,
 };
 
@@ -51,6 +51,16 @@ pub trait CAILoader {
 
     // Get XMP block
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String>;
+}
+
+pub trait CAIWriter {
+    // Return entire CAI block as Vec<u8>
+    fn write_cai(
+        &self,
+        reader: &mut dyn CAIRead,
+        writer: &mut dyn Write,
+        store_bytes: &[u8],
+    ) -> Result<()>;
 }
 
 pub trait AssetIO {

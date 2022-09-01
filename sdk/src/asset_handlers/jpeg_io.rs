@@ -13,7 +13,7 @@
 
 use std::{
     fs::{read, File},
-    io::Cursor,
+    io::{Cursor, Write},
     path::*,
 };
 
@@ -24,7 +24,7 @@ use img_parts::{
 };
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIRead, CAIWriter, HashBlockObjectType, HashObjectPositions},
     error::{wrap_io_err, Error, Result},
 };
 
@@ -141,6 +141,68 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
     }
     Ok(())
 }
+
+//fn write_cai<W: Write>(reader: &mut dyn CAIRead , writer: W, store_bytes: &[u8]) -> Result<Vec<u8>> {
+fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
+    //     let mut buf = Vec::new();
+    // // read the whole file
+    // reader.read_to_end(&mut buf).map_err(wrap_io_err);
+    let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+    // remove existing CAI segments
+    delete_cai_segments(&mut jpeg)?;
+
+    let jumbf_len = store_bytes.len();
+    let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
+    let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
+
+    for seg in 1..num_segments + 1 {
+        /*
+            If the size of the box payload is less than 2^32-8 bytes,
+            then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
+            shall be present in all JPEG XT marker segment representing this box,
+            regardless of whether the marker segments starts this box,
+            or continues a box started by a former JPEG XT Marker segment.
+        */
+        // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
+        // CI: JPEG extensions marker - JP
+        // En: Box Instance Number  - 0x0001
+        //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
+        // Z: Packet sequence number - 0x00000001...
+        let ci = vec![0x4A, 0x50];
+        let en = vec![0x02, 0x11];
+        let z = seg.to_be_bytes();
+
+        let mut seg_data = Vec::new();
+        seg_data.extend(ci);
+        seg_data.extend(en);
+        seg_data.extend(&z[4..]);
+        if seg > 1 {
+            // the LBox and TBox are already in the JUMBF
+            // but we need to duplicate them in all other segments
+            let lbox_tbox = &store_bytes[..8];
+            seg_data.extend(lbox_tbox);
+        }
+        if seg_chucks.len() > 0 {
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
+            }
+        } else {
+            seg_data.extend(store_bytes);
+        }
+        let seg_bytes = Bytes::from(seg_data);
+        let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
+        jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+    }
+
+    jpeg.encoder()
+        .write_to(writer)
+        //.map_err(wrap_io_err)
+        .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+
+    Ok(())
+}
 pub struct JpegIO {}
 
 impl CAILoader for JpegIO {
@@ -232,6 +294,19 @@ impl CAILoader for JpegIO {
     }
 }
 
+impl CAIWriter for JpegIO {
+    fn write_cai(
+        &self,
+        reader: &mut dyn CAIRead,
+        writer: &mut dyn Write,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let mut buf: Vec<u8> = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        write_cai(buf, writer, store_bytes)
+    }
+}
+
 impl AssetIO for JpegIO {
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut f = File::open(asset_path)?;
@@ -241,55 +316,8 @@ impl AssetIO for JpegIO {
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let input = read(asset_path).map_err(wrap_io_err)?;
-
-        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
-
-        // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
-
-        let jumbf_len = store_bytes.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
-        let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
-
-        for seg in 1..num_segments + 1 {
-            /*
-                If the size of the box payload is less than 2^32-8 bytes,
-                then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
-                shall be present in all JPEG XT marker segment representing this box,
-                regardless of whether the marker segments starts this box,
-                or continues a box started by a former JPEG XT Marker segment.
-            */
-            // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
-            // CI: JPEG extensions marker - JP
-            // En: Box Instance Number  - 0x0001
-            //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
-            // Z: Packet sequence number - 0x00000001...
-            let ci = vec![0x4A, 0x50];
-            let en = vec![0x02, 0x11];
-            let z = seg.to_be_bytes();
-
-            let mut seg_data = Vec::new();
-            seg_data.extend(ci);
-            seg_data.extend(en);
-            seg_data.extend(&z[4..]);
-            if seg > 1 {
-                // the LBox and TBox are already in the JUMBF
-                // but we need to duplicate them in all other segments
-                let lbox_tbox = &store_bytes[..8];
-                seg_data.extend(lbox_tbox);
-            }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(store_bytes);
-            }
-            let seg_bytes = Bytes::from(seg_data);
-            let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
-        }
+        // let mut input = File::open(asset_path)
+        // .map_err(Error::IoError)?;
 
         let output = std::fs::OpenOptions::new()
             .read(true)
@@ -298,9 +326,7 @@ impl AssetIO for JpegIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        jpeg.encoder()
-            .write_to(output)
-            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+        write_cai(input, output, store_bytes)?;
 
         Ok(())
     }
