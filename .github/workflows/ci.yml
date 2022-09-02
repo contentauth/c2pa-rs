@@ -240,3 +240,59 @@ jobs:
         with:
           version: latest
           args: --all-targets --all-features
+
+  version_bump:
+    name: Ensure (MINOR) tag is used when making an API breaking change
+    # Change all of these steps to (MAJOR) after 1.0 release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Get latest existing tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        id: get-latest-tag
+        with:
+          semver_only: true
+
+      - name: Set new version
+        uses: paulhatch/semantic-version@v4.0.2
+        id: set-version
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          tag_prefix: "v"
+          format: "${major}.${minor}.${patch}"
+          major_pattern: "(MAJORXXXX)"
+          minor_pattern: "(MINORXXXX)"
+
+      - name: "Bump crate version (NOTE: Not pushed back to repo!)"
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        run: |
+          sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
+          git config user.email "nobody@example.com"
+          git config --global user.name "PR validation bot"
+          git add .
+          git commit -m "DO NOT PUSH BACK TO PR: Bump crate version"
+        env:
+          VERSION: ${{ steps.set-version.outputs.version }}
+
+      - name: Has (MINOR) tag been used in a previous commit?
+        id: bump_exists
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        run: |
+          git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep "(MINOR)" || :; }
+
+      - name: If this step fails, change title of the PR to include (MINOR) tag
+        uses: obi1kenobi/cargo-semver-checks-action@v1
+        if: ${{ steps.bump_exists.outputs.stdout == '' && !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          crate-name: c2pa
