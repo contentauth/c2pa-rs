@@ -254,7 +254,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         with:
-          toolchain: nightly
+          toolchain: stable
           override: true
 
       - name: Get latest existing tag
