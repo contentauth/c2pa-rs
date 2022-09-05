@@ -13,13 +13,13 @@
 
 use std::{
     fs::{self, File},
-    io::{Cursor, Write},
+    io::Cursor,
     path::{Path, PathBuf},
 };
 
 use crate::{
     asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
-    asset_io::{AssetIO, CAILoader, CAIRead, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -83,22 +83,24 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
 pub fn save_jumbf_to_stream(
     asset_type: &str,
-    reader: &mut dyn CAIRead,
-    writer: &mut dyn Write,
+    stream: &mut dyn CAIReadWrite,
     store_bytes: &[u8],
 ) -> Result<()> {
     match get_caiwriter_handler(asset_type) {
-        Some(asset_handler) => asset_handler.write_cai(reader, writer, store_bytes),
+        Some(asset_handler) => asset_handler.write_cai(stream, store_bytes),
         None => Err(Error::UnsupportedType),
     }
 }
 
-/// writes the jumbf data in store_bytes into an asset in data and returns a new asset
-pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut reader = Cursor::new(data);
-    let mut buf = Vec::new();
-    save_jumbf_to_stream(asset_type, &mut reader, &mut buf, store_bytes)?;
-    Ok(buf)
+/// writes the jumbf data in store_bytes into an asset in data and the updatedcar data
+pub fn save_jumbf_to_memory(
+    asset_type: &str,
+    data: Vec<u8>,
+    store_bytes: &[u8],
+) -> Result<Vec<u8>> {
+    let mut stream = Cursor::new(data);
+    save_jumbf_to_stream(asset_type, &mut stream, store_bytes)?;
+    Ok(stream.into_inner())
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
@@ -252,6 +254,16 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
 
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.get_object_locations(in_path),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+pub fn object_locations_from_stream(
+    format: &str,
+    stream: &mut dyn CAIReadWrite,
+) -> Result<Vec<HashObjectPositions>> {
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(stream),
         _ => Err(Error::UnsupportedType),
     }
 }

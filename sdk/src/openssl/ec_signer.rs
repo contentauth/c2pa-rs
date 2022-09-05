@@ -26,7 +26,7 @@ use x509_parser::der_parser::{
 
 use super::check_chain_order;
 use crate::{
-    error::{wrap_io_err, wrap_openssl_err, Error, Result},
+    error::{wrap_openssl_err, Error, Result},
     signer::ConfigurableSigner,
     Signer, SigningAlg,
 };
@@ -51,8 +51,8 @@ impl ConfigurableSigner for EcSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
+        let signcert = fs::read(signcert_path).map_err(Error::IoError)?;
+        let pkey = fs::read(pkey_path).map_err(Error::IoError)?;
 
         Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }

@@ -44,6 +44,11 @@ impl CAIRead for std::fs::File {}
 impl CAIRead for std::io::Cursor<&[u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
 
+pub trait CAIReadWrite: CAIRead + Write {}
+
+impl CAIReadWrite for std::fs::File {}
+impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
+
 // Interface for in memory CAI reading
 pub trait CAILoader {
     // Return entire CAI block as Vec<u8>
@@ -55,12 +60,12 @@ pub trait CAILoader {
 
 pub trait CAIWriter {
     // Return entire CAI block as Vec<u8>
-    fn write_cai(
+    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()>;
+
+    fn get_object_locations_from_stream(
         &self,
-        reader: &mut dyn CAIRead,
-        writer: &mut dyn Write,
-        store_bytes: &[u8],
-    ) -> Result<()>;
+        stream: &mut dyn CAIReadWrite,
+    ) -> Result<Vec<HashObjectPositions>>;
 }
 
 pub trait AssetIO {

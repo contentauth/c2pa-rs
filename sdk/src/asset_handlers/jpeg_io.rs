@@ -12,8 +12,8 @@
 // each license.
 
 use std::{
-    fs::{read, File},
-    io::{Cursor, Write},
+    fs::File,
+    io::{Cursor, SeekFrom},
     path::*,
 };
 
@@ -24,8 +24,11 @@ use img_parts::{
 };
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, CAIWriter, HashBlockObjectType, HashObjectPositions},
-    error::{wrap_io_err, Error, Result},
+    asset_io::{
+        AssetIO, CAILoader, CAIRead, CAIReadWrite, CAIWriter, HashBlockObjectType,
+        HashObjectPositions,
+    },
+    error::{Error, Result},
 };
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
@@ -67,8 +70,12 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
-    let buf = read(asset_path)?;
+fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
+    let mut buf: Vec<u8> = Vec::new();
+    stream.seek(SeekFrom::Start(0))?;
+    stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+    stream.seek(SeekFrom::Start(0))?;
+
     let dimg_opt = DynImage::from_bytes(buf.into())
         .map_err(|_err| Error::BadParam("Could not parse input image".to_owned()))?;
 
@@ -80,7 +87,8 @@ fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
             let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
             no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
             let aio = JpegIO {};
-            aio.save_cai_store(asset_path, &no_bytes)?;
+            aio.write_cai(stream, &no_bytes)?;
+            stream.seek(SeekFrom::Start(0))?;
         }
     } else {
         return Err(Error::BadParam(
@@ -142,67 +150,6 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
     Ok(())
 }
 
-//fn write_cai<W: Write>(reader: &mut dyn CAIRead , writer: W, store_bytes: &[u8]) -> Result<Vec<u8>> {
-fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
-    //     let mut buf = Vec::new();
-    // // read the whole file
-    // reader.read_to_end(&mut buf).map_err(wrap_io_err);
-    let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
-
-    // remove existing CAI segments
-    delete_cai_segments(&mut jpeg)?;
-
-    let jumbf_len = store_bytes.len();
-    let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
-    let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
-
-    for seg in 1..num_segments + 1 {
-        /*
-            If the size of the box payload is less than 2^32-8 bytes,
-            then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
-            shall be present in all JPEG XT marker segment representing this box,
-            regardless of whether the marker segments starts this box,
-            or continues a box started by a former JPEG XT Marker segment.
-        */
-        // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
-        // CI: JPEG extensions marker - JP
-        // En: Box Instance Number  - 0x0001
-        //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
-        // Z: Packet sequence number - 0x00000001...
-        let ci = vec![0x4A, 0x50];
-        let en = vec![0x02, 0x11];
-        let z = seg.to_be_bytes();
-
-        let mut seg_data = Vec::new();
-        seg_data.extend(ci);
-        seg_data.extend(en);
-        seg_data.extend(&z[4..]);
-        if seg > 1 {
-            // the LBox and TBox are already in the JUMBF
-            // but we need to duplicate them in all other segments
-            let lbox_tbox = &store_bytes[..8];
-            seg_data.extend(lbox_tbox);
-        }
-        if seg_chucks.len() > 0 {
-            // make sure we have some...
-            if let Some(next_seg) = seg_chucks.next() {
-                seg_data.extend(next_seg);
-            }
-        } else {
-            seg_data.extend(store_bytes);
-        }
-        let seg_bytes = Bytes::from(seg_data);
-        let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-        jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
-    }
-
-    jpeg.encoder()
-        .write_to(writer)
-        //.map_err(wrap_io_err)
-        .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
-
-    Ok(())
-}
 pub struct JpegIO {}
 
 impl CAILoader for JpegIO {
@@ -213,6 +160,7 @@ impl CAILoader for JpegIO {
 
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
+        asset_reader.seek(SeekFrom::Start(0))?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into())
@@ -295,56 +243,88 @@ impl CAILoader for JpegIO {
 }
 
 impl CAIWriter for JpegIO {
-    fn write_cai(
-        &self,
-        reader: &mut dyn CAIRead,
-        writer: &mut dyn Write,
-        store_bytes: &[u8],
-    ) -> Result<()> {
-        let mut buf: Vec<u8> = Vec::new();
-        reader.read_to_end(&mut buf)?;
-        write_cai(buf, writer, store_bytes)
-    }
-}
+    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()> {
+        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
+        let mut buf = Vec::new();
+        // read the whole asset
+        stream.seek(SeekFrom::Start(0))?;
+        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
-impl AssetIO for JpegIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
 
-        self.read_cai(&mut f)
-    }
+        let jumbf_len = store_bytes.len();
+        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
+        let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
 
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let input = read(asset_path).map_err(wrap_io_err)?;
-        // let mut input = File::open(asset_path)
-        // .map_err(Error::IoError)?;
+        for seg in 1..num_segments + 1 {
+            /*
+                If the size of the box payload is less than 2^32-8 bytes,
+                then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
+                shall be present in all JPEG XT marker segment representing this box,
+                regardless of whether the marker segments starts this box,
+                or continues a box started by a former JPEG XT Marker segment.
+            */
+            // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
+            // CI: JPEG extensions marker - JP
+            // En: Box Instance Number  - 0x0001
+            //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
+            // Z: Packet sequence number - 0x00000001...
+            let ci = vec![0x4A, 0x50];
+            let en = vec![0x02, 0x11];
+            let z = seg.to_be_bytes();
 
-        let output = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
+            let mut seg_data = Vec::new();
+            seg_data.extend(ci);
+            seg_data.extend(en);
+            seg_data.extend(&z[4..]);
+            if seg > 1 {
+                // the LBox and TBox are already in the JUMBF
+                // but we need to duplicate them in all other segments
+                let lbox_tbox = &store_bytes[..8];
+                seg_data.extend(lbox_tbox);
+            }
+            if seg_chucks.len() > 0 {
+                // make sure we have some...
+                if let Some(next_seg) = seg_chucks.next() {
+                    seg_data.extend(next_seg);
+                }
+            } else {
+                seg_data.extend(store_bytes);
+            }
+            let seg_bytes = Bytes::from(seg_data);
+            let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
+            jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+        }
 
-        write_cai(input, output, store_bytes)?;
+        stream.seek(SeekFrom::Start(0))?;
+        jpeg.encoder()
+            .write_to(stream)
+            //.map_err(Error::IoError)
+            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
 
         Ok(())
     }
 
-    fn get_object_locations(
+    fn get_object_locations_from_stream(
         &self,
-        asset_path: &std::path::Path,
+        stream: &mut dyn CAIReadWrite,
     ) -> Result<Vec<HashObjectPositions>> {
-        // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs(asset_path)?;
-
         let mut cai_en: Vec<u8> = Vec::new();
         let mut cai_seg_cnt: u32 = 0;
 
         let mut positions: Vec<HashObjectPositions> = Vec::new();
         let mut curr_offset = 2; // start after JPEG marker
 
-        let buf = read(asset_path)?;
+        // make sure the file has the required segments so we can generate all the required offsets
+        add_required_segs_to_stream(stream)?;
+
+        let mut buf: Vec<u8> = Vec::new();
+        stream.seek(SeekFrom::Start(0))?;
+        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        stream.seek(SeekFrom::Start(0))?;
+
         let dimg = DynImage::from_bytes(buf.into())
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
@@ -408,7 +388,7 @@ impl AssetIO for JpegIO {
                                 length: seg.len_with_entropy(),
                                 htype: HashBlockObjectType::Xmp,
                             };
-                            // todo: pick the app1 that is the xmp (not cruical as it gets hashed either way)
+                            // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
                             positions.push(v);
                         }
                         _ => {
@@ -425,10 +405,44 @@ impl AssetIO for JpegIO {
                     curr_offset += seg.len_with_entropy();
                 }
             }
-            _ => return Err(Error::BadParam("Unknown image format".to_owned())),
+            _ => return Err(Error::UnsupportedType),
         }
 
         Ok(positions)
+    }
+}
+
+impl AssetIO for JpegIO {
+    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(asset_path)?;
+
+        self.read_cai(&mut f)
+    }
+
+    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            //.truncate(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.write_cai(&mut stream, store_bytes)?;
+
+        Ok(())
+    }
+
+    fn get_object_locations(
+        &self,
+        asset_path: &std::path::Path,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.get_object_locations_from_stream(&mut file)
     }
 }
 
