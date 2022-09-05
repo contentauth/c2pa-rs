@@ -3238,6 +3238,6 @@ pub mod tests {
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_memory("jpeg", &result, true, &mut report).unwrap();
-        std::fs::write("foo.jpg", result).unwrap();
+        // std::fs::write("target/test.jpg", result).unwrap();
     }
 }
