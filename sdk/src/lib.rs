@@ -86,7 +86,7 @@ pub mod assertions;
 
 mod cose_validator;
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub mod create_signer;
 
 mod error;

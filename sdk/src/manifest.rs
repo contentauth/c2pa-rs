@@ -20,8 +20,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-#[cfg(feature = "file_io")]
-use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
@@ -32,6 +30,8 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
+#[cfg(feature = "sign")]
+use crate::{asset_io::CAIReadWrite, Signer};
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
 use crate::{AsyncSigner, RemoteSigner};
 
@@ -735,6 +735,26 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
+    /// Embed a signed manifest into a stream using a supplied signer.
+    ///
+    #[cfg(feature = "sign")]
+    pub fn embed_stream(
+        &mut self,
+        format: &str,
+        stream: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        self.set_format(format);
+        // todo:: read instance_id from xmp from stream
+        self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+        // todo: generate thumbnail if we don't already have one
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        store.save_to_stream(format, stream, signer)
+    }
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
@@ -797,6 +817,8 @@ pub(crate) mod tests {
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
 
+    #[cfg(feature = "sign")]
+    use crate::utils::test::temp_signer;
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         utils::test::TEST_VC,
@@ -806,9 +828,7 @@ pub(crate) mod tests {
     use crate::{
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
-        utils::test::{
-            fixture_path, temp_dir_path, temp_fixture_path, temp_signer, TEST_SMALL_JPEG,
-        },
+        utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
         Ingredient,
     };
 
@@ -1157,5 +1177,40 @@ pub(crate) mod tests {
             manifest_store.get_active().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
+    }
+
+    #[test]
+    #[cfg(feature = "sign")]
+    fn test_embed_stream() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image);
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        manifest
+            .embed_stream("jpeg", &mut stream, &signer)
+            .expect("embed_stream");
+
+        // get the updated image
+        let image = stream.into_inner();
+
+        let manifest_store =
+            crate::ManifestStore::from_bytes("jpeg", image, true).expect("from_bytes");
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "EmbedStream"
+        );
+        println!("{}", manifest_store);
     }
 }

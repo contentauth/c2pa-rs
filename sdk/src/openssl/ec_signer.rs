@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
 use openssl::{
@@ -45,6 +46,7 @@ pub struct EcSigner {
 }
 
 impl ConfigurableSigner for EcSigner {
+    #[cfg(feature = "file_io")]
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
@@ -206,6 +208,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
 

@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
 use openssl::{
@@ -35,14 +36,15 @@ pub struct EdSigner {
 }
 
 impl ConfigurableSigner for EdSigner {
+    #[cfg(feature = "file_io")]
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
+        let signcert = fs::read(signcert_path).map_err(Error::IoError)?;
+        let pkey = fs::read(pkey_path).map_err(Error::IoError)?;
 
         Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }
@@ -113,15 +115,12 @@ impl Signer for EdSigner {
     }
 }
 
-fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
-}
-
 fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;

@@ -259,7 +259,7 @@ pub(crate) fn wrap_io_err(err: std::io::Error) -> Error {
     Error::IoError(err)
 }
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }

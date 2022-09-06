@@ -21,6 +21,11 @@ use log::error;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 use crate::embedded_xmp;
+#[cfg(feature = "sign")]
+use crate::utils::{
+    hash_utils::{hash256, Exclusion},
+    patch::patch_bytes,
+};
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
 #[cfg(feature = "sign")]
@@ -51,10 +56,6 @@ use crate::{
     jumbf_io::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
         object_locations, save_jumbf_to_file,
-    },
-    utils::{
-        hash_utils::{hash256, Exclusion},
-        patch::patch_bytes,
     },
 };
 
@@ -3214,12 +3215,10 @@ pub mod tests {
     }
 
     #[actix::test]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "sign")]
     async fn test_jumbf_generation_stream() {
-        // test adding to actual image
-        let ap = fixture_path("earth_apollo17.jpg");
-        // Load the exported file into a buffer
-        let file_buffer = std::fs::read(&ap).unwrap();
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
@@ -3228,16 +3227,19 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer(); // todo:: temp_signer depends on file_io
+        let signer = temp_signer();
 
         store.commit_claim(claim1).unwrap();
 
         store.save_to_stream("jpeg", &mut buf_io, &signer).unwrap();
 
+        // convert our cursor back into a buffer
         let result = buf_io.into_inner();
+
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_memory("jpeg", &result, true, &mut report).unwrap();
+
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 }
