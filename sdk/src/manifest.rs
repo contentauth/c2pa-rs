@@ -738,6 +738,23 @@ impl Manifest {
     /// Embed a signed manifest into a stream using a supplied signer.
     ///
     #[cfg(feature = "sign")]
+    pub fn embed_from_memory(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // first make a copy of the asset that will contain our modified result
+        // todo:: see if we can pass a trait with to_vec support like we to for Strings
+        let asset = asset.to_vec();
+        let mut stream = std::io::Cursor::new(asset);
+        self.embed_stream(format, &mut stream, signer)?;
+        Ok(stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    ///
+    #[cfg(feature = "sign")]
     pub fn embed_stream(
         &mut self,
         format: &str,
