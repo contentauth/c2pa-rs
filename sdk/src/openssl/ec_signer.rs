@@ -11,9 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use std::{fs, path::Path};
-
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -46,19 +43,6 @@ pub struct EcSigner {
 }
 
 impl ConfigurableSigner for EcSigner {
-    #[cfg(feature = "file_io")]
-    fn from_files<P: AsRef<Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(Error::IoError)?;
-        let pkey = fs::read(pkey_path).map_err(Error::IoError)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],

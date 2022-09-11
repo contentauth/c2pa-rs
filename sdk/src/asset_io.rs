@@ -59,7 +59,6 @@ pub trait CAILoader {
 }
 
 pub trait CAIWriter {
-    // Return entire CAI block as Vec<u8>
     fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()>;
 
     fn get_object_locations_from_stream(

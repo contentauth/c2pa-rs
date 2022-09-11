@@ -88,12 +88,9 @@ fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
             no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
             let aio = JpegIO {};
             aio.write_cai(stream, &no_bytes)?;
-            stream.seek(SeekFrom::Start(0))?;
         }
     } else {
-        return Err(Error::BadParam(
-            "Image type not supported by handler".to_owned(),
-        ));
+        return Err(Error::UnsupportedType);
     }
 
     Ok(())

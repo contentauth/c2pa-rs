@@ -753,7 +753,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    ///
+    /// returns the manifest that was embedded
     #[cfg(feature = "sign")]
     pub fn embed_stream(
         &mut self,

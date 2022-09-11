@@ -10,9 +10,9 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-
+#[cfg(feature = "file_io")]
+use crate::Error;
 use crate::{Result, SigningAlg};
-
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -54,7 +54,12 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         pkey_path: P,
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self>;
+    ) -> Result<Self> {
+        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+
+        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
+    }
 
     /// Create signer from credentials data
     fn from_signcert_and_pkey(

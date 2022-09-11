@@ -241,7 +241,7 @@ pub enum Error {
     CborError(#[from] serde_cbor::Error),
 
     #[error(transparent)]
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl")]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
     #[error(transparent)]
