@@ -155,6 +155,20 @@ impl ManifestStore {
             .await
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
+
+    /// Loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
+    pub fn from_manifest_and_asset_bytes(
+        manifest_bytes: &[u8],
+        asset_bytes: &[u8],
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        Store::from_jumbf(manifest_bytes, &mut validation_log).and_then(|mut store| {
+            store
+                .verify_from_buffer(asset_bytes, "", &mut validation_log)
+                .map(|_| Self::from_store(&store, &mut validation_log))
+        })
+    }
 }
 
 impl Default for ManifestStore {
@@ -292,7 +306,6 @@ mod tests {
         let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
         println!("{}", manifest_store);
 
-        assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
@@ -301,5 +314,18 @@ mod tests {
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
         assert!(manifest.time().is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_report_from_manifest_and_asset_bytes() {
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+
+        let manifest_store =
+            ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, asset_bytes).unwrap();
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        println!("{}", manifest_store);
     }
 }
