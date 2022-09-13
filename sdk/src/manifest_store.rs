@@ -155,6 +155,39 @@ impl ManifestStore {
             .await
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
+
+    /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
+    ///
+    /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
+    /// ```
+    /// use c2pa::{Result, ManifestStore};
+    ///
+    /// # fn main() -> Result<()> {
+    /// #    async {
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
+    ///             .await
+    ///             .unwrap();
+    ///
+    ///         println!("{}", manifest_store);
+    /// #    };
+    /// #
+    /// #    Ok(())
+    /// }
+    /// ```
+    pub async fn from_manifest_and_asset_bytes_async(
+        manifest_bytes: &[u8],
+        asset_bytes: &[u8],
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+
+        Store::verify_store_async(&store, asset_bytes, &mut validation_log).await?;
+
+        Ok(Self::from_store(&store, &mut validation_log))
+    }
 }
 
 impl Default for ManifestStore {
@@ -264,10 +297,9 @@ mod tests {
         assert!(manifest.time().is_some());
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[ignore]
-    #[allow(dead_code)]
-    async fn manifest_report_image_wasm() {
+    async fn manifest_report_image_async() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
         let manifest_store =
@@ -292,7 +324,6 @@ mod tests {
         let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
         println!("{}", manifest_store);
 
-        assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
@@ -301,5 +332,20 @@ mod tests {
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
         assert!(manifest.time().is_some());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn manifest_report_from_manifest_and_asset_bytes_async() {
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+
+        let manifest_store =
+            ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
+                .await
+                .unwrap();
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        println!("{}", manifest_store);
     }
 }
