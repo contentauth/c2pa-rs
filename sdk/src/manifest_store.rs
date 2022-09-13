@@ -299,7 +299,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn manifest_report_image() {
+    async fn manifest_report_image_async() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
         let manifest_store =
