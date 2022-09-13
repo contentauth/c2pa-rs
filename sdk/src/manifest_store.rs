@@ -162,8 +162,8 @@ impl ManifestStore {
     /// ```
     /// use c2pa::{Result, ManifestStore};
     ///
-    /// fn main() -> Result<()> {
-    ///     async {
+    /// # fn main() -> Result<()> {
+    /// #    async {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
@@ -172,9 +172,9 @@ impl ManifestStore {
     ///             .unwrap();
     ///
     ///         println!("{}", manifest_store);
-    ///     };
-    ///
-    ///     Ok(())
+    /// #    };
+    /// #
+    /// #    Ok(())
     /// }
     /// ```
     pub async fn from_manifest_and_asset_bytes_async(
