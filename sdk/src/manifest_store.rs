@@ -299,8 +299,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[allow(dead_code)]
-    async fn manifest_report_image_wasm() {
+    async fn manifest_report_image() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
         let manifest_store =
@@ -337,7 +336,6 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[allow(dead_code)]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
