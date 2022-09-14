@@ -116,7 +116,7 @@ impl ManifestStore {
     }
 
     /// generate a Store from a format string and bytes
-    pub fn from_bytes(format: &str, image_bytes: Vec<u8>, verify: bool) -> Result<ManifestStore> {
+    pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
         Store::load_from_memory(format, &image_bytes, verify, &mut validation_log)
@@ -146,7 +146,7 @@ impl ManifestStore {
     /// Loads a ManifestStore from a file
     pub async fn from_bytes_async(
         format: &str,
-        image_bytes: Vec<u8>,
+        image_bytes: &[u8],
         verify: bool,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
@@ -250,8 +250,7 @@ mod tests {
     fn manifest_report_image() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
-        let manifest_store =
-            ManifestStore::from_bytes("image/jpeg", image_bytes.to_vec(), true).unwrap();
+        let manifest_store = ManifestStore::from_bytes("image/jpeg", image_bytes, true).unwrap();
 
         assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
@@ -270,10 +269,9 @@ mod tests {
     async fn manifest_report_image_wasm() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
-        let manifest_store =
-            ManifestStore::from_bytes_async("image/jpeg", image_bytes.to_vec(), true)
-                .await
-                .unwrap();
+        let manifest_store = ManifestStore::from_bytes_async("image/jpeg", image_bytes, true)
+            .await
+            .unwrap();
 
         assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
