@@ -736,7 +736,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    ///
+    /// returns the bytes of the  manifest that was embedded
     #[cfg(feature = "sign")]
     pub fn embed_from_memory(
         &mut self,
@@ -753,7 +753,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the manifest that was embedded
+    /// returns the bytes of the  manifest that was embedded
     #[cfg(feature = "sign")]
     pub fn embed_stream(
         &mut self,
@@ -1188,7 +1188,7 @@ pub(crate) mod tests {
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store =
-            crate::ManifestStore::from_bytes("c2pa", c2pa_data, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("c2pa", &c2pa_data, true).expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
@@ -1200,9 +1200,11 @@ pub(crate) mod tests {
     #[cfg(feature = "sign")]
     fn test_embed_stream() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
-        let mut stream = std::io::Cursor::new(image);
+        let mut stream = std::io::Cursor::new(image.to_vec());
+        // let mut image = image.to_vec();
+        // let mut stream = std::io::Cursor::new(image.as_mut_slice());
 
         let mut manifest = Manifest::new("my_app".to_owned());
         manifest.set_title("EmbedStream");
@@ -1223,7 +1225,7 @@ pub(crate) mod tests {
         let image = stream.into_inner();
 
         let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", image, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
