@@ -119,7 +119,7 @@ impl ManifestStore {
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_from_memory(format, &image_bytes, verify, &mut validation_log)
+        Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
@@ -151,7 +151,7 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_from_memory_async(format, &image_bytes, verify, &mut validation_log)
+        Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
             .await
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
