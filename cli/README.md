@@ -92,6 +92,19 @@ c2patool -d sample/C.jpg
 
 The tool displays the detailed report to standard output (stdout).
 
+### Detailed manifest report
+
+The `--info` option will print a high level report about any c2pa content in the file. 
+For a cloud manifest it will display the url to the manifest.
+For embedded manifests, the size of the manifest store and number of manifests will be displayed. It will also report if the manifest validated or any errors encountered in validation.
+
+
+```shell
+c2patool sample/C.jpg --info
+```
+
+The tool displays the info report to standard output (stdout).
+
 ### Adding a manifest to an asset file
 
 To add C2PA manifest data to a file, use the `--manifest` / `-m` option with a manifest JSON file as the option argument and the path to the asset file to be signed. Specify the output file as the argument to the `--output` / `-o` option. For example:

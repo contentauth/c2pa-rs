@@ -26,6 +26,9 @@ test-local:
 # Run this before pushing a PR to pre-validate
 test: check-format clippy test-local
 
+fmt: 
+	cargo +nightly fmt
+
 # Creates a folder wtih c2patool bin, samples and readme
 c2patool-package:
 	rm -rf target/c2patool*

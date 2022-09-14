@@ -17,15 +17,14 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 ///
-use std::{
-    path::{Path, PathBuf},
-    process::exit,
-};
+use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, ManifestStore, ManifestStoreReport};
 use structopt::{clap::AppSettings, StructOpt};
 
+mod info;
+use info::info;
 pub mod manifest_config;
 use manifest_config::ManifestConfig;
 mod signer;
@@ -89,6 +88,9 @@ struct CliArgs {
         help = "Generate a sidecar (.c2pa) manifest"
     )]
     sidecar: bool,
+
+    #[structopt(long = "info", help = "Show manifest size, XMP url and other stats")]
+    info: bool,
 }
 
 // prints the requested kind of report or exits with error
@@ -116,10 +118,14 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
+    if args.info && args.path.exists() {
+        return info(&args.path);
+    }
+
+    // get manifest config from either the -manifest option or the -config option
     let config = if let Some(json) = args.config {
         if args.manifest.is_some() {
-            eprintln!("Do not use config and manifest options together");
-            exit(1);
+            bail!("Do not use config and manifest options together");
         }
         Some(ManifestConfig::from_json(&json)?)
     } else if let Some(config_path) = args.manifest {
@@ -128,6 +134,7 @@ fn main() -> Result<()> {
         None
     };
 
+    // if we have a manifest config, process it
     if let Some(mut manifest_config) = config {
         if let Some(parent_path) = args.parent {
             manifest_config.parent = Some(parent_path)
@@ -146,18 +153,18 @@ fn main() -> Result<()> {
         }
 
         if let Some(output) = args.output {
+            if output.extension() != args.path.extension() {
+                bail!("output type must match source type");
+            }
             if output.exists() && !args.force {
-                eprintln!("Output already exists, use -f/force to force write");
-                exit(1);
+                bail!("Output already exists, use -f/force to force write");
             }
 
             if output.file_name().is_none() {
-                eprintln!("Missing filename on output");
-                exit(1);
+                bail!("Missing filename on output");
             }
             if output.extension().is_none() {
-                eprintln!("Missing extension output");
-                exit(1);
+                bail!("Missing extension output");
             }
 
             // create any needed folders for the output path (embed should do this)
@@ -169,16 +176,12 @@ fn main() -> Result<()> {
 
             manifest
                 .embed(&args.path, &output, signer.as_ref())
-                .unwrap_or_else(|e| {
-                    eprintln!("error embedding manifest: {:?}", e);
-                    exit(1);
-                });
+                .context("embedding manifest")?;
 
             // generate a report on the output file
             println!("{}", report_from_path(&output, args.detailed)?);
         } else if args.detailed {
-            eprintln!("detailed report not supported for preview");
-            exit(1);
+            bail!("detailed report not supported for preview");
         } else {
             // normally the output file provides the title, format and other manifest fields
             // since there is no output file, gather some information from the source
@@ -200,6 +203,13 @@ fn main() -> Result<()> {
             }
             println!("{}", ManifestStore::from_manifest(&manifest)?)
         }
+    } else if args.output.is_some()
+        || args.parent.is_some()
+        || args.sidecar
+        || args.remote.is_some()
+        || args.force
+    {
+        bail!("manifest definition required with these options or flags")
     } else {
         // let extension = path.extension().and_then(|p| p.to_str()).unwrap_or("");
         // just report from file if no manifest configuration given

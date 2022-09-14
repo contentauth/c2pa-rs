@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{bail, Context, Result};
 use c2pa::{Ingredient, Manifest, ManifestAssertion};
 use serde::Deserialize;
 use serde_json::Value;
@@ -64,8 +64,7 @@ impl ManifestConfig {
     }
 
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json)
-            .map_err(|e| anyhow!("Error reading manifest configuration {:?}", e))
+        serde_json::from_str(json).context("reading manifest configuration")
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -130,7 +129,7 @@ impl ManifestConfig {
 
         if let Some(parent) = parent.as_ref() {
             if !parent.exists() {
-                return Err(anyhow!("Parent file not found {:#?}", parent));
+                bail!("parent file not found {:#?}", parent);
             }
             manifest.set_parent(Ingredient::from_file(parent)?)?;
         }
@@ -140,10 +139,10 @@ impl ManifestConfig {
             for ingredient in ingredients {
                 let path = self.fix_relative_path(ingredient);
                 if !path.exists() {
-                    return Err(anyhow!("Ingredient file not found {:#?}", path));
+                    bail!("ingredient file not found {:#?}", path);
                 }
                 let ingredient = Ingredient::from_file(&path)
-                    .map_err(|e| anyhow!("error loading ingredient {:?} {:?}", &path, e))?;
+                    .with_context(|| format!("loading ingredient {:?}", &path))?;
                 manifest.add_ingredient(ingredient);
             }
         }
