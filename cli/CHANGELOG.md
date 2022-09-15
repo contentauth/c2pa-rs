@@ -9,29 +9,11 @@ Do not manually edit this file. It will be automatically updated when a new rele
 ## 0.3.5
 _15 September 2022_
 
-* Fix reference to previous version tag
-
-## 0.3.4
-_15 September 2022_
-
-* Put the binary outputs in the correct release
-
-## 0.3.3
-_15 September 2022_
-
-* Fix name mismatch that caused binary publish to fail
-
-## 0.3.2
-_15 September 2022_
-
 * Upgrade cpufeatures to non-yanked version ([contentauth/c2patool#68](https://github.com/contentauth/c2patool/pull/68))
-
-## 0.3.1
-_15 September 2022_
-
 * Add --info option  ([contentauth/c2patool#65](https://github.com/contentauth/c2patool/pull/65))
-* Updates publish workflow to upload binaries to github ([contentauth/c2patool#58](https://github.com/contentauth/c2patool/pull/58))
+* Updated publish workflow to upload binaries to GitHub ([contentauth/c2patool#58](https://github.com/contentauth/c2patool/pull/58))
 * Fix Make release script & update readme ([contentauth/c2patool#55](https://github.com/contentauth/c2patool/pull/55))
+* (Some version history omitted as we worked on some release process issues)
 
 ## 0.3.0
 _18 August 2022_
