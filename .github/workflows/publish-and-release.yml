@@ -97,7 +97,7 @@ jobs:
         body: ${{ steps.generate-changelog.outputs.stdout }}
         commit: ${{ steps.commit.outputs.commit_hash }}
         prerelease: true # remove at 1.0
-        tag: ${{ steps.get-latest-tag.outputs.tag }}
+        tag: ${{ steps.set-version.outputs.version_tag }}
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
   release-crate:
