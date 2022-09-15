@@ -79,11 +79,15 @@ jobs:
         sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" Cargo.toml
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
+    
+    - name: Update Cargo.lock
+      run: |
+        cargo update -p c2patool
 
     - name: Report differences for "prepare (release)" commit
       run: git diff
 
-    - name: Commit Cargo.toml and changelog
+    - name: Commit Cargo.toml, Cargo.lock, and changelog
       uses: stefanzweifel/git-auto-commit-action@v4
       id: commit
       with:
