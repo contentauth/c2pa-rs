@@ -8,7 +8,7 @@ jobs:
     name: Prepare versioning and changelogs for release
     runs-on: ubuntu-latest
 
-    outputs:
+    outputs: # TODO: See if these are still needed after refactoring
       changelog-body: ${{ steps.generate-changelog.outputs.stdout }}
       commit-hash: ${{ steps.commit.outputs.commit_hash }}
       latest-tag: ${{ steps.get-latest-tag.outputs.tag }}
@@ -91,6 +91,15 @@ jobs:
         commit_user_name: Adobe CAI Team
         commit_user_email: noreply@adobe.com
 
+    - name: Create GitHub release
+      uses: ncipollo/release-action@v1
+      with:
+        body: ${{ steps.generate-changelog.outputs.stdout }}
+        commit: ${{ steps.commit.outputs.commit_hash }}
+        prerelease: true # remove at 1.0
+        tag: ${{ steps.get-latest-tag.outputs.tag }}
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
+
   release-crate:
     name: Release c2patool Rust crate
     needs: repo-prep
@@ -98,15 +107,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
-
-    - name: Create release
-      uses: ncipollo/release-action@v1
-      with:
-        body: ${{ needs.repo-prep.outputs.changelog-body }}
-        commit: ${{ needs.repo-prep.outputs.commit-hash }}
-        prerelease: true # remove at 1.0
-        tag: ${{ needs.repo-prep.outputs.latest-tag }}
-        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Publish crate
       run: |
