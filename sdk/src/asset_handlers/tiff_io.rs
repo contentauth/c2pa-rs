@@ -12,10 +12,14 @@
 // each license.
 
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-//use conv::*;
+use conv::ValueFrom;
+use tiff::{encoder::*, TiffResult};
+use tiff::tags::Tag;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{SeekFrom, Write, Seek, Read};
+use std::slice::from_ref;
 
 use crate::asset_io::{CAILoader, CAIRead};
 use crate::error::{Error, Result};
@@ -56,6 +60,19 @@ impl EndianReader {
     }
 
     #[inline]
+    pub fn read_i16<R: ?Sized>(&self, r: &mut R) -> Result<i16> 
+    where
+    R: Read + Seek
+    {
+        match self.byte_order {
+            Endianess::BigEndian => r.read_i16::<BigEndian>().map_err(crate::error::wrap_io_err),
+            Endianess::LittleEndian => r
+                .read_i16::<LittleEndian>()
+                .map_err(crate::error::wrap_io_err),
+        }
+    }
+
+    #[inline]
     pub fn read_u32<R: ?Sized>(&self, r: &mut R) -> Result<u32> 
     where
     R: Read + Seek
@@ -64,6 +81,19 @@ impl EndianReader {
             Endianess::BigEndian => r.read_u32::<BigEndian>().map_err(crate::error::wrap_io_err),
             Endianess::LittleEndian => r
                 .read_u32::<LittleEndian>()
+                .map_err(crate::error::wrap_io_err),
+        }
+    }
+
+    #[inline]
+    pub fn read_i32<R: ?Sized>(&self, r: &mut R) -> Result<i32> 
+    where
+    R: Read + Seek
+    {
+        match self.byte_order {
+            Endianess::BigEndian => r.read_i32::<BigEndian>().map_err(crate::error::wrap_io_err),
+            Endianess::LittleEndian => r
+                .read_i32::<LittleEndian>()
                 .map_err(crate::error::wrap_io_err),
         }
     }
@@ -80,6 +110,46 @@ impl EndianReader {
                 .map_err(crate::error::wrap_io_err),
         }
     }
+
+    #[inline]
+    pub fn read_i64<R: ?Sized>(&self, r: &mut R) -> Result<i64> 
+    where
+    R: Read + Seek
+    {
+        match self.byte_order {
+            Endianess::BigEndian => r.read_i64::<BigEndian>().map_err(crate::error::wrap_io_err),
+            Endianess::LittleEndian => r
+                .read_i64::<LittleEndian>()
+                .map_err(crate::error::wrap_io_err),
+        }
+    }
+
+    #[inline]
+    pub fn read_f32<R: ?Sized>(&self, r: &mut R) -> Result<f32> 
+    where
+    R: Read + Seek
+    {
+        match self.byte_order {
+            Endianess::BigEndian => r.read_f32::<BigEndian>().map_err(crate::error::wrap_io_err),
+            Endianess::LittleEndian => r
+                .read_f32::<LittleEndian>()
+                .map_err(crate::error::wrap_io_err),
+        }
+    }
+
+    #[inline]
+    pub fn read_f64<R: ?Sized>(&self, r: &mut R) -> Result<f64> 
+    where
+    R: Read + Seek
+    {
+        match self.byte_order {
+            Endianess::BigEndian => r.read_f64::<BigEndian>().map_err(crate::error::wrap_io_err),
+            Endianess::LittleEndian => r
+                .read_f64::<LittleEndian>()
+                .map_err(crate::error::wrap_io_err),
+        }
+    }
+
 }
 
 #[allow(dead_code)]
@@ -90,14 +160,14 @@ pub struct IfdEntry {
     value_offset: u64,
 }
 #[allow(dead_code)]
-pub struct Ifd {
+pub struct ImageFileDirectory {
     offset: u64,
     entry_cnt: u64,
     entries: HashMap<u16, IfdEntry>,
     next_ifd_offset: Option<u64>,
 }
 
-impl Ifd {
+impl ImageFileDirectory {
     #[allow(dead_code)]
     pub fn get_tag(&self, tag_id: u16) -> Option<&IfdEntry> {
         self.entries.get(&tag_id)
@@ -109,7 +179,7 @@ pub(crate) struct TiffStructure {
     byte_order: Endianess,
     big_tiff: bool,
     first_ifd_offset: u64,
-    first_ifd: Option<Ifd>,
+    first_ifd: Option<ImageFileDirectory>,
 }
 
 #[allow(dead_code)]
@@ -172,7 +242,7 @@ impl TiffStructure {
     }
 
     #[allow(dead_code)]
-    fn read_ifd<R: ?Sized>(reader: &mut R, byte_order: Endianess, big_tiff: bool) -> Result<Ifd> 
+    fn read_ifd<R: ?Sized>(reader: &mut R, byte_order: Endianess, big_tiff: bool) -> Result<ImageFileDirectory> 
     where
         R: Read + Seek
     {
@@ -186,7 +256,7 @@ impl TiffStructure {
             byte_reader.read_u16(reader)?.into()
         };
 
-        let mut ifd = Ifd {
+        let mut ifd = ImageFileDirectory {
             offset: ifd_offset,
             entry_cnt,
             entries: HashMap::new(),
@@ -242,7 +312,7 @@ impl TiffStructure {
 
 
 #[allow(dead_code)]
-pub fn map_tiff<R: ?Sized>(input: &mut R) -> Result<Ifd> 
+pub fn map_tiff<R: ?Sized>(input: &mut R) -> Result<(ImageFileDirectory, Endianess)> 
 where
   R: Read + Seek
 {
@@ -251,8 +321,8 @@ where
 
     let ts = TiffStructure::load(input)?;
 
-    ts.first_ifd
-        .ok_or(Error::BadParam("Could not parse TIFF/DNG".to_string()))
+    Ok((ts.first_ifd
+        .ok_or(Error::BadParam("Could not parse TIFF/DNG".to_string()))?, ts.byte_order))
 }
 
 fn get_cai_data<R: ?Sized>(asset_reader: &mut R) -> Result<Vec<u8>> 
@@ -337,27 +407,291 @@ where
             .unwrap();
         image.write_data(&image_data).unwrap();
     }
-   
-    /*
-   impl TiffValue for [u8] {
-    const BYTE_LEN: u8 = 1;
-    const FIELD_TYPE: Type = Type::BYTE;
-
-    fn count(&self) -> usize {
-        self.len()
-    }
-
-    fn data(&self) -> Cow<[u8]> {
-        Cow::Borrowed(self)
-    }
-}
-
-
-    */
     
     Ok(0)
 }
 
+
+/// Type to represent tiff values of type `IFD`
+#[derive(Clone)]
+struct Ifd(pub u32);
+
+/// Type to represent tiff values of type `IFD8`
+#[derive(Clone)]
+struct Ifd8(pub u64);
+
+/// Type to represent tiff values of type `RATIONAL`
+#[derive(Clone)]
+struct Rational {
+    pub n: u32,
+    pub d: u32,
+}
+
+/// Type to represent tiff values of type `SRATIONAL`
+#[derive(Clone)]
+struct SRational {
+    pub n: i32,
+    pub d: i32,
+}
+  
+impl TiffValue for Rational {
+    const BYTE_LEN: u8 = 8;
+    const FIELD_TYPE: tiff::tags::Type = tiff::tags::Type::RATIONAL;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_u32(self.n)?;
+        writer.write_u32(self.d)?;
+        Ok(())
+    }
+
+    fn data(&self) -> Cow<[u8]> {
+        Cow::Owned({
+            let first_dword = from_ref(&self.n);
+            let second_dword = from_ref(&self.d);
+            [first_dword, second_dword].concat()
+        })
+    }
+}
+
+impl TiffValue for SRational {
+    const BYTE_LEN: u8 = 8;
+    const FIELD_TYPE: tiff::tags::Type = tiff::tags::Type::SRATIONAL;
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn write<W: Write>(&self, writer: &mut TiffWriter<W>) -> TiffResult<()> {
+        writer.write_i32(self.n)?;
+        writer.write_i32(self.d)?;
+        Ok(())
+    }
+
+    fn data(&self) -> Cow<[u8]> {
+        Cow::Owned({
+            let first_dword = bytecast::i32_as_ne_bytes(from_ref(&self.n));
+            let second_dword = bytecast::i32_as_ne_bytes(from_ref(&self.d));
+            [first_dword, second_dword].concat()
+        })
+    }
+}
+fn clone_idf_entries< R: Read + Seek, W: Write + Seek>(entries: &HashMap<u16, IfdEntry>, asset_reader:  &mut R, writer: &mut W, endianess: Endianess) -> Result<()> 
+{
+    let mut tiff = TiffEncoder::new(writer).unwrap();
+    let er = EndianReader::new(endianess);
+
+    let mut new_ifd = tiff.new_directory().unwrap();
+
+    for (tag, entry) in entries {
+        // get bytes for tag
+        let cnt = entry.value_count;
+        let offset = entry.value_offset;
+        let et = entry.entry_type;
+
+        let entry_type = tiff::tags::Type::from_u16(et).ok_or(Error::UnsupportedType)?;
+
+        // move to start of data 
+        asset_reader.seek(SeekFrom::Start(offset))?;
+    
+        match entry_type {
+            tiff::tags::Type::BYTE => {
+                let num_bytes = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+    
+                let mut data = vec![0u8; num_bytes];
+                asset_reader.read_exact(&mut data)?;
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::ASCII => {
+                let num_chars = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+    
+                let mut data = vec![0u8; num_chars];
+                asset_reader.read_exact(&mut data)?;
+                
+                let s = String::from_utf8_lossy(&data).to_string();
+
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), s.as_str()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SHORT => {
+                let num_shorts = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0u16; num_shorts];
+
+                for i in 0..num_shorts {
+                    let val = er.read_u16(asset_reader)?;
+                    data.push(val);
+                }
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::LONG => {
+                let num_longs = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0u32; num_longs];
+               
+                for i in 0..num_longs {
+                    let val = er.read_u32(asset_reader)?;
+                    data.push(val);
+                }
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::RATIONAL => {
+                let num_rationals = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data: Vec<Rational> = Vec::new();
+
+                for i in 0..num_rationals {
+                    let n = er.read_u32(asset_reader)?;
+                    let d = er.read_u32(asset_reader)?;
+
+                    let r = Rational { n, d };
+                    
+                    data.push(r);
+                }
+               
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SBYTE => {
+                let num_sbytes = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+    
+                let mut data = vec![0i8; num_sbytes];
+                asset_reader.read_exact(&mut data)?;
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::UNDEFINED => 
+            {
+                let num_undefined = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+    
+                let mut data = vec![0u8; num_undefined];
+                asset_reader.read_exact(&mut data)?;
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SSHORT => {
+                let num_sshorts = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0i16; num_sshorts];
+
+                for i in 0..num_sshorts {
+                    let val = er.read_i16(asset_reader)?;
+                    data.push(val);
+                }
+
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SLONG => {
+                let num_slongs = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0i32; num_slongs];
+                
+                for i in 0..num_slongs {
+                    let val = er.read_i32(asset_reader)?;
+                    data.push(val);
+                }
+
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SRATIONAL => {
+                let num_srationals = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data: Vec<SRational> = Vec::new();
+
+                for i in 0..num_srationals {
+                    let n = er.read_i32(asset_reader)?;
+                    let d = er.read_i32(asset_reader)?;
+
+                    let s = SRational { n, d };
+                    
+                    data.push(s);
+                }
+               
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::FLOAT => {
+                let num_floats = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0f32; num_floats];
+
+                for i in 0..num_floats {
+                    let val = er.read_f32(asset_reader)?;
+                    data.push(val);
+                }
+
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::DOUBLE => {
+                let num_doubles = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0f64; num_doubles];
+                
+                for i in 0..num_doubles {
+                    let val = er.read_f64(asset_reader)?;
+                    data.push(val);
+                }
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::IFD => {
+                let num_ifds = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data: Vec<Ifd> = Vec::with_capacity(num_ifds);
+
+                for i in 0..num_ifds {
+                    let ifd = asset_reader.read_u32()?;
+                    data.push(Ifd(ifd));
+                }
+               
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::LONG8 => {
+                let num_long8s = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0u64; num_long8s];
+
+                 for i in 0..num_long8s {
+                    let val = er.read_u64(asset_reader)?;
+                    data.push(val);
+                }
+
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::SLONG8 => {
+                let num_slong8s = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data = vec![0i64; num_slong8s];
+
+                 for i in 0..num_slong8s {
+                    let val = er.read_i64(asset_reader)?;
+                    data.push(val);
+                }
+                
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            tiff::tags::Type::IFD8 => {
+                let num_ifd8s = usize::value_from(cnt).map_err(|_err| Error::BadParam("value out of range".to_string()))?; 
+                let mut data: Vec<Ifd8> = Vec::new();
+
+                for i in 0..num_ifd8s {
+                    let ifd = asset_reader.read_u64()?;
+                    data.push(Ifd8(ifd));
+                }
+               
+                new_ifd.write_tag(Tag::from_u16_exhaustive(*tag), data.as_slice()).map_err(|_| Error::UnsupportedType)?;
+            }
+            _ => return Err(Error::UnsupportedType),
+        }
+    }
+    new_ifd.finish().map_err(|_| Error::UnsupportedType)?;
+
+    Ok(())
+}
+
+fn tiff_clone<R: Read + Seek, W: Write + Seek>(writer: &mut W, asset_reader: &mut R) -> Result<()> 
+{
+    let (ifd, endianess) =  map_tiff(&mut asset_reader)?;
+
+    let mut tiff = TiffEncoder::new(writer).unwrap();
+
+    clone_idf_entries(&ifd.entries, asset_reader, writer, endianess)?;
+
+    Ok(())
+   
+}
 pub struct TiffIO {}
 
 impl CAILoader for TiffIO {
@@ -379,7 +713,7 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn test_dup_tiff() {
+    fn test_read_manifest() {
         let _data = "some data";
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
