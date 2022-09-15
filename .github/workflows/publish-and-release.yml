@@ -11,7 +11,7 @@ jobs:
     outputs: # TODO: See if these are still needed after refactoring
       changelog-body: ${{ steps.generate-changelog.outputs.stdout }}
       commit-hash: ${{ steps.commit.outputs.commit_hash }}
-      latest-tag: ${{ steps.get-latest-tag.outputs.tag }}
+      new-tag: ${{ steps.set-version.outputs.tag }}
       version: ${{ steps.set-version.outputs.version }}
 
     steps:
@@ -160,5 +160,5 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: target/${{ matrix.artifact_name }}
         asset_name: ${{ matrix.artifact_name }}
-        tag: ${{ needs.repo-prep.outputs.latest-tag }}
+        tag: ${{ needs.repo-prep.outputs.new-tag }}
         overwrite: true
