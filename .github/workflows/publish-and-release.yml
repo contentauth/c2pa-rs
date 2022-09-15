@@ -107,6 +107,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        ref: ${{ needs.repo-prep.outputs.commit-hash }}
 
     - name: Publish crate
       run: |
@@ -136,6 +138,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        ref: ${{ needs.repo-prep.outputs.commit-hash }}
 
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
