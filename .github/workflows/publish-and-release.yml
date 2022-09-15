@@ -11,7 +11,7 @@ jobs:
     outputs: # TODO: See if these are still needed after refactoring
       changelog-body: ${{ steps.generate-changelog.outputs.stdout }}
       commit-hash: ${{ steps.commit.outputs.commit_hash }}
-      new-tag: ${{ steps.set-version.outputs.tag }}
+      new-tag: ${{ steps.set-version.outputs.version_tag }}
       version: ${{ steps.set-version.outputs.version }}
 
     steps:
