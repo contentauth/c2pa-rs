@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.3.1
+_15 September 2022_
+
+* Add --info option  ([contentauth/c2patool#65](https://github.com/contentauth/c2patool/pull/65))
+* Updates publish workflow to upload binaries to github ([contentauth/c2patool#58](https://github.com/contentauth/c2patool/pull/58))
+* Fix Make release script & update readme ([contentauth/c2patool#55](https://github.com/contentauth/c2patool/pull/55))
+
 ## 0.3.0
 _18 August 2022_
 
