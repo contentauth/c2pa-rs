@@ -49,10 +49,10 @@ jobs:
         VERSION: ${{ steps.set-version.outputs.version }}
         VERSION_TAG: ${{ steps.set-version.outputs.version_tag }}
         LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.stdout }}
 
     - name: Prevent empty release
-      if: ${{ steps.changelog.outputs.stdout == '' }}
+      if: ${{ steps.generate-changelog.outputs.stdout == '' }}
       uses: actions/github-script@v3
       with:
         script: |
@@ -64,7 +64,7 @@ jobs:
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
