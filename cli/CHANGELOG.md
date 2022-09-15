@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.3.4
+_15 September 2022_
+
+* Put the binary outputs in the correct release
+
 ## 0.3.3
 _15 September 2022_
 
