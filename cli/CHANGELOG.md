@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.3.6
+_16 September 2022_
+
+* Update Cargo.lock when publishing crate ([contentauth/c2patool#71](https://github.com/contentauth/c2patool/pull/71))
+* [IGNORE] update readme --info ([contentauth/c2patool#70](https://github.com/contentauth/c2patool/pull/70))
+* Update Cargo.lock to 0.3.5
+
 ## 0.3.5
 _15 September 2022_
 
