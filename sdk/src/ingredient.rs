@@ -387,10 +387,7 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
-        use crate::{
-            jumbf_io,
-            status_tracker::{DetailedStatusTracker, StatusTracker},
-        };
+        use crate::status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -413,14 +410,39 @@ impl Ingredient {
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut report = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::new();
+
+        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
+            Ok(manifest_bytes) => {
+                (
+                    Store::from_jumbf(&manifest_bytes, &mut validation_log)
+                        .and_then(|mut store| {
+                            // verify the store
+                            store
+                                .verify_from_path(path, &mut validation_log)
+                                .map(|_| store)
+                        })
+                        .map_err(|e| {
+                            // add a log entry for the error so we act like verify
+                            validation_log.log_silent(
+                                log_item!("asset", "error loading file", "Ingredient::from_file")
+                                    .set_error(&e),
+                            );
+                            e
+                        }),
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
 
         // generate a store from the buffer and then validate from the asset path
         // load and verify store in single call - no need to call low level jumbf_io functions
-        match Store::load_from_asset(path, true, &mut report) {
+        match result {
             Ok(store) => {
                 // generate ValidationStatus from ValidationItems filtering for only errors
-                let statuses = status_for_store(&store, &mut report);
+                let statuses = status_for_store(&store, &mut validation_log);
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
@@ -438,7 +460,7 @@ impl Ingredient {
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data = jumbf_io::load_jumbf_from_file(path).ok();
+                ingredient.manifest_data = manifest_bytes;
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {
@@ -453,7 +475,7 @@ impl Ingredient {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
                 // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = report
+                let statuses: Vec<ValidationStatus> = validation_log
                     .get_log()
                     .iter()
                     .filter_map(ValidationStatus::from_validation_item)
@@ -886,7 +908,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        //println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
