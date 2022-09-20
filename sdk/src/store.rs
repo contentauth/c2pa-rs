@@ -1871,8 +1871,7 @@ impl Store {
             Ok(manifest_bytes) => Ok(manifest_bytes),
             Err(Error::JumbfNotFound) => {
                 if external_manifest.exists() {
-                    let external_manifest_bytes = std::fs::read(external_manifest)?;
-                    Ok(external_manifest_bytes)
+                    std::fs::read(external_manifest).map_err(Error::IoError)
                 } else {
                     // check for remote manifest
                     let mut asset_reader = std::fs::File::open(in_path)?;
@@ -1884,8 +1883,7 @@ impl Store {
                     .provenance
                     {
                         if cfg!(feature = "fetch_remote_manifests") {
-                            let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
-                            Ok(remote_manifest_bytes)
+                            Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
                             Err(Error::RemoteManifestUrl(ext_ref))
