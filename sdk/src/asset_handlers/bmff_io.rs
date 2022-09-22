@@ -509,7 +509,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
         for stco_token in stco_list {
             let stco_box_info = &bmff_tree[*stco_token].data;
             if stco_box_info.box_type != BoxType::StcoBox {
-                return Err(Error::BadParam("Bad BMFF".to_string()));
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
             }
 
             // read stco box and patch
@@ -517,9 +517,9 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
 
             // read header
             let header = BoxHeaderLite::read(output)
-                .map_err(|_err| Error::BadParam("Bad BMFF".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
             if header.name != BoxType::StcoBox {
-                return Err(Error::BadParam("Bad BMFF".to_string()));
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
             }
 
             // read extended header
@@ -536,12 +536,12 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
                 let new_offset = if adjust < 0 {
                     offset
                         - u32::try_from(adjust.abs()).map_err(|_| {
-                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
                         })?
                 } else {
                     offset
                         + u32::try_from(adjust).map_err(|_| {
-                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
                         })?
                 };
                 entries.push(new_offset);
@@ -560,7 +560,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
         for co64_token in co64_list {
             let co64_box_info = &bmff_tree[*co64_token].data;
             if co64_box_info.box_type != BoxType::Co64Box {
-                return Err(Error::BadParam("Bad BMFF".to_string()));
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
             }
 
             // read co64 box and patch
@@ -568,9 +568,9 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
 
             // read header
             let header = BoxHeaderLite::read(output)
-                .map_err(|_err| Error::BadParam("Bad BMFF".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
             if header.name != BoxType::Co64Box {
-                return Err(Error::BadParam("Bad BMFF".to_string()));
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
             }
 
             // read extended header
@@ -587,12 +587,12 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
                 let new_offset = if adjust < 0 {
                     offset
                         - u64::try_from(adjust.abs()).map_err(|_| {
-                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
                         })?
                 } else {
                     offset
                         + u64::try_from(adjust).map_err(|_| {
-                            Error::BadParam("Bad BMFF offset adjustment".to_string())
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
                         })?
                 };
                 entries.push(new_offset);
@@ -625,8 +625,8 @@ pub(crate) fn build_bmff_tree(
     let mut current = start;
     while current < end {
         // Get box header.
-        let header =
-            BoxHeaderLite::read(reader).map_err(|_err| Error::BadParam("Bad BMFF".to_string()))?;
+        let header = BoxHeaderLite::read(reader)
+            .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
 
         // Break if size zero BoxHeader
         let s = header.size;
@@ -710,7 +710,7 @@ pub(crate) fn build_bmff_tree(
                 let new_token = bmff_tree.new_node(b);
                 current_node
                     .append_node(bmff_tree, new_token)
-                    .map_err(|_err| Error::BadParam("Bad BMFF Graph".to_string()))?;
+                    .map_err(|_err| Error::InvalidAsset("Bad BMFF Graph".to_string()))?;
 
                 let path = path_from_token(bmff_tree, &new_token)?;
                 add_token_to_cache(bmff_path_map, path, new_token);
@@ -965,16 +965,16 @@ impl AssetIO for BmffIO {
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
             let start = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             let end = usize::value_from(c2pa_start + c2pa_length)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
         } else {
             // insert new c2pa
             let end = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (end, end)
         };
@@ -1113,14 +1113,14 @@ impl AssetIO for BmffIO {
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
             let start = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             let end = usize::value_from(c2pa_start + c2pa_length)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             (start, end)
         } else {
-            return Err(Error::BadParam("value out of range".to_string()));
+            return Err(Error::InvalidAsset("value out of range".to_string()));
         };
 
         // write content before ContentProvenanceBox
@@ -1249,7 +1249,7 @@ impl AssetPatch for BmffIO {
                 (0, None)
             }
         } else {
-            return Err(Error::BadParam(
+            return Err(Error::InvalidAsset(
                 "patch_cai_store found no manifest store to patch.".to_string(),
             ));
         };
@@ -1265,12 +1265,12 @@ impl AssetPatch for BmffIO {
                 asset.write_all(&new_c2pa_box)?;
                 Ok(())
             } else {
-                Err(Error::BadParam(
+                Err(Error::InvalidAsset(
                     "patch_cai_store store size mismatch.".to_string(),
                 ))
             }
         } else {
-            Err(Error::BadParam(
+            Err(Error::InvalidAsset(
                 "patch_cai_store store size mismatch.".to_string(),
             ))
         }

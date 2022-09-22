@@ -70,7 +70,7 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
     let buf = read(asset_path)?;
     let dimg_opt = DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::BadParam("Could not parse input image".to_owned()))?;
+        .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
         // check for JUMBF Seg
@@ -83,9 +83,7 @@ fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
             aio.save_cai_store(asset_path, &no_bytes)?;
         }
     } else {
-        return Err(Error::BadParam(
-            "Image type not supported by handler".to_owned(),
-        ));
+        return Err(Error::UnsupportedType);
     }
 
     Ok(())
@@ -154,7 +152,7 @@ impl CAILoader for JpegIO {
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into())
-            .map_err(|_err| Error::BadParam("Could not parse input image".to_owned()))?;
+            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
@@ -206,12 +204,10 @@ impl CAILoader for JpegIO {
                         }
                     }
                 }
-                _ => return Err(Error::BadParam("Unknown image format".to_owned())),
+                _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
             };
         } else {
-            return Err(Error::BadParam(
-                "Image type not supported by handler".to_owned(),
-            ));
+            return Err(Error::UnsupportedType);
         }
 
         if buffer.is_empty() {
@@ -300,7 +296,7 @@ impl AssetIO for JpegIO {
 
         jpeg.encoder()
             .write_to(output)
-            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
 
         Ok(())
     }
@@ -399,7 +395,7 @@ impl AssetIO for JpegIO {
                     curr_offset += seg.len_with_entropy();
                 }
             }
-            _ => return Err(Error::BadParam("Unknown image format".to_owned())),
+            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
         }
 
         Ok(positions)
@@ -423,7 +419,7 @@ impl AssetIO for JpegIO {
 
         jpeg.encoder()
             .write_to(output)
-            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
 
         Ok(())
     }
