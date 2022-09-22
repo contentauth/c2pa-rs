@@ -140,6 +140,13 @@ fn main() -> Result<()> {
             manifest_config.parent = Some(parent_path)
         }
 
+        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
+        // note: This could be treated as an update manifest eventually since the image is the same
+        let source_ingredient = c2pa::Ingredient::from_file(&args.path)?;
+        if source_ingredient.manifest_data().is_some() && manifest_config.parent.is_none() {
+            manifest_config.parent = Some(std::fs::canonicalize(&args.path)?);
+        }
+
         let mut manifest = manifest_config.to_manifest()?;
 
         if let Some(remote) = args.remote {
