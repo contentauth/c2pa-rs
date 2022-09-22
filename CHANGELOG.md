@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.13.2
+_21 September 2022_
+
+* manifest_data was missing for remote manifests ([#135](https://github.com/contentauth/c2pa-rs/pull/135))
+
 ## 0.13.1
 _13 September 2022_
 
