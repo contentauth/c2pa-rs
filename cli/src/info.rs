@@ -25,22 +25,33 @@ pub fn info(path: &Path) -> Result<()> {
     }
     let ingredient = c2pa::Ingredient::from_file_with_options(path, &Options {})?;
     println!("Information for {}", ingredient.title());
+    let mut is_cloud_manifest = false;
     //println!("instanceID = {}", ingredient.instance_id());
     if let Some(provenance) = ingredient.provenance() {
-        if !provenance.starts_with("self#jumbf=") {
+        is_cloud_manifest = !provenance.starts_with("self#jumbf=");
+        if is_cloud_manifest {
             println!("Cloud URL = {}", provenance);
         } else {
             println!("Provenance URI = {}", provenance);
         }
     }
+
     if let Some(manifest_data) = ingredient.manifest_data() {
         let file_size = std::fs::metadata(path).unwrap().len();
-        println!(
-            "C2PA manifest store size = {} ({:.2}% of {})",
-            manifest_data.len(),
-            (manifest_data.len() as f64 / file_size as f64) * 100f64,
-            file_size
-        );
+        if is_cloud_manifest {
+            println!(
+                "Remote manifest store size = {} (file size = {})",
+                manifest_data.len(),
+                file_size
+            );
+        } else {
+            println!(
+                "Manifest store size = {} ({:.2}% of {})",
+                manifest_data.len(),
+                (manifest_data.len() as f64 / file_size as f64) * 100f64,
+                file_size
+            );
+        }
         if let Some(validation_status) = ingredient.validation_status() {
             println!("Validation issues:");
             for status in validation_status {
@@ -51,10 +62,12 @@ pub fn info(path: &Path) -> Result<()> {
         }
         let manifest_store = ManifestStore::from_bytes("c2pa", manifest_data.to_vec(), false)?;
         match manifest_store.manifests().len() {
-            0 => println!("No embedded manifests"),
+            0 => println!("No manifests"),
             1 => println!("One manifest"),
             n => println!("{} manifests", n),
         }
+    } else if is_cloud_manifest {
+        println!("Unable to fetch cloud manifest");
     } else {
         println!("No C2PA Manifests");
     }
