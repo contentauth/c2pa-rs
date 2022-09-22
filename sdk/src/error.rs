@@ -216,6 +216,9 @@ pub enum Error {
     #[error(transparent)]
     InvalidClaim(#[from] crate::store::InvalidClaimError),
 
+    #[error("asset could not be parsed: {0}")]
+    InvalidAsset(String),
+
     #[error(transparent)]
     JumbfParseError(#[from] crate::jumbf::boxes::JumbfParseError),
 

@@ -59,9 +59,9 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
 
     // check PNG signature
     f.read_exact(&mut hdr)
-        .map_err(|_err| Error::BadParam("PNG invalid".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("PNG invalid".to_string()))?;
     if hdr != PNG_ID {
-        return Err(Error::BadParam("PNG invalid".to_string()));
+        return Err(Error::InvalidAsset("PNG invalid".to_string()));
     }
 
     loop {
@@ -70,23 +70,23 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
         // read the chunk length
         let length = f
             .read_u32::<BigEndian>()
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         // read the chunk type
         f.read_exact(&mut buf4)
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
         let name = buf4;
 
         // seek past data
         f.seek(SeekFrom::Current(length as i64))
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         // read crc
         f.read_exact(&mut buf4)
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         let chunk_name = String::from_utf8(name.to_vec())
-            .map_err(|_err| Error::BadParam("PNG bad chunk name".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG bad chunk name".to_string()))?;
 
         let pcp = PngChunkPos {
             start: current_pos,
@@ -131,7 +131,7 @@ fn get_cai_data(f: &mut dyn CAIRead) -> Result<Vec<u8>> {
 
     let mut data: Vec<u8> = vec![0; length];
     f.read_exact(&mut data[..])
-        .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
     Ok(data)
 }
@@ -303,7 +303,7 @@ impl AssetIO for PngIO {
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
                 chunk identifier (4 byte character sequence)
-                chunk data (0 - n bytes of chunck data)
+                chunk data (0 - n bytes of chunk data)
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
@@ -313,10 +313,10 @@ impl AssetIO for PngIO {
         if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
             // replace existing CAI
             let start = usize::value_from(existing_cai.start)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             let end = usize::value_from(existing_cai.end())
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(start..end, empty_buf.iter().cloned());
         }
@@ -330,7 +330,7 @@ impl AssetIO for PngIO {
         // add new cai data after image header chunk
         if let Some(img_hdr) = iter.find(|pcp| pcp.name == IMG_HDR) {
             let end = usize::value_from(img_hdr.end())
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(end..end, cai_data.iter().cloned());
         } else {
@@ -338,8 +338,7 @@ impl AssetIO for PngIO {
         }
 
         // save png data
-        std::fs::write(asset_path, png_buf)
-            .map_err(|_err| Error::BadParam("PNG write error".to_owned()))?;
+        std::fs::write(asset_path, png_buf)?;
 
         Ok(())
     }
@@ -383,6 +382,43 @@ impl AssetIO for PngIO {
         });
 
         Ok(positions)
+    }
+
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+        // get png byte
+        let mut png_buf = std::fs::read(asset_path).map_err(|_err| Error::EmbeddingError)?;
+
+        let mut cursor = Cursor::new(png_buf);
+        let ps = get_png_chunk_positions(&mut cursor)?;
+
+        // get back buffer
+        png_buf = cursor.into_inner();
+
+        /*  splice in new chunk.  Each PNG chunk has the following format:
+                chunk data length (4 bytes big endian)
+                chunk identifier (4 byte character sequence)
+                chunk data (0 - n bytes of chunk data)
+                chunk crc (4 bytes in crc in format defined in PNG spec)
+        */
+
+        // erase existing
+        let empty_buf = Vec::new();
+        let mut iter = ps.into_iter();
+        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
+            // replace existing CAI
+            let start = usize::value_from(existing_cai.start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::value_from(existing_cai.end())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            png_buf.splice(start..end, empty_buf.iter().cloned());
+        }
+
+        // save png data
+        std::fs::write(asset_path, png_buf)?;
+
+        Ok(())
     }
 }
 
@@ -431,6 +467,25 @@ pub mod tests {
                     hop.name_str, hop.start, hop.length
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
+
+        std::fs::copy(&source, &output).unwrap();
+        let png_io = PngIO {};
+
+        png_io.remove_cai_store(&output).unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        match png_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
         }
     }
 }

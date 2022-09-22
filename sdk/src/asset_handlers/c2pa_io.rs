@@ -60,6 +60,10 @@ impl AssetIO for C2paIO {
 
         Ok(vec![hop])
     }
+
+    fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
