@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.3.7
+_22 September 2022_
+
+* Treat a source asset with a manifest store as a default parent ([contentauth/c2patool#76](https://github.com/contentauth/c2patool/pull/76))
+* Fetch remote manifests for --info ([contentauth/c2patool#75](https://github.com/contentauth/c2patool/pull/75))
+
 ## 0.3.6
 _16 September 2022_
 
