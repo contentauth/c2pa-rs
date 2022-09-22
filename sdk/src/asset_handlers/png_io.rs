@@ -474,20 +474,18 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
-        if let Ok(temp_dir) = tempfile::tempdir() {
-            let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
-                let png_io = PngIO {};
+        std::fs::copy(&source, &output).unwrap();
+        let png_io = PngIO {};
 
-                if let Ok(()) = png_io.remove_cai_store(&output) {
-                    // read back in asset, JumbfNotFound is expected since it was removed
-                    if let Err(Error::JumbfNotFound) = png_io.read_cai_store(&output) {
-                        return;
-                    }
-                }
-            }
+        png_io.remove_cai_store(&output).unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        match png_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
         }
-        unreachable!()
     }
 }

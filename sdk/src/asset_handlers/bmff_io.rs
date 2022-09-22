@@ -1391,20 +1391,18 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("video1.mp4");
 
-        if let Ok(temp_dir) = tempdir() {
-            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+        let temp_dir = tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
-                let bmff_io = BmffIO::new("mp4");
+        std::fs::copy(&source, &output).unwrap();
+        let bmff_io = BmffIO::new("mp4");
 
-                if let Ok(()) = bmff_io.remove_cai_store(&output) {
-                    // read back in asset, JumbfNotFound is expected since it was removed
-                    if let Err(Error::JumbfNotFound) = bmff_io.read_cai_store(&output) {
-                        return;
-                    }
-                }
-            }
+        bmff_io.remove_cai_store(&output).unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        match bmff_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
         }
-        unreachable!()
     }
 }
