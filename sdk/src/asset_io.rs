@@ -86,6 +86,9 @@ pub trait AssetIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
+
+    // Remove entire CAI block from asset
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 }
 
 // `AssetPatch` optimizes output generation for asset_io handlers that

@@ -21,11 +21,7 @@ use log::error;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 use crate::embedded_xmp;
-#[cfg(feature = "sign")]
-use crate::utils::{
-    hash_utils::{hash256, Exclusion},
-    patch::patch_bytes,
-};
+
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
 #[cfg(feature = "sign")]
@@ -35,7 +31,11 @@ use crate::{
     asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
+    jumbf_io::object_locations_from_stream,
+    utils::{
+        hash_utils::{hash256, Exclusion},
+        patch::patch_bytes,
+    },
     Signer,
 };
 use crate::{
@@ -55,7 +55,7 @@ use crate::{
     claim::RemoteManifest,
     jumbf_io::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, save_jumbf_to_file,
+        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
 
@@ -1744,10 +1744,14 @@ impl Store {
                     dest_path.to_path_buf()
                 }
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_url) => {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     // even though this block is protected by the outer cfg!(feature = "xmp_write")
                     // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
@@ -1768,6 +1772,8 @@ impl Store {
             match pc.remote_manifest() {
                 crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_)
@@ -1991,26 +1997,21 @@ impl Store {
         }
     }
 
-    /// load a CAI store from  a file
+    /// load jumbf given a file path
+    ///
+    /// This handles, embedded, sidecar and remote manifests
     ///
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
-    fn load_cai_from_file(
-        in_path: &Path,
-        validation_log: &mut impl StatusTracker,
-    ) -> Result<Store> {
+    pub fn load_jumbf_from_path(in_path: &Path) -> Result<Vec<u8>> {
         let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
 
         match load_jumbf_from_file(in_path) {
-            Ok(manifest_bytes) => {
-                // load and validate with CAI toolkit and dump if desired
-                Store::from_jumbf(&manifest_bytes, validation_log)
-            }
+            Ok(manifest_bytes) => Ok(manifest_bytes),
             Err(Error::JumbfNotFound) => {
                 if external_manifest.exists() {
-                    let external_manifest_bytes = std::fs::read(external_manifest)?;
-                    Store::from_jumbf(&external_manifest_bytes, validation_log)
+                    std::fs::read(external_manifest).map_err(Error::IoError)
                 } else {
                     // check for remote manifest
                     let mut asset_reader = std::fs::File::open(in_path)?;
@@ -2022,8 +2023,7 @@ impl Store {
                     .provenance
                     {
                         if cfg!(feature = "fetch_remote_manifests") {
-                            let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
-                            Store::from_jumbf(&remote_manifest_bytes, validation_log)
+                            Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
                             Err(Error::RemoteManifestUrl(ext_ref))
@@ -2032,6 +2032,24 @@ impl Store {
                         Err(Error::JumbfNotFound)
                     }
                 }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// load a CAI store from  a file
+    ///
+    /// in_path -  path to source file
+    /// validation_log - optional vec to contain addition info about the asset
+    #[cfg(feature = "file_io")]
+    fn load_cai_from_file(
+        in_path: &Path,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        match Self::load_jumbf_from_path(in_path) {
+            Ok(manifest_bytes) => {
+                // load and validate with CAI toolkit
+                Store::from_jumbf(&manifest_bytes, validation_log)
             }
             Err(e) => Err(e),
         }
