@@ -293,7 +293,7 @@ jobs:
 
       - name: (DEBUG) 
         run: |
-          echo BUMP = ${BUMP}
+          echo BUMP = xx${BUMP}xx
           echo BUMP_BOOL = ${BUMP_BOOL}
           echo TITLE = ${TITLE}
           echo TITLE_BOOL = ${TITLE_BOOL}
