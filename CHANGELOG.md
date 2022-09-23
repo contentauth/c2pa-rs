@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.14.0
+_23 September 2022_
+
+* (MINOR) Remove previously embedded manifests for remote manifests ([#136](https://github.com/contentauth/c2pa-rs/pull/136))
+* (MINOR) Add support for manifest removal ([#123](https://github.com/contentauth/c2pa-rs/pull/123))
+
 ## 0.13.2
 _21 September 2022_
 
