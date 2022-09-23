@@ -764,7 +764,16 @@ impl Manifest {
         self.set_format(format);
         // todo:: read instance_id from xmp from stream
         self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
-        // todo: generate thumbnail if we don't already have one
+
+        // generate thumbnail if we don't already have one
+        if self.thumbnail().is_none() {
+            #[cfg(feature = "add_thumbnails")]
+            if let Ok((format, image)) =
+                crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+            {
+                self.set_thumbnail(format, image);
+            }
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -772,6 +781,7 @@ impl Manifest {
         // sign and write our store to to the output image file
         store.save_to_stream(format, stream, signer)
     }
+
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
@@ -1230,6 +1240,9 @@ pub(crate) mod tests {
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
         );
+        #[cfg(feature = "add_thumbnails")]
+        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+
         println!("{}", manifest_store);
     }
 
