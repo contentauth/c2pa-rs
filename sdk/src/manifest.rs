@@ -1115,8 +1115,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
-    #[actix::test]
-    async fn test_embed_user_label() {
+    #[test]
+    fn test_embed_user_label() {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
@@ -1134,8 +1134,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
-    #[actix::test]
-    async fn test_embed_sidecar_user_label() {
+    #[test]
+    fn test_embed_sidecar_user_label() {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
         let sidecar = output.with_extension("c2pa");
@@ -1160,8 +1160,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
-    #[actix::test]
-    async fn test_embed_sidecar_with_parent_manifest() {
+    #[test]
+    fn test_embed_sidecar_with_parent_manifest() {
         let temp_dir = tempdir().expect("temp dir");
         let source = fixture_path("XCA.jpg");
         let output = temp_dir.path().join("XCAplus.jpg");
