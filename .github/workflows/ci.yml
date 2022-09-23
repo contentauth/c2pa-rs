@@ -286,10 +286,12 @@ jobs:
           VERSION: ${{ steps.set-version.outputs.version }}
 
       - name: Has (MINOR) tag been used in a previous commit?
+        uses: mathiasvr/command-output@v1
         id: bump_exists
         if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
-        run: |
-          git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
+        with:
+          run: |
+            git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
 
       - name: (DEBUG) 
         run: |
