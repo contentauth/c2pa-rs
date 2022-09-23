@@ -293,9 +293,15 @@ jobs:
 
       - name: (DEBUG) 
         run: |
-          echo PR title = ${TITLE}
+          echo BUMP = ${BUMP}
+          echo BUMP_BOOL = ${BUMP_BOOL}
+          echo TITLE = ${TITLE}
+          echo TITLE_BOOL = ${TITLE_BOOL}
         env:
+          BUMP: ${{ steps.bump_exists.outputs.stdout }}
           TITLE: ${{ github.event.pull_request.title }}
+          BUMP_BOOL: ${{ steps.bump_exists.outputs.stdout == '' }}
+          TITLE_BOOL: ${{ (!github.event.pull_request.title || !contains(github.event.pull_request.title, '(MINOR)')) }}
 
       - name: If this step fails, change title of the PR to include (MINOR) tag
         uses: obi1kenobi/cargo-semver-checks-action@v1
