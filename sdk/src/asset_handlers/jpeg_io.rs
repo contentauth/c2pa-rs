@@ -403,29 +403,6 @@ impl CAIWriter for JpegIO {
 
         Ok(positions)
     }
-
-    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
-        let input = read(asset_path).map_err(wrap_io_err)?;
-
-        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
-
-        // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
-
-        // save updated file
-        let output = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        jpeg.encoder()
-            .write_to(output)
-            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-
-        Ok(())
-    }
 }
 
 impl AssetIO for JpegIO {
@@ -459,6 +436,29 @@ impl AssetIO for JpegIO {
             .map_err(Error::IoError)?;
 
         self.get_object_locations_from_stream(&mut file)
+    }
+
+    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+        let input = std::fs::read(asset_path).map_err(Error::IoError)?;
+
+        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
+
+        // save updated file
+        let output = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        jpeg.encoder()
+            .write_to(output)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+
+        Ok(())
     }
 }
 

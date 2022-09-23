@@ -21,7 +21,6 @@ use log::error;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 use crate::embedded_xmp;
-
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
 #[cfg(feature = "sign")]
@@ -31,7 +30,7 @@ use crate::{
     asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
-    jumbf_io::object_locations_from_stream,
+    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
     utils::{
         hash_utils::{hash256, Exclusion},
         patch::patch_bytes,

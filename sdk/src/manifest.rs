@@ -1233,7 +1233,6 @@ pub(crate) mod tests {
         println!("{}", manifest_store);
     }
 
-
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
     #[test]
     fn test_embed_sidecar_with_parent_manifest() {
