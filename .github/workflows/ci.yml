@@ -289,7 +289,7 @@ jobs:
         id: bump_exists
         if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         run: |
-          git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep "(MINOR)" || :; }
+          git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
 
       - name: (DEBUG) 
         run: |
