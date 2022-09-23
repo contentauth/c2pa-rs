@@ -32,7 +32,7 @@ use crate::{
     cose_validator::verify_cose,
     jumbf_io::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, save_jumbf_to_file,
+        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -1610,10 +1610,14 @@ impl Store {
                     dest_path.to_path_buf()
                 }
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_url) => {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     // even though this block is protected by the outer cfg!(feature = "xmp_write")
                     // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
@@ -1634,6 +1638,8 @@ impl Store {
             match pc.remote_manifest() {
                 crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_)
