@@ -293,6 +293,6 @@ jobs:
 
       - name: If this step fails, change title of the PR to include (MINOR) tag
         uses: obi1kenobi/cargo-semver-checks-action@v1
-        if: ${{ steps.bump_exists.outputs.stdout == '' && !contains(github.event.pull_request.title, '(MINOR)') }}
+        if: ${{ steps.bump_exists.outputs.stdout == '' && (!github.event.pull_request.title || !contains(github.event.pull_request.title, '(MINOR)')) }}
         with:
           crate-name: c2pa
