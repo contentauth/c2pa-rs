@@ -32,7 +32,7 @@ use crate::{
     cose_validator::verify_cose,
     jumbf_io::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, save_jumbf_to_file,
+        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
     utils::{
         hash_utils::{hash256, Exclusion},
@@ -47,7 +47,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{self, boxes::*},
-    jumbf_io::{get_cailoader_handler, load_jumbf_from_memory},
+    jumbf_io::load_jumbf_from_memory,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     validation_status, ManifestStoreReport,
 };
@@ -1610,10 +1610,14 @@ impl Store {
                     dest_path.to_path_buf()
                 }
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_url) => {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     // even though this block is protected by the outer cfg!(feature = "xmp_write")
                     // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
@@ -1634,6 +1638,8 @@ impl Store {
             match pc.remote_manifest() {
                 crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
                 crate::claim::RemoteManifest::SideCar => {
+                    // remove any previous c2pa manifest from the asset
+                    remove_jumbf_from_file(dest_path)?;
                     dest_path.with_extension(MANIFEST_STORE_EXT)
                 }
                 crate::claim::RemoteManifest::Remote(_)
@@ -1834,32 +1840,44 @@ impl Store {
         data: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        load_jumbf_from_memory(asset_type, data).and_then(|cai_block| {
-            // load and validate with CAI toolkit and dump if desired
-            Store::from_jumbf(&cai_block, validation_log)
-        })
-    }
-
-    /// load a CAI store from  a file
-    ///
-    /// in_path -  path to source file
-    /// validation_log - optional vec to contain addition info about the asset
-    #[cfg(feature = "file_io")]
-    fn load_cai_from_file(
-        in_path: &Path,
-        validation_log: &mut impl StatusTracker,
-    ) -> Result<Store> {
-        let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
-
-        match load_jumbf_from_file(in_path) {
+        match load_jumbf_from_memory(asset_type, data) {
             Ok(manifest_bytes) => {
                 // load and validate with CAI toolkit and dump if desired
                 Store::from_jumbf(&manifest_bytes, validation_log)
             }
             Err(Error::JumbfNotFound) => {
+                let mut buf_reader = Cursor::new(data);
+                if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
+                    &mut buf_reader,
+                    asset_type,
+                )
+                .provenance
+                {
+                    // return an error with the url that should be read
+                    Err(Error::RemoteManifestUrl(ext_ref))
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// load jumbf given a file path
+    ///
+    /// This handles, embedded, sidecar and remote manifests
+    ///
+    /// in_path -  path to source file
+    /// validation_log - optional vec to contain addition info about the asset
+    #[cfg(feature = "file_io")]
+    pub fn load_jumbf_from_path(in_path: &Path) -> Result<Vec<u8>> {
+        let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
+
+        match load_jumbf_from_file(in_path) {
+            Ok(manifest_bytes) => Ok(manifest_bytes),
+            Err(Error::JumbfNotFound) => {
                 if external_manifest.exists() {
-                    let external_manifest_bytes = std::fs::read(external_manifest)?;
-                    Store::from_jumbf(&external_manifest_bytes, validation_log)
+                    std::fs::read(external_manifest).map_err(Error::IoError)
                 } else {
                     // check for remote manifest
                     let mut asset_reader = std::fs::File::open(in_path)?;
@@ -1871,15 +1889,33 @@ impl Store {
                     .provenance
                     {
                         if cfg!(feature = "fetch_remote_manifests") {
-                            let remote_manifest_bytes = Store::fetch_remote_manifest(&ext_ref)?;
-                            Store::from_jumbf(&remote_manifest_bytes, validation_log)
+                            Store::fetch_remote_manifest(&ext_ref)
                         } else {
-                            Err(Error::JumbfNotFound)
+                            // return an error with the url that should be read
+                            Err(Error::RemoteManifestUrl(ext_ref))
                         }
                     } else {
                         Err(Error::JumbfNotFound)
                     }
                 }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// load a CAI store from  a file
+    ///
+    /// in_path -  path to source file
+    /// validation_log - optional vec to contain addition info about the asset
+    #[cfg(feature = "file_io")]
+    fn load_cai_from_file(
+        in_path: &Path,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        match Self::load_jumbf_from_path(in_path) {
+            Ok(manifest_bytes) => {
+                // load and validate with CAI toolkit
+                Store::from_jumbf(&manifest_bytes, validation_log)
             }
             Err(e) => Err(e),
         }
@@ -1906,18 +1942,10 @@ impl Store {
                 Ok(store)
             })
             .map_err(|e| {
-                let err = match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::IoError(_) => {
-                        Error::FileNotFound(asset_path.to_string_lossy().to_string())
-                    }
-                    Error::UnsupportedType => Error::UnsupportedType,
-                    _ => Error::LogStop,
-                };
-                let log_item = log_item!("asset", "error loading file", "load_from_asset").error(e);
-                validation_log.log_silent(log_item);
-                err
+                validation_log.log_silent(
+                    log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
+                );
+                e
             })
     }
 
@@ -1925,29 +1953,14 @@ impl Store {
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
-    ) -> Result<(Store, Option<String>)> {
-        let cai_loader = get_cailoader_handler(asset_type).ok_or(Error::UnsupportedType)?;
-
-        let mut buf_reader = Cursor::new(data);
-
-        // check for xmp, error if not present
-        let xmp = cai_loader.read_xmp(&mut buf_reader);
-
+    ) -> Result<Store> {
         // load jumbf if available
-        Self::load_cai_from_memory(asset_type, data, validation_log)
-            .map(|store| (store, xmp))
-            .map_err(|e| {
-                let err = match e {
-                    Error::PrereleaseError => Error::PrereleaseError,
-                    Error::JumbfNotFound => Error::JumbfNotFound,
-                    Error::UnsupportedType => Error::UnsupportedType,
-                    _ => Error::LogStop,
-                };
-                let log_item =
-                    log_item!("asset", "error loading asset", "get_store_from_memory").error(e);
-                validation_log.log_silent(log_item);
-                err
-            })
+        Self::load_cai_from_memory(asset_type, data, validation_log).map_err(|e| {
+            validation_log.log_silent(
+                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(&e),
+            );
+            e
+        })
     }
 
     /// Returns embedded remote manifest URL if available
@@ -1979,17 +1992,15 @@ impl Store {
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        Store::get_store_from_memory(asset_type, data, validation_log).and_then(
-            |(store, _xmp_opt)| {
-                // verify the store
-                if verify {
-                    // verify store and claims
-                    Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
-                }
+        Store::get_store_from_memory(asset_type, data, validation_log).and_then(|store| {
+            // verify the store
+            if verify {
+                // verify store and claims
+                Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
+            }
 
-                Ok(store)
-            },
-        )
+            Ok(store)
+        })
     }
 
     /// Load Store from a in-memory asset asychronously validating
@@ -2003,7 +2014,7 @@ impl Store {
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        let (store, _xmp_opt) = Store::get_store_from_memory(asset_type, data, validation_log)?;
+        let store = Store::get_store_from_memory(asset_type, data, validation_log)?;
 
         // verify the store
         if verify {
@@ -2617,10 +2628,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::IoError(_err))
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("IoError"));
     }
 
     #[test]
@@ -2636,10 +2644,7 @@ pub mod tests {
         );
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(matches!(
-            errors[0].err_val.as_ref(),
-            Some(Error::PrereleaseError)
-        ));
+        assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
     }
 
     #[test]
@@ -2763,11 +2768,10 @@ pub mod tests {
         // modify a required field label in the claim - causes failure to read claim from cbor
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
-        assert!(matches!(
-            report.get_log()[0].err_val,
-            Some(Error::ClaimDecoding)
-        ));
-        //assert_eq!(report[0].validation_status.as_deref(), Some(???));  // what validation status should we have for this?
+        assert!(report.get_log()[0]
+            .error_str()
+            .unwrap()
+            .starts_with("ClaimDecoding"))
     }
 
     #[test]
@@ -2781,7 +2785,7 @@ pub mod tests {
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
-        assert!(matches!(errors[0].err_val, Some(Error::HashMismatch(_))));
+        assert!(errors[0].error_str().unwrap().starts_with("HashMismatch"));
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_DATAHASH_MISMATCH)
@@ -3032,5 +3036,65 @@ pub mod tests {
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
+    }
+
+    #[test]
+    fn test_external_manifest_from_memory() {
+        // test adding to actual image
+        let ap = fixture_path("libpng-test.png");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+
+        let sidecar = op.with_extension(MANIFEST_STORE_EXT);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // start with base url
+        let fp = format!("file:/{}", sidecar.to_str().unwrap());
+        let url = url::Url::parse(&fp).unwrap();
+
+        let url_string: String = url.into();
+
+        // set claim for side car with remote manifest embedding generation
+        claim.set_remote_manifest(url_string.clone()).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+
+        // delete the sidecar so we can test for url only rea
+        // std::fs::remove_file(sidecar);
+
+        assert!(sidecar.exists());
+
+        // load external manifest
+        let loaded_manifest = std::fs::read(sidecar).unwrap();
+
+        // compare returned to external
+        assert_eq!(saved_manifest, loaded_manifest);
+
+        // Load the exported file into a buffer
+        let file_buffer = std::fs::read(&op).unwrap();
+
+        let mut validation_log = OneShotStatusTracker::default();
+        let result = Store::load_from_memory("png", &file_buffer, true, &mut validation_log);
+
+        assert!(result.is_err());
+
+        // verify that we got  RemoteManifestUrl error with the expected url
+        match result {
+            Ok(_store) => panic!("did not expect to have a store"),
+            Err(e) => match e {
+                Error::RemoteManifestUrl(url) => assert_eq!(url, url_string),
+                _ => panic!("unexepected error"),
+            },
+        }
     }
 }
