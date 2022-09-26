@@ -287,6 +287,7 @@ jobs:
 
       - name: Has (MINOR) tag been used in a previous commit?
         uses: mathiasvr/command-output@v1
+        continue-on-error: true
         id: bump_exists
         if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         with:
