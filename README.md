@@ -56,6 +56,12 @@ c2pa = { version = "0.11.0", features = ["file_io"] }
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
 
+If you want to support OTF font files, add the `otf` dependency to your `Cargo.toml`. For example:
+
+```toml
+c2pa = {version = "0.11.0", features = ["otf"] }
+```
+
 ## Crate features
 
 The Rust SDK crate provides:
@@ -65,6 +71,7 @@ The Rust SDK crate provides:
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
+* `otf` enables a CAI store for OTF font files. (Requires [fonttools](https://crates.io/crates/fonttools).)
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 

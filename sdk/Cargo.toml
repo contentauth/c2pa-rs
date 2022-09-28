@@ -23,6 +23,7 @@ default = ["add_thumbnails"]
 add_thumbnails = ["image"]
 async_signer = ["async-trait", "file_io"]
 bmff = []
+otf = ["fonttools"]
 file_io = ["sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
@@ -85,6 +86,7 @@ url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.11.0"
 x509-certificate = "0.12.0"
+fonttools = { version = "0.1.0", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ring = "0.16.20"

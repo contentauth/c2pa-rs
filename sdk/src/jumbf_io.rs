@@ -17,6 +17,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "otf")]
+use crate::{
+    asset_handlers::otf_io::OtfIO
+};
+
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
@@ -25,7 +30,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 23] = [
+static SUPPORTED_TYPES: [&str; 24] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -47,6 +52,10 @@ static SUPPORTED_TYPES: [&str; 23] = [
     "image/jpeg",
     "image/png",
     "video/mp4",
+    "application/font-sfnt",
+    "otf",
+    "ttf",
+    "font/ttf"
     "image/tiff",
     "image/dng",
 ];
@@ -117,6 +126,8 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
         "png" => Some(Box::new(PngIO {})),
         "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
+        #[cfg(feature = "otf")]
+        "otf" | "ttf" => Some(Box::new(OtfIO{})),
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
         _ => None,
     }
@@ -130,6 +141,10 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         }
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
+        #[cfg(feature = "otf")]
+        "otf" | "application/font-sfnt" | "ttf" | "font/ttf" => {
+            Some(Box::new(OtfIO {}))
+        },
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
         | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
             if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>

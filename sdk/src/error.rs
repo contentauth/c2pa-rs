@@ -213,6 +213,9 @@ pub enum Error {
     #[error("PDF read error")]
     PdfReadError,
 
+    #[error("OTF read error")]
+    OtfReadError,
+
     #[error(transparent)]
     InvalidClaim(#[from] crate::store::InvalidClaimError),
 
@@ -249,6 +252,18 @@ pub enum Error {
 
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    /// Failed to load a font
+    #[error("Failed to load font")]
+    FontLoadError,
+
+    /// Failed to parse or de-serialize font data
+    #[error("Failed to de-serialize data")]
+    DeserializationError,
+
+    /// Invalid font format
+    #[error("Failed to load font")]
+    UnsupportedFontError,
 
     #[error("prerelease content detected")]
     PrereleaseError,
