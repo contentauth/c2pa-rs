@@ -22,19 +22,63 @@ use std::{
     collections::{BTreeMap, HashMap},
     io::Cursor,
 };
-//use std::slice::from_ref;
 
 use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
 use crate::error::{Error, Result};
 
 const C2PA_TAG: u16 = 0xCd41;
-#[allow(dead_code)]
-const C2PA_FIELD_TYPE: u16 = 1;
+const XMP_TAG: u16 = 0x02BC;
+const C2PA_FIELD_TYPE: u16 = 7;
 
 const STRIPBYTECOUNTS: u16 = 279;
 const STRIPOFFSETS: u16 = 273;
 const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
+
+// The type of an IFD entry
+enum IFDType {
+    BYTE = 1,       // 8-bit unsigned integer
+    ASCII = 2,      // 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
+    SHORT = 3,      // 16-bit unsigned integer
+    LONG = 4,       // 32-bit unsigned integer
+    RATIONAL = 5,   // Fraction stored as two 32-bit unsigned integers
+    SBYTE = 6,      // 8-bit signed integer
+    UNDEFINED = 7,  // 8-bit byte that may contain anything, depending on the field
+    SSHORT = 8,     // 16-bit signed integer
+    SLONG = 9,      // 32-bit signed integer
+    SRATIONAL = 10, // Fraction stored as two 32-bit signed integers
+    FLOAT = 11,     // 32-bit IEEE floating point
+    DOUBLE = 12,    // 64-bit IEEE floating point
+    IFD = 13,       // 32-bit unsigned integer (offset)
+    LONG8 = 16,     // BigTIFF 64-bit unsigned integer
+    /// BigTIFF 64-bit signed integer
+    SLONG8 = 17, // BigTIFF 64-bit unsigned integer (offset)
+    IFD8 = 18,
+}
+
+impl IFDType {
+    pub fn from_u16(val: u16) -> Option<IFDType> {
+        match val {
+            1 => Some(IFDType::BYTE),
+            2 => Some(IFDType::ASCII),
+            3 => Some(IFDType::SHORT),
+            4 => Some(IFDType::LONG),
+            5 => Some(IFDType::RATIONAL),
+            6 => Some(IFDType::SBYTE),
+            7 => Some(IFDType::UNDEFINED),
+            8 => Some(IFDType::SSHORT),
+            9 => Some(IFDType::SLONG),
+            10 => Some(IFDType::SRATIONAL),
+            11 => Some(IFDType::FLOAT),
+            12 => Some(IFDType::DOUBLE),
+            13 => Some(IFDType::IFD),
+            16 => Some(IFDType::LONG8),
+            17 => Some(IFDType::SLONG8),
+            18 => Some(IFDType::IFD8),
+            _ => None,
+        }
+    }
+}
 
 #[allow(dead_code)]
 pub struct EndianIO {
@@ -184,9 +228,7 @@ pub(crate) struct TiffStructure {
     first_ifd: Option<ImageFileDirectory>,
 }
 
-#[allow(dead_code)]
 const II: [u8; 2] = *b"II";
-#[allow(dead_code)]
 const MM: [u8; 2] = *b"MM";
 
 impl TiffStructure {
@@ -243,7 +285,6 @@ impl TiffStructure {
         Ok(ts)
     }
 
-    #[allow(dead_code)]
     fn read_ifd<R: ?Sized>(
         reader: &mut R,
         byte_order: Endianness,
@@ -317,7 +358,6 @@ impl TiffStructure {
     }
 }
 
-#[allow(dead_code)]
 fn map_tiff<R: ?Sized>(input: &mut R) -> Result<(ImageFileDirectory, Endianness)>
 where
     R: Read + Seek,
@@ -364,41 +404,30 @@ where
     Ok(data)
 }
 
-#[allow(dead_code)]
-fn write_manifest<W>(w: &mut W, _assert_reader: &dyn CAIRead, data: &[u8]) -> Result<u64>
+fn get_xmp_data<R: ?Sized>(asset_reader: &mut R) -> Option<Vec<u8>>
 where
-    W: Write + Seek,
+    R: Read + Seek,
 {
-    use tiff::{encoder::*, tags::*};
+    let (first_idf, _e) = map_tiff(asset_reader).ok()?;
 
-    let mut image_data = Vec::new();
-    for x in 0..100 {
-        for y in 0..100u8 {
-            let val = x + y;
-            image_data.push(val);
-            image_data.push(val);
-            image_data.push(val);
-        }
-    }
+    let xmp_ifd_entry = match first_idf.get_tag(XMP_TAG) {
+        Some(entry) => entry,
+        None => return None,
+    };
 
-    {
-        let mut tiff = TiffEncoder::new(w).unwrap();
+    // move read point to start of entry
+    asset_reader
+        .seek(SeekFrom::Start(xmp_ifd_entry.value_offset))
+        .ok()?;
 
-        let mut image = tiff.new_image::<colortype::RGB8>(100, 100).unwrap();
-        image
-            .encoder()
-            .write_tag(Tag::Artist, "Image-tiff")
-            .unwrap();
-        image
-            .encoder()
-            .write_tag(Tag::Unknown(C2PA_TAG), data)
-            .unwrap();
-        image.write_data(&image_data).unwrap();
-    }
+    let xmp_len: usize = usize::value_from(xmp_ifd_entry.value_count).ok()?;
 
-    Ok(0)
+    let mut data = vec![0u8; xmp_len];
+
+    asset_reader.read_exact(data.as_mut_slice()).ok()?;
+
+    Some(data)
 }
-
 #[derive(PartialEq, Clone)]
 pub struct IfdClonedEntry {
     pub entry_tag: u16,
@@ -522,12 +551,6 @@ impl<T: Write + Seek> TiffCloner<T> {
                     ));
                 }
 
-                if so_entry.entry_type != 4 {
-                    return Err(Error::InvalidSourceAsset(
-                        "expected LONG TagStripOffests, found SHORT".to_string(),
-                    ));
-                }
-
                 let mut sbcs = vec![0u64; sbc_entry.value_count as usize];
                 let mut dest_offsets: Vec<u64> = Vec::new();
 
@@ -634,46 +657,119 @@ impl<T: Write + Seek> TiffCloner<T> {
                 );
             }
             (false, false, true, true) => {
-                /*
-                chunk_type = ChunkType::Tile;
+                let tbc_entry = self.target_ifd[&TILEBYTECOUNTS].clone();
+                let to_entry = self
+                    .target_ifd
+                    .get_mut(&TILEOFFSETS)
+                    .ok_or(Error::NotFound)?;
 
-                let tile_width =
-                    usize::try_from(tag_reader.require_tag(Tag::TileWidth)?.into_u32()?)?;
-                let tile_length =
-                    usize::try_from(tag_reader.require_tag(Tag::TileLength)?.into_u32()?)?;
-
-                if tile_width == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileWidth).into());
-                } else if tile_length == 0 {
-                    return Err(TiffFormatError::InvalidTagValueType(Tag::TileLength).into());
-                }
-
-                strip_decoder = None;
-                tile_attributes = Some(TileAttributes {
-                    image_width: usize::try_from(width)?,
-                    image_height: usize::try_from(height)?,
-                    tile_width,
-                    tile_length,
-                });
-                chunk_offsets = tag_reader
-                    .find_tag(Tag::TileOffsets)?
-                    .unwrap()
-                    .into_u64_vec()?;
-                chunk_bytes = tag_reader
-                    .find_tag(Tag::TileByteCounts)?
-                    .unwrap()
-                    .into_u64_vec()?;
-
-                let tile = tile_attributes.as_ref().unwrap();
-                if chunk_offsets.len() != chunk_bytes.len()
-                    || chunk_offsets.len() != tile.tiles_down() * tile.tiles_across()
-                {
-                    return Err(TiffError::FormatError(
-                        TiffFormatError::InconsistentSizesEncountered,
+                // check for well formed TIFF
+                if to_entry.value_count != tbc_entry.value_count {
+                    return Err(Error::InvalidSourceAsset(
+                        "TIFF tile count does not match tile offset count".to_string(),
                     ));
                 }
 
-                */
+                let mut tbcs = vec![0u64; tbc_entry.value_count as usize];
+                let mut dest_offsets: Vec<u64> = Vec::new();
+
+                // get the byte counts
+                with_order!(tbc_entry.value_bytes.as_slice(), self.endianness, |src| {
+                    for i in 0..tbcs.len() {
+                        match tbc_entry.entry_type {
+                            4u16 => {
+                                let s = src.read_u32()?;
+                                tbcs[i] = s.into();
+                            }
+                            3u16 => {
+                                let s = src.read_u16()?;
+                                tbcs[i] = s.into();
+                            }
+                            16u16 => {
+                                let s = src.read_u64()?;
+                                tbcs[i] = s;
+                            }
+                            _ => {
+                                return Err(Error::InvalidSourceAsset(
+                                    "invalid TIFF tile".to_string(),
+                                ))
+                            }
+                        }
+                    }
+                });
+
+                // seek to end of file
+                self.writer.seek(SeekFrom::End(0))?;
+
+                // copy the tiles
+                with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
+                    for i in 0..to_entry.value_count as usize {
+                        let cnt = usize::value_from(tbcs[i])
+                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+
+                        // get the offset
+                        let to: u64 = match to_entry.entry_type {
+                            4u16 => {
+                                let s = src.read_u32()?;
+                                s.into()
+                            }
+                            16u16 => {
+                                let s = src.read_u64()?;
+                                s.into()
+                            }
+                            _ => {
+                                return Err(Error::InvalidSourceAsset(
+                                    "invalid TIFF strip".to_string(),
+                                ))
+                            }
+                        };
+
+                        let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
+                        dest_offsets.push(dest_offset);
+
+                        // copy the tile to new file
+                        let mut data = vec![0u8; cnt];
+                        asset_reader.seek(SeekFrom::Start(to))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                        self.writer.write_all(data.as_slice())?;
+                    }
+                });
+
+                // patch the offsets
+                with_order!(
+                    to_entry.value_bytes.as_mut_slice(),
+                    self.endianness,
+                    |dest| {
+                        for i in 0..to_entry.value_count as usize {
+                            // get the offset
+                            match to_entry.entry_type {
+                                4u16 => {
+                                    let offset =
+                                        u32::value_from(dest_offsets[i]).map_err(|_err| {
+                                            Error::BadParam("value out of range".to_string())
+                                        })?;
+                                    dest.write_u32(offset)?;
+                                }
+                                3u16 => {
+                                    let offset =
+                                        u16::value_from(dest_offsets[i]).map_err(|_err| {
+                                            Error::BadParam("value out of range".to_string())
+                                        })?;
+                                    dest.write_u16(offset)?;
+                                }
+                                16u16 => {
+                                    let offset = dest_offsets[i];
+                                    dest.write_u64(offset)?;
+                                }
+                                _ => {
+                                    return Err(Error::InvalidSourceAsset(
+                                        "invalid TIFF strip".to_string(),
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                );
             }
             (_, _, _, _) => {
                 return Err(Error::InvalidSourceAsset(
@@ -809,11 +905,11 @@ impl<T: Write + Seek> TiffCloner<T> {
 
             let target_endianness = self.writer.endianness();
 
-            let entry_type = tiff::tags::Type::from_u16(et).ok_or(Error::UnsupportedType)?;
+            let entry_type = IFDType::from_u16(et).ok_or(Error::UnsupportedType)?;
 
             // read IFD raw data in file native endian format
             let data = match entry_type {
-                tiff::tags::Type::BYTE | tiff::tags::Type::SBYTE => {
+                IFDType::BYTE | IFDType::SBYTE => {
                     let num_bytes = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
@@ -832,7 +928,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::ASCII => {
+                IFDType::ASCII => {
                     let num_chars = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
@@ -848,7 +944,7 @@ impl<T: Write + Seek> TiffCloner<T> {
                         return Err(Error::InvalidSourceAsset("invalid TIFF tag".to_string()));
                     }
                 }
-                tiff::tags::Type::SHORT => {
+                IFDType::SHORT => {
                     let num_shorts = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_shorts * 2];
@@ -871,7 +967,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::LONG => {
+                IFDType::LONG => {
                     let num_longs = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_longs * 4];
@@ -894,7 +990,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::RATIONAL => {
+                IFDType::RATIONAL => {
                     let num_rationals = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_rationals * 8];
@@ -905,7 +1001,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::UNDEFINED => {
+                IFDType::UNDEFINED => {
                     let num_undefined = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_undefined];
@@ -916,7 +1012,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::SSHORT => {
+                IFDType::SSHORT => {
                     let num_sshorts = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_sshorts * 2];
@@ -939,7 +1035,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::SLONG => {
+                IFDType::SLONG => {
                     let num_slongs = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slongs * 4];
@@ -962,7 +1058,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::SRATIONAL => {
+                IFDType::SRATIONAL => {
                     let num_srationals = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_srationals * 8];
@@ -973,7 +1069,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::FLOAT => {
+                IFDType::FLOAT => {
                     let num_floats = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_floats * 4];
@@ -996,7 +1092,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::DOUBLE => {
+                IFDType::DOUBLE => {
                     let num_doubles = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_doubles * 8];
@@ -1007,7 +1103,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::IFD => {
+                IFDType::IFD => {
                     let num_ifds = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_ifds * 4];
@@ -1030,7 +1126,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::LONG8 => {
+                IFDType::LONG8 => {
                     let num_long8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_long8s * 8];
@@ -1041,7 +1137,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::SLONG8 => {
+                IFDType::SLONG8 => {
                     let num_slong8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slong8s * 8];
@@ -1052,7 +1148,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                tiff::tags::Type::IFD8 => {
+                IFDType::IFD8 => {
                     let num_ifd8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_ifd8s * 8];
@@ -1063,14 +1159,13 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                _ => return Err(Error::UnsupportedType),
             };
 
             self.target_ifd.insert(
                 *tag,
                 IfdClonedEntry {
                     entry_tag: *tag,
-                    entry_type: entry_type.to_u16(),
+                    entry_type: entry_type as u16,
                     value_count: cnt,
                     value_bytes: data,
                 },
@@ -1123,8 +1218,9 @@ impl CAILoader for TiffIO {
         Ok(cai_data)
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+        let xmp_data = get_xmp_data(asset_reader)?;
+        String::from_utf8(xmp_data).ok()
     }
 }
 
@@ -1193,7 +1289,6 @@ impl AssetIO for TiffIO {
             length: manifest_len,
             htype: HashBlockObjectType::Cai,
         }])
-
     }
 }
 
