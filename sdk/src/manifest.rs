@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
+    assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -624,6 +624,10 @@ impl Manifest {
                         cw = cw.set_author(&authors)?;
                     }
                     claim.add_assertion_with_salt(&cw, &salt)
+                }
+                Exif::LABEL => {
+                    let exif: Exif = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
                     ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(

@@ -25,6 +25,10 @@ pub(crate) use data_hash::DataHash;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
+
+mod exif;
+pub use exif::Exif;
+
 #[allow(dead_code)] // will become public later
 mod ingredient;
 pub(crate) use ingredient::{Ingredient, Relationship};
