@@ -11,31 +11,34 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{collections::HashMap, fmt, path::Path};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
-use std::fmt;
 use uuid::Uuid;
 
-use crate::assertion::{
-    get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion, AssertionBase,
-    AssertionData,
+use crate::{
+    assertion::{
+        get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
+        AssertionBase, AssertionData,
+    },
+    assertions::{self, labels, BmffHash, DataHash},
+    cose_validator::{get_signing_info, verify_cose, verify_cose_async},
+    error::{Error, Result},
+    hashed_uri::HashedUri,
+    jumbf::{
+        self,
+        boxes::{
+            CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
+        },
+    },
+    salt::{SaltGenerator, NO_SALT},
+    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    validation_status,
+    validator::ValidationInfo,
 };
-use crate::assertions::{self, labels, BmffHash, DataHash};
-use crate::cose_validator::{get_signing_info, verify_cose, verify_cose_async};
-use crate::hashed_uri::HashedUri;
-use crate::jumbf::{
-    self,
-    boxes::{CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox},
-};
-use crate::salt::{SaltGenerator, NO_SALT};
-use crate::utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg};
-
-use crate::error::{Error, Result};
-use crate::status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
-use crate::validation_status;
-use crate::validator::ValidationInfo;
 
 const BUILD_HASH_ALG: &str = "sha256";
 
@@ -45,7 +48,12 @@ use HashedUri as C2PAAssertion;
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
 
-#[derive(PartialEq, Clone)]
+pub enum ClaimAssetData<'a> {
+    PathData(&'a Path),
+    ByteData(&'a [u8]),
+}
+
+#[derive(PartialEq, Eq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
@@ -148,6 +156,10 @@ impl fmt::Debug for ClaimAssertion {
 /// that hash is signed to produce the claim signature.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Claim {
+    // external manifest
+    #[serde(skip_deserializing, skip_serializing)]
+    remote_manifest: RemoteManifest,
+
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
     update_manifest: bool,
@@ -221,6 +233,21 @@ pub enum AssertionStoreJsonFormat {
     OrderedListNoBinary, // list of Assertions as json objects omitting binaries results
 }
 
+/// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteManifest {
+    NoRemote,                // No external manifest (default)
+    SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
+    Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
+    EmbedWithRemote(String), // Manifest will be embedded with a remote reference, sidecar will be generated
+}
+
+impl Default for RemoteManifest {
+    fn default() -> Self {
+        Self::NoRemote
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JsonOrderedAssertionData {
     label: String,
@@ -239,8 +266,7 @@ impl Claim {
     /// Create a new claim.
     /// vendor: name used to label the claim (unique instance number is automatically calculated)
     /// claim_generator: User agent see c2pa spec for format
-    // #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(claim_generator: &str, vendor: Option<&str>) -> Self {
+    pub fn new<S: Into<String>>(claim_generator: S, vendor: Option<&str>) -> Self {
         let urn = Uuid::new_v4();
         let l = match vendor {
             Some(v) => format!(
@@ -255,6 +281,7 @@ impl Claim {
         };
 
         Claim {
+            remote_manifest: RemoteManifest::NoRemote,
             box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
@@ -262,13 +289,44 @@ impl Claim {
             label: l,
             signature: "".to_string(),
 
-            claim_generator: claim_generator.to_string(),
+            claim_generator: claim_generator.into(),
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
             redacted_assertions: None,
             alg: Some(BUILD_HASH_ALG.to_string()),
+            alg_soft: None,
+            claim_generator_hints: None,
+
+            title: None,
+            format: "".to_string(),
+            instance_id: "".to_string(),
+
+            update_manifest: false,
+        }
+    }
+
+    /// Create a new claim with a user supplied GUID.
+    /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
+    /// claim_generator: User agent see c2pa spec for format
+    pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
+        Claim {
+            remote_manifest: RemoteManifest::NoRemote,
+            box_prefix: "self#jumbf".to_string(),
+            root: jumbf::labels::MANIFEST_STORE.to_string(),
+            signature_val: Vec::new(),
+            ingredients_store: HashMap::new(),
+            label: user_guid.into(), // todo figure out how to validate this
+            signature: "".to_string(),
+
+            claim_generator: claim_generator.into(),
+            assertion_store: Vec::new(),
+            vc_store: Vec::new(),
+            assertions: Vec::new(),
+            original_bytes: None,
+            redacted_assertions: None,
+            alg: Some(BUILD_HASH_ALG.into()),
             alg_soft: None,
             claim_generator_hints: None,
 
@@ -371,6 +429,36 @@ impl Claim {
     /// Is this an update manifest
     pub fn update_manifest(&self) -> bool {
         self.update_manifest
+    }
+
+    pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(
+        &mut self,
+        remote_url: S,
+    ) -> Result<()> {
+        let url = url::Url::parse(remote_url.as_ref())
+            .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+        self.remote_manifest = RemoteManifest::Remote(url.to_string());
+
+        Ok(())
+    }
+
+    pub fn set_embed_remote_manifest<S: Into<String> + AsRef<str>>(
+        &mut self,
+        remote_url: S,
+    ) -> Result<()> {
+        let url = url::Url::parse(remote_url.as_ref())
+            .map_err(|_e| Error::BadParam("remote url is badly formed".to_string()))?;
+        self.remote_manifest = RemoteManifest::EmbedWithRemote(url.to_string());
+
+        Ok(())
+    }
+    pub fn set_external_manifest(&mut self) {
+        self.remote_manifest = RemoteManifest::SideCar;
+    }
+
+    #[cfg(feature = "file_io")]
+    pub(crate) fn remote_manifest(&self) -> RemoteManifest {
+        self.remote_manifest.clone()
     }
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
@@ -710,9 +798,9 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub async fn verify_claim_async(
+    pub async fn verify_claim_async<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_bytes: &'a [u8],
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -750,15 +838,21 @@ impl Claim {
             validation_log,
         )
         .await;
-        Claim::verify_internal(claim, asset_bytes, is_provenance, verified, validation_log)
+        Claim::verify_internal(
+            claim,
+            &ClaimAssetData::ByteData(asset_bytes),
+            is_provenance,
+            verified,
+            validation_log,
+        )
     }
 
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub fn verify_claim(
+    pub fn verify_claim<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -782,20 +876,20 @@ impl Claim {
             validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
         }
 
-        let verified = verify_cose(
-            sig,
-            &claim.data()?,
-            &additional_bytes,
-            !is_provenance,
-            validation_log,
-        );
+        let data = if let Some(ref original_bytes) = claim.original_bytes {
+            original_bytes
+        } else {
+            return Err(Error::ClaimDecoding);
+        };
 
-        Claim::verify_internal(claim, asset_bytes, is_provenance, verified, validation_log)
+        let verified = verify_cose(sig, data, &additional_bytes, !is_provenance, validation_log);
+
+        Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
-    fn verify_internal(
+    fn verify_internal<'a>(
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &ClaimAssetData<'a>,
         is_provenance: bool,
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
@@ -962,7 +1056,16 @@ impl Claim {
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
-                        match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
+                        let hash_result = match asset_data {
+                            ClaimAssetData::PathData(asset_path) => {
+                                dh.verify_hash(asset_path, Some(claim.alg()))
+                            }
+                            ClaimAssetData::ByteData(asset_bytes) => {
+                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                            }
+                        };
+
+                        match hash_result {
                             Ok(_a) => {
                                 let log_item = log_item!(
                                     claim.assertion_uri(&dh_assertion.label()),
@@ -996,7 +1099,16 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
-                    match dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string())) {
+                    let hash_result = match asset_data {
+                        ClaimAssetData::PathData(asset_path) => {
+                            dh.verify_hash(asset_path, Some(claim.alg()))
+                        }
+                        ClaimAssetData::ByteData(asset_bytes) => {
+                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                        }
+                    };
+
+                    match hash_result {
                         Ok(_a) => {
                             let log_item = log_item!(
                                 claim.assertion_uri(&dh_assertion.label()),

@@ -15,9 +15,18 @@
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
+//!
+//! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
+//! EXCEPTION: If you are building for WASM, do not add this dependency.
+//! For example:
+//!
+//! ```text
+//! c2pa = {version="0.11.0", features=["file_io"]}
+//! ```
 //!
 //! # Example: Reading a ManifestStore
 //!
@@ -45,8 +54,9 @@
 //! # use c2pa::Result;
 //! use c2pa::{
 //!     assertions::User,
-//!     get_signer_from_files,
-//!     Manifest
+//!     create_signer,
+//!     Manifest,
+//!     SigningAlg,
 //! };
 //!
 //! use std::path::PathBuf;
@@ -63,7 +73,7 @@
 //! // Create a ps256 signer using certs and key files
 //! let signcert_path = "tests/fixtures/certs/ps256.pub";
 //! let pkey_path = "tests/fixtures/certs/ps256.pem";
-//! let signer = get_signer_from_files(signcert_path, pkey_path, "ps256", None)?;
+//! let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 //!
 //! // embed a manifest using the signer
 //! manifest.embed(&source, &dest, &*signer)?;
@@ -76,11 +86,14 @@ pub mod assertions;
 
 mod cose_validator;
 
+#[cfg(feature = "file_io")]
+pub mod create_signer;
+
 mod error;
 pub use error::{Error, Result};
 
 mod ingredient;
-pub use ingredient::{Ingredient, IngredientOptions};
+pub use ingredient::Ingredient;
 pub mod jumbf_io;
 mod manifest;
 pub use manifest::Manifest;
@@ -93,19 +106,21 @@ pub use manifest_store::ManifestStore;
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
+mod signing_alg;
+#[cfg(feature = "file_io")]
+pub use ingredient::{DefaultOptions, IngredientOptions};
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
 mod openssl;
-#[cfg(feature = "file_io")]
-pub use crate::openssl::signer::{get_signer, get_signer_from_files};
 
 #[cfg(feature = "file_io")]
 mod signer;
-#[cfg(feature = "async_signer")]
-pub use signer::AsyncSigner;
 #[cfg(feature = "file_io")]
 pub use signer::Signer;
+#[cfg(feature = "async_signer")]
+pub use signer::{AsyncSigner, RemoteSigner};
 /// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
@@ -113,8 +128,10 @@ pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod claim;
+
 #[cfg(feature = "file_io")]
-pub(crate) mod cose_sign;
+pub mod cose_sign;
+
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
 pub(crate) mod hashed_uri;
@@ -126,9 +143,9 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-pub(crate) use utils::cbor_types;
-pub(crate) use utils::hash_utils;
+#[cfg(feature = "file_io")]
 pub(crate) use utils::xmp_inmemory_utils;
+pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

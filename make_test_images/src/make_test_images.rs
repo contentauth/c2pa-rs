@@ -12,34 +12,24 @@
 // each license.
 
 //! Constructs a set of test images using a configuration script
-//!
-use c2pa::{
-    assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    get_signer_from_files, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore,
-    Signer,
-};
-
-use anyhow::{Context, Result};
-use image::GenericImageView;
-use nom::AsBytes;
-use serde::Deserialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+use anyhow::{Context, Result};
+use c2pa::{
+    assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
+    create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
+    SigningAlg,
+};
+use image::GenericImageView;
+use nom::AsBytes;
+use serde::Deserialize;
 use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
-
-fn get_signer_with_alg(alg: &str) -> c2pa::Result<Box<dyn Signer>> {
-    // sign and embed into the target file
-    let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", alg));
-    let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
-    get_signer_from_files(signcert_path, pkey_path, alg, None)
-}
 
 /// Defines an operation for creating a test image
 #[derive(Debug, Deserialize)]
@@ -81,6 +71,19 @@ pub struct Config {
     pub recipes: Vec<Recipe>,
 }
 
+impl Config {
+    pub fn get_signer(&self) -> c2pa::Result<Box<dyn Signer>> {
+        // sign and embed into the target file
+        let alg: SigningAlg = self.alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
+        let tsa_url = self.tsa_url.as_ref().map(|s| s.to_owned());
+        let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", self.alg));
+        let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+        create_signer::from_files(signcert_path, pkey_path, alg, tsa_url)
+    }
+}
+
 // Defaults for Config
 impl Default for Config {
     fn default() -> Self {
@@ -93,6 +96,25 @@ impl Default for Config {
             recipes: Vec::new(),
         }
     }
+}
+
+/// Generate a blake3 hash over the image in path using a fixed buffer
+fn blake3_hash(path: &Path) -> Result<String> {
+    use std::{fs::File, io::Read};
+    // Hash an input incrementally.
+    let mut hasher = blake3::Hasher::new();
+    const BUFFER_LEN: usize = 1024 * 1024;
+    let mut buffer = [0u8; BUFFER_LEN];
+    let mut file = File::open(path)?;
+    loop {
+        let read_count = file.read(&mut buffer)?;
+        hasher.update(&buffer[..read_count]);
+        if read_count != BUFFER_LEN {
+            break;
+        }
+    }
+    let hash = hasher.finalize();
+    Ok(hash.to_hex().as_str().to_owned())
 }
 
 /// Tool for building test case images for C2PA
@@ -164,10 +186,18 @@ impl MakeTestImages {
         // keep track of all actions here
         let mut actions = Actions::new();
 
-        let options = IngredientOptions {
-            make_hash: true,
-            title: None,
-        };
+        struct ImageOptions {}
+        impl ImageOptions {
+            fn new() -> Self {
+                ImageOptions {}
+            }
+        }
+
+        impl IngredientOptions for ImageOptions {
+            fn hash(&self, path: &Path) -> Option<String> {
+                blake3_hash(path).ok()
+            }
+        }
 
         let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         let mut manifest = Manifest::new(generator);
@@ -185,7 +215,8 @@ impl MakeTestImages {
             Some(src) => {
                 let src_path = &self.make_path(src);
 
-                let parent = Ingredient::from_file_with_options(src_path, &options)?;
+                let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
+
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED)
                         .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
@@ -246,7 +277,8 @@ impl MakeTestImages {
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
                 // create and add the ingredient
-                let ingredient = Ingredient::from_file_with_options(ing_path, &options)?;
+                let ingredient =
+                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
                 actions =
                     actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
                         "identifier".to_owned(),
@@ -267,7 +299,7 @@ impl MakeTestImages {
         manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
         // now sign manifest and embed in target
-        let signer = get_signer_with_alg(&self.config.alg)?;
+        let signer = self.config.get_signer()?;
 
         manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 

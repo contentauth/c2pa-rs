@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::Result;
+use crate::{Result, SigningAlg};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -21,7 +21,7 @@ pub trait Signer {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
 
     /// Returns the algorithm of the Signer.
-    fn alg(&self) -> Option<String>;
+    fn alg(&self) -> SigningAlg;
 
     /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
     fn certs(&self) -> Result<Vec<Vec<u8>>>;
@@ -51,7 +51,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     fn from_files<P: AsRef<std::path::Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self>;
 
@@ -59,7 +59,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self>;
 }
@@ -76,9 +76,45 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
-    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
 
     /// Returns the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+#[cfg(feature = "async_signer")]
+#[async_trait]
+pub trait RemoteSigner: Sync {
+    /// Returns the `CoseSign1` bytes signed by the [`RemoteSigner`].
+    ///
+    /// The size of returned `Vec` must match the value returned by `reserve_size`.
+    /// This data will be embedded in the JUMBF `c2pa.signature` box of the manifest.
+    /// `data` are the bytes of the claim to be remotely signed.
+    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    ///
     /// Signing will fail if the result of the `sign` function is larger
     /// than this value.
     fn reserve_size(&self) -> usize;

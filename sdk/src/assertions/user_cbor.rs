@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Helper class to create Cbor User assertion
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct UserCbor {
     label: String,
     cbor_data: Vec<u8>,
@@ -75,7 +75,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertion::Assertion;
 
     const LABEL: &str = "user_test_assertion";

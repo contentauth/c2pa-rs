@@ -54,6 +54,9 @@ pub enum Error {
     #[error("claim already signed, no further changes allowed")]
     ClaimAlreadySigned,
 
+    #[error("attempt to add new claim without signing last claim")]
+    ClaimUnsigned,
+
     #[error("missing signature box link")]
     ClaimMissingSignatureBox,
 
@@ -77,6 +80,9 @@ pub enum Error {
 
     #[error("update manifest is invalid")]
     UpdateManifestInvalid,
+
+    #[error("more than one manifest store detected")]
+    TooManyManifestStores,
 
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
@@ -136,6 +142,12 @@ pub enum Error {
     #[error("WASM verifier error")]
     WasmVerifier,
 
+    #[error("WASM RSA-PSS key import error: {0}")]
+    WasmRsaKeyImport(String),
+
+    #[error("WASM RSA-PSS verification error")]
+    WasmRsaVerification,
+
     #[error("WASM crypto key error")]
     WasmKey,
 
@@ -149,13 +161,20 @@ pub enum Error {
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
 
-    /// No JUMBF data found.
-    /// TODO before merging PR: Does this error case need to be part of the public API?
+    #[error("thread receive error")]
+    ThreadReceiveError,
+
     #[error("no JUMBF data found")]
     JumbfNotFound,
 
     #[error("required JUMBF box not found")]
     JumbfBoxNotFound,
+
+    #[error("could not fetch the remote manifest")]
+    RemoteManifestFetch(String),
+
+    #[error("must fetch remote manifests from url")]
+    RemoteManifestUrl(String),
 
     #[error("stopped because of logged error")]
     LogStop,
@@ -197,8 +216,8 @@ pub enum Error {
     #[error(transparent)]
     InvalidClaim(#[from] crate::store::InvalidClaimError),
 
-    #[error("Asset could not be parsed ( {0} )")]
-    InvalidSourceAsset(String),
+    #[error("asset could not be parsed: {0}")]
+    InvalidAsset(String),
 
     #[error(transparent)]
     JumbfParseError(#[from] crate::jumbf::boxes::JumbfParseError),
@@ -218,6 +237,7 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "add_thumbnails"))]
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]

@@ -11,6 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+#[cfg(feature = "file_io")]
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::{
     assertion::AssertionData,
     claim::Claim,
@@ -19,11 +26,6 @@ use crate::{
     validation_status::ValidationStatus,
     Result,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-#[cfg(feature = "file_io")]
-use std::path::Path;
 
 /// Low level JSON based representation of Manifest Store - used for debugging
 #[non_exhaustive]
@@ -150,7 +152,7 @@ impl ManifestReport {
 
         let signature = match claim.signature_info() {
             Some(info) => SignatureReport {
-                alg: info.alg,
+                alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
                 time: info.date.map(|d| d.to_rfc3339()),
             },

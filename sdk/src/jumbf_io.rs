@@ -11,18 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{
+    fs::{self, File},
+    io::Cursor,
+    path::{Path, PathBuf},
+};
+
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAILoader, HashObjectPositions},
     error::{Error, Result},
-};
-
-use std::{
-    fs::{self, File},
-    io::Cursor,
-    path::{Path, PathBuf},
 };
 
 static SUPPORTED_TYPES: [&str; 22] = [
@@ -100,7 +100,9 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
 pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
     let asset_type = asset_type.to_lowercase();
     match asset_type.as_ref() {
-        "c2pa" | "application/c2pa" => Some(Box::new(C2paIO {})),
+        "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
+            Some(Box::new(C2paIO {}))
+        }
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
@@ -141,7 +143,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
-    let img_out_path: PathBuf = match out_path {
+    let asset_out_path: PathBuf = match out_path {
         Some(p) => p.to_owned(),
         None => {
             let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
@@ -153,12 +155,22 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
     };
 
     // clone output to be overwritten
-    if in_path != img_out_path {
-        fs::copy(&in_path, &img_out_path).map_err(Error::IoError)?;
+    if in_path != asset_out_path {
+        fs::copy(&in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.save_cai_store(&img_out_path, data),
+        Some(asset_handler) => {
+            // patch if possible to save time and resources
+            if let Some(patch_handler) = asset_handler.asset_patch_ref() {
+                if patch_handler.patch_cai_store(&asset_out_path, data).is_ok() {
+                    return Ok(());
+                }
+            }
+
+            // couldn't patch so just save
+            asset_handler.save_cai_store(&asset_out_path, data)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -208,6 +220,20 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
 
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.get_object_locations(in_path),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+/// removes the C2PA JUMBF from an asset
+/// Note: Use with caution since this deletes C2PA data
+/// It is useful when creating remote manifests from embedded manifests
+///
+/// path - path to file to be updated
+/// returns Unsupported type or errors from remove_cai_store
+pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
+    let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
+    match get_assetio_handler(&ext) {
+        Some(asset_handler) => asset_handler.remove_cai_store(path),
         _ => Err(Error::UnsupportedType),
     }
 }

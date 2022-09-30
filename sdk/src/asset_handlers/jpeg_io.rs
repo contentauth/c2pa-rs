@@ -11,18 +11,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fs::{read, File};
-use std::io::Cursor;
-use std::path::*;
+use std::{
+    fs::{read, File},
+    io::Cursor,
+    path::*,
+};
 
 use byteorder::{BigEndian, ReadBytesExt};
+use img_parts::{
+    jpeg::{markers, Jpeg, JpegSegment},
+    Bytes, DynImage,
+};
 
-use img_parts::jpeg::{markers, Jpeg, JpegSegment};
-use img_parts::Bytes;
-use img_parts::DynImage;
-
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
-use crate::error::{wrap_io_err, Error, Result};
+use crate::{
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    error::{wrap_io_err, Error, Result},
+};
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
@@ -62,7 +66,7 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
     let buf = read(asset_path)?;
     let dimg_opt = DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::BadParam("Could not parse input image".to_owned()))?;
+        .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
         // check for JUMBF Seg
@@ -75,9 +79,7 @@ fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
             aio.save_cai_store(asset_path, &no_bytes)?;
         }
     } else {
-        return Err(Error::BadParam(
-            "Image type not supported by handler".to_owned(),
-        ));
+        return Err(Error::UnsupportedType);
     }
 
     Ok(())
@@ -139,12 +141,14 @@ impl CAILoader for JpegIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
 
+        let mut manifest_store_cnt = 0;
+
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into())
-            .map_err(|_err| Error::BadParam("Could not parse input image".to_owned()))?;
+            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
@@ -176,25 +180,30 @@ impl CAILoader for JpegIO {
                                 buffer.append(&mut raw_vec.as_mut_slice()[16..].to_vec());
 
                                 cai_seg_cnt += 1;
-                            } else {
+                            } else if raw_vec.len() > 28 {
+                                // must be at least 28 bytes for this to be a valid JUMBF box
                                 // check if this is a CAI JUMBF block
                                 let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
                                 let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                                 if is_cai {
+                                    if manifest_store_cnt == 1 {
+                                        return Err(Error::TooManyManifestStores);
+                                    }
+
                                     buffer.append(&mut raw_vec.as_mut_slice()[8..].to_vec());
                                     cai_seg_cnt = 1;
                                     cai_en = en.clone(); // store the identifier
+
+                                    manifest_store_cnt += 1;
                                 }
                             }
                         }
                     }
                 }
-                _ => return Err(Error::BadParam("Unknown image format".to_owned())),
+                _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
             };
         } else {
-            return Err(Error::BadParam(
-                "Image type not supported by handler".to_owned(),
-            ));
+            return Err(Error::UnsupportedType);
         }
 
         if buffer.is_empty() {
@@ -283,7 +292,7 @@ impl AssetIO for JpegIO {
 
         jpeg.encoder()
             .write_to(output)
-            .map_err(|_err| Error::BadParam("JPEG write error".to_owned()))?;
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
 
         Ok(())
     }
@@ -382,10 +391,33 @@ impl AssetIO for JpegIO {
                     curr_offset += seg.len_with_entropy();
                 }
             }
-            _ => return Err(Error::BadParam("Unknown image format".to_owned())),
+            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
         }
 
         Ok(positions)
+    }
+
+    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+        let input = read(asset_path).map_err(wrap_io_err)?;
+
+        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
+
+        // save updated file
+        let output = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        jpeg.encoder()
+            .write_to(output)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+
+        Ok(())
     }
 }
 
@@ -393,8 +425,9 @@ impl AssetIO for JpegIO {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
     use img_parts::Bytes;
+
+    use super::*;
 
     #[test]
     fn test_extract_xmp() {
@@ -412,5 +445,24 @@ pub mod tests {
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+        std::fs::copy(&source, &output).unwrap();
+        let jpeg_io = JpegIO {};
+
+        jpeg_io.remove_cai_store(&output).unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        match jpeg_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
     }
 }

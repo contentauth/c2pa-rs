@@ -53,7 +53,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [1.58.0]
+        rust_version: [1.59.0]
 
     steps:
       - name: Checkout repository
@@ -69,7 +69,7 @@ jobs:
         uses: Swatinem/rust-cache@v1
 
       # Note that we do not run code coverage because
-      # it was not stabilized as of 1.58.0.
+      # it was not stabilized as of 1.59.0.
 
       - name: Run self tests
         uses: actions-rs/cargo@v1
@@ -98,6 +98,33 @@ jobs:
       - name: Run Wasm tests
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
+
+  publish-preflight:
+    name: Preflight crate publish
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust_version: [stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+          override: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Dry-run of crate publish
+        run: cargo publish -p c2pa --dry-run
 
   clippy_check:
     name: Clippy
@@ -136,7 +163,7 @@ jobs:
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: nightly
           override: true
           components: rustfmt
 
@@ -146,27 +173,31 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  doc_format:
-    name: Doc format
+  docs_rs:
+    name: Preflight docs.rs build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
       
-      - name: Install Rust toolchain
+      - name: Install nightly Rust toolchain
+        # Nightly is used here because the docs.rs build
+        # uses nightly and we use doc_cfg features that are
+        # not in stable Rust as of this writing (Rust 1.62).
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: nightly
           override: true
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
-
       - name: Run cargo docs
-        uses: actions-rs/cargo@v1
-        with:
-          command: doc
-          args: --no-deps
+        # This is intended to mimic the docs.rs build
+        # environment. The goal is to fail PR validation
+        # if the subsequent release would result in a failed
+        # documentation build on docs.rs.
+        run: cargo +nightly doc --all-features
+        env:
+          RUSTDOCFLAGS: --cfg docsrs
+          DOCS_RS: 1
 
   cargo-deny:
     name: License / vulnerability audit
@@ -179,7 +210,7 @@ jobs:
           - advisories
           - bans licenses sources
 
-    # Prevent sudden announcement of a new advisory from failing ci:
+    # Prevent sudden announcement of a new advisory from failing CI:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
 
     steps:
@@ -209,3 +240,62 @@ jobs:
         with:
           version: latest
           args: --all-targets --all-features
+
+  version_bump:
+    name: Ensure (MINOR) tag is used when making an API breaking change
+    # Change all of these steps to (MAJOR) after 1.0 release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Get latest existing tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        id: get-latest-tag
+        with:
+          semver_only: true
+
+      - name: Set new version
+        uses: paulhatch/semantic-version@v4.0.2
+        id: set-version
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          tag_prefix: "v"
+          format: "${major}.${minor}.${patch}"
+          major_pattern: "(MAJORXXXX)"
+          minor_pattern: "(MINORXXXX)"
+
+      - name: "Bump crate version (NOTE: Not pushed back to repo!)"
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        run: |
+          sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
+          git config user.email "nobody@example.com"
+          git config --global user.name "PR validation bot"
+          git add .
+          git commit -m "DO NOT PUSH BACK TO PR: Bump crate version"
+        env:
+          VERSION: ${{ steps.set-version.outputs.version }}
+
+      - name: Has (MINOR) tag been used in a previous commit?
+        uses: mathiasvr/command-output@v1
+        continue-on-error: true
+        id: bump_exists
+        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        with:
+          run: |
+            git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
+
+      - name: If this step fails, change title of the PR to include (MINOR) tag
+        uses: obi1kenobi/cargo-semver-checks-action@v1
+        if: ${{ steps.bump_exists.outputs.stdout == '' && (!github.event.pull_request.title || !contains(github.event.pull_request.title, '(MINOR)')) }}
+        with:
+          crate-name: c2pa

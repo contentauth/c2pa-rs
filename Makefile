@@ -14,7 +14,7 @@ else
 endif
 
 check-format:
-	cargo fmt -- --check
+	cargo +nightly fmt -- --check
 
 check-docs:
 	cargo doc --no-deps --workspace --all-features
@@ -25,12 +25,19 @@ clippy:
 test-local:
 	cargo test --all-features
 
+test-no-defaults:
+	cd sdk && cargo test --features="file_io, xmp_write, bmff" --no-default-features 
+
 test-wasm:
 	cd sdk && wasm-pack test --node
 
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-local test-wasm
+test: check-format check-docs clippy test-local test-no-defaults test-wasm
+
+# Auto format code according to standards
+fmt: 
+	cargo +nightly fmt
 
 # Builds and views documentation
 doc:
@@ -44,3 +51,7 @@ images:
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
 	cargo run --example client sdk/tests/fixtures/ca.jpg target/tmp/client.jpg
+
+# Runs the show example
+show:
+	cargo run --example show -- sdk/tests/fixtures/ca.jpg

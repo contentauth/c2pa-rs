@@ -11,22 +11,23 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//use std::borrow::Cow;
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+};
+
 use byteorder::{BigEndian, LittleEndian, NativeEndian, ReadBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
 use conv::ValueFrom;
 use tempfile::Builder;
 
-//use std::borrow::Cow;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::{
-    collections::{BTreeMap, HashMap},
-    io::Cursor,
+use crate::{
+    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    error::{Error, Result},
 };
 
-use crate::asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions};
-use crate::error::{Error, Result};
-
-const C2PA_TAG: u16 = 0xCd41;
+const C2PA_TAG: u16 = 0xCD41;
 const XMP_TAG: u16 = 0x02BC;
 const C2PA_FIELD_TYPE: u16 = 7;
 
@@ -37,44 +38,43 @@ const TILEOFFSETS: u16 = 324;
 
 // The type of an IFD entry
 enum IFDType {
-    BYTE = 1,       // 8-bit unsigned integer
-    ASCII = 2,      // 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
-    SHORT = 3,      // 16-bit unsigned integer
-    LONG = 4,       // 32-bit unsigned integer
-    RATIONAL = 5,   // Fraction stored as two 32-bit unsigned integers
-    SBYTE = 6,      // 8-bit signed integer
-    UNDEFINED = 7,  // 8-bit byte that may contain anything, depending on the field
-    SSHORT = 8,     // 16-bit signed integer
-    SLONG = 9,      // 32-bit signed integer
-    SRATIONAL = 10, // Fraction stored as two 32-bit signed integers
-    FLOAT = 11,     // 32-bit IEEE floating point
-    DOUBLE = 12,    // 64-bit IEEE floating point
-    IFD = 13,       // 32-bit unsigned integer (offset)
-    LONG8 = 16,     // BigTIFF 64-bit unsigned integer
-    /// BigTIFF 64-bit signed integer
-    SLONG8 = 17, // BigTIFF 64-bit unsigned integer (offset)
-    IFD8 = 18,
+    Byte = 1,       // 8-bit unsigned integer
+    Ascii = 2,      // 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
+    Short = 3,      // 16-bit unsigned integer
+    Long = 4,       // 32-bit unsigned integer
+    Rational = 5,   // Fraction stored as two 32-bit unsigned integers
+    Sbyte = 6,      // 8-bit signed integer
+    Undefined = 7,  // 8-bit byte that may contain anything, depending on the field
+    Sshort = 8,     // 16-bit signed integer
+    Slong = 9,      // 32-bit signed integer
+    Srational = 10, // Fraction stored as two 32-bit signed integers
+    Float = 11,     // 32-bit IEEE floating point
+    Double = 12,    // 64-bit IEEE floating point
+    Ifd = 13,       // 32-bit unsigned integer (offset)
+    Long8 = 16,     // BigTIFF 64-bit unsigned integer
+    Slong8 = 17,    // BigTIFF 64-bit unsigned integer (offset)
+    Ifd8 = 18,      // 64-bit unsigned integer (offset)
 }
 
 impl IFDType {
     pub fn from_u16(val: u16) -> Option<IFDType> {
         match val {
-            1 => Some(IFDType::BYTE),
-            2 => Some(IFDType::ASCII),
-            3 => Some(IFDType::SHORT),
-            4 => Some(IFDType::LONG),
-            5 => Some(IFDType::RATIONAL),
-            6 => Some(IFDType::SBYTE),
-            7 => Some(IFDType::UNDEFINED),
-            8 => Some(IFDType::SSHORT),
-            9 => Some(IFDType::SLONG),
-            10 => Some(IFDType::SRATIONAL),
-            11 => Some(IFDType::FLOAT),
-            12 => Some(IFDType::DOUBLE),
-            13 => Some(IFDType::IFD),
-            16 => Some(IFDType::LONG8),
-            17 => Some(IFDType::SLONG8),
-            18 => Some(IFDType::IFD8),
+            1 => Some(IFDType::Byte),
+            2 => Some(IFDType::Ascii),
+            3 => Some(IFDType::Short),
+            4 => Some(IFDType::Long),
+            5 => Some(IFDType::Rational),
+            6 => Some(IFDType::Sbyte),
+            7 => Some(IFDType::Undefined),
+            8 => Some(IFDType::Sshort),
+            9 => Some(IFDType::Slong),
+            10 => Some(IFDType::Srational),
+            11 => Some(IFDType::Float),
+            12 => Some(IFDType::Double),
+            13 => Some(IFDType::Ifd),
+            16 => Some(IFDType::Long8),
+            17 => Some(IFDType::Slong8),
+            18 => Some(IFDType::Ifd8),
             _ => None,
         }
     }
@@ -246,7 +246,7 @@ impl TiffStructure {
             _ => return Err(Error::BadParam("Could not parse input image".to_owned())),
         };
 
-        let byte_reader = EndianIO::new(byte_order.clone());
+        let byte_reader = EndianIO::new(byte_order);
 
         let big_tiff = match byte_reader.read_u16(reader) {
             Ok(42) => false,
@@ -273,10 +273,10 @@ impl TiffStructure {
 
         // move read pointer to IFD
         reader.seek(SeekFrom::Start(first_ifd_offset))?;
-        let first_ifd = TiffStructure::read_ifd(reader, byte_order.clone(), big_tiff)?;
+        let first_ifd = TiffStructure::read_ifd(reader, byte_order, big_tiff)?;
 
         let ts = TiffStructure {
-            byte_order: byte_order.clone(),
+            byte_order,
             big_tiff,
             first_ifd_offset,
             first_ifd: Some(first_ifd),
@@ -369,7 +369,7 @@ where
 
     Ok((
         ts.first_ifd
-            .ok_or(Error::BadParam("Could not parse TIFF/DNG".to_string()))?,
+            .ok_or_else(|| Error::BadParam("Could not parse TIFF/DNG".to_string()))?,
         ts.byte_order,
     ))
 }
@@ -399,7 +399,7 @@ where
 
     asset_reader
         .read_exact(data.as_mut_slice())
-        .map_err(|_err| Error::InvalidSourceAsset("TIFF/DNG out of range".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
     Ok(data)
 }
@@ -428,7 +428,7 @@ where
 
     Some(data)
 }
-#[derive(PartialEq, Clone)]
+#[derive(Eq, PartialEq, Clone)]
 pub struct IfdClonedEntry {
     pub entry_tag: u16,
     pub entry_type: u16,
@@ -487,7 +487,7 @@ impl<T: Write + Seek> TiffCloner<T> {
         let offset;
 
         if self.big_tiff {
-            self.writer.write(&[boi, boi])?;
+            self.writer.write_all(&[boi, boi])?;
             self.writer.write_u16(43u16)?;
             self.writer.write_u16(8u16)?;
             self.writer.write_u16(0u16)?;
@@ -495,7 +495,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
             self.writer.write_u64(0)?;
         } else {
-            self.writer.write(&[boi, boi])?;
+            self.writer.write_all(&[boi, boi])?;
             self.writer.write_u16(42u16)?;
             offset = self.writer.seek(SeekFrom::Current(0))?; // first ifd offset
 
@@ -546,7 +546,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // check for well formed TIFF
                 if so_entry.value_count != sbc_entry.value_count {
-                    return Err(Error::InvalidSourceAsset(
+                    return Err(Error::InvalidAsset(
                         "TIFF strip count does not match strip offset count".to_string(),
                     ));
                 }
@@ -556,25 +556,21 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // get the byte counts
                 with_order!(sbc_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for i in 0..sbcs.len() {
+                    for c in &mut sbcs {
                         match sbc_entry.entry_type {
                             4u16 => {
                                 let s = src.read_u32()?;
-                                sbcs[i] = s.into();
+                                *c = s.into();
                             }
                             3u16 => {
                                 let s = src.read_u16()?;
-                                sbcs[i] = s.into();
+                                *c = s.into();
                             }
                             16u16 => {
                                 let s = src.read_u64()?;
-                                sbcs[i] = s;
+                                *c = s;
                             }
-                            _ => {
-                                return Err(Error::InvalidSourceAsset(
-                                    "invalid TIFF strip".to_string(),
-                                ))
-                            }
+                            _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         }
                     }
                 });
@@ -584,8 +580,8 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for i in 0..so_entry.value_count as usize {
-                        let cnt = usize::value_from(sbcs[i])
+                    for c in sbcs.iter() {
+                        let cnt = usize::value_from(*c)
                             .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
                         // get the offset
@@ -598,15 +594,8 @@ impl<T: Write + Seek> TiffCloner<T> {
                                 let s = src.read_u16()?;
                                 s.into()
                             }
-                            16u16 => {
-                                let s = src.read_u64()?;
-                                s.into()
-                            }
-                            _ => {
-                                return Err(Error::InvalidSourceAsset(
-                                    "invalid TIFF strip".to_string(),
-                                ))
-                            }
+                            16u16 => src.read_u64()?,
+                            _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
 
                         let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
@@ -625,29 +614,29 @@ impl<T: Write + Seek> TiffCloner<T> {
                     so_entry.value_bytes.as_mut_slice(),
                     self.endianness,
                     |dest| {
-                        for i in 0..so_entry.value_count as usize {
+                        for o in dest_offsets.iter() {
                             // get the offset
                             match so_entry.entry_type {
                                 4u16 => {
                                     let offset =
-                                        u32::value_from(dest_offsets[i]).map_err(|_err| {
+                                        u32::value_from(*o).map_err(|_err| {
                                             Error::BadParam("value out of range".to_string())
                                         })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
                                     let offset =
-                                        u16::value_from(dest_offsets[i]).map_err(|_err| {
+                                        u16::value_from(*o).map_err(|_err| {
                                             Error::BadParam("value out of range".to_string())
                                         })?;
                                     dest.write_u16(offset)?;
                                 }
                                 16u16 => {
-                                    let offset = dest_offsets[i];
+                                    let offset = *o;
                                     dest.write_u64(offset)?;
                                 }
                                 _ => {
-                                    return Err(Error::InvalidSourceAsset(
+                                    return Err(Error::InvalidAsset(
                                         "invalid TIFF strip".to_string(),
                                     ))
                                 }
@@ -665,7 +654,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // check for well formed TIFF
                 if to_entry.value_count != tbc_entry.value_count {
-                    return Err(Error::InvalidSourceAsset(
+                    return Err(Error::InvalidAsset(
                         "TIFF tile count does not match tile offset count".to_string(),
                     ));
                 }
@@ -675,25 +664,21 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // get the byte counts
                 with_order!(tbc_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for i in 0..tbcs.len() {
+                    for val in &mut tbcs {
                         match tbc_entry.entry_type {
                             4u16 => {
                                 let s = src.read_u32()?;
-                                tbcs[i] = s.into();
+                                *val = s.into();
                             }
                             3u16 => {
                                 let s = src.read_u16()?;
-                                tbcs[i] = s.into();
+                                *val = s.into();
                             }
                             16u16 => {
                                 let s = src.read_u64()?;
-                                tbcs[i] = s;
+                                *val = s;
                             }
-                            _ => {
-                                return Err(Error::InvalidSourceAsset(
-                                    "invalid TIFF tile".to_string(),
-                                ))
-                            }
+                            _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         }
                     }
                 });
@@ -703,8 +688,8 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for i in 0..to_entry.value_count as usize {
-                        let cnt = usize::value_from(tbcs[i])
+                    for c in tbcs.iter() {
+                        let cnt = usize::value_from(*c)
                             .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
                         // get the offset
@@ -713,15 +698,8 @@ impl<T: Write + Seek> TiffCloner<T> {
                                 let s = src.read_u32()?;
                                 s.into()
                             }
-                            16u16 => {
-                                let s = src.read_u64()?;
-                                s.into()
-                            }
-                            _ => {
-                                return Err(Error::InvalidSourceAsset(
-                                    "invalid TIFF strip".to_string(),
-                                ))
-                            }
+                            16u16 => src.read_u64()?,
+                            _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
 
                         let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
@@ -740,29 +718,29 @@ impl<T: Write + Seek> TiffCloner<T> {
                     to_entry.value_bytes.as_mut_slice(),
                     self.endianness,
                     |dest| {
-                        for i in 0..to_entry.value_count as usize {
+                        for v in dest_offsets.iter() {
                             // get the offset
                             match to_entry.entry_type {
                                 4u16 => {
                                     let offset =
-                                        u32::value_from(dest_offsets[i]).map_err(|_err| {
+                                        u32::value_from(*v).map_err(|_err| {
                                             Error::BadParam("value out of range".to_string())
                                         })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
                                     let offset =
-                                        u16::value_from(dest_offsets[i]).map_err(|_err| {
+                                        u16::value_from(*v).map_err(|_err| {
                                             Error::BadParam("value out of range".to_string())
                                         })?;
                                     dest.write_u16(offset)?;
                                 }
                                 16u16 => {
-                                    let offset = dest_offsets[i];
+                                    let offset = *v;
                                     dest.write_u64(offset)?;
                                 }
                                 _ => {
-                                    return Err(Error::InvalidSourceAsset(
+                                    return Err(Error::InvalidAsset(
                                         "invalid TIFF strip".to_string(),
                                     ))
                                 }
@@ -772,9 +750,7 @@ impl<T: Write + Seek> TiffCloner<T> {
                 );
             }
             (_, _, _, _) => {
-                return Err(Error::InvalidSourceAsset(
-                    "unknown TIFF image layout".to_string(),
-                ))
+                return Err(Error::InvalidAsset("unknown TIFF image layout".to_string()))
             }
         };
 
@@ -909,16 +885,16 @@ impl<T: Write + Seek> TiffCloner<T> {
 
             // read IFD raw data in file native endian format
             let data = match entry_type {
-                IFDType::BYTE | IFDType::SBYTE => {
+                IFDType::Byte | IFDType::Sbyte => {
                     let num_bytes = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
-                    let mut data = vec![0u8; num_bytes];
+                    let mut data = Vec::with_capacity(num_bytes);
 
                     if num_bytes <= 4 || self.big_tiff && num_bytes <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
-                        for i in 0..num_bytes {
-                            data.push(offset_bytes[i]);
+                        for item in offset_bytes.iter().take(num_bytes) {
+                            data.push(*item);
                         }
                     } else {
                         // move to start of data
@@ -928,7 +904,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::ASCII => {
+                IFDType::Ascii => {
                     let num_chars = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
@@ -941,10 +917,10 @@ impl<T: Write + Seek> TiffCloner<T> {
                     if data.is_ascii() && data.ends_with(&[0]) {
                         data
                     } else {
-                        return Err(Error::InvalidSourceAsset("invalid TIFF tag".to_string()));
+                        return Err(Error::InvalidAsset("invalid TIFF tag".to_string()));
                     }
                 }
-                IFDType::SHORT => {
+                IFDType::Short => {
                     let num_shorts = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_shorts * 2];
@@ -967,7 +943,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::LONG => {
+                IFDType::Long => {
                     let num_longs = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_longs * 4];
@@ -990,7 +966,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::RATIONAL => {
+                IFDType::Rational => {
                     let num_rationals = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_rationals * 8];
@@ -1001,7 +977,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::UNDEFINED => {
+                IFDType::Undefined => {
                     let num_undefined = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_undefined];
@@ -1012,7 +988,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::SSHORT => {
+                IFDType::Sshort => {
                     let num_sshorts = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_sshorts * 2];
@@ -1035,7 +1011,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::SLONG => {
+                IFDType::Slong => {
                     let num_slongs = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slongs * 4];
@@ -1058,7 +1034,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::SRATIONAL => {
+                IFDType::Srational => {
                     let num_srationals = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_srationals * 8];
@@ -1069,7 +1045,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::FLOAT => {
+                IFDType::Float => {
                     let num_floats = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_floats * 4];
@@ -1092,7 +1068,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::DOUBLE => {
+                IFDType::Double => {
                     let num_doubles = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_doubles * 8];
@@ -1103,7 +1079,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::IFD => {
+                IFDType::Ifd => {
                     let num_ifds = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_ifds * 4];
@@ -1126,7 +1102,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::LONG8 => {
+                IFDType::Long8 => {
                     let num_long8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_long8s * 8];
@@ -1137,7 +1113,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::SLONG8 => {
+                IFDType::Slong8 => {
                     let num_slong8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slong8s * 8];
@@ -1148,7 +1124,7 @@ impl<T: Write + Seek> TiffCloner<T> {
 
                     data
                 }
-                IFDType::IFD8 => {
+                IFDType::Ifd8 => {
                     let num_ifd8s = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_ifd8s * 8];
@@ -1290,6 +1266,10 @@ impl AssetIO for TiffIO {
             htype: HashBlockObjectType::Cai,
         }])
     }
+
+    fn remove_cai_store(&self, _asset_path: &std::path::Path) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1299,9 +1279,8 @@ pub mod tests {
 
     use tempfile::tempdir;
 
-    use crate::utils::test::temp_dir_path;
-
     use super::*;
+    use crate::utils::test::temp_dir_path;
 
     #[test]
     fn test_read_write_manifest() {

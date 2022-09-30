@@ -13,14 +13,13 @@
 
 use std::{fs, path::Path};
 
-use crate::{signer::ConfigurableSigner, Error, Result, Signer};
-
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
 };
 
 use super::check_chain_order;
+use crate::{signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// Edwards Curve encryption.
@@ -31,7 +30,7 @@ pub struct EdSigner {
     certs_size: usize,
     timestamp_size: usize,
 
-    alg: String,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 }
 
@@ -39,7 +38,7 @@ impl ConfigurableSigner for EdSigner {
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
@@ -51,14 +50,14 @@ impl ConfigurableSigner for EdSigner {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let certs_size = signcert.len();
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let pkey = PKey::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
 
-        if alg.to_lowercase() != "ed25519" {
+        if alg != SigningAlg::Ed25519 {
             return Err(Error::UnsupportedType); // only ed25519 is supported by C2PA
         }
 
@@ -74,7 +73,7 @@ impl ConfigurableSigner for EdSigner {
             pkey,
             certs_size,
             timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
-            alg: "ed25519".to_string(),
+            alg,
             tsa_url,
         })
     }
@@ -90,8 +89,8 @@ impl Signer for EdSigner {
         Ok(signed_data)
     }
 
-    fn alg(&self) -> Option<String> {
-        Some(self.alg.to_owned())
+    fn alg(&self) -> SigningAlg {
+        self.alg
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -126,14 +125,13 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-
-    use crate::{openssl::temp_signer, utils::test::fixture_path};
+    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
 
     #[test]
     fn ed25519_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ed_signer(&cert_dir, "ed25519", None);
+        let (signer, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());

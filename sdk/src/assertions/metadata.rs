@@ -11,6 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
+use chrono::{SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -18,15 +24,10 @@ use crate::{
     hashed_uri::HashedUri,
 };
 
-use chrono::{SecondsFormat, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// The Metadata structure can be used as part of other assertions or on its own to reference others
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
@@ -154,7 +155,7 @@ pub mod c2pa_source {
 }
 
 /// A description of the source for assertion data
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct DataSource {
     /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
@@ -192,7 +193,7 @@ impl DataSource {
 }
 
 /// Identifies a person responsible for an action.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Actor {
     /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -212,7 +213,7 @@ impl Actor {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ReviewCode {
     #[serde(rename(serialize = "actions.unknownActionsPerformed"))]
     ActionsUnknown,
@@ -240,7 +241,7 @@ pub enum ReviewCode {
 /// A rating on an [`Assertion`].
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub struct ReviewRating {
     pub explanation: String,
     #[serde(skip_serializing_if = "Option::is_none")]

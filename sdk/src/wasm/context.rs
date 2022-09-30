@@ -11,10 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{Error, Result};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{prelude::*, JsCast, JsValue};
 use web_sys::{SubtleCrypto, Window, WorkerGlobalScope};
+
+use crate::{Error, Result};
 
 // Adapted from gloo's implementation, since there doesn't seem to be a great way to do context checking using
 // wasm-bindgen/web-sys without using something like `js_sys::eval`. References:

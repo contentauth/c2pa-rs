@@ -24,7 +24,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 // Used to differentiate a parent from a component
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum Relationship {
     #[serde(rename = "parentOf")]
     ParentOf,
@@ -144,7 +144,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertion::{AssertionCbor, AssertionData};
 
     #[test]
