@@ -45,10 +45,11 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod user;
-pub use user::User;
+pub(crate) use user::User;
 
 mod user_cbor;
-pub use user_cbor::UserCbor;
+pub(crate) use user_cbor::UserCbor;
 
 mod uuid_assertion;
-pub use uuid_assertion::Uuid;
+#[allow(unused_imports)]
+pub(crate) use uuid_assertion::Uuid;

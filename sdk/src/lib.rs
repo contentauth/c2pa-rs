@@ -53,7 +53,6 @@
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{
-//!     assertions::User,
 //!     create_signer,
 //!     Manifest,
 //!     SigningAlg,
@@ -61,10 +60,14 @@
 //!
 //! use std::path::PathBuf;
 //! use tempfile::tempdir;
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! struct Test { my_tag: usize }
 //!
 //! # fn main() -> Result<()> {
 //! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+//! manifest.add_labeled_assertion("org.contentauth.test", &Test{my_tag: 42})?;
 //!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;

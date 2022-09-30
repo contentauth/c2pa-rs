@@ -699,18 +699,15 @@ impl Manifest {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::{
-    ///     assertions::User,
-    ///     create_signer,
-    ///     Manifest,
-    ///     SigningAlg,
-    /// };
+    /// use c2pa::{create_signer, Manifest, SigningAlg,};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Test { my_tag: usize }
+    ///
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
-    /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
-    ///
-    /// let source = "tests/fixtures/C.jpg";
-    /// let dest = "../target/test_file.jpg";
+    /// manifest.add_labeled_assertion("org.contentauth.test", &Test{my_tag: 42})?;
     ///
     /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
@@ -718,7 +715,7 @@ impl Manifest {
     /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
     ///
     /// // Embed a manifest using the signer.
-    /// manifest.embed(&source, &dest, &*signer)?;
+    /// manifest.embed("tests/fixtures/C.jpg", "../target/test_file.jpg", &*signer)?;
     /// # Ok(())
     /// # }
     /// ```
