@@ -699,7 +699,7 @@ impl Manifest {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::{create_signer, Manifest, SigningAlg,};
+    /// use c2pa::{create_signer, Manifest, SigningAlg};
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
