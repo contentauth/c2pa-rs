@@ -55,7 +55,7 @@ impl XmpInfo {
     }
 }
 
-/// Extract an a value from XMP using a key.
+/// Extract a value from XMP using a key.
 fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
     let mut reader = Reader::from_str(xmp);
     reader.trim_text(true);
