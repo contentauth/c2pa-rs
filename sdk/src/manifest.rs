@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
+    assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -625,6 +625,10 @@ impl Manifest {
                     }
                     claim.add_assertion_with_salt(&cw, &salt)
                 }
+                Exif::LABEL => {
+                    let exif: Exif = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&exif, &salt)
+                }
                 _ => match manifest_assertion.kind() {
                     ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
                         &UserCbor::new(
@@ -1115,8 +1119,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
-    #[actix::test]
-    async fn test_embed_user_label() {
+    #[test]
+    fn test_embed_user_label() {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
@@ -1134,8 +1138,8 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
-    #[actix::test]
-    async fn test_embed_sidecar_user_label() {
+    #[test]
+    fn test_embed_sidecar_user_label() {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
         let sidecar = output.with_extension("c2pa");
@@ -1188,5 +1192,31 @@ pub(crate) mod tests {
         );
         assert_eq!(manifest.title().unwrap(), TEST_SMALL_JPEG);
         assert!(manifest_store.validation_status().is_none())
+    }
+
+    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[test]
+    fn test_embed_sidecar_with_parent_manifest() {
+        let temp_dir = tempdir().expect("temp dir");
+        let source = fixture_path("XCA.jpg");
+        let output = temp_dir.path().join("XCAplus.jpg");
+        let sidecar = output.with_extension("c2pa");
+        let fp = format!("file:/{}", sidecar.to_str().unwrap());
+        let url = url::Url::parse(&fp).unwrap();
+
+        let signer = temp_signer();
+
+        let parent = Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting parent");
+        let mut manifest = test_manifest();
+        manifest.set_parent(parent).expect("setting parent");
+        manifest.set_remote_manifest(url);
+        let _c2pa_data = manifest.embed(&source, &output, &signer).expect("embed");
+
+        //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "XCAplus.jpg"
+        );
     }
 }

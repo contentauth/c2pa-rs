@@ -286,13 +286,16 @@ jobs:
           VERSION: ${{ steps.set-version.outputs.version }}
 
       - name: Has (MINOR) tag been used in a previous commit?
+        uses: mathiasvr/command-output@v1
+        continue-on-error: true
         id: bump_exists
         if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
-        run: |
-          git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep "(MINOR)" || :; }
+        with:
+          run: |
+            git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
 
       - name: If this step fails, change title of the PR to include (MINOR) tag
         uses: obi1kenobi/cargo-semver-checks-action@v1
-        if: ${{ steps.bump_exists.outputs.stdout == '' && !contains(github.event.pull_request.title, '(MINOR)') }}
+        if: ${{ steps.bump_exists.outputs.stdout == '' && (!github.event.pull_request.title || !contains(github.event.pull_request.title, '(MINOR)')) }}
         with:
           crate-name: c2pa
