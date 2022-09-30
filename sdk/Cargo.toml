@@ -1,10 +1,12 @@
 [package]
 name = "c2pa"
-version = "0.13.0"
+version = "0.14.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-rs"
 readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
@@ -78,7 +80,6 @@ serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
 thiserror = ">= 1.0.20, < 1.0.32"
-time = ">= 0.2.23"
 twoway = "0.2.1"
 url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
