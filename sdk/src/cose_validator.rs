@@ -11,16 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::str::FromStr;
-
 use ciborium::value::Value;
 use conv::*;
 use coset::{sig_structure_data, Label, TaggedCborSerializable};
-
 use x509_parser::{
-    der_parser::ber::parse_ber_sequence, der_parser::oid, oid_registry::Oid, prelude::*,
+    der_parser::{ber::parse_ber_sequence, oid},
+    oid_registry::Oid,
+    prelude::*,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::validator::{get_validator, CoseValidator};
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
@@ -30,12 +33,6 @@ use crate::{
     validator::ValidationInfo,
     SigningAlg,
 };
-
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webcrypto_validator::validate_async;
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::{get_validator, CoseValidator};
 
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
@@ -583,39 +580,12 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 fn get_signing_time(
     sign1: &coset::CoseSign1,
     data: &[u8],
-    validation_log: &mut impl StatusTracker,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
     if let Ok(tst_info) = get_timestamp_info(sign1, data) {
         Some(gt_to_datetime(tst_info.gen_time))
-    } else if let Some(t) = &sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("temp_signing_time".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        let time_cbor = serde_cbor::to_vec(t).ok()?;
-        let dt_string: String = serde_cbor::from_slice(&time_cbor).ok()?;
-        chrono::DateTime::<chrono::Utc>::from_str(&dt_string).ok()
     } else {
-        let log_item = log_item!(
-            "Cose_Sign1",
-            "invalid timestamp message imprint",
-            "get_signing_time"
-        )
-        .error(Error::CoseTimeStampMismatch)
-        .validation_status(validation_status::TIMESTAMP_MISMATCH);
-        validation_log
-            .log(log_item, Some(Error::CoseTimeStampMismatch))
-            .ok()?;
-
         None
     }
 }
@@ -753,7 +723,7 @@ pub async fn verify_cose_async(
         result.alg = Some(alg);
 
         // parse the temp time for now util we have TA
-        result.date = get_signing_time(&sign1, &data, validation_log);
+        result.date = get_signing_time(&sign1, &data);
     }
 
     Ok(result)
@@ -773,7 +743,7 @@ pub fn get_signing_info(
         let der_bytes = get_sign_cert(&sign1)?;
 
         let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
-            date = get_signing_time(&sign1, data, validation_log);
+            date = get_signing_time(&sign1, data);
             issuer_org = extract_subject_from_cert(&signcert).ok();
             if let Ok(a) = get_signing_alg(&sign1) {
                 alg = Some(a);
@@ -883,7 +853,7 @@ pub fn verify_cose(
             result.alg = Some(alg);
 
             // parse the temp time for now util we have TA
-            result.date = get_signing_time(&sign1, data, validation_log);
+            result.date = get_signing_time(&sign1, data);
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
@@ -969,10 +939,9 @@ async fn validate_with_cert_async(
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-
     use sha2::digest::generic_array::sequence::Shorten;
 
+    use super::*;
     use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
 
     #[test]
@@ -1094,5 +1063,27 @@ pub mod tests {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
         }
+    }
+
+    #[test]
+    fn test_no_timestamp() {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let box_size = 10000;
+
+        let signer = crate::utils::test::temp_signer();
+
+        let cose_bytes = crate::cose_sign::sign_claim(&claim_bytes, &signer, box_size).unwrap();
+
+        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+
+        let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
+
+        assert_eq!(signing_time, None);
     }
 }

@@ -1,13 +1,13 @@
+use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
+use serde_json::Value;
+
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     error::{Error, Result},
 };
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
-use serde_json::Value;
-
 /// Assertions in C2PA can be stored in several formats
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub enum ManifestAssertionKind {
     Cbor,
     Json,

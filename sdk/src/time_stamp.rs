@@ -11,23 +11,24 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::asn1::rfc5652::CertificateChoices::Certificate;
-use crate::asn1::rfc5652::{SignedData, OID_ID_SIGNED_DATA};
-use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+
+use bcder::decode::Constructed;
+use coset::{iana, sig_structure_data, HeaderBuilder, ProtectedHeader};
+use serde::{Deserialize, Serialize};
+use x509_certificate::DigestAlgorithm::{self};
 
 /// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
 /// using the specified Time Authority
 use crate::error::{Error, Result};
-use crate::hash_utils::vec_compare;
-
-use crate::asn1::rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO};
-use crate::SigningAlg;
-
-use bcder::decode::Constructed;
-use x509_certificate::DigestAlgorithm::{self};
-
-use coset::{iana, sig_structure_data, HeaderBuilder, ProtectedHeader};
+use crate::{
+    asn1::{
+        rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+        rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
+    },
+    hash_utils::vec_compare,
+    SigningAlg,
+};
 
 #[allow(dead_code)]
 pub(crate) fn cose_countersign_data(data: &[u8], alg: SigningAlg) -> Vec<u8> {
@@ -131,8 +132,9 @@ fn time_stamp_request_http(
     url: &str,
     request: &crate::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
-    use bcder::encode::Values;
     use std::io::Read;
+
+    use bcder::encode::Values;
 
     const HTTP_CONTENT_TYPE_REQUEST: &str = "application/timestamp-query";
     const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
@@ -329,7 +331,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     h.update(data);
     let digest = h.finish();
 
-    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes().to_vec()) {
+    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
         return Err(Error::CoseTimeStampMismatch);
     }
 
@@ -371,13 +373,13 @@ pub fn get_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse> {
     Ok(ts)
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct TstToken {
     #[serde(with = "serde_bytes")]
     pub val: Vec<u8>,
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct TstContainer {
     #[serde(rename = "tstTokens")]
     pub tst_tokens: Vec<TstToken>,

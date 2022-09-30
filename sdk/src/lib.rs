@@ -20,6 +20,14 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with JPEG and PNG images.
 //!
+//! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
+//! EXCEPTION: If you are building for WASM, do not add this dependency.
+//! For example:
+//!
+//! ```text
+//! c2pa = {version="0.11.0", features=["file_io"]}
+//! ```
+//!
 //! # Example: Reading a ManifestStore
 //!
 //! ```
@@ -99,10 +107,9 @@ mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
 mod signing_alg;
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 #[cfg(feature = "file_io")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "file_io")]
@@ -110,10 +117,10 @@ mod openssl;
 
 #[cfg(feature = "file_io")]
 mod signer;
-#[cfg(feature = "async_signer")]
-pub use signer::AsyncSigner;
 #[cfg(feature = "file_io")]
 pub use signer::Signer;
+#[cfg(feature = "async_signer")]
+pub use signer::{AsyncSigner, RemoteSigner};
 /// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
@@ -136,9 +143,9 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-pub(crate) use utils::cbor_types;
-pub(crate) use utils::hash_utils;
+#[cfg(feature = "file_io")]
 pub(crate) use utils::xmp_inmemory_utils;
+pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

@@ -11,16 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Actor, Metadata},
     error::Result,
     Error,
 };
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 
 /// Specification defined C2PA actions
 pub mod c2pa_action {
@@ -65,7 +66,7 @@ pub mod c2pa_action {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -228,7 +229,7 @@ impl Action {
 /// other information such as what software performed the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,
@@ -308,10 +309,11 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
-    use crate::assertion::{Assertion, AssertionData};
-    use crate::assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating};
-    use crate::hashed_uri::HashedUri;
+    use crate::{
+        assertion::{Assertion, AssertionData},
+        assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+        hashed_uri::HashedUri,
+    };
 
     fn make_hashed_uri1() -> HashedUri {
         HashedUri::new(

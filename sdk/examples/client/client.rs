@@ -13,13 +13,13 @@
 
 //! Example C2PA client application
 
-use anyhow::Result;
+use std::path::PathBuf;
 
+use anyhow::Result;
 use c2pa::{
-    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, SchemaDotOrgPerson},
+    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
-use std::path::PathBuf;
 
 const GENERATOR: &str = "test_app/0.1";
 const INDENT_SPACE: usize = 2;
@@ -100,13 +100,28 @@ pub fn main() -> Result<()> {
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
+    let exif = Exif::from_json_str(
+        r#"{
+        "@context" : {
+          "exif": "http://ns.adobe.com/exif/1.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "exif:GPSAltitudeRef": 0,
+        "exif:GPSAltitude": "100963/29890",
+        "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
+    }"#,
+    )?;
+
     // create a new Manifest
     let mut manifest = Manifest::new(GENERATOR.to_owned());
     // add parent and assertions
     manifest
         .set_parent(parent)?
         .add_assertion(&actions)?
-        .add_assertion(&creative_work)?;
+        .add_assertion(&creative_work)?
+        .add_assertion(&exif)?;
 
     // sign and embed into the target file
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";

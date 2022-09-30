@@ -11,17 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt;
+
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_bytes::ByteBuf;
+use serde_json::Value;
+use thiserror::Error;
+
 use crate::{
     assertions::labels,
     error::{Error, Result},
 };
-use std::fmt;
-
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
-use serde_json::Value;
-use thiserror::Error;
 
 /// Check to see if this a label whose string can vary, if so return the root of the label and version if available
 fn get_mutable_label(var_label: &str) -> (String, Option<usize>) {
@@ -174,7 +174,7 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
 /// the Assertion type (see spec).
 /// for Json assertions the data is a Json string and Vec<u8> for
 /// binary data and json data to be cbor encoded.
-#[derive(Deserialize, Serialize, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 pub enum AssertionData {
     Json(String),          // json encoded data
     Binary(Vec<u8>),       // binary data
@@ -212,7 +212,7 @@ impl fmt::Debug for AssertionData {
 // contain its AssertionData.  For the User Assertion type we
 // allow a String to set the label. The AssertionData contains
 // the data payload for the assertion and the version number for its schema (if supported).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assertion {
     label: String,
     version: Option<usize>,
@@ -611,7 +611,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertions::{Action, Actions};
 
     #[test]

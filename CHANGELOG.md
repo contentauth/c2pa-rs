@@ -6,6 +6,69 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.14.0
+_23 September 2022_
+
+* (MINOR) Remove previously embedded manifests for remote manifests ([#136](https://github.com/contentauth/c2pa-rs/pull/136))
+* (MINOR) Add support for manifest removal ([#123](https://github.com/contentauth/c2pa-rs/pull/123))
+
+## 0.13.2
+_21 September 2022_
+
+* manifest_data was missing for remote manifests ([#135](https://github.com/contentauth/c2pa-rs/pull/135))
+
+## 0.13.1
+_13 September 2022_
+
+* Add ManifestStore::from_manifest_and_asset_bytes_async ([#130](https://github.com/contentauth/c2pa-rs/pull/130))
+
+## 0.13.0
+_26 August 2022_
+
+* Add RemoteManifestUrl Error, returning url ([#120](https://github.com/contentauth/c2pa-rs/pull/120))
+* Convert status_log error val to a string so that we can return full errors ([#121](https://github.com/contentauth/c2pa-rs/pull/121))
+* Report failures from remote manifest fetch ([#116](https://github.com/contentauth/c2pa-rs/pull/116))
+* Fast XMP extraction from PNG ([#117](https://github.com/contentauth/c2pa-rs/pull/117))
+* Bump MSRV to 1.59.0 ([#118](https://github.com/contentauth/c2pa-rs/pull/118))
+* Make sure there is  a single manifest store in the asset ([#114](https://github.com/contentauth/c2pa-rs/pull/114))
+* (MINOR) Switch to "lib" for crate-type ([#113](https://github.com/contentauth/c2pa-rs/pull/113))
+
+## 0.12.0
+_16 August 2022_
+
+* Update C2PA manifest store mime type ([#112](https://github.com/contentauth/c2pa-rs/pull/112))
+* Updates Manifest API to support remote and external manifests ([#107](https://github.com/contentauth/c2pa-rs/pull/107))
+* Support validating remote and external manifest stores ([#108](https://github.com/contentauth/c2pa-rs/pull/108))
+* Fix build error when xmp_write is not defined ([#105](https://github.com/contentauth/c2pa-rs/pull/105))
+* Fix box order for BMFF ([#104](https://github.com/contentauth/c2pa-rs/pull/104))
+* Added support for external manifests ([#101](https://github.com/contentauth/c2pa-rs/pull/101))
+
+## 0.11.3
+_03 August 2022_
+
+* Remove inadvertent 1.0.0 release from changelog ([#97](https://github.com/contentauth/c2pa-rs/pull/97))
+* Treat 'meta' box as standard container ([#95](https://github.com/contentauth/c2pa-rs/pull/95))
+* Fix for `sign_claim` masking error ([#96](https://github.com/contentauth/c2pa-rs/pull/96))
+
+## 0.11.1
+_01 August 2022_
+
+* Bug fix: Ingredients with valid claims not reporting correct thumbnails ([#94](https://github.com/contentauth/c2pa-rs/pull/94))
+* Update `make_test_images` to use timestamp authority ([#90](https://github.com/contentauth/c2pa-rs/pull/90))
+* Fix bad response for case when there is no timestamp ([#89](https://github.com/contentauth/c2pa-rs/pull/89))
+
+## 0.11.0
+_21 July 2022_
+
+* (MINOR) Add support for remotely generated CoseSign1 signatures ([#87](https://github.com/contentauth/c2pa-rs/pull/87))
+* Optimize performance of large assets ([#84](https://github.com/contentauth/c2pa-rs/pull/84))
+
+## 0.10.0
+_20 July 2022_
+
+* Add Unicode license to allow-list ([#85](https://github.com/contentauth/c2pa-rs/pull/85))
+* (MINOR) `IngredientOptions` allow override of hash and thumbnail generation; image library is now a default feature ([#79](https://github.com/contentauth/c2pa-rs/pull/79))
+
 ## 0.9.1
 _19 July 2022_
 

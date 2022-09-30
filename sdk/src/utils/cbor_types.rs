@@ -11,11 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::de::{Deserialize, Deserializer};
-use serde::ser::{Serialize, Serializer};
+use std::fmt;
+
+use serde::{
+    de::{Deserialize, Deserializer},
+    ser::{Serialize, Serializer},
+};
 use serde_bytes::ByteBuf;
 use serde_cbor::tags::Tagged;
-use std::fmt;
 
 // New types for C2PA that will serialize to the correct
 // CBOR type specified in the C2PA spec.
@@ -23,7 +26,7 @@ use std::fmt;
 // Based on samples from cbor rust git repository.
 //
 // https://tools.ietf.org/html/rfc7049#section-2.4.1
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateT(pub String);
 
 impl Serialize for DateT {
@@ -55,7 +58,7 @@ impl fmt::Display for DateT {
 }
 
 // https://tools.ietf.org/html/rfc7049#section-2.4.4.3
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UriT(pub String);
 
 impl Serialize for UriT {
@@ -86,7 +89,7 @@ impl fmt::Display for UriT {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesT(pub Vec<u8>);
 
 impl Serialize for BytesT {

@@ -1,15 +1,17 @@
 [package]
 name = "c2pa"
-version = "0.9.1"
+version = "0.14.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-rs"
 readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2018"
-rust-version = "1.58.0"
+rust-version = "1.59.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -24,6 +26,8 @@ bmff = []  # Work in progress support for BMFF-based containers
 file_io = ["openssl"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
+no_interleaved_io = ["file_io"]
+fetch_remote_manifests = ["file_io"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -43,13 +47,14 @@ name = "custom_assertion"
 
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["lib"]
 
 [dependencies]
 async-trait = { version = "0.1.48", optional = true }
 atree = "0.5.2"
 base64 = "0.13.0"
 bcder = "0.6.0" 
+blake3 = "1.0.0"
 bytes = "1.1.0"
 byteorder = "1.3.4"
 chrono = { version = "0.4.19", features = ["wasmbind"] }
@@ -75,20 +80,20 @@ serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
 thiserror = ">= 1.0.20, < 1.0.32"
-time = ">= 0.2.23"
 twoway = "0.2.1"
+url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.11.0"
 x509-certificate = "0.12.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ring = "0.16.20"
-url = "2.2.2"
 ureq = "2.4.0"
 image = { version = "0.24.2", optional = true }
 instant = "0.1.0"
 openssl = { version = "0.10.31", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "0.5.1", optional = true }
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "0.2", features = ["color"] }

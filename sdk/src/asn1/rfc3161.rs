@@ -4,19 +4,18 @@
 
 //! ASN.1 types defined by RFC 3161.
 
-use {
-    crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo},
-    bcder::{
-        decode::{Constructed, Malformed, Primitive, Source},
-        encode::{self, PrimitiveContent, Values},
-        ConstOid, Integer, OctetString, Oid, Tag,
-    },
-    x509_certificate::{
-        asn1time::GeneralizedTime,
-        rfc3280::GeneralName,
-        rfc5280::{AlgorithmIdentifier, Extensions},
-    },
+use bcder::{
+    decode::{Constructed, Malformed, Primitive, Source},
+    encode::{self, PrimitiveContent, Values},
+    ConstOid, Integer, OctetString, Oid, Tag,
 };
+use x509_certificate::{
+    asn1time::GeneralizedTime,
+    rfc3280::GeneralName,
+    rfc5280::{AlgorithmIdentifier, Extensions},
+};
+
+use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 
 /// Content-Type for Time-Stamp Token Info.
 ///
@@ -193,7 +192,7 @@ impl PkiStatusInfo {
 
     pub fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
-            (&self.status).encode(),
+            self.status.encode(),
             self.status_string
                 .as_ref()
                 .map(|status_string| status_string.encode_ref()),

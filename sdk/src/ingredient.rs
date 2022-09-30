@@ -13,6 +13,11 @@
 
 #![deny(missing_docs)]
 
+use std::ops::Deref;
+
+use log::{debug, error};
+use serde::{Deserialize, Serialize};
+
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
@@ -23,12 +28,8 @@ use crate::{
     store::Store,
     validation_status::{self, ValidationStatus},
 };
-use std::ops::Deref;
-
 #[cfg(feature = "file_io")]
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
-use log::{debug, error};
-use serde::{Deserialize, Serialize};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
@@ -382,13 +383,11 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
-
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
-        use crate::jumbf_io;
-        use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
+        use crate::status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -407,27 +406,52 @@ impl Ingredient {
         if let Some(opt_title) = options.title(path) {
             ingredient.title = opt_title;
         }
-        // read the file into a buffer for processing
-        let buf = std::fs::read(path).map_err(wrap_io_err)?;
 
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut report = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::new();
+
+        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
+            Ok(manifest_bytes) => {
+                (
+                    Store::from_jumbf(&manifest_bytes, &mut validation_log)
+                        .and_then(|mut store| {
+                            // verify the store
+                            store
+                                .verify_from_path(path, &mut validation_log)
+                                .map(|_| store)
+                        })
+                        .map_err(|e| {
+                            // add a log entry for the error so we act like verify
+                            validation_log.log_silent(
+                                log_item!("asset", "error loading file", "Ingredient::from_file")
+                                    .set_error(&e),
+                            );
+                            e
+                        }),
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
 
         // generate a store from the buffer and then validate from the asset path
         // load and verify store in single call - no need to call low level jumbf_io functions
-        match Store::load_from_memory(&ingredient.format, &buf, true, &mut report) {
+        match result {
             Ok(store) => {
                 // generate ValidationStatus from ValidationItems filtering for only errors
-                let statuses = status_for_store(&store, &mut report);
+                let statuses = status_for_store(&store, &mut validation_log);
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
                     if statuses.is_empty() {
-                        //todo: need a better test here
-                        if let Some(claim_assertion) =
-                            claim.get_claim_assertion(labels::JPEG_CLAIM_THUMBNAIL, 0)
+                        // search claim to find a claim thumbnail assertion without knowing the format
+                        if let Some(claim_assertion) = claim
+                            .claim_assertion_store()
+                            .iter()
+                            .find(|ca| ca.label_raw().starts_with(labels::CLAIM_THUMBNAIL))
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
@@ -436,8 +460,7 @@ impl Ingredient {
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data =
-                    jumbf_io::load_jumbf_from_memory(&ingredient.format, &buf).ok();
+                ingredient.manifest_data = manifest_bytes;
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {
@@ -452,7 +475,7 @@ impl Ingredient {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
                 // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = report
+                let statuses: Vec<ValidationStatus> = validation_log
                     .get_log()
                     .iter()
                     .filter_map(ValidationStatus::from_validation_item)
@@ -501,8 +524,12 @@ impl Ingredient {
             .and_then(|hash_url| jumbf::labels::manifest_label_from_uri(&hash_url.url()));
 
         let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
-            // if we have a relative thumbnail pass in URI and Claim to search
-            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), ingredient_uri) {
+            // This could be a relative or absolute thumbnail reference to another manifest
+            let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
+                Some(label) => label,              // use the manifest from the thumbnail uri
+                None => ingredient_uri.to_owned(), // relative so use the whole url from the thumbnail assertion
+            };
+            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
                 Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
                 None => {
                     error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
@@ -533,7 +560,9 @@ impl Ingredient {
 
         ingredient.is_parent = is_parent;
         ingredient.active_manifest = active_manifest;
-        ingredient.validation_status = ingredient_assertion.validation_status;
+        if !validation_status.is_empty() {
+            ingredient.validation_status = Some(validation_status)
+        }
         ingredient.metadata = ingredient_assertion.metadata;
         Ok(ingredient)
     }
@@ -705,8 +734,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::assertions::Metadata;
+
     #[test]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
@@ -749,7 +778,6 @@ mod tests_file_io {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
     use crate::utils::test::fixture_path;
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
@@ -880,7 +908,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(&ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        //println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
