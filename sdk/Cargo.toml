@@ -79,7 +79,7 @@ serde_json = "1.0.66"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
-thiserror = ">= 1.0.20, < 1.0.32"
+thiserror = ">= 1.0.20, < 1.0.38"
 twoway = "0.2.1"
 url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
