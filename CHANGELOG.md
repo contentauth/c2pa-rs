@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.14.1
+_04 October 2022_
+
+* Add homepage and repository links to crates.io ([#132](https://github.com/contentauth/c2pa-rs/pull/132))
+* Add Exif Assertion support ([#140](https://github.com/contentauth/c2pa-rs/pull/140))
+
 ## 0.14.0
 _23 September 2022_
 
