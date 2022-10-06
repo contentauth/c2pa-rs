@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Thumbnail, User, UserCbor},
+    assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -625,6 +625,10 @@ impl Manifest {
                     }
                     claim.add_assertion_with_salt(&cw, &salt)
                 }
+                Exif::LABEL => {
+                    let exif: Exif = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&exif, &salt)
+                }
                 _ => match manifest_assertion.kind() {
                     ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
                         &UserCbor::new(
@@ -809,7 +813,7 @@ pub(crate) mod tests {
         utils::test::{
             fixture_path, temp_dir_path, temp_fixture_path, temp_signer, TEST_SMALL_JPEG,
         },
-        Ingredient,
+        validation_status, Ingredient,
     };
 
     // example of random data structure as an assertion
@@ -1157,6 +1161,37 @@ pub(crate) mod tests {
             manifest_store.get_active().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
+    }
+
+    #[cfg(feature = "file_io")]
+    #[actix::test]
+    /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
+    async fn test_embed_with_ingredient_error() {
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = test_manifest();
+        let ingredient =
+            Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting ingredient");
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::ASSERTION_DATAHASH_MISMATCH
+        );
+        manifest.add_ingredient(ingredient);
+        manifest.embed(&output, &output, &signer).expect("embed");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{}", manifest_store);
+        let manifest = manifest_store.get_active().unwrap();
+        let ingredient_status = manifest.ingredients()[0].validation_status();
+        assert_eq!(
+            ingredient_status.unwrap()[0].code(),
+            validation_status::ASSERTION_DATAHASH_MISMATCH
+        );
+        assert_eq!(manifest.title().unwrap(), TEST_SMALL_JPEG);
+        assert!(manifest_store.validation_status().is_none())
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
