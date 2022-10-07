@@ -410,7 +410,7 @@ fn check_cert(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
-    // popluate needed extension info
+    // populate needed extension info
     for e in signcert.extensions() {
         match e.parsed_extension() {
             ParsedExtension::AuthorityKeyIdentifier(_aki) => {
@@ -502,10 +502,6 @@ pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
                     -36 => Ok(SigningAlg::Es512),
                     -35 => Ok(SigningAlg::Es384),
                     -7 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // -259 => "rs512",
-                    // -258 => "rs384",
-                    // -257 => "rs256",
                     -8 => Ok(SigningAlg::Ed25519),
                     _ => Err(Error::CoseSignatureAlgorithmNotSupported),
                 },
@@ -516,10 +512,6 @@ pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
                     coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
                     coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
                     coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // coset::iana::Algorithm::RS512 => "rs512",
-                    // coset::iana::Algorithm::RS384 => "rs384",
-                    // coset::iana::Algorithm::RS256 => "rs256",
                     coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
                     _ => Err(Error::CoseSignatureAlgorithmNotSupported),
                 },
@@ -574,6 +566,23 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     } else {
         Err(Error::CoseX5ChainMissing)
     }
+}
+
+// internal util function to dump the cert chain in PEM format
+#[allow(dead_code)]
+fn dump_cert_chain(certs: &Vec<Vec<u8>>, output_path: &std::path::Path) -> Result<()> {
+    let mut out_buf: Vec<u8> = Vec::new();
+
+    for der_bytes in certs {
+        let c = openssl::x509::X509::from_der(&der_bytes).map_err(|_e| Error::UnsupportedType)?;
+        let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+
+        out_buf.append(&mut c_pem);
+    }
+
+    std::fs::write(output_path, &out_buf).map_err(|_e| Error::UnsupportedType)?;
+
+    Ok(())
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
