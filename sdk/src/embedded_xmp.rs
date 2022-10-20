@@ -38,8 +38,12 @@ pub(crate) fn add_manifest_uri_to_file<P: AsRef<Path>>(path: P, manifest_uri: &s
         None => XmpMeta::new().map_err(xmp_write_err)?,
     };
 
-    m.set_property("http://purl.org/dc/terms/", "provenance", manifest_uri)
-        .map_err(xmp_write_err)?;
+    m.set_property(
+        "http://purl.org/dc/terms/",
+        "provenance",
+        &manifest_uri.into(),
+    )
+    .map_err(xmp_write_err)?;
 
     f.put_xmp(&m).map_err(xmp_write_err)?;
     f.close();
