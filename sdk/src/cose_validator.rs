@@ -306,7 +306,7 @@ fn check_cert(
         }
     }
 
-    // check modulus minumum length (for RSA & PSS algorithms)
+    // check modulus minimum length (for RSA & PSS algorithms)
     if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
         let (_, skpi_ber) = parse_ber_sequence(pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
