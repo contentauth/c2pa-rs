@@ -34,18 +34,18 @@ The tool will display the version installed. Compare the version number displaye
 
 The tool works with the following types of asset files (also referred to as _assets_).
 
-| MIME type         | extensions  | read only |
-| ----------------- | ----------- | --------- |
-| `image/jpeg`      | `jpg, jpeg` |           |
-| `image/png`       | `png`       |           |
-| `image/avif`      | `avif`      |    X      |
-| `image/heic`      | `heic`      |    X      |
-| `image/heif`      | `heif`      |    X      |
-| `video/mp4`       | `mp4`       |           |
-| `application/mp4` | `mp4`       |           |
-| `audio/mp4`       | `m4a`       |           |
-| `application/c2pa`| `c2pa`      |    X      |
-| `video/quicktime` | `mov`       |           |
+| MIME type                           | extensions  | read only |
+| ----------------------------------- | ----------- | --------- |
+| `image/jpeg`                        | `jpg, jpeg` |           |
+| `image/png`                         | `png`       |           |
+| `image/avif`                        | `avif`      |    X      |
+| `image/heic`                        | `heic`      |    X      |
+| `image/heif`                        | `heif`      |    X      |
+| `video/mp4`                         | `mp4`       |           |
+| `application/mp4`                   | `mp4`       |           |
+| `audio/mp4`                         | `m4a`       |           |
+| `video/quicktime`                   |  `mov`      |           |
+| `application/x-c2pa-manifest-store` | `c2pa`      |           |
 
 NOTE: Quicktime (`.mov`) format is not yet fully supported.
 
@@ -95,18 +95,18 @@ c2patool -d sample/C.jpg
 
 The tool displays the detailed report to standard output (stdout).
 
-### Information report
+### Displaying an information report
 
-The `--info` option will print a high level report about the file and related C2PA data. 
-For a cloud manifest it will display the url to the manifest.
-For embedded manifests, the size of the manifest store and number of manifests will be displayed. It will also report if the manifest validated or any errors encountered in validation.
+Use the `--info` option to print a high-level report about the asset file and related C2PA data. 
+For a cloud manifest the tool displays the URL to the manifest.
+For embedded manifests, the tool displays the size of the manifest store and number of manifests. It will also report if the manifest validated or any errors were encountered in validation.
 
 
 ```shell
 c2patool sample/C.jpg --info
 ```
 
-The tool displays the info report to standard output (stdout).
+The tool displays the report to standard output (stdout).
 
 ### Adding a manifest to an asset file
 
@@ -159,7 +159,7 @@ c2patool image.jpg -s -m sample/test.json -o signed_image.jpg
 ```
 ### Generating a remote manifest
 
-Use the `--remote` / `-r` option to places an HTTP reference to the manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file with the same filename but with a `.c2pa` extension. Place the manifest at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched. 
+Use the `--remote` / `-r` option to place an HTTP reference to the manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file with the same filename but with a `.c2pa` extension. Place the manifest at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched. 
 
 ```shell
 c2patool sample/image.jpg -r http://my_server/myasset.c2pa -m sample/test.json -o signed_image.jpg
@@ -278,13 +278,21 @@ The schema for the manifest definition file is shown below.
 }
 ```
 
-#### Example manifest definition file
+### Example manifest definition file
 
-Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON into a file to use as a test manifest.
+Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest. 
+
+It is important to provide a value for the Time Authority URL (the `ta_url` property) to have a valid timestamp on the claim. 
+
+The default certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) are built into the c2patool binary. This example uses the default testing certs. You will see a warning message when using them, since they are meant for development purposes only. 
+
+**NOTE**: Use the default private key and signing certificate only for development.
+For actual use, provide a permanent key and cert in the manifest definition or environment variables (see [Appendix](#appendix-creating-and-using-an-x509-certificate)).
 
 ```json
 {
     "ta_url": "http://timestamp.digicert.com",
+
     "claim_generator": "TestApp",
     "assertions": [
         {
@@ -303,3 +311,31 @@ Here's an example of a manifest definition that inserts a CreativeWork author as
     ]
 }
 ```
+
+## Appendix: Creating and using an X.509 certificate
+
+You can test creating your own manifests using the pre-built certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample). To use your own generated certificates, specify the path to the cert files in the following manifest fields:
+
+- `private_key`
+- `sign_cert`
+
+If you are using a signing algorithm other than the default `es256`, specify it in the manifest definition field `alg` with one of the following values:
+
+- `ps256`
+- `ps384`
+- `ps512`
+- `es256`
+- `es384`
+- `es512`
+- `ed25519`
+
+The specified algorithm must be compatible with the values of `private_key` and `sign_cert`.
+
+You can put the values of the key and cert chain in two environment variables: `C2PA_PRIVATE_KEY` (for the private key) and `C2PA_SIGN_CERT` (for the public certificates). For example, to sign with ES256 signatures using the content of a private key file and certificate file:
+
+```shell
+set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)
+set C2PA_SIGN_CERT=$(cat my_es256_certs)
+```
+
+Both the `private_key` and `sign_cert` must be in PEM format. The `sign_cert` must contain a PEM certificate chain starting with the end-entity certificate used to sign the claim ending with the intermediate certificate before the root CA certificate. See the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) for example certificates.
