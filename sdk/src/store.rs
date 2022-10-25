@@ -1888,7 +1888,10 @@ impl Store {
                     )
                     .provenance
                     {
-                        if cfg!(feature = "fetch_remote_manifests") {
+                        // verify provenance path is remote url
+                        let is_remote_url = Store::is_valid_remote_url(&ext_ref);
+
+                        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
                             Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
@@ -1978,6 +1981,14 @@ impl Store {
             Some(ext_ref)
         } else {
             None
+        }
+    }
+
+    /// check the input url to see if it is a supported remotes URI
+    pub fn is_valid_remote_url(url: &str) -> bool {
+        match url::Url::parse(url) {
+            Ok(u) => !(u.scheme() != "http" && u.scheme() != "https"),
+            Err(_) => false,
         }
     }
 

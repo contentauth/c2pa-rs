@@ -887,7 +887,7 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        extract_subject_from_cert(&signcert).or_else(|_| Ok("".to_string()))
     } else {
         Err(Error::CoseSignature)
     }
@@ -928,7 +928,7 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        extract_subject_from_cert(&signcert).or_else(|_| Ok("".to_string()))
     } else {
         Err(Error::CoseSignature)
     }
