@@ -536,9 +536,12 @@ impl Manifest {
             self.set_title(ingredient.title());
         }
 
-        #[cfg(feature = "add_thumbnails")]
-        if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
-            self.set_thumbnail(format, image);
+        // if a thumbnail is not already defined, create one here
+        if self.thumbnail().is_none() {
+            #[cfg(feature = "add_thumbnails")]
+            if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+                self.set_thumbnail(format, image);
+            }
         }
     }
 
@@ -1218,5 +1221,23 @@ pub(crate) mod tests {
             manifest_store.get_active().unwrap().title().unwrap(),
             "XCAplus.jpg"
         );
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_embed_user_thumbnail() {
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = test_manifest();
+        manifest.set_thumbnail("image/jpeg",vec![1,2,3]);
+        manifest.embed(&output, &output, &signer).expect("embed");
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let active_manifest = manifest_store.get_active().unwrap();
+        let (format, thumb) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+        assert_eq!(thumb, vec![1,2,3]);
     }
 }
