@@ -1232,12 +1232,12 @@ pub(crate) mod tests {
         let signer = temp_signer();
 
         let mut manifest = test_manifest();
-        manifest.set_thumbnail("image/jpeg",vec![1,2,3]);
+        manifest.set_thumbnail("image/jpeg", vec![1, 2, 3]);
         manifest.embed(&output, &output, &signer).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
         let (format, thumb) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
-        assert_eq!(thumb, vec![1,2,3]);
+        assert_eq!(thumb, vec![1, 2, 3]);
     }
 }
