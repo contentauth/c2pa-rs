@@ -1987,7 +1987,7 @@ impl Store {
     /// check the input url to see if it is a supported remotes URI
     pub fn is_valid_remote_url(url: &str) -> bool {
         match url::Url::parse(url) {
-            Ok(u) => u.scheme().starts_with("http"),
+            Ok(u) => u.scheme() == "http" || u.scheme() == "https",
             Err(_) => false,
         }
     }
