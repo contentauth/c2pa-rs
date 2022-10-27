@@ -33,11 +33,10 @@ pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
     if img.width() > longest_edge || img.height() > longest_edge {
         img = img.thumbnail(longest_edge, longest_edge);
     }
-
-    // for png files, use png thumbnails for transparency
+    // for png files, use png thumbnails if there is an alpha channel
     // for other supported types try a jpeg thumbnail
     let (output_format, content_type) = match format {
-        ImageFormat::Png => (image::ImageOutputFormat::Png, "image/png"),
+        ImageFormat::Png if img.color().has_alpha() => (image::ImageOutputFormat::Png, "image/png"),
         _ => (
             image::ImageOutputFormat::Jpeg(THUMBNAIL_JPEG_QUALITY),
             "image/jpeg",
