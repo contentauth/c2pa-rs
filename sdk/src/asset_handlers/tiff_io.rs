@@ -755,6 +755,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         Ok(offset_map)
     }
+
     pub fn clone_tiff<R: Read + Seek>(
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
@@ -775,7 +776,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.clone_image_data(&mut cloned_ifd, asset_reader)?;
 
         // add in new Tags
-        cloned_ifd.append(&mut self.additional_ifds);
+        for (tag, new_entry) in &self.additional_ifds {
+            cloned_ifd.insert(*tag, new_entry.clone());
+        }
+       
         
         // fix up subfile offsets
         for t in SUBFILES {
@@ -783,20 +787,19 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 let e = cloned_ifd.get_mut(&t).ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
                 let mut adjust_offsets = if self.big_tiff { vec![0u8; offsets.len() * 8] } else { vec![0u8; offsets.len() * 4] } ;
 
-                with_order!(adjust_offsets.as_mut_slice(), self.endianness, |dest| {
-                    for o in offsets {
-                        if self.big_tiff {
-                            dest.write_u64(*o)?;
-                        } else {
-                            let offset_u32 = u32::value_from(*o)
-                                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-    
-                            dest.write_u32(offset_u32)?;
-                        }
-                    }
-                   
-                });
+                let mut offset_writer = Cursor::new(adjust_offsets.as_mut_slice());
 
+                for o in offsets {
+                    if self.big_tiff {
+                        offset_writer.write_all(&o.to_ne_bytes())?;
+                    } else {
+                        let offset_u32 = u32::value_from(*o)
+                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+                        offset_writer.write_all(&offset_u32.to_ne_bytes())?;
+                    }
+                }
+                   
                 e.value_bytes = adjust_offsets;
             }
         }
@@ -919,7 +922,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // read IFD raw data in file native endian format
             let data = match entry_type {
-                IFDEntryType::Byte | IFDEntryType::Sbyte | IFDEntryType::Undefined => {
+                IFDEntryType::Byte | IFDEntryType::Sbyte | IFDEntryType::Undefined | IFDEntryType::Ascii => {
                     let num_bytes = usize::value_from(cnt)
                         .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
 
@@ -927,8 +930,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                     if num_bytes <= 4 || self.big_tiff && num_bytes <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
-                        for item in offset_bytes.iter().take(num_bytes) {
-                            data.push(*item);
+                        for (i, item) in offset_bytes.iter().take(num_bytes).enumerate() {
+                            data[i] = *item;
                         }
                     } else {
                         // move to start of data
@@ -937,22 +940,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
 
                     data
-                }
-                IFDEntryType::Ascii => {
-                    let num_chars = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
-
-                    let mut data = vec![0u8; num_chars];
-
-                    // move to start of data
-                    asset_reader.seek(SeekFrom::Start(offset))?;
-                    asset_reader.read_exact(data.as_mut_slice())?;
-
-                    if data.is_ascii() && data.ends_with(&[0]) {
-                        data
-                    } else {
-                        data
-                    }
                 }
                 IFDEntryType::Short => {
                     let num_shorts = usize::value_from(cnt)
