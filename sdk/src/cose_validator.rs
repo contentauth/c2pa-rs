@@ -572,7 +572,7 @@ fn dump_cert_chain(certs: &Vec<Vec<u8>>, output_path: &std::path::Path) -> Resul
     let mut out_buf: Vec<u8> = Vec::new();
 
     for der_bytes in certs {
-        let c = openssl::x509::X509::from_der(&der_bytes).map_err(|_e| Error::UnsupportedType)?;
+        let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
         let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
 
         out_buf.append(&mut c_pem);

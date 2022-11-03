@@ -34,6 +34,7 @@ const C2PA_TAG: u16 = 0xCD41;
 const XMP_TAG: u16 = 0x02BC;
 const SUBFILE_TAG: u16 = 0x014a;
 const EXIFIFD_TAG: u16 = 0x8769;
+const GPSIFD_TAG: u16 = 0x8825;
 const C2PA_FIELD_TYPE: u16 = 7;
 
 const STRIPBYTECOUNTS: u16 = 279;
@@ -41,7 +42,7 @@ const STRIPOFFSETS: u16 = 273;
 const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
-const SUBFILES: [u16; 2] = [SUBFILE_TAG, EXIFIFD_TAG];
+const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
 
 // The type of an IFD entry
 enum IFDEntryType {
@@ -100,6 +101,7 @@ pub enum IFDType {
     PageIFD,
     SubIFD,
     ExifIFD,
+    GpsIFD,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -291,11 +293,7 @@ impl TiffStructure {
     }
 }
 
-fn decode_offset(
-    offset_file_native: u64,
-    endianness: Endianness,
-    big_tiff: bool,
-) -> Result<u64> {
+fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool) -> Result<u64> {
     let offset: u64;
     let offset_bytes = offset_file_native.to_ne_bytes();
     let offset_reader = Cursor::new(offset_bytes);
@@ -345,10 +343,7 @@ where
         */
 
         // look for known special IFDs on page 0
-        let page0_subifd = match tiff_tree[page_0_token].data.get_tag(SUBFILE_TAG) {
-            Some(ifd) => Some(ifd.clone()),
-            None => None,
-        };
+        let page0_subifd = tiff_tree[page_0_token].data.get_tag(SUBFILE_TAG).copied();
 
         // grab SubIFDs for page 0
         if let Some(subifd) = page0_subifd {
@@ -367,9 +362,9 @@ where
                 let offset_reader = Cursor::new(offset_bytes);
 
                 with_order!(offset_reader, ts.byte_order, |src| {
-                    for i in 0..num_longs {
+                    for item in subfile_offsets.iter_mut().take(num_longs) {
                         let s = src.read_u32()?; // read a long from offset
-                        subfile_offsets[i] = s; // write a short in output endian
+                        *item = s; // write a long in output endian
                     }
                 });
             } else {
@@ -378,9 +373,9 @@ where
                 let offsets_buf = Cursor::new(buf);
 
                 with_order!(offsets_buf, ts.byte_order, |src| {
-                    for i in 0..num_longs {
+                    for item in subfile_offsets.iter_mut().take(num_longs) {
                         let s = src.read_u32()?; // read a long from offset
-                        subfile_offsets[i] = s; // write a short in output endian
+                        *item = s; // write a long in output endian
                     }
                 });
             }
@@ -406,7 +401,7 @@ where
             let decoded_offset = decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            println!("Reading SubIFD: {}", exififd.value_offset);
+            println!("EXIF Reading SubIFD: {}", exififd.value_offset);
 
             let exif_ifd =
                 TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::ExifIFD)?;
@@ -414,6 +409,22 @@ where
 
             page_0_token
                 .append_node(&mut tiff_tree, exif_token)
+                .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
+        }
+
+        // grab GPS IFD for page 0
+        if let Some(gpsifd) = tiff_tree[page_0_token].data.get_tag(GPSIFD_TAG) {
+            let decoded_offset = decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
+            input.seek(SeekFrom::Start(decoded_offset))?;
+
+            println!("GPS Reading SubIFD: {}", gpsifd.value_offset);
+
+            let gps_ifd =
+                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::GpsIFD)?;
+            let gps_token = tiff_tree.new_node(gps_ifd);
+
+            page_0_token
+                .append_node(&mut tiff_tree, gps_token)
                 .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
         }
 
@@ -553,7 +564,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 *value_bytes_ref = offset_vec; // Set to new data offset position
             } else {
                 while value_bytes_ref.len() < data_bytes {
-                    value_bytes_ref.push(0); 
+                    value_bytes_ref.push(0);
                 }
             }
         }
@@ -827,6 +838,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         let mut offsets_ifd: Vec<u64> = Vec::new();
         let mut offsets_exif: Vec<u64> = Vec::new();
+        let mut offsets_gps: Vec<u64> = Vec::new();
 
         // clone the EXIF entry and DNG entries
         for n in page.children(tiff_tree) {
@@ -863,11 +875,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 IFDType::PageIFD => (),
                 IFDType::SubIFD => offsets_ifd.push(sub_ifd_offset),
                 IFDType::ExifIFD => offsets_exif.push(sub_ifd_offset),
+                IFDType::GpsIFD => offsets_gps.push(sub_ifd_offset),
             };
         }
 
         offset_map.insert(SUBFILE_TAG, offsets_ifd);
         offset_map.insert(EXIFIFD_TAG, offsets_exif);
+        offset_map.insert(GPSIFD_TAG, offsets_gps);
 
         Ok(offset_map)
     }
