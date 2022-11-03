@@ -493,33 +493,31 @@ fn check_cert(
 pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
     match cs1.protected.header.alg {
-        Some(ref alg) => {
-            match alg {
-                coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-                    -39 => Ok(SigningAlg::Ps512),
-                    -38 => Ok(SigningAlg::Ps384),
-                    -37 => Ok(SigningAlg::Ps256),
-                    -36 => Ok(SigningAlg::Es512),
-                    -35 => Ok(SigningAlg::Es384),
-                    -7 => Ok(SigningAlg::Es256),
-                    -8 => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
-                    coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
-                    coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
-                    coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
-                    coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
-                    coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
-                    coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
-                    coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Text(a) => a
-                    .parse()
-                    .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
-            }
-        }
+        Some(ref alg) => match alg {
+            coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
+                -39 => Ok(SigningAlg::Ps512),
+                -38 => Ok(SigningAlg::Ps384),
+                -37 => Ok(SigningAlg::Ps256),
+                -36 => Ok(SigningAlg::Es512),
+                -35 => Ok(SigningAlg::Es384),
+                -7 => Ok(SigningAlg::Es256),
+                -8 => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
+                coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
+                coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
+                coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
+                coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
+                coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
+                coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
+                coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Text(a) => a
+                .parse()
+                .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
+        },
         None => Err(Error::CoseSignatureAlgorithmNotSupported),
     }
 }
