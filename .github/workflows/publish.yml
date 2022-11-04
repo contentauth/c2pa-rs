@@ -17,12 +17,16 @@ jobs:
 
     - name: Get latest existing tag
       uses: actions-ecosystem/action-get-latest-tag@v1
+        ## NEEDS UPDATE for set-output deprecation.
+        ## See https://github.com/actions-ecosystem/action-get-latest-tag/issues/25.
       id: get-latest-tag
       with:
         semver_only: true
 
     - name: Set new version
       uses: paulhatch/semantic-version@v4.0.2
+        ## NEEDS UPDATE for set-output deprecation.
+        ## See https://github.com/PaulHatch/semantic-version/issues/66.
       id: set-version
       with:
         tag_prefix: "v"
@@ -32,6 +36,8 @@ jobs:
 
     - name: Generate changelog since last tag
       uses: mathiasvr/command-output@v1
+        ## NEEDS UPDATE for set-output deprecation.
+        ## See https://github.com/mathiasvr/command-output/issues/4.
       id: changelog
       with:
         run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
@@ -81,6 +87,8 @@ jobs:
 
     - name: Commit Cargo.toml and changelog
       uses: stefanzweifel/git-auto-commit-action@v4
+        ## NEEDS UPDATE for set-output deprecation.
+        ## See https://github.com/stefanzweifel/git-auto-commit-action/issues/250.
       id: commit
       with:
         commit_message: Prepare ${{ steps.set-version.outputs.version }} release
