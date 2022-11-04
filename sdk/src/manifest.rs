@@ -25,6 +25,7 @@ use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
+    asset_store::{skip_serializing_thumbnails, AssetMap, AssetRef, AssetStore},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -34,13 +35,6 @@ use crate::{
 };
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
 use crate::{AsyncSigner, RemoteSigner};
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// thumbnail data based on the `serialize_thumbnails` flag.
-/// (Serialization is disabled by default.)
-fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || value.is_none()
-}
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Deserialize, Serialize)]
@@ -66,8 +60,8 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    thumbnail: Option<(String, Vec<u8>)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thumbnail: Option<AssetRef>,
 
     /// A List of ingredients
     ingredients: Vec<Ingredient>,
@@ -90,8 +84,14 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing, skip_serializing)]
+    /// Indicates where a generated manifest goes
+    #[serde(skip)]
     remote_manifest: Option<RemoteManifest>,
+
+    /// container for binary assets (like thumbnails)
+    #[serde(skip_deserializing)]
+    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
+    assets: AssetMap,
 }
 
 impl Manifest {
@@ -113,6 +113,7 @@ impl Manifest {
             signature_info: None,
             label: None,
             remote_manifest: None,
+            assets: AssetMap::new(),
         }
     }
 
@@ -143,9 +144,12 @@ impl Manifest {
 
     /// Returns a tuple with thumbnail format and image bytes or `None`.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
-        self.thumbnail
-            .as_ref()
-            .map(|(format, image)| (format.as_str(), image.as_ref()))
+        if let Some(thumbnail) = self.thumbnail.as_ref() {
+            if let Some(image) = self.assets.get(&thumbnail.identifier) {
+                return Some((&thumbnail.content_type, image));
+            }
+        }
+        None
     }
 
     /// Returns the [Ingredient]s used by this Manifest
@@ -206,7 +210,8 @@ impl Manifest {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format.into(), thumbnail));
+        let identifier = self.assets.add(thumbnail);
+        self.thumbnail = Some(AssetRef::new(format.into(), identifier));
         self
     }
 

@@ -121,12 +121,13 @@ mod signer;
 pub use signer::Signer;
 #[cfg(feature = "async_signer")]
 pub use signer::{AsyncSigner, RemoteSigner};
-/// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+/// crate private declarations
+pub(crate) mod asset_store;
 pub(crate) mod claim;
 
 #[cfg(feature = "file_io")]
