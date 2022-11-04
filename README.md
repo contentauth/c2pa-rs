@@ -17,7 +17,7 @@ The SDK supports several common C2PA [assertions](https://c2pa.org/specification
 
 ## State of the project
 
-This is an early release (version 0.x.x) of the project. The minor version number (0.x.0) will be incremented when there are breaking API changes, which may happen frequently.
+This is an early release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
 The SDK:
 * Supports a variety of image and video formats. For details, see [c2patool supported file formats](https://opensource.contentauthenticity.org/docs/c2patool/#supported-file-formats).
