@@ -11,16 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::rustls::common::get_algorithm_data;
+use crate::rustls::common::{ensure_asn_sig, get_algorithm_data};
+use crate::SigningAlg;
 use crate::{validator::CoseValidator, Error, Result};
 use ring::signature;
+use spki::SubjectPublicKeyInfo;
+use std::convert::TryFrom;
 
 pub struct Validator {
-    alg: String,
+    alg: SigningAlg,
 }
 
 impl Validator {
-    pub fn new(alg: &str) -> Self {
+    pub fn new(alg: SigningAlg) -> Self {
         Validator {
             alg: alg.to_owned(),
         }
@@ -30,13 +33,15 @@ impl Validator {
 impl CoseValidator for Validator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
         let algorithm_data = &get_algorithm_data(&self.alg).map_err(|_err| Error::CoseSignature)?;
+        let spki = SubjectPublicKeyInfo::try_from(pkey).map_err(|_err| Error::CoseSignature)?;
 
+        let sig_asn = ensure_asn_sig(sig, self.alg)?;
         let public_key = signature::UnparsedPublicKey::new(
             algorithm_data.verification_alg,
-            &pkey[algorithm_data.spk_offset..],
+            spki.subject_public_key,
         );
 
-        Ok(public_key.verify(data, sig).is_ok())
+        Ok(public_key.verify(data, &sig_asn).is_ok())
     }
 }
 
@@ -46,48 +51,71 @@ mod tests {
     use super::*;
     use crate::rustls::temp_signer;
     use crate::Signer;
-    use rustls_pemfile::certs;
-    use std::io::BufReader;
-    use tempfile::tempdir;
+    use x509_parser::parse_x509_certificate;
 
     #[test]
     fn verify_signatures() {
         const MESSAGE: &[u8] = b"hello, world";
 
-        for item in ["rs256", "rs384", "rs512", "ps256", "ps384", "ps512"].iter() {
-            let temp_dir = tempdir().unwrap();
-            let (signer, cert_path) = temp_signer::get_rsa_signer(&temp_dir.path(), item, None);
+        // No verifying with RSA-PSS and SigningAlg::Es512.
+        // This is a ring limitation, see reference in PR description.
 
-            let cert_bytes: &[u8] = &std::fs::read(&cert_path).unwrap();
+        for alg in [SigningAlg::Es256, SigningAlg::Es384].iter() {
+            let cert_dir = crate::utils::test::fixture_path("certs");
+            let (signer, _cert_path) = temp_signer::get_ec_signer(&cert_dir, *alg, None);
+
             let signature = signer.sign(MESSAGE).unwrap();
-            let signcerts = certs(&mut BufReader::new(cert_bytes)).unwrap();
-            let public_key: &[u8] = signcerts[0].as_ref();
-            let validator = Validator::new(item);
-            assert!(validator.validate(&signature, MESSAGE, public_key).is_ok());
+
+            let leaf_certificate = match signer.certs() {
+                Ok(certificate) => certificate,
+                Err(_) => {
+                    println!("Could not parse certificate");
+                    return;
+                }
+            };
+
+            let certificate = match parse_x509_certificate(&leaf_certificate[0]) {
+                Ok((_rem, certificate)) => certificate,
+                Err(_) => {
+                    println!("Could not parse certificate");
+                    return;
+                }
+            };
+
+            let public_key = certificate.public_key();
+
+            let validator = Validator::new(*alg);
+            assert!(validator
+                .validate(&signature, MESSAGE, public_key.raw)
+                .is_ok());
         }
 
-        // No es512
-        for item in ["es256", "es384"].iter() {
-            let temp_dir = tempdir().unwrap();
-            let (signer, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), item, None);
-
-            let cert_bytes: &[u8] = &std::fs::read(&cert_path).unwrap();
-            let signature = signer.sign(MESSAGE).unwrap();
-            let signcerts = certs(&mut BufReader::new(cert_bytes)).unwrap();
-            let public_key: &[u8] = signcerts[0].as_ref();
-            let validator = Validator::new(item);
-            assert!(validator.validate(&signature, MESSAGE, public_key).is_ok());
-        }
-
-        let item = "ed25519";
-        let temp_dir = tempdir().unwrap();
-        let (signer, cert_path) = temp_signer::get_ed_signer(&temp_dir.path(), item, None);
-
-        let cert_bytes: &[u8] = &std::fs::read(&cert_path).unwrap();
+        let alg = SigningAlg::Ed25519;
+        let cert_dir = crate::utils::test::fixture_path("certs");
+        let (signer, _cert_path) = temp_signer::get_ed_signer(&cert_dir, alg, None);
         let signature = signer.sign(MESSAGE).unwrap();
-        let signcerts = certs(&mut BufReader::new(cert_bytes)).unwrap();
-        let public_key: &[u8] = signcerts[0].as_ref();
-        let validator = Validator::new(item);
-        assert!(validator.validate(&signature, MESSAGE, public_key).is_ok());
+
+        let leaf_certificate = match signer.certs() {
+            Ok(certificate) => certificate,
+            Err(_) => {
+                println!("Could not parse certificate");
+                return;
+            }
+        };
+
+        let certificate = match parse_x509_certificate(&leaf_certificate[0]) {
+            Ok((_rem, certificate)) => certificate,
+            Err(_) => {
+                println!("Could not parse certificate");
+                return;
+            }
+        };
+
+        let public_key = certificate.public_key();
+
+        let validator = Validator::new(alg);
+        assert!(validator
+            .validate(&signature, MESSAGE, public_key.raw)
+            .is_ok());
     }
 }

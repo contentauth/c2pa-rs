@@ -256,12 +256,12 @@ pub enum Error {
     RustlsInvalidSignatureSchemeError,
 
     #[cfg(feature = "file_io")]
-    #[error("could not sign")]
-    RustlsCouldNotSignError,
-
-    #[cfg(feature = "file_io")]
     #[error("no such algorithm")]
     RustlsUnknownAlgorithmError,
+
+    #[cfg(feature = "file_io")]
+    #[error("could not validate certificate chain")]
+    RustlsCertificateChainError,
 
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),

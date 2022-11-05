@@ -18,39 +18,46 @@ pub mod rustls_signer;
 pub mod signer;
 pub mod temp_signer;
 pub mod validator;
+use self::common::certificate_to_alg;
+use crate::rustls::common::get_algorithm_data;
+// use crate::{error::Result, Error};
+use ring::signature;
+use rustls::Certificate;
 pub(crate) use rustls_signer::RustlsSigner;
 pub(crate) use validator::Validator;
-use x509_parser::prelude::{FromDer, X509Certificate};
-
-use rustls::Certificate;
+use x509_parser::parse_x509_certificate;
 
 pub(crate) fn check_chain_order(certs: &Vec<Certificate>) -> bool {
+    match _check_chain_order_to_result(certs) {
+        Ok(res) => res,
+        Err(res) => res,
+    }
+}
+
+pub(crate) fn _check_chain_order_to_result(certs: &Vec<Certificate>) -> Result<bool, bool> {
     let chain_length = certs.len();
     if chain_length < 2 {
-        return true;
+        return Ok(true);
     }
 
     for i in 1..(chain_length - 1) {
-        let verifier_certificate = match X509Certificate::from_der(&certs[i].0) {
-            Ok((_rem, verifier_certificate)) => verifier_certificate,
-            Err(_) => {
-                return false;
-            }
-        };
-        let verified_certificate = match X509Certificate::from_der(&certs[i - 1].0) {
-            Ok((_rem, verified_certificate)) => verified_certificate,
-            Err(_) => {
-                return false;
-            }
-        };
-        let verifier_public_key = verifier_certificate.public_key();
+        let (_, verifier_cert) = parse_x509_certificate(&certs[i].0).map_err(|_| false)?;
+        let (_, verified_cert) = parse_x509_certificate(&certs[i - 1].0).map_err(|_| false)?;
 
-        if verified_certificate
-            .verify_signature(Some(verifier_public_key))
-            .is_err()
-        {
-            return false;
-        }
+        let alg_id = certificate_to_alg(&certs[i].0).map_err(|_| false)?;
+        let algorithm_data = get_algorithm_data(&alg_id).map_err(|_| false)?;
+
+        let verifier_spki = verifier_cert.public_key();
+        let verifier_key = signature::UnparsedPublicKey::new(
+            algorithm_data.verification_alg,
+            &verifier_spki.subject_public_key.data,
+        );
+
+        let verified_sig = &verified_cert.signature_value.data;
+
+        verifier_key
+            .verify(verified_cert.tbs_certificate.as_ref(), verified_sig)
+            .map_err(|_| false)?
     }
-    true
+    Ok(true)
 }

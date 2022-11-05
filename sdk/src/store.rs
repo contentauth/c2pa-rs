@@ -1297,7 +1297,7 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
-    pub fn verify_store(
+    pub fn verify_store<'a>(
         store: &Store,
         asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
@@ -2392,19 +2392,20 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use crate::error::{Error, Result};
+    use crate::store::{Store, MANIFEST_STORE_EXT};
+    use crate::validation_status;
     use tempfile::tempdir;
     use twoway::find_bytes;
 
-    #[cfg(not(feature = "with_rustls"))]
-    use crate::openssl::temp_signer::get_temp_signer;
-    #[cfg(feature = "with_rustls")]
-    use crate::rustls::temp_signer::get_temp_signer;
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},
         jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
         status_tracker::*,
-        utils::test::{create_test_claim, fixture_path, temp_dir_path, temp_fixture_path},
+        utils::test::{
+            create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+        },
     };
     use crate::{utils::patch::patch_file, SigningAlg};
 
@@ -2669,14 +2670,11 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", feature = "with_rustls"))]
     fn test_sign_with_expired_cert() {
-        #[cfg(not(feature = "with_rustls"))]
-        use crate::openssl::RsaSigner;
-        #[cfg(feature = "with_rustls")]
         use crate::rustls::RustlsSigner;
         use crate::signer::ConfigurableSigner;
-        use crate::signer::SigningAlg;
+        use crate::SigningAlg;
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2701,9 +2699,38 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "file_io", not(feature = "with_rustls")))]
+    fn test_sign_with_expired_cert() {
+        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-image-expired-cert.jpg");
+
+        let mut store = Store::new();
+
+        let claim = create_test_claim().unwrap();
+
+        let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
+        let pkey_path = fixture_path("rsa-pss256-expired.pem");
+        let signer =
+            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // JUMBF generation should fail because the certificate won't validate.
+        let r = store.save_to_asset(&ap, &signer, &op);
+        assert!(r.is_err());
+        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_jumbf_replacement_generation() {
         // Create claims store.
+
+        use std::fs;
         let mut store = Store::new();
 
         // Create a new claim.
@@ -2981,7 +3008,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_verifiable_credentials() {
-        use crate::utils::test::create_test_store;
+        use crate::{assertion::AssertionData, utils::test::create_test_store};
 
         let signer = temp_signer();
 

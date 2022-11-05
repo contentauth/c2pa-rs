@@ -36,25 +36,22 @@ use crate::{
 
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
-const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
-const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
+pub(crate) const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
+pub(crate) const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
 const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
+pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
 const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
-const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
-const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
-const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
-const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
+pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
+pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
+pub(crate) const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 /********************** Supported Valiators ***************************************
-    RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
-    RS384	RSASSA-PKCS1-v1_5 using SHA-384 - not recommended
-    RS512	RSASSA-PKCS1-v1_5 using SHA-512 - not recommended
     PS256	RSASSA-PSS using SHA-256 and MGF1 with SHA-256
     PS384	RSASSA-PSS using SHA-384 and MGF1 with SHA-384
     PS512	RSASSA-PSS using SHA-512 and MGF1 with SHA-512
@@ -999,11 +996,6 @@ pub mod tests {
     use super::*;
     use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
 
-    #[cfg(feature = "with_rustls")]
-    fn read_file(path: &str) -> Vec<u8> {
-        std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
-    }
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_expired_cert() {
@@ -1030,53 +1022,15 @@ pub mod tests {
     #[test]
     #[cfg(feature = "with_rustls")]
     fn test_verify_cose_good_with_rustls() {
-        for algorithm in [
-            "rs256", "rs384", "rs512", "ps256", "ps384", "ps512", "es256", "es384",
-        ] {
-            let validator = get_validator(algorithm).unwrap();
-            let sig_bytes = &read_file(&format!(
-                "tests/fixtures/rustls/{}_signed_data.sign",
-                algorithm
-            ));
-            let data_bytes = &read_file("tests/fixtures/data.data");
-            let key_bytes: &[u8] = &read_file(&format!(
-                "tests/fixtures/rustls/{}_public_key.der",
-                algorithm
-            ));
+        let validator = get_validator(SigningAlg::Ps256);
 
-            assert!(validator
-                .validate(sig_bytes, data_bytes, key_bytes)
-                .unwrap());
-        }
-    }
+        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
+        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
+        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
 
-    #[test]
-    #[cfg(feature = "with_rustls")]
-    fn test_verify_cose_bad_with_rustls() {
-        for algorithm in [
-            "rs256", "rs384", "rs512", "ps256", "ps384", "ps512", "es256", "es384",
-        ] {
-            let validator = get_validator(algorithm).unwrap();
-            let sig_bytes = &read_file(&format!(
-                "tests/fixtures/rustls/{}_signed_data.sign",
-                algorithm
-            ));
-            let data_bytes = &read_file("tests/fixtures/data.data");
-            let key_bytes: &[u8] = &read_file(&format!(
-                "tests/fixtures/rustls/{}_public_key.der",
-                algorithm
-            ));
-
-            let mut bad_bytes = data_bytes.to_vec();
-            bad_bytes[0] = b'c';
-            bad_bytes[1] = b'2';
-            bad_bytes[2] = b'p';
-            bad_bytes[3] = b'a';
-
-            assert!(!validator
-                .validate(sig_bytes, &bad_bytes, key_bytes)
-                .unwrap());
-        }
+        assert!(validator
+            .validate(sig_bytes, data_bytes, key_bytes)
+            .unwrap());
     }
 
     #[test]
@@ -1095,25 +1049,18 @@ pub mod tests {
     #[test]
     fn test_verify_ec_good() {
         // EC signatures
-        // let validator = get_validator(SigningAlg::Es384);
+        let validator = get_validator(SigningAlg::Es384);
 
-        // let sig_es384_bytes = include_bytes!("../tests/fixtures/sig_es384.data");
-        // let data_es384_bytes = include_bytes!("../tests/fixtures/data_es384.data");
-        // let key_es384_bytes = include_bytes!("../tests/fixtures/key_es384.data");
+        let sig_es384_bytes = include_bytes!("../tests/fixtures/sig_es384.data");
+        let data_es384_bytes = include_bytes!("../tests/fixtures/data_es384.data");
+        let key_es384_bytes = include_bytes!("../tests/fixtures/key_es384.data");
 
-        // assert!(validator
-        //     .validate(sig_es384_bytes, data_es384_bytes, key_es384_bytes)
-        //     .unwrap());
+        assert!(validator
+            .validate(sig_es384_bytes, data_es384_bytes, key_es384_bytes)
+            .unwrap());
 
-        // validator = get_validator(SigningAlg::Es512);
-
-        // let sig_es512_bytes = include_bytes!("../tests/fixtures/sig_es512.data");
-        // let data_es512_bytes = include_bytes!("../tests/fixtures/data_es512.data");
-        // let key_es512_bytes = include_bytes!("../tests/fixtures/key_es512.data");
-
-        // assert!(validator
-        //     .validate(sig_es512_bytes, data_es512_bytes, key_es512_bytes)
-        //     .unwrap());
+        // Cannot test validation for Es512
+        // This is a ring limitation, see reference in PR description.
     }
 
     #[test]
@@ -1153,11 +1100,9 @@ pub mod tests {
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
         let es384_cert = std::fs::read(cert_path).unwrap();
 
-        // let (_, cert_path) = temp_signer::get_ec_signer(&temp_dir.path(), SigningAlg::Es512, None);
-        // let es512_cert = std::fs::read(&cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
+        // Does not work with RSA-PSS.
+        // This is because of https://github.com/briansmith/ring/issues/1353
+        // In turn, this makes sign::any_supported_type fail in RustlsSigner::from_signcert_and_pkey
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
@@ -1167,16 +1112,6 @@ pub mod tests {
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(SigningAlg::Es384, &der_bytes, &mut validation_log, None).is_ok());
-        }
-
-        // if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
-        //     let der_bytes = signcert.to_der().unwrap();
-        //     assert!(check_cert(SigningAlg::Es512, &der_bytes, &mut validation_log, None).is_ok());
-        // }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
         }
     }
 

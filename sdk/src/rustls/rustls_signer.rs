@@ -12,15 +12,22 @@
 // each license.
 
 use super::check_chain_order;
+use super::common::ensure_p1363_sig;
 use super::common::get_certificates;
 use super::common::get_ec_private_keys;
 use crate::rustls::common::get_algorithm_data;
+use crate::signing_alg;
+use crate::SigningAlg;
 use crate::{signer::ConfigurableSigner, Error, Result, Signer};
 use rustls::{sign, PrivateKey};
 use rustls::{sign::CertifiedKey, sign::Signer as SignerTrait, Certificate};
 use rustls_pemfile::pkcs8_private_keys;
 use std::io::BufReader;
 use std::{fs, path::Path};
+use x509_parser::der_parser::{
+    self,
+    der::{parse_der_integer, parse_der_sequence_defined_g},
+};
 
 pub struct RustlsSigner {
     signcerts: Vec<Certificate>,
@@ -30,26 +37,27 @@ pub struct RustlsSigner {
     certs_size: usize,
     timestamp_size: usize,
 
-    alg: String,
+    alg: SigningAlg,
     tsa_url: Option<String>,
 }
 
-fn get_private_key(alg: &str, pkey: &[u8]) -> Result<PrivateKey> {
+fn get_private_key(alg: &signing_alg::SigningAlg, pkey: &[u8]) -> Result<PrivateKey> {
     match alg {
-        "ps256" | "ps384" | "ps512" | "rs256" | "rs384" | "rs512" | "ed25519" => {
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 | SigningAlg::Ed25519 => {
             let mut reader = BufReader::new(pkey);
             let pkeys = pkcs8_private_keys(&mut reader)?;
 
             if pkeys.is_empty() {
-                return Err(Error::BadParam("unusable private key".to_string()));
+                return Err(Error::BadParam("unusable Ps or Ed private key".to_string()));
             }
             Ok(PrivateKey(pkeys[0].clone()))
         }
-        "es256" | "es384" => {
-            let pkeys = get_ec_private_keys(pkey).map_err(wrap_io_err)?;
+        // SigningAlg::Es512
+        SigningAlg::Es256 | SigningAlg::Es384 => {
+            let pkeys = get_ec_private_keys(pkey)?;
 
             if pkeys.is_empty() {
-                return Err(Error::BadParam("unusable private key".to_string()));
+                return Err(Error::BadParam("unusable Es private key".to_string()));
             }
             Ok(PrivateKey(pkeys[0].clone().0))
         }
@@ -61,7 +69,7 @@ impl ConfigurableSigner for RustlsSigner {
     fn from_files<P: AsRef<Path>>(
         signcert_path: P,
         pkey_path: P,
-        alg: String,
+        alg: signing_alg::SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
@@ -73,14 +81,11 @@ impl ConfigurableSigner for RustlsSigner {
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
-        alg: String,
+        alg: signing_alg::SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
         // Get signcerts, the certificates vector
         let signcerts = get_certificates(signcert);
-        let pkey = get_private_key(&alg, pkey)?;
-
-        check_chain_order(&signcerts);
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
@@ -89,17 +94,19 @@ impl ConfigurableSigner for RustlsSigner {
             ));
         }
 
+        let pkey = get_private_key(&alg, pkey)?;
+
         // Get signing key from der format key
         let signing_key = match sign::any_supported_type(&pkey) {
             Ok(signing_key) => signing_key,
             Err(_e) => {
-                return Err(Error::BadParam("could not parse private key".to_string()));
+                return Err(Error::BadParam(_e.to_string()));
             }
         };
 
         // Get certified_key from certificates+signing key.
         let certified_key = CertifiedKey::new(signcerts.clone(), signing_key);
-        let signature_scheme = get_algorithm_data(alg.as_str())?;
+        let signature_scheme = get_algorithm_data(&alg)?;
 
         if let Some(signer) = certified_key
             .key
@@ -122,10 +129,8 @@ impl ConfigurableSigner for RustlsSigner {
 
 impl Signer for RustlsSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        match self.signer.sign(data) {
-            Ok(signed_data) => Ok(signed_data),
-            Err(_) => Err(Error::RustlsCouldNotSignError),
-        }
+        let signature = self.signer.sign(data)?;
+        ensure_p1363_sig(&signature, self.alg)
     }
 
     fn reserve_size(&self) -> usize {
@@ -138,13 +143,35 @@ impl Signer for RustlsSigner {
         Ok(certs)
     }
 
-    fn alg(&self) -> Option<String> {
-        Some(self.alg.to_owned())
+    fn alg(&self) -> SigningAlg {
+        self.alg
     }
 
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
+}
+
+// C2PA use P1363 format for EC signatures so we must
+// convert from ASN.1 DER to IEEE P1363 format to verify.
+struct ECSigComps<'a> {
+    r: &'a [u8],
+    s: &'a [u8],
+}
+
+fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
+    parse_der_sequence_defined_g(|content: &[u8], _| {
+        let (rem1, r) = parse_der_integer(content)?;
+        let (_rem2, s) = parse_der_integer(rem1)?;
+
+        Ok((
+            data,
+            ECSigComps {
+                r: r.as_slice()?,
+                s: s.as_slice()?,
+            },
+        ))
+    })(data)
 }
 
 #[allow(unused_imports)]
@@ -176,23 +203,7 @@ mod tests {
         let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
 
         let signer =
-            RustlsSigner::from_signcert_and_pkey(cert_bytes, key_bytes, "ps256".to_string(), None)
-                .unwrap();
-
-        let data = b"some sample content to sign";
-
-        let signature = signer.sign(data).unwrap();
-        println!("signature len = {}", signature.len());
-        assert!(signature.len() <= signer.reserve_size());
-    }
-
-    #[test]
-    fn sign_rs256() {
-        let cert_bytes = include_bytes!("../../tests/fixtures/temp_cert.data");
-        let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
-
-        let signer =
-            RustlsSigner::from_signcert_and_pkey(cert_bytes, key_bytes, "rs256".to_string(), None)
+            RustlsSigner::from_signcert_and_pkey(cert_bytes, key_bytes, SigningAlg::Ps256, None)
                 .unwrap();
 
         let data = b"some sample content to sign";

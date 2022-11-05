@@ -81,11 +81,6 @@ pub mod tests {
         utils::test::{fixture_path, temp_dir_path, temp_signer},
     };
 
-    #[cfg(not(feature = "with_rustls"))]
-    use crate::openssl::temp_signer::get_temp_signer;
-    #[cfg(feature = "with_rustls")]
-    use crate::rustls::temp_signer::get_temp_signer;
-
     #[test]
     fn c2pa_io_parse() {
         let path = fixture_path("C.jpg");
