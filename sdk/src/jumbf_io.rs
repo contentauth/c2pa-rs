@@ -148,7 +148,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 
     // clone output to be overwritten
     if in_path != asset_out_path {
-        fs::copy(&in_path, &asset_out_path).map_err(Error::IoError)?;
+        fs::copy(in_path, &asset_out_path).map_err(Error::IoError)?;
     }
 
     match get_assetio_handler(&ext) {

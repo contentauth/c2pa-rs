@@ -1588,7 +1588,7 @@ impl Store {
         get_supported_file_extension(asset_path).ok_or(Error::UnsupportedType)?; // verify extensions
         let ext = get_supported_file_extension(dest_path).ok_or(Error::UnsupportedType)?;
         if asset_path != dest_path {
-            fs::copy(&asset_path, &dest_path).map_err(Error::IoError)?;
+            fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
 
         //  update file following the steps outlined in CAI spec

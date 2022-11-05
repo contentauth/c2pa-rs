@@ -1053,9 +1053,9 @@ impl AssetIO for BmffIO {
         }
 
         // copy temp file to asset
-        std::fs::rename(&temp_file.path(), asset_path)
+        std::fs::rename(temp_file.path(), asset_path)
             // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(&temp_file.path(), asset_path).and(Ok(())))
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
             .map_err(Error::IoError)
     }
 
@@ -1190,9 +1190,9 @@ impl AssetIO for BmffIO {
         }
 
         // copy temp file to asset
-        std::fs::rename(&temp_file.path(), asset_path)
+        std::fs::rename(temp_file.path(), asset_path)
             // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(&temp_file.path(), asset_path).and(Ok(())))
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
             .map_err(Error::IoError)
     }
 }
