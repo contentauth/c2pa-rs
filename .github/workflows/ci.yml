@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: main
+  schedule:
+    - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
   tests:
@@ -41,10 +43,8 @@ jobs:
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
         with:
-          fail_ci_if_error: ${{ matrix.os != 'macos-latest' }}
-            # Disregard build errors on Mac until
-            # https://github.com/codecov/codecov-action/issues/745
-            # is fixed.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
           verbose: true
 
   clippy_check:
@@ -84,7 +84,7 @@ jobs:
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: nightly
           override: true
           components: rustfmt
 
@@ -105,7 +105,7 @@ jobs:
           - advisories
           - bans licenses sources
 
-    # Prevent sudden announcement of a new advisory from failing ci:
+    # Prevent sudden announcement of a new advisory from failing CI:
     continue-on-error: ${{ matrix.checks == 'advisories' }}
 
     steps:
