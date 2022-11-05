@@ -68,7 +68,7 @@ impl ManifestConfig {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let json = fs::read_to_string(&path)?;
+        let json = fs::read_to_string(path)?;
         let mut manifest_config = Self::from_json(&json)?;
         if manifest_config.base_path.is_none() {
             let mut base_dir = PathBuf::from(&path);
