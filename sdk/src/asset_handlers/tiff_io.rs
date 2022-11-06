@@ -13,6 +13,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
 };
 
@@ -23,7 +24,7 @@ use conv::ValueFrom;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -350,12 +351,9 @@ where
             let decoded_offset = decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            //let subfile_ifd = TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::SubIFD)?;
-            //let subfile_token = tiff_tree.new_node(subfile_ifd);
-
             let num_longs = usize::value_from(subifd.value_count)
                 .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
-            let mut subfile_offsets = vec![0u32; num_longs];
+            let mut subfile_offsets = vec![0u32; num_longs]; // will contain offsets in native endianness
 
             if num_longs * 4 <= 4 || ts.big_tiff && num_longs * 4 <= 8 {
                 let offset_bytes = subifd.value_offset.to_ne_bytes();
@@ -386,6 +384,8 @@ where
                     .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
                 input.seek(SeekFrom::Start(u64_offset))?;
 
+                println!("Reading SubIFD: {}", u64_offset);
+
                 let subfile_ifd =
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::SubIFD)?;
                 let subfile_token = tiff_tree.new_node(subfile_ifd);
@@ -401,7 +401,7 @@ where
             let decoded_offset = decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            println!("EXIF Reading SubIFD: {}", exififd.value_offset);
+            println!("EXIF Reading SubIFD: {}", decoded_offset);
 
             let exif_ifd =
                 TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::ExifIFD)?;
@@ -417,7 +417,7 @@ where
             let decoded_offset = decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            println!("GPS Reading SubIFD: {}", gpsifd.value_offset);
+            println!("GPS Reading SubIFD: {}", decoded_offset);
 
             let gps_ifd =
                 TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::GpsIFD)?;
@@ -541,7 +541,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             if value_bytes_ref.len() > data_bytes {
                 // Start on a WORD boundary
-                self.pad_word_boundary()?;
+                //self.pad_word_boundary()?;
 
                 let offset = self.writer.seek(SeekFrom::Current(0))?; // get location of entry data start
 
@@ -680,10 +680,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
                         dest_offsets.push(dest_offset);
 
+                        let file_end = asset_reader.seek(SeekFrom::End(0))?;
+                        let should_take = if so + cnt as u64 > file_end {
+                            println!("Strip offset out of range, reading partial");
+                            usize::value_from(file_end - so)
+                                .map_err(|_err| Error::BadParam("value out of range".to_string()))?
+                        } else {
+                            usize::value_from(cnt)
+                                .map_err(|_err| Error::BadParam("value out of range".to_string()))?
+                        };
+
                         // copy the strip to new file
                         let mut data = vec![0u8; cnt];
                         asset_reader.seek(SeekFrom::Start(so))?;
-                        asset_reader.read_exact(data.as_mut_slice())?;
+                        asset_reader.read_exact(&mut data.as_mut_slice()[0..should_take])?;
                         self.writer.write_all(data.as_slice())?;
                     }
                 });
@@ -859,17 +869,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 self.writer.write_u32(0)?;
             }
 
-            let curr = self.writer.seek(SeekFrom::Current(0))?;
-            self.writer.seek(SeekFrom::Start(sub_ifd_offset))?;
-            let _i = TiffStructure::read_ifd(
-                &mut self.writer,
-                self.endianness,
-                self.big_tiff,
-                IFDType::ExifIFD,
-            )?;
-
-            self.writer.seek(SeekFrom::Start(curr))?;
-
             // fix up offset in main page known IFDs
             match ifd.ifd_type {
                 IFDType::PageIFD => (),
@@ -928,18 +927,19 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     vec![0u8; offsets.len() * 4]
                 };
 
-                let mut offset_writer = Cursor::new(adjust_offsets.as_mut_slice());
+                with_order!(adjust_offsets.as_mut_slice(), self.endianness, |dest| {
+                    for o in offsets {
+                        if self.big_tiff {
+                            dest.write_u64(*o)?;
+                        } else {
+                            let offset_u32 = u32::value_from(*o).map_err(|_err| {
+                                Error::BadParam("value out of range".to_string())
+                            })?;
 
-                for o in offsets {
-                    if self.big_tiff {
-                        offset_writer.write_all(&o.to_ne_bytes())?;
-                    } else {
-                        let offset_u32 = u32::value_from(*o)
-                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-                        offset_writer.write_all(&offset_u32.to_ne_bytes())?;
+                            dest.write_u32(offset_u32)?;
+                        }
                     }
-                }
+                });
 
                 e.value_bytes = adjust_offsets;
             }
@@ -1076,6 +1076,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         target_endianness,
                         self.big_tiff,
                     )?))?;
+
                     asset_reader.read_exact(data.as_mut_slice())?;
 
                     data
@@ -1342,6 +1343,9 @@ impl CAILoader for TiffIO {
 }
 
 impl AssetIO for TiffIO {
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
     fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
         let mut reader = std::fs::File::open(asset_path)?;
 
@@ -1411,6 +1415,45 @@ impl AssetIO for TiffIO {
 
     fn remove_cai_store(&self, _asset_path: &std::path::Path) -> Result<()> {
         Ok(())
+    }
+}
+
+impl AssetPatch for TiffIO {
+    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        let mut asset_io = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(asset_path)?;
+       
+        let (tiff_tree, page_0, e, big_tiff) = map_tiff(&mut asset_io)?;
+
+        let first_ifd = &tiff_tree[page_0].data;
+
+        let cai_ifd_entry = first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
+
+        // make sure data type is for unstructured data
+        if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
+            return Err(Error::BadParam(
+                "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+            ));
+        }
+
+        let manifest_len: usize = usize::value_from(cai_ifd_entry.value_count)
+            .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+
+        if store_bytes.len() == manifest_len {
+            // move read point to start of entry
+            let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+            asset_io.seek(SeekFrom::Start(decoded_offset))?;
+
+            asset_io.write_all(&store_bytes)?;
+            Ok(())
+        } else {
+            Err(Error::InvalidAsset(
+                "patch_cai_store store size mismatch.".to_string(),
+            ))
+        }
     }
 }
 
