@@ -441,8 +441,7 @@ where
 
             //println!("GPS Reading SubIFD: {}", decoded_offset);
 
-            let gps_ifd =
-                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
+            let gps_ifd = TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
             let gps_token = tiff_tree.new_node(gps_ifd);
 
             page_0_token
