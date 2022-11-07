@@ -100,11 +100,11 @@ pub struct IfdEntry {
 
 // helper enum to know if the IFD requires special handling
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IFDType {
-    PageIFD,
-    SubIFD,
-    ExifIFD,
-    GpsIFD,
+pub enum IfdType {
+    Page,
+    Subfile,
+    Exif,
+    Gps,
 }
 
 // TIFF IFD
@@ -112,7 +112,7 @@ pub enum IFDType {
 pub struct ImageFileDirectory {
     offset: u64,
     entry_cnt: u64,
-    ifd_type: IFDType,
+    ifd_type: IfdType,
     entries: HashMap<u16, IfdEntry>,
     next_ifd_offset: Option<u64>,
 }
@@ -196,7 +196,7 @@ impl TiffStructure {
             byte_reader.into_inner(),
             byte_order,
             big_tiff,
-            IFDType::PageIFD,
+            IfdType::Page,
         )?;
 
         let ts = TiffStructure {
@@ -273,7 +273,7 @@ impl TiffStructure {
         reader: &mut R,
         byte_order: Endianness,
         big_tiff: bool,
-        ifd_type: IFDType,
+        ifd_type: IfdType,
     ) -> Result<ImageFileDirectory>
     where
         R: Read + Seek + ReadBytesExt,
@@ -409,7 +409,7 @@ where
                 //println!("Reading SubIFD: {}", u64_offset);
 
                 let subfile_ifd =
-                    TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::SubIFD)?;
+                    TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Subfile)?;
                 let subfile_token = tiff_tree.new_node(subfile_ifd);
 
                 page_0_token
@@ -426,7 +426,7 @@ where
             //println!("EXIF Reading SubIFD: {}", decoded_offset);
 
             let exif_ifd =
-                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::ExifIFD)?;
+                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Exif)?;
             let exif_token = tiff_tree.new_node(exif_ifd);
 
             page_0_token
@@ -442,7 +442,7 @@ where
             //println!("GPS Reading SubIFD: {}", decoded_offset);
 
             let gps_ifd =
-                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::GpsIFD)?;
+                TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
             let gps_token = tiff_tree.new_node(gps_ifd);
 
             page_0_token
@@ -710,7 +710,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         // copy the strip to new file
                         let mut data = vec![0u8; cnt];
                         asset_reader.seek(SeekFrom::Start(so))?;
-                        asset_reader.read_exact(&mut data.as_mut_slice())?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
                         self.writer.write_all(data.as_slice())?;
                     }
                 });
@@ -890,10 +890,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // fix up offset in main page known IFDs
             match ifd.ifd_type {
-                IFDType::PageIFD => (),
-                IFDType::SubIFD => offsets_ifd.push(sub_ifd_offset),
-                IFDType::ExifIFD => offsets_exif.push(sub_ifd_offset),
-                IFDType::GpsIFD => offsets_gps.push(sub_ifd_offset),
+                IfdType::Page => (),
+                IfdType::Subfile => offsets_ifd.push(sub_ifd_offset),
+                IfdType::Exif => offsets_exif.push(sub_ifd_offset),
+                IfdType::Gps => offsets_gps.push(sub_ifd_offset),
             };
         }
 
@@ -1508,6 +1508,7 @@ pub mod tests {
         assert_eq!(&loaded, data.as_bytes());
     }
 
+    /*  disable until I find smaller DNG
     #[test]
     fn test_read_write_dng_manifest() {
         let data = "some data";
@@ -1542,4 +1543,5 @@ pub mod tests {
 
         println!("IFD {}", idfs[token].data.entry_cnt);
     }
+    */
 }
