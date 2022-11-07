@@ -89,6 +89,7 @@ impl IFDEntryType {
     }
 }
 
+// TIFF IFD Entry (value_offset is is in target endian)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IfdEntry {
     entry_tag: u16,
@@ -97,6 +98,7 @@ pub struct IfdEntry {
     value_offset: u64,
 }
 
+// helper enum to know if the IFD requires special handling
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IFDType {
     PageIFD,
@@ -105,6 +107,7 @@ pub enum IFDType {
     GpsIFD,
 }
 
+// TIFF IFD
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageFileDirectory {
     offset: u64,
@@ -126,6 +129,7 @@ impl ImageFileDirectory {
     }
 }
 
+// Struct to map the contents of a TIFF file
 #[allow(dead_code)]
 pub(crate) struct TiffStructure {
     byte_order: Endianness,
@@ -146,7 +150,11 @@ impl TiffStructure {
         let byte_order = match endianness {
             II => Endianness::Little,
             MM => Endianness::Big,
-            _ => return Err(Error::BadParam("Could not parse input image".to_owned())),
+            _ => {
+                return Err(Error::InvalidAsset(
+                    "Could not parse input image".to_owned(),
+                ))
+            }
         };
 
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
@@ -157,15 +165,23 @@ impl TiffStructure {
                 // read past Endianness::Big TIFF structs
                 // Read bytesize of offsets, must be 8
                 if byte_reader.read_u16()? != 8 {
-                    return Err(Error::BadParam("Could not parse input image".to_owned()));
+                    return Err(Error::InvalidAsset(
+                        "Could not parse input image".to_owned(),
+                    ));
                 }
                 // must currently be 0
                 if byte_reader.read_u16()? != 0 {
-                    return Err(Error::BadParam("Could not parse input image".to_owned()));
+                    return Err(Error::InvalidAsset(
+                        "Could not parse input image".to_owned(),
+                    ));
                 }
                 true
             }
-            _ => return Err(Error::BadParam("Could not parse input image".to_owned())),
+            _ => {
+                return Err(Error::InvalidAsset(
+                    "Could not parse input image".to_owned(),
+                ))
+            }
         };
 
         let first_ifd_offset = if big_tiff {
@@ -193,6 +209,7 @@ impl TiffStructure {
         Ok(ts)
     }
 
+    // read IFD entries, all value_offset are in source endianness
     pub fn read_ifd_entries<R: ?Sized>(
         byte_reader: &mut ByteOrdered<&mut R, Endianness>,
         big_tiff: bool,
@@ -214,7 +231,7 @@ impl TiffStructure {
                 let data_offset = buf
                     .as_slice()
                     .read_u64::<NativeEndian>()
-                    .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                 (count, data_offset)
             } else {
                 let count = byte_reader.read_u32()?;
@@ -224,7 +241,7 @@ impl TiffStructure {
                 let data_offset = buf
                     .as_slice()
                     .read_u32::<NativeEndian>()
-                    .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                 (count.into(), data_offset.into())
             };
 
@@ -235,6 +252,7 @@ impl TiffStructure {
                 value_offset: data_offset,
             };
 
+            /*
             println!(
                 "{}, {}, {}. {:?}",
                 ifd_entry.entry_tag,
@@ -242,6 +260,7 @@ impl TiffStructure {
                 ifd_entry.value_count,
                 ifd_entry.value_offset.to_ne_bytes()
             );
+            */
 
             entries.insert(tag, ifd_entry);
         }
@@ -249,6 +268,7 @@ impl TiffStructure {
         Ok(())
     }
 
+    // read IFD from reader
     pub fn read_ifd<R: ?Sized>(
         reader: &mut R,
         byte_order: Endianness,
@@ -261,7 +281,7 @@ impl TiffStructure {
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
         let ifd_offset = byte_reader.seek(SeekFrom::Current(0))?;
-        println!("IFD Offset: {:#x}", ifd_offset);
+        //println!("IFD Offset: {:#x}", ifd_offset);
 
         let entry_cnt = if big_tiff {
             byte_reader.read_u64()?
@@ -294,6 +314,7 @@ impl TiffStructure {
     }
 }
 
+// offset are sourced in source endianness so to use offset value in Seek calls we must convert to native endianness
 fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool) -> Result<u64> {
     let offset: u64;
     let offset_bytes = offset_file_native.to_ne_bytes();
@@ -312,6 +333,7 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+// create tree of TIFF strcuture IFDs and IFD entries.
 fn map_tiff<R: ?Sized>(
     input: &mut R,
 ) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
@@ -327,7 +349,7 @@ where
         ts.first_ifd.clone()
     {
         let (mut tiff_tree, page_0_token) = Arena::with_data(ifd);
-        /*
+        /* No multi-page at the moment
         // get the pages
         loop {
             if let Some(next_ifd_offset) = &tiff_tree[current_token].data.next_ifd_offset {
@@ -346,13 +368,13 @@ where
         // look for known special IFDs on page 0
         let page0_subifd = tiff_tree[page_0_token].data.get_tag(SUBFILE_TAG).copied();
 
-        // grab SubIFDs for page 0
+        // grab SubIFDs for page 0 (DNG)
         if let Some(subifd) = page0_subifd {
             let decoded_offset = decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
             let num_longs = usize::value_from(subifd.value_count)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
             let mut subfile_offsets = vec![0u32; num_longs]; // will contain offsets in native endianness
 
             if num_longs * 4 <= 4 || ts.big_tiff && num_longs * 4 <= 8 {
@@ -381,10 +403,10 @@ where
             // get all subfiles
             for subfile_offset in subfile_offsets {
                 let u64_offset = u64::value_from(subfile_offset)
-                    .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                 input.seek(SeekFrom::Start(u64_offset))?;
 
-                println!("Reading SubIFD: {}", u64_offset);
+                //println!("Reading SubIFD: {}", u64_offset);
 
                 let subfile_ifd =
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::SubIFD)?;
@@ -396,12 +418,12 @@ where
             }
         }
 
-        // grab EXIF IFD for page 0
+        // grab EXIF IFD for page 0 (DNG)
         if let Some(exififd) = tiff_tree[page_0_token].data.get_tag(EXIFIFD_TAG) {
             let decoded_offset = decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            println!("EXIF Reading SubIFD: {}", decoded_offset);
+            //println!("EXIF Reading SubIFD: {}", decoded_offset);
 
             let exif_ifd =
                 TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::ExifIFD)?;
@@ -412,12 +434,12 @@ where
                 .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
         }
 
-        // grab GPS IFD for page 0
+        // grab GPS IFD for page 0 (DNG)
         if let Some(gpsifd) = tiff_tree[page_0_token].data.get_tag(GPSIFD_TAG) {
             let decoded_offset = decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            println!("GPS Reading SubIFD: {}", decoded_offset);
+            //println!("GPS Reading SubIFD: {}", decoded_offset);
 
             let gps_ifd =
                 TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IFDType::GpsIFD)?;
@@ -436,15 +458,17 @@ where
     Ok((tiff_tree, page_0, ts.byte_order, ts.big_tiff))
 }
 
+// struct used to clone source IFD entries. value_bytes are in target endianness
 #[derive(Eq, PartialEq, Clone)]
-pub struct IfdClonedEntry {
+pub(crate) struct IfdClonedEntry {
     pub entry_tag: u16,
     pub entry_type: u16,
     pub value_count: u64,
     pub value_bytes: Vec<u8>,
 }
 
-pub struct TiffCloner<T>
+// struct to clone a TIFF/DNG and new tags if desired
+pub(crate) struct TiffCloner<T>
 where
     T: Read + Write + Seek,
 {
@@ -517,12 +541,12 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     fn write_entry_count(&mut self, count: usize) -> Result<()> {
         if self.big_tiff {
             let cnt = u64::value_from(count)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u64(cnt)?;
         } else {
             let cnt = u16::value_from(count)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u16(cnt)?;
         }
@@ -531,7 +555,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 
     fn write_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
-        // Write out all data and save the offsets, skipping subfiles since the data is already written
+        // write out all data and save the offsets, skipping subfiles since the data is already written
         for &mut IfdClonedEntry {
             value_bytes: ref mut value_bytes_ref,
             ..
@@ -554,8 +578,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     if self.big_tiff {
                         ew.write_u64(offset)?;
                     } else {
-                        let offset_u32 = u32::value_from(offset)
-                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                        let offset_u32 = u32::value_from(offset).map_err(|_err| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?; // get beginning of chunk which starts 4 bytes before label
 
                         ew.write_u32(offset_u32)?;
                     }
@@ -581,19 +606,18 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.write_entry_count(target_ifd.len())?;
 
         // Write out the directory entries
-
         for (tag, entry) in target_ifd.iter() {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(entry.entry_type)?;
 
             if self.big_tiff {
                 let cnt = u64::value_from(entry.value_count)
-                    .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
                 self.writer.write_u64(cnt)?;
             } else {
                 let cnt = u32::value_from(entry.value_count)
-                    .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
                 self.writer.write_u32(cnt)?;
             }
@@ -604,11 +628,12 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(ifd_offset)
     }
 
+    // add new TAG by supplying the IDF entry
     pub fn add_target_tag(&mut self, entry: IfdClonedEntry) {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
 
-    pub fn clone_image_data<R: Read + Seek>(
+    fn clone_image_data<R: Read + Seek>(
         &mut self,
         target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
         asset_reader: &mut R,
@@ -620,6 +645,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             target_ifd.contains_key(&TILEOFFSETS),
         ) {
             (true, true, false, false) => {
+                // stripped image data
                 let sbc_entry = target_ifd[&STRIPBYTECOUNTS].clone();
                 let so_entry = target_ifd.get_mut(&STRIPOFFSETS).ok_or(Error::NotFound)?;
 
@@ -660,8 +686,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in sbcs.iter() {
-                        let cnt = usize::value_from(*c)
-                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        let cnt = usize::value_from(*c).map_err(|_err| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?;
 
                         // get the offset
                         let so: u64 = match so_entry.entry_type {
@@ -680,20 +707,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
                         dest_offsets.push(dest_offset);
 
-                        let file_end = asset_reader.seek(SeekFrom::End(0))?;
-                        let should_take = if so + cnt as u64 > file_end {
-                            println!("Strip offset out of range, reading partial");
-                            usize::value_from(file_end - so)
-                                .map_err(|_err| Error::BadParam("value out of range".to_string()))?
-                        } else {
-                            usize::value_from(cnt)
-                                .map_err(|_err| Error::BadParam("value out of range".to_string()))?
-                        };
-
                         // copy the strip to new file
                         let mut data = vec![0u8; cnt];
                         asset_reader.seek(SeekFrom::Start(so))?;
-                        asset_reader.read_exact(&mut data.as_mut_slice()[0..should_take])?;
+                        asset_reader.read_exact(&mut data.as_mut_slice())?;
                         self.writer.write_all(data.as_slice())?;
                     }
                 });
@@ -708,13 +725,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             match so_entry.entry_type {
                                 4u16 => {
                                     let offset = u32::value_from(*o).map_err(|_err| {
-                                        Error::BadParam("value out of range".to_string())
+                                        Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
                                     let offset = u16::value_from(*o).map_err(|_err| {
-                                        Error::BadParam("value out of range".to_string())
+                                        Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u16(offset)?;
                                 }
@@ -733,6 +750,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 );
             }
             (false, false, true, true) => {
+                // tiled image data
                 let tbc_entry = target_ifd[&TILEBYTECOUNTS].clone();
                 let to_entry = target_ifd.get_mut(&TILEOFFSETS).ok_or(Error::NotFound)?;
 
@@ -773,8 +791,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in tbcs.iter() {
-                        let cnt = usize::value_from(*c)
-                            .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        let cnt = usize::value_from(*c).map_err(|_err| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?;
 
                         // get the offset
                         let to: u64 = match to_entry.entry_type {
@@ -783,7 +802,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                                 s.into()
                             }
                             16u16 => src.read_u64()?,
-                            _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
+                            _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         };
 
                         let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
@@ -807,13 +826,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             match to_entry.entry_type {
                                 4u16 => {
                                     let offset = u32::value_from(*v).map_err(|_err| {
-                                        Error::BadParam("value out of range".to_string())
+                                        Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u32(offset)?;
                                 }
                                 3u16 => {
                                     let offset = u16::value_from(*v).map_err(|_err| {
-                                        Error::BadParam("value out of range".to_string())
+                                        Error::InvalidAsset("value out of range".to_string())
                                     })?;
                                     dest.write_u16(offset)?;
                                 }
@@ -823,7 +842,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                                 }
                                 _ => {
                                     return Err(Error::InvalidAsset(
-                                        "invalid TIFF strip".to_string(),
+                                        "invalid TIFF tile".to_string(),
                                     ))
                                 }
                             }
@@ -893,17 +912,17 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     ) -> Result<()> {
         // handle page 0
 
-        // clone the EXIF entry and DNG entry
+        // clone the subfile entries (DNG)
         let subfile_offsets = self.clone_sub_files(tiff_tree, page_0, asset_reader)?;
 
         let page_0_idf = tiff_tree
             .get_mut(page_0)
             .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
 
-        // Clone IFD entries
+        // clone IFD entries
         let mut cloned_ifd = self.clone_ifd_entries(&page_0_idf.data.entries, asset_reader)?;
 
-        // Clone the image data
+        // clone the image data
         self.clone_image_data(&mut cloned_ifd, asset_reader)?;
 
         // add in new Tags
@@ -933,7 +952,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             dest.write_u64(*o)?;
                         } else {
                             let offset_u32 = u32::value_from(*o).map_err(|_err| {
-                                Error::BadParam("value out of range".to_string())
+                                Error::InvalidAsset("value out of range".to_string())
                             })?;
 
                             dest.write_u32(offset_u32)?;
@@ -959,7 +978,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u64(0)?;
         } else {
             let offset_u32 = u32::value_from(first_ifd_offset)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             self.writer.write_u32(offset_u32)?;
             self.writer.seek(SeekFrom::Start(curr_pos))?;
@@ -992,7 +1011,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Undefined
                 | IFDEntryType::Ascii => {
                     let num_bytes = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                     let mut data = vec![0u8; num_bytes];
 
@@ -1015,7 +1034,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Short => {
                     let num_shorts = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_shorts * 2];
 
                     if num_shorts * 2 <= 4 || self.big_tiff && num_shorts * 2 <= 8 {
@@ -1041,7 +1060,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Long | IFDEntryType::Ifd => {
                     let num_longs = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_longs * 4];
 
                     if num_longs * 4 <= 4 || self.big_tiff && num_longs * 4 <= 8 {
@@ -1067,7 +1086,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Rational => {
                     let num_rationals = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_rationals * 8];
 
                     // move to start of data
@@ -1083,7 +1102,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Sshort => {
                     let num_sshorts = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_sshorts * 2];
 
                     if num_sshorts * 2 <= 4 || self.big_tiff && num_sshorts * 2 <= 8 {
@@ -1109,7 +1128,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Slong => {
                     let num_slongs = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slongs * 4];
 
                     if num_slongs * 4 <= 4 || self.big_tiff && num_slongs * 4 <= 8 {
@@ -1135,7 +1154,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Srational => {
                     let num_srationals = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_srationals * 8];
 
                     // move to start of data
@@ -1150,7 +1169,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Float => {
                     let num_floats = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_floats * 4];
 
                     if num_floats * 4 <= 4 || self.big_tiff && num_floats * 4 <= 8 {
@@ -1176,7 +1195,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Double => {
                     let num_doubles = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_doubles * 8];
 
                     // move to start of data
@@ -1191,7 +1210,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Long8 | IFDEntryType::Ifd8 => {
                     let num_long8s = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_long8s * 8];
 
                     // move to start of data
@@ -1206,7 +1225,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
                 IFDEntryType::Slong8 => {
                     let num_slong8s = usize::value_from(cnt)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
                     let mut data = vec![0u8; num_slong8s * 8];
 
                     // move to start of data
@@ -1283,8 +1302,8 @@ where
 
     // make sure data type is for unstructured data
     if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
-        return Err(Error::BadParam(
-            "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+        return Err(Error::InvalidAsset(
+            "Ifd entry for C2PA must be type UNDEFINED(7)".to_string(),
         ));
     }
 
@@ -1293,7 +1312,7 @@ where
     asset_reader.seek(SeekFrom::Start(decoded_offset))?;
 
     let manifest_len: usize = usize::value_from(cai_ifd_entry.value_count)
-        .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
     let mut data = vec![0u8; manifest_len];
 
@@ -1361,7 +1380,7 @@ impl AssetIO for TiffIO {
         let mut reader = std::fs::File::open(asset_path)?;
 
         let l = u64::value_from(store_bytes.len())
-            .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
         let entry = IfdClonedEntry {
             entry_tag: C2PA_TAG,
@@ -1395,16 +1414,16 @@ impl AssetIO for TiffIO {
 
         // make sure data type is for unstructured data
         if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
-            return Err(Error::BadParam(
+            return Err(Error::InvalidAsset(
                 "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
             ));
         }
 
         let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
         let manifest_offset = usize::value_from(decoded_offset)
-            .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
         let manifest_len = usize::value_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         Ok(vec![HashObjectPositions {
             offset: manifest_offset,
@@ -1425,7 +1444,7 @@ impl AssetPatch for TiffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
-       
+
         let (tiff_tree, page_0, e, big_tiff) = map_tiff(&mut asset_io)?;
 
         let first_ifd = &tiff_tree[page_0].data;
@@ -1434,20 +1453,20 @@ impl AssetPatch for TiffIO {
 
         // make sure data type is for unstructured data
         if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
-            return Err(Error::BadParam(
+            return Err(Error::InvalidAsset(
                 "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
             ));
         }
 
         let manifest_len: usize = usize::value_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::BadParam("TIFF/DNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         if store_bytes.len() == manifest_len {
             // move read point to start of entry
             let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
             asset_io.seek(SeekFrom::Start(decoded_offset))?;
 
-            asset_io.write_all(&store_bytes)?;
+            asset_io.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(
