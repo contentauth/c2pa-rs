@@ -225,7 +225,7 @@ impl MakeTestImages {
 
                 // load the image for editing
                 let mut img =
-                    image::open(&src_path).context(format!("opening parent {:?}", src_path))?;
+                    image::open(src_path).context(format!("opening parent {:?}", src_path))?;
 
                 // adjust brightness to show we made an edit
                 img = img.brighten(30);
@@ -272,7 +272,7 @@ impl MakeTestImages {
 
                 // get the bits of the ingredient, resize it and overlay it on the base image
                 let img_ingredient =
-                    image::open(&ing_path).context(format!("opening ingredient {:?}", ing_path))?;
+                    image::open(ing_path).context(format!("opening ingredient {:?}", ing_path))?;
                 let img_small = img_ingredient.thumbnail(width, height);
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
@@ -316,8 +316,8 @@ impl MakeTestImages {
         let jumbf = jumbf_io::load_jumbf_from_file(&PathBuf::from(src_path))
             .context(format!("loading OGP {:?}", src_path))?;
         // save the edited image to our destination file
-        let mut img = image::open(&Path::new(src_path))
-            .context(format!("loading OGP image{:?}", src_path))?;
+        let mut img =
+            image::open(Path::new(src_path)).context(format!("loading OGP image{:?}", src_path))?;
         img = img.grayscale();
         img.save(&dst_path)
             .context(format!("saving OGP image{:?}", &dst_path))?;

@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: main
+  schedule:
+    - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
   tests:
@@ -39,10 +41,8 @@ jobs:
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
         with:
-          fail_ci_if_error: ${{ matrix.os != 'macos-latest' }}
-            # Disregard build errors on Mac until
-            # https://github.com/codecov/codecov-action/issues/745
-            # is fixed.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
           verbose: true
 
   wasm_tests:
@@ -215,18 +215,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
       
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         with:
           toolchain: stable
           override: true
 
       - name: Get latest existing tag
         uses: actions-ecosystem/action-get-latest-tag@v1
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         id: get-latest-tag
         with:
           semver_only: true
@@ -234,15 +231,22 @@ jobs:
       - name: Set new version
         uses: paulhatch/semantic-version@v4.0.2
         id: set-version
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
         with:
           tag_prefix: "v"
           format: "${major}.${minor}.${patch}"
-          major_pattern: "(MAJORXXXX)"
-          minor_pattern: "(MINORXXXX)"
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+
+      - name: Generate changelog since last tag
+        uses: mathiasvr/command-output@v1
+          ## NEEDS UPDATE for set-output deprecation.
+          ## See https://github.com/mathiasvr/command-output/issues/4.
+        id: changelog
+        with:
+          run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD
 
       - name: "Bump crate version (NOTE: Not pushed back to repo!)"
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
+        continue-on-error: true # If no change to crate version, ignore git commit error
         run: |
           sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
           git config user.email "nobody@example.com"
@@ -252,17 +256,7 @@ jobs:
         env:
           VERSION: ${{ steps.set-version.outputs.version }}
 
-      - name: Has (MINOR) tag been used in a previous commit?
-        uses: mathiasvr/command-output@v1
-        continue-on-error: true
-        id: bump_exists
-        if: ${{ !contains(github.event.pull_request.title, '(MINOR)') }}
-        with:
-          run: |
-            git log --format="%s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | grep "(MINOR)"
-
       - name: If this step fails, change title of the PR to include (MINOR) tag
         uses: obi1kenobi/cargo-semver-checks-action@v1
-        if: ${{ steps.bump_exists.outputs.stdout == '' && (!github.event.pull_request.title || !contains(github.event.pull_request.title, '(MINOR)')) }}
         with:
           crate-name: c2pa

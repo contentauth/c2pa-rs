@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust SDK was created by Adobe and other contributors as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022. 
+The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust SDK as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022. 
 
 ## Key features
 
@@ -17,10 +17,10 @@ The SDK supports several common C2PA [assertions](https://c2pa.org/specification
 
 ## State of the project
 
-This project is an early pre-release version and has unimplemented features and may have outstanding issues or bugs. While in prerelease form, the minor version number (0.x.0) will be incremented when there are breaking API changes, which may happen frequently.
+This is an early release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
 The SDK:
-* Currently supports only still image formats (JPEG and PNG).
+* Supports a variety of image and video formats. For details, see [c2patool supported file formats](https://opensource.contentauthenticity.org/docs/c2patool/#supported-file-formats).
 * Does not parse identity structures (verifiable credentials).
 
 ### Contributions and feedback
@@ -46,7 +46,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.14.0"
+c2pa = "0.14.1"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
