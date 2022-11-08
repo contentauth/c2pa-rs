@@ -568,6 +568,7 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 
 // internal util function to dump the cert chain in PEM format
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "file_io")]
 #[allow(dead_code)]
 fn dump_cert_chain(certs: &Vec<Vec<u8>>, output_path: &std::path::Path) -> Result<()> {
     let mut out_buf: Vec<u8> = Vec::new();
