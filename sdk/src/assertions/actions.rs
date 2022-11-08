@@ -357,7 +357,7 @@ pub mod tests {
             .add_action(make_action1())
             .add_action(
                 Action::new("c2pa.filtered")
-                    .set_parameter("name".to_owned(), &"gaussian blur")
+                    .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200"),
             )

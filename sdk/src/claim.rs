@@ -813,7 +813,7 @@ impl Claim {
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
             _ => {
-                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_else(|| "".to_string())
+                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
                     != jumbf::labels::SIGNATURE
             } // relative signature box
         };
@@ -864,7 +864,7 @@ impl Claim {
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
             Some(signature_url) if signature_url != claim.label() => true,
             _ => {
-                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_else(|| "".to_string())
+                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
                     != jumbf::labels::SIGNATURE
             } // relative signature box
         };
@@ -1212,7 +1212,7 @@ impl Claim {
             for redaction in redactions {
                 if let Some(claim) = ingredient
                     .iter_mut()
-                    .find(|x| redaction.contains(&x.label()))
+                    .find(|x| redaction.contains(x.label()))
                 {
                     claim.redact_assertion(redaction)?;
                 } else {

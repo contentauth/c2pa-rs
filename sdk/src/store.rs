@@ -1721,7 +1721,7 @@ impl Store {
         get_supported_file_extension(asset_path).ok_or(Error::UnsupportedType)?; // verify extensions
         let ext = get_supported_file_extension(dest_path).ok_or(Error::UnsupportedType)?;
         if asset_path != dest_path {
-            fs::copy(&asset_path, &dest_path).map_err(Error::IoError)?;
+            fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
 
         //  update file following the steps outlined in CAI spec
@@ -2021,11 +2021,18 @@ impl Store {
                     )
                     .provenance
                     {
-                        if cfg!(feature = "fetch_remote_manifests") {
+                        // verify provenance path is remote url
+                        let is_remote_url = Store::is_valid_remote_url(&ext_ref);
+
+                        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
                             Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
-                            Err(Error::RemoteManifestUrl(ext_ref))
+                            if is_remote_url {
+                                Err(Error::RemoteManifestUrl(ext_ref))
+                            } else {
+                                Err(Error::JumbfNotFound)
+                            }
                         }
                     } else {
                         Err(Error::JumbfNotFound)
@@ -2111,6 +2118,14 @@ impl Store {
             Some(ext_ref)
         } else {
             None
+        }
+    }
+
+    /// check the input url to see if it is a supported remotes URI
+    pub fn is_valid_remote_url(url: &str) -> bool {
+        match url::Url::parse(url) {
+            Ok(u) => u.scheme() == "http" || u.scheme() == "https",
+            Err(_) => false,
         }
     }
 
@@ -3026,6 +3041,20 @@ pub mod tests {
 
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+    }
+
+    #[test]
+    #[cfg(all(feature = "file_io"))]
+    fn test_removed_jumbf() {
+        // test adding to actual image
+        let ap = fixture_path("no_manifest.jpg");
+
+        let mut report = DetailedStatusTracker::new();
+
+        // can we read back in
+        let _store = Store::load_from_asset(&ap, true, &mut report);
+
+        assert!(report_has_err(report.get_log(), Error::JumbfNotFound));
     }
 
     #[test]
