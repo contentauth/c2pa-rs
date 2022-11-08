@@ -29,7 +29,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.59.0** or newer.
+The SDK requires **Rust version 1.61.0** or newer.
 
 ### Supported platforms
 
