@@ -1895,7 +1895,11 @@ impl Store {
                             Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
-                            Err(Error::RemoteManifestUrl(ext_ref))
+                            if is_remote_url {
+                                Err(Error::RemoteManifestUrl(ext_ref))
+                            } else {
+                                Err(Error::JumbfNotFound)
+                            }
                         }
                     } else {
                         Err(Error::JumbfNotFound)
@@ -2904,6 +2908,20 @@ pub mod tests {
 
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+    }
+
+    #[test]
+    #[cfg(all(feature = "file_io"))]
+    fn test_removed_jumbf() {
+        // test adding to actual image
+        let ap = fixture_path("no_manifest.jpg");
+
+        let mut report = DetailedStatusTracker::new();
+
+        // can we read back in
+        let _store = Store::load_from_asset(&ap, true, &mut report);
+
+        assert!(report_has_err(report.get_log(), Error::JumbfNotFound));
     }
 
     #[test]
