@@ -895,7 +895,7 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
@@ -914,7 +914,7 @@ async fn validate_with_cert_async(
     let pk_der = pk.raw;
 
     if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
@@ -936,7 +936,7 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
