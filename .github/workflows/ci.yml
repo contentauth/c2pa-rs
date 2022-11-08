@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
+        rust_version: [1.61.0, stable]
 
     steps:
       - name: Checkout repository
@@ -44,39 +44,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-
-  tests-msrv:
-    name: Unit tests
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [1.59.0]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust_version }}
-          override: true
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
-
-      # Note that we do not run code coverage because
-      # it was not stabilized as of 1.59.0.
-
-      - name: Run self tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          # args: --all-targets --all-features --workspace (waiting on bug fix)
-          args: --all-features --workspace
 
   wasm_tests:
     name: Wasm tests
