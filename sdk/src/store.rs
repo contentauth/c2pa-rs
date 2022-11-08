@@ -1895,7 +1895,11 @@ impl Store {
                             Store::fetch_remote_manifest(&ext_ref)
                         } else {
                             // return an error with the url that should be read
-                            Err(Error::RemoteManifestUrl(ext_ref))
+                            if is_remote_url {
+                                Err(Error::RemoteManifestUrl(format!("Remote manifest fetch not enabled. Remote URI: {}", ext_ref)))
+                            } else {
+                                Err(Error::JumbfNotFound)
+                            }
                         }
                     } else {
                         Err(Error::JumbfNotFound)
