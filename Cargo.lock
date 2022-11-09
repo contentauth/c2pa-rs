@@ -258,9 +258,9 @@ checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
 
 [[package]]
 name = "c2pa"
-version = "0.13.2"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9f42af1b4a0c8d365d4bec40ebdc9555f980b0fd0478f0d299a462597204468"
+checksum = "d5eadc06ea58cfa080c18314541bd6c2dfe2a6aa662fbe4270f3c25fe7e11e58"
 dependencies = [
  "atree",
  "base64",
@@ -2346,9 +2346,9 @@ dependencies = [
 
 [[package]]
 name = "xmp_toolkit"
-version = "0.5.3"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88109ef849824bb028f75ee2f6860420a48bb38b9c4f28702e6e7418923f9949"
+checksum = "22c639009c72fd52b12e0e9edd9a10093f521958571ed7e71c0d1d8503db4a32"
 dependencies = [
  "cc",
  "fs_extra",
