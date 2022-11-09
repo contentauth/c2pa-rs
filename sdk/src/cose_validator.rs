@@ -306,7 +306,7 @@ fn check_cert(
         }
     }
 
-    // check modulus minumum length (for RSA & PSS algorithms)
+    // check modulus minimum length (for RSA & PSS algorithms)
     if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
         let (_, skpi_ber) = parse_ber_sequence(pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
@@ -410,7 +410,7 @@ fn check_cert(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
-    // popluate needed extension info
+    // populate needed extension info
     for e in signcert.extensions() {
         match e.parsed_extension() {
             ParsedExtension::AuthorityKeyIdentifier(_aki) => {
@@ -493,41 +493,31 @@ fn check_cert(
 pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
     match cs1.protected.header.alg {
-        Some(ref alg) => {
-            match alg {
-                coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-                    -39 => Ok(SigningAlg::Ps512),
-                    -38 => Ok(SigningAlg::Ps384),
-                    -37 => Ok(SigningAlg::Ps256),
-                    -36 => Ok(SigningAlg::Es512),
-                    -35 => Ok(SigningAlg::Es384),
-                    -7 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // -259 => "rs512",
-                    // -258 => "rs384",
-                    // -257 => "rs256",
-                    -8 => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
-                    coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
-                    coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
-                    coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
-                    coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
-                    coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
-                    coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // coset::iana::Algorithm::RS512 => "rs512",
-                    // coset::iana::Algorithm::RS384 => "rs384",
-                    // coset::iana::Algorithm::RS256 => "rs256",
-                    coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Text(a) => a
-                    .parse()
-                    .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
-            }
-        }
+        Some(ref alg) => match alg {
+            coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
+                -39 => Ok(SigningAlg::Ps512),
+                -38 => Ok(SigningAlg::Ps384),
+                -37 => Ok(SigningAlg::Ps256),
+                -36 => Ok(SigningAlg::Es512),
+                -35 => Ok(SigningAlg::Es384),
+                -7 => Ok(SigningAlg::Es256),
+                -8 => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
+                coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
+                coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
+                coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
+                coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
+                coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
+                coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
+                coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Text(a) => a
+                .parse()
+                .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
+        },
         None => Err(Error::CoseSignatureAlgorithmNotSupported),
     }
 }
@@ -574,6 +564,23 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     } else {
         Err(Error::CoseX5ChainMissing)
     }
+}
+
+// internal util function to dump the cert chain in PEM format
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "file_io")]
+#[allow(dead_code)]
+fn dump_cert_chain(certs: &[Vec<u8>], output_path: &std::path::Path) -> Result<()> {
+    let mut out_buf: Vec<u8> = Vec::new();
+
+    for der_bytes in certs {
+        let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+        let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+
+        out_buf.append(&mut c_pem);
+    }
+
+    std::fs::write(output_path, &out_buf).map_err(Error::IoError)
 }
 
 // Note: this function is only used to get the display string and not for cert validation.

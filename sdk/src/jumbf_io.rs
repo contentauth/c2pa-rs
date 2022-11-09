@@ -18,12 +18,14 @@ use std::{
 };
 
 use crate::{
-    asset_handlers::{bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO},
+    asset_handlers::{
+        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
+    },
     asset_io::{AssetIO, CAILoader, HashObjectPositions},
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 18] = [
+static SUPPORTED_TYPES: [&str; 23] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -34,6 +36,9 @@ static SUPPORTED_TYPES: [&str; 18] = [
     "m4a",
     "mov",
     "png",
+    "tif",
+    "tiff",
+    "dng",
     "application/mp4",
     "audio/mp4",
     "image/avif",
@@ -42,6 +47,8 @@ static SUPPORTED_TYPES: [&str; 18] = [
     "image/jpeg",
     "image/png",
     "video/mp4",
+    "image/tiff",
+    "image/dng",
 ];
 
 #[cfg(feature = "file_io")]
@@ -86,6 +93,7 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
         "png" => Some(Box::new(PngIO {})),
         "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
+        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
         _ => None,
     }
 }
@@ -104,6 +112,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         {
             Some(Box::new(BmffIO::new(&asset_type)))
         }
+        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
         _ => None,
     }
 }
