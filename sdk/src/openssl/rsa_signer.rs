@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{cell::Cell, fs, path::Path};
+use std::cell::Cell;
 
 //use extfmt::Hexlify;
 use openssl::{
@@ -66,18 +66,6 @@ impl RsaSigner {
 }
 
 impl ConfigurableSigner for RsaSigner {
-    fn from_files<P: AsRef<Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
@@ -195,10 +183,6 @@ impl Signer for RsaSigner {
             None
         }
     }
-}
-
-fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
 }
 
 fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {

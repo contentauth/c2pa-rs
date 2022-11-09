@@ -72,6 +72,7 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;

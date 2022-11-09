@@ -25,12 +25,9 @@ use crate::{
     Result,
 };
 #[cfg(feature = "file_io")]
-use crate::{
-    create_signer,
-    openssl::RsaSigner,
-    signer::{ConfigurableSigner, Signer},
-    SigningAlg,
-};
+use crate::{create_signer, Signer};
+#[cfg(feature = "sign")]
+use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 
@@ -196,7 +193,7 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 /// Can panic if the certs cannot be read. (This function should only
 /// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
-pub fn temp_signer() -> RsaSigner {
+pub fn temp_signer_file() -> RsaSigner {
     #![allow(clippy::expect_used)]
     let mut sign_cert_path = fixture_path("certs");
     sign_cert_path.push("ps256");
@@ -207,6 +204,16 @@ pub fn temp_signer() -> RsaSigner {
     pem_key_path.set_extension("pem");
 
     RsaSigner::from_files(&sign_cert_path, &pem_key_path, SigningAlg::Ps256, None)
+        .expect("get_temp_signer")
+}
+
+#[cfg(feature = "sign")]
+pub fn temp_signer() -> RsaSigner {
+    #![allow(clippy::expect_used)]
+    let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
+    let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
+
+    RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
         .expect("get_temp_signer")
 }
 

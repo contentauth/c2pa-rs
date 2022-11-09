@@ -16,7 +16,7 @@ pub(crate) mod cbor_types;
 pub(crate) mod hash_utils;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
-#[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
+#[cfg(all(feature = "add_thumbnails", any(feature = "file_io", feature = "sign")))]
 pub(crate) mod thumbnail;
 pub(crate) mod time_it;
 #[allow(dead_code)] // for wasm builds
