@@ -47,11 +47,7 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
     let contents = seg.contents();
     if contents.starts_with(XMP_SIGNATURE) {
         let rest = contents.slice(XMP_SIGNATURE_BUFFER_SIZE..);
-        if let Ok(c) = String::from_utf8(rest.to_vec()) {
-            Some(c)
-        } else {
-            None
-        }
+        String::from_utf8(rest.to_vec()).ok()
     } else {
         None
     }
