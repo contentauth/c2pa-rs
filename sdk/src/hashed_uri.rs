@@ -50,7 +50,7 @@ impl HashedUri {
         self.hash.clone()
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "sign")]
     pub(crate) fn update_hash(&mut self, hash: Vec<u8>) {
         self.hash = hash;
     }
