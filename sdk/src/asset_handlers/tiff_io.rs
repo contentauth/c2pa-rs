@@ -89,7 +89,7 @@ impl IFDEntryType {
     }
 }
 
-// TIFF IFD Entry (value_offset is is in target endian)
+// TIFF IFD Entry (value_offset is in target endian)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IfdEntry {
     entry_tag: u16,
@@ -162,8 +162,8 @@ impl TiffStructure {
         let big_tiff = match byte_reader.read_u16() {
             Ok(42) => false,
             Ok(43) => {
-                // read past Endianness::Big TIFF structs
-                // Read bytesize of offsets, must be 8
+                // read Big TIFF structs
+                // Read byte size of offsets, must be 8
                 if byte_reader.read_u16()? != 8 {
                     return Err(Error::InvalidAsset(
                         "Could not parse input image".to_owned(),
@@ -314,7 +314,7 @@ impl TiffStructure {
     }
 }
 
-// offset are sourced in source endianness so to use offset value in Seek calls we must convert to native endianness
+// offset are stored in source endianness so to use offset value in Seek calls we must convert to native endianness
 fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool) -> Result<u64> {
     let offset: u64;
     let offset_bytes = offset_file_native.to_ne_bytes();
@@ -333,7 +333,7 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
-// create tree of TIFF strcuture IFDs and IFD entries.
+// create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R: ?Sized>(
     input: &mut R,
 ) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
@@ -563,11 +563,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             let data_bytes = if self.big_tiff { 8 } else { 4 };
 
             if value_bytes_ref.len() > data_bytes {
-                let offset = self.writer.seek(SeekFrom::Current(0))?; // get location of entry data start
+                // get location of entry data start
+                let offset = self.writer.seek(SeekFrom::Current(0))?;
 
-                self.writer.write_all(value_bytes_ref)?; // write out the data bytes
+                // write out the data bytes
+                self.writer.write_all(value_bytes_ref)?;
 
-                // Set offset pointer in file source endian
+                // set offset pointer in file source endian
                 let mut offset_vec = vec![0; data_bytes];
 
                 with_order!(offset_vec.as_mut_slice(), self.endianness, |ew| {
@@ -582,7 +584,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
-                *value_bytes_ref = offset_vec; // Set to new data offset position
+                // set to new data offset position
+                *value_bytes_ref = offset_vec;
             } else {
                 while value_bytes_ref.len() < data_bytes {
                     value_bytes_ref.push(0);
@@ -592,33 +595,33 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         // Write out the IFD
 
-        // Start on a WORD boundary
+        // start on a WORD boundary
         self.pad_word_boundary()?;
 
-        // Save location of start of IFD
+        // save location of start of IFD
         let ifd_offset = self.writer.seek(SeekFrom::Current(0))?;
 
-        // Write out the entry count
+        // write out the entry count
         self.write_entry_count(target_ifd.len())?;
 
-        // Write out the directory entries
+        // write out the directory entries
         for (tag, entry) in target_ifd.iter() {
             self.writer.write_u16(*tag)?;
             self.writer.write_u16(entry.entry_type)?;
 
             if self.big_tiff {
                 let cnt = u64::value_from(entry.value_count)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                 self.writer.write_u64(cnt)?;
             } else {
                 let cnt = u32::value_from(entry.value_count)
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                 self.writer.write_u32(cnt)?;
             }
 
-            self.writer.write_all(&entry.value_bytes)?; // Write offset or data
+            self.writer.write_all(&entry.value_bytes)?;
         }
 
         Ok(ifd_offset)
@@ -868,13 +871,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         // clone the EXIF entry and DNG entries
         for n in page.children(tiff_tree) {
             let ifd = &n.data;
-            // Clone IFD entries
+
+            // clone IFD entries
             let mut cloned_ifd = self.clone_ifd_entries(&ifd.entries, asset_reader)?;
 
-            // Clone the image data
+            // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
 
-            // Write directory
+            // write directory
             let sub_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
 
             // terminate since we don't support chained subifd
@@ -960,10 +964,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             }
         }
 
-        // Write directory
+        // write directory
         let first_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
 
-        // Write final location info
+        // write final location info
         let curr_pos = self.offset()?;
 
         self.writer.seek(SeekFrom::Start(self.first_idf_offset))?;
