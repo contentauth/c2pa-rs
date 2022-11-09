@@ -21,7 +21,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAILoader, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -86,6 +86,30 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
     Ok(cai_block)
 }
 
+/// writes the jumbf data in store_bytes
+/// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
+pub fn save_jumbf_to_stream(
+    asset_type: &str,
+    stream: &mut dyn CAIReadWrite,
+    store_bytes: &[u8],
+) -> Result<()> {
+    match get_caiwriter_handler(asset_type) {
+        Some(asset_handler) => asset_handler.write_cai(stream, store_bytes),
+        None => Err(Error::UnsupportedType),
+    }
+}
+
+/// writes the jumbf data in store_bytes into an asset in data and the updatedcar data
+pub fn save_jumbf_to_memory(
+    asset_type: &str,
+    data: Vec<u8>,
+    store_bytes: &[u8],
+) -> Result<Vec<u8>> {
+    let mut stream = Cursor::new(data);
+    save_jumbf_to_stream(asset_type, &mut stream, store_bytes)?;
+    Ok(stream.into_inner())
+}
+
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
     let ext = ext.to_lowercase();
     match ext.as_ref() {
@@ -113,6 +137,24 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
             Some(Box::new(BmffIO::new(&asset_type)))
         }
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
+        _ => None,
+    }
+}
+
+pub fn get_caiwriter_handler(asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    let asset_type = asset_type.to_lowercase();
+    match asset_type.as_ref() {
+        // "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
+        //     Some(Box::new(C2paIO {}))
+        // }
+        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
+        // "png" | "image/png" => Some(Box::new(PngIO {})),
+        // "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
+        // | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
+        //     if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
+        // {
+        //     Some(Box::new(BmffIO::new(&asset_type)))
+        // }
         _ => None,
     }
 }
@@ -221,6 +263,16 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
 
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.get_object_locations(in_path),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+pub fn object_locations_from_stream(
+    format: &str,
+    stream: &mut dyn CAIReadWrite,
+) -> Result<Vec<HashObjectPositions>> {
+    match get_caiwriter_handler(format) {
+        Some(handler) => handler.get_object_locations_from_stream(stream),
         _ => Err(Error::UnsupportedType),
     }
 }

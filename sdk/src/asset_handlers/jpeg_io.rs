@@ -12,8 +12,8 @@
 // each license.
 
 use std::{
-    fs::{read, File},
-    io::Cursor,
+    fs::File,
+    io::{Cursor, SeekFrom},
     path::*,
 };
 
@@ -24,8 +24,11 @@ use img_parts::{
 };
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
-    error::{wrap_io_err, Error, Result},
+    asset_io::{
+        AssetIO, CAILoader, CAIRead, CAIReadWrite, CAIWriter, HashBlockObjectType,
+        HashObjectPositions,
+    },
+    error::{Error, Result},
 };
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
@@ -63,8 +66,12 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
-    let buf = read(asset_path)?;
+fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
+    let mut buf: Vec<u8> = Vec::new();
+    stream.seek(SeekFrom::Start(0))?;
+    stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+    stream.seek(SeekFrom::Start(0))?;
+
     let dimg_opt = DynImage::from_bytes(buf.into())
         .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
@@ -76,7 +83,7 @@ fn add_required_segs(asset_path: &std::path::Path) -> Result<()> {
             let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
             no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
             let aio = JpegIO {};
-            aio.save_cai_store(asset_path, &no_bytes)?;
+            aio.write_cai(stream, &no_bytes)?;
         }
     } else {
         return Err(Error::UnsupportedType);
@@ -135,6 +142,7 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
     }
     Ok(())
 }
+
 pub struct JpegIO {}
 
 impl CAILoader for JpegIO {
@@ -145,6 +153,7 @@ impl CAILoader for JpegIO {
 
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
+        asset_reader.seek(SeekFrom::Start(0))?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into())
@@ -224,17 +233,14 @@ impl CAILoader for JpegIO {
     }
 }
 
-impl AssetIO for JpegIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let input = read(asset_path).map_err(wrap_io_err)?;
-
-        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
+impl CAIWriter for JpegIO {
+    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()> {
+        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
+        let mut buf = Vec::new();
+        // read the whole asset
+        stream.seek(SeekFrom::Start(0))?;
+        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
         delete_cai_segments(&mut jpeg)?;
@@ -283,34 +289,31 @@ impl AssetIO for JpegIO {
             jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
         }
 
-        let output = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
+        stream.seek(SeekFrom::Start(0))?;
         jpeg.encoder()
-            .write_to(output)
+            .write_to(stream)
             .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-
         Ok(())
     }
 
-    fn get_object_locations(
+    fn get_object_locations_from_stream(
         &self,
-        asset_path: &std::path::Path,
+        stream: &mut dyn CAIReadWrite,
     ) -> Result<Vec<HashObjectPositions>> {
-        // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs(asset_path)?;
-
         let mut cai_en: Vec<u8> = Vec::new();
         let mut cai_seg_cnt: u32 = 0;
 
         let mut positions: Vec<HashObjectPositions> = Vec::new();
         let mut curr_offset = 2; // start after JPEG marker
 
-        let buf = read(asset_path)?;
+        // make sure the file has the required segments so we can generate all the required offsets
+        add_required_segs_to_stream(stream)?;
+
+        let mut buf: Vec<u8> = Vec::new();
+        stream.seek(SeekFrom::Start(0))?;
+        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        stream.seek(SeekFrom::Start(0))?;
+
         let dimg = DynImage::from_bytes(buf.into())
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
@@ -374,7 +377,7 @@ impl AssetIO for JpegIO {
                                 length: seg.len_with_entropy(),
                                 htype: HashBlockObjectType::Xmp,
                             };
-                            // todo: pick the app1 that is the xmp (not cruical as it gets hashed either way)
+                            // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
                             positions.push(v);
                         }
                         _ => {
@@ -396,9 +399,43 @@ impl AssetIO for JpegIO {
 
         Ok(positions)
     }
+}
+
+impl AssetIO for JpegIO {
+    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(asset_path)?;
+
+        self.read_cai(&mut f)
+    }
+
+    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            //.truncate(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.write_cai(&mut stream, store_bytes)?;
+
+        Ok(())
+    }
+
+    fn get_object_locations(
+        &self,
+        asset_path: &std::path::Path,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.get_object_locations_from_stream(&mut file)
+    }
 
     fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
-        let input = read(asset_path).map_err(wrap_io_err)?;
+        let input = std::fs::read(asset_path).map_err(Error::IoError)?;
 
         let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
 

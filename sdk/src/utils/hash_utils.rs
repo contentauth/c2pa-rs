@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{Error, Result};
+use crate::{asset_io::CAIReadWrite, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
@@ -172,10 +172,20 @@ pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -
     }
 }
 
-// Return hash bytes for assset using desired hashing algorithm.
+// Return hash bytes for asset using desired hashing algorithm.
 pub fn hash_asset_by_alg(
     alg: &str,
     asset_path: &Path,
+    exclusions: Option<Vec<Exclusion>>,
+) -> Result<Vec<u8>> {
+    let mut file = File::open(asset_path)?;
+    hash_stream_by_alg(alg, &mut file, exclusions)
+}
+
+// Return hash bytes for stream using desired hashing algorithm.
+pub fn hash_stream_by_alg(
+    alg: &str,
+    data: &mut dyn CAIReadWrite,
     exclusions: Option<Vec<Exclusion>>,
 ) -> Result<Vec<u8>> {
     use Hasher::*;
@@ -192,7 +202,6 @@ pub fn hash_asset_by_alg(
         }
     };
 
-    let mut data = File::open(asset_path)?;
     let data_len = data.seek(SeekFrom::End(0))?;
     data.seek(SeekFrom::Start(0))?;
 
@@ -303,7 +312,7 @@ pub fn hash_asset_by_alg(
     Ok(Hasher::finalize(hasher_enum))
 }
 
-// verify the hash using the specified alogrithm
+// verify the hash using the specified algorithm
 pub fn verify_by_alg(
     alg: &str,
     hash: &[u8],

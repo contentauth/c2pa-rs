@@ -15,7 +15,7 @@
 
 //! The `create_signer` module provides a way to obtain a [`Signer`]
 //! instance for each signing format supported by this crate.
-
+#[cfg(feature = "file_io")]
 use std::path::Path;
 
 use crate::{
@@ -65,6 +65,7 @@ pub fn from_keys(
 /// * `pkey_path` - Path to the private key file
 /// * `alg` - Format for signing
 /// * `tsa_url` - Optional URL for a timestamp authority
+#[cfg(feature = "file_io")]
 pub fn from_files<P: AsRef<Path>>(
     signcert_path: P,
     pkey_path: P,

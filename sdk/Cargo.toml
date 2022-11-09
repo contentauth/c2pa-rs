@@ -22,12 +22,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["add_thumbnails"]
 add_thumbnails = ["image"]
 async_signer = ["async-trait", "file_io"]
-bmff = []  # Work in progress support for BMFF-based containers
-file_io = ["openssl"]
+bmff = []
+file_io = ["sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
+sign = ["openssl"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
