@@ -25,7 +25,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 22] = [
+static SUPPORTED_TYPES: [&str; 23] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -48,6 +48,7 @@ static SUPPORTED_TYPES: [&str; 22] = [
     "image/png",
     "video/mp4",
     "image/tiff",
+    "image/dng",
 ];
 
 #[cfg(feature = "file_io")]

@@ -563,9 +563,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             let data_bytes = if self.big_tiff { 8 } else { 4 };
 
             if value_bytes_ref.len() > data_bytes {
-                // Start on a WORD boundary
-                //self.pad_word_boundary()?;
-
                 let offset = self.writer.seek(SeekFrom::Current(0))?; // get location of entry data start
 
                 self.writer.write_all(value_bytes_ref)?; // write out the data bytes
@@ -1259,11 +1256,11 @@ fn tiff_clone_with_tags<R: Read + Seek, W: Read + Write + Seek>(
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
-    let (mut tiff_tree, page_0, endianness, _big_tiff) = map_tiff(asset_reader)?;
+    let (mut tiff_tree, page_0, endianness, big_tiff) = map_tiff(asset_reader)?;
 
     let mut bo = ByteOrdered::new(writer, endianness);
 
-    let mut tc = TiffCloner::new(endianness, false, &mut bo)?;
+    let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
 
     for t in tiff_tags {
         tc.add_target_tag(t);
@@ -1390,9 +1387,11 @@ impl AssetIO for TiffIO {
 
         tiff_clone_with_tags(&mut temp_file, &mut reader, vec![entry])?;
 
-        std::fs::copy(temp_file.path(), asset_path)?;
-
-        Ok(())
+        // copy temp file to asset
+        std::fs::rename(temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 
     fn get_object_locations(
@@ -1401,8 +1400,7 @@ impl AssetIO for TiffIO {
     ) -> Result<Vec<crate::asset_io::HashObjectPositions>> {
         add_required_tags(asset_path)?;
 
-        let mut asset_reader =
-            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
+        let mut asset_reader = std::fs::File::open(asset_path)?;
 
         let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut asset_reader)?;
 
@@ -1431,8 +1429,31 @@ impl AssetIO for TiffIO {
         }])
     }
 
-    fn remove_cai_store(&self, _asset_path: &std::path::Path) -> Result<()> {
-        Ok(())
+    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
+
+        let mut asset_reader = std::fs::File::open(asset_path)?;
+
+        let (mut idfs, page_0, e, big_tiff) = map_tiff(&mut asset_reader)?;
+
+        let mut bo = ByteOrdered::new(&mut temp_file, e);
+        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+
+        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
+            Some(_ifd) => {
+                tc.clone_tiff(&mut idfs, page_0, &mut asset_reader)?;
+
+                // copy temp file to asset
+                std::fs::rename(temp_file.path(), asset_path)
+                    // if rename fails, try to copy in case we are on different volumes
+                    .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
+                    .map_err(Error::IoError)
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -1480,6 +1501,8 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use core::panic;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -1505,6 +1528,35 @@ pub mod tests {
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
+    }
+
+    #[test]
+    fn test_remove_manifest() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+
+        let temp_dir = tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(&source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+
+        tiff_io.remove_cai_store(&output).unwrap();
+
+        match tiff_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => panic!("should be no C2PA store"),
+        }
     }
 
     /*  disable until I find smaller DNG

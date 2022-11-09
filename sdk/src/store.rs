@@ -3160,19 +3160,12 @@ pub mod tests {
         store.commit_claim(claim2).unwrap();
         store.save_to_asset(&op, &signer, &op).unwrap();
 
-        // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         let mut report = DetailedStatusTracker::new();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-
-        // can  we get by the ingredient data back
-        let _some_binary_data: Vec<u8> = vec![
-            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
-            0x0b, 0x0e,
-        ];
 
         // dump store and compare to original
         for claim in new_store.claims() {
