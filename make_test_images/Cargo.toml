@@ -12,7 +12,7 @@ blake3 = "1.0.0"
 c2pa = { path="../sdk", features = ["file_io", "xmp_write"] }
 env_logger = "0.9"
 log = "0.4" 
-image = "0.23.10"
+image = "0.24.5"
 nom = "7.1.1"
 regex = "1.5.6"
 serde = "1.0.137"
