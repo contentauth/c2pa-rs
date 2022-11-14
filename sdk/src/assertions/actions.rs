@@ -98,6 +98,10 @@ pub struct Action {
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
     actors: Option<Vec<Actor>>,
+
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
+    #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
+    source_type: Option<String>,
 }
 
 impl Action {
@@ -114,6 +118,7 @@ impl Action {
             instance_id: None,
             parameters: None,
             actors: None,
+            source_type: None,
         }
     }
 
@@ -161,6 +166,11 @@ impl Action {
     /// An array of the [`Actor`]s that undertook this action.
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
+    }
+
+    /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    pub fn source_type(&self) -> Option<&str> {
+        self.source_type.as_deref()
     }
 
     /// Sets the timestamp for when the action occurred.
@@ -217,6 +227,12 @@ impl Action {
     /// Sets the array of [`Actor`]s that undertook this action.
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
+        self
+    }
+
+    /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    pub fn set_source_type<S: Into<String>>(mut self, uri: S) -> Self {
+        self.source_type = Some(uri.into());
         self
     }
 }
@@ -359,7 +375,8 @@ pub mod tests {
                 Action::new("c2pa.filtered")
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
-                    .set_when("2015-06-26T16:43:23+0200"),
+                    .set_when("2015-06-26T16:43:23+0200")
+                    .set_source_type("digsrctype:algorithmicMedia"),
             )
             .add_metadata(
                 Metadata::new()
@@ -387,6 +404,10 @@ pub mod tests {
             original.actions[1].parameters.as_ref().unwrap().get("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
+        assert_eq!(
+            result.actions[1].source_type().unwrap(),
+            "digsrctype:algorithmicMedia"
+        );
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
@@ -497,7 +518,8 @@ pub mod tests {
                     "action": "c2pa.edited",
                     "parameters": {
                       "description": "import"
-                    }
+                    },
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
                   },
                 ],
             "metadata": {
