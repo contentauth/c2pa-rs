@@ -90,13 +90,15 @@ impl AssetFolder {
 
 impl AssetStore for AssetFolder {
     fn add(&mut self, value: Vec<u8>) -> Result<String> {
-        let key = uuid_b64::UuidB64::new().to_string();
-        std::fs::write(key.clone(), value)?;
-        Ok(key)
+        let id = uuid_b64::UuidB64::new().to_string();
+        let path = self.base_path.join(&id);
+        std::fs::write(path, value)?;
+        Ok(id)
     }
 
     fn get(&self, id: &str) -> Result<Cow<[u8]>> {
-        Ok(std::fs::read(id)?.into())
+        let path = self.base_path.join(id);
+        Ok(std::fs::read(path)?.into())
     }
 }
 
@@ -122,5 +124,22 @@ impl AssetThing {
 impl Default for AssetThing {
     fn default() -> Self {
         Self::AssetMap(AssetMap::new())
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn asset_folder() {
+        const DATA: &[u8] = b"foo";
+        let mut af = AssetFolder::_new("../target/tmp");
+        let id = af.add(DATA.to_vec()).expect("add");
+        let foo = af.get(&id).expect("get");
+        assert_eq!(Cow::Borrowed(DATA), foo)
     }
 }
