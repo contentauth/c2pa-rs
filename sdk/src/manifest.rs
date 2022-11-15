@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
+use std::{borrow::Cow, collections::HashMap};
 
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -145,7 +145,7 @@ impl Manifest {
     /// Returns a tuple with thumbnail format and image bytes or `None`.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
         if let Some(thumbnail) = self.thumbnail.as_ref() {
-            if let Some(image) = self.assets.get(&thumbnail.identifier) {
+            if let Ok(Cow::Borrowed(image)) = self.assets.get(&thumbnail.identifier) {
                 return Some((&thumbnail.content_type, image));
             }
         }
@@ -210,8 +210,9 @@ impl Manifest {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        let identifier = self.assets.add(thumbnail);
-        self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+        if let Ok(identifier) = self.assets.add(thumbnail) {
+            self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+        }
         self
     }
 

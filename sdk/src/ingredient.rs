@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 
 //use std::ops::Deref;
-
+use std::borrow::Cow;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
-    asset_store::{skip_serializing_thumbnails, AssetMap, AssetRef, AssetStore},
+    asset_store::{AssetRef, AssetThing},
     claim::Claim,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -96,9 +96,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<String>,
 
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    assets: AssetMap,
+    // #[serde(skip_deserializing)]
+    // #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
+    #[serde(skip)]
+    assets: AssetThing,
 }
 
 impl Ingredient {
@@ -133,7 +134,7 @@ impl Ingredient {
             metadata: None,
             active_manifest: None,
             manifest_data: None,
-            assets: AssetMap::new(),
+            assets: AssetThing::default(),
         }
     }
 
@@ -165,7 +166,7 @@ impl Ingredient {
     /// Returns a tuple with thumbnail format and image bytes or `None`.
     pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
         if let Some(thumbnail) = self.thumbnail.as_ref() {
-            if let Some(image) = self.assets.get(&thumbnail.identifier) {
+            if let Ok(Cow::Borrowed(image)) = self.assets.get(&thumbnail.identifier) {
                 return Some((&thumbnail.content_type, image));
             }
         }
@@ -207,7 +208,7 @@ impl Ingredient {
     /// This is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<&[u8]> {
         if let Some(identifier) = self.manifest_data.as_ref() {
-            if let Some(data) = self.assets.get(identifier) {
+            if let Ok(Cow::Borrowed(data)) = self.assets.get(identifier) {
                 return Some(data);
             }
         }
@@ -251,8 +252,9 @@ impl Ingredient {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        let identifier = self.assets.add(thumbnail);
-        self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+        if let Ok(identifier) = self.assets.add(thumbnail) {
+            self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+        }
         self
     }
 
@@ -285,7 +287,7 @@ impl Ingredient {
 
     /// Sets the Manifest C2PA data for this ingredient.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> &mut Self {
-        let identifier = self.assets.add(data);
+        let identifier = self.assets.add(data).unwrap_or_default();
         self.manifest_data = Some(identifier);
         dbg!(&self.manifest_data);
         self
@@ -471,7 +473,8 @@ impl Ingredient {
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data = manifest_bytes.map(|bytes| ingredient.assets.add(bytes));
+                ingredient.manifest_data =
+                    manifest_bytes.and_then(|bytes| ingredient.assets.add(bytes).ok());
                 dbg!(&ingredient.manifest_data);
 
                 ingredient.validation_status = if statuses.is_empty() {
