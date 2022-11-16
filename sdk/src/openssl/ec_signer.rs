@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs, path::Path};
-
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -26,7 +24,7 @@ use x509_parser::der_parser::{
 
 use super::check_chain_order;
 use crate::{
-    error::{wrap_io_err, wrap_openssl_err, Error, Result},
+    error::{wrap_openssl_err, Error, Result},
     signer::ConfigurableSigner,
     Signer, SigningAlg,
 };
@@ -45,18 +43,6 @@ pub struct EcSigner {
 }
 
 impl ConfigurableSigner for EcSigner {
-    fn from_files<P: AsRef<Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
@@ -206,6 +192,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
 

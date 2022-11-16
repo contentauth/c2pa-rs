@@ -19,9 +19,10 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    asset_io::CAIReadWrite,
     cbor_types::UriT,
     error::{Error, Result},
-    utils::hash_utils::{hash_asset_by_alg, verify_asset_by_alg, verify_by_alg, Exclusion},
+    utils::hash_utils::{hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, Exclusion},
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -104,6 +105,12 @@ impl DataHash {
         Ok(())
     }
 
+    /// generate the hash value for the Asset stream using the range from the DataHash
+    pub fn gen_hash_from_stream(&mut self, stream: &mut dyn CAIReadWrite) -> Result<()> {
+        self.hash = self.hash_from_stream(stream)?;
+        Ok(())
+    }
+
     // add padding to match size
     pub fn pad_to_size(&mut self, desired_size: usize) -> Result<()> {
         let mut curr_size = self.to_assertion()?.data().len();
@@ -143,6 +150,13 @@ impl DataHash {
     /// generate the asset hash from a file asset using the constructed
     /// start and length values
     fn hash_from_asset(&mut self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut file = std::fs::File::open(asset_path)?;
+        self.hash_from_stream(&mut file)
+    }
+
+    /// generate the asset hash from a stream using the constructed
+    /// start and length values
+    pub fn hash_from_stream(&mut self, stream: &mut dyn CAIReadWrite) -> Result<Vec<u8>> {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
                 "asset hash is remote, not yet supported".to_owned(),
@@ -156,8 +170,8 @@ impl DataHash {
 
         // sort the exclusions
         let hash = match self.exclusions {
-            Some(ref e) => hash_asset_by_alg(&alg, asset_path, Some(e.clone()))?,
-            None => hash_asset_by_alg(&alg, asset_path, None)?,
+            Some(ref e) => hash_stream_by_alg(&alg, stream, Some(e.clone()))?,
+            None => hash_stream_by_alg(&alg, stream, None)?,
         };
 
         if hash.is_empty() {
