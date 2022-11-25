@@ -10,7 +10,7 @@ rust-version = "1.61.0"
 anyhow = "1.0"
 blake3 = "1.0.0"
 c2pa = { path="../sdk", features = ["file_io", "xmp_write"] }
-env_logger = "0.9"
+env_logger = "0.10"
 log = "0.4" 
 image = "0.23.10"
 nom = "7.1.1"
