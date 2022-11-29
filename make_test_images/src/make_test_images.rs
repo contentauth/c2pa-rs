@@ -279,11 +279,9 @@ impl MakeTestImages {
                 // create and add the ingredient
                 let ingredient =
                     Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
-                actions =
-                    actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
-                        "identifier".to_owned(),
-                        ingredient.instance_id().to_owned(),
-                    )?);
+                actions = actions.add_action(
+                    Action::new(c2pa_action::PLACED).set_instance_id(ingredient.instance_id()),
+                );
                 manifest.add_ingredient(ingredient);
 
                 x += width;

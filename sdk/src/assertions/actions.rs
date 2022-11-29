@@ -66,7 +66,7 @@ pub mod c2pa_action {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -277,6 +277,12 @@ impl Actions {
     /// Returns the assertion's [`Metadata`], if it exists.
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
+    }
+
+    /// Internal method to update actions to meet spec requirements
+    pub(crate) fn update_action(mut self, index: usize, action: Action) -> Self {
+        self.actions[index] = action;
+        self
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.

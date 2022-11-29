@@ -591,9 +591,13 @@ impl Manifest {
             }
         }
 
+        let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
-            ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            ingredient_map.insert(
+                ingredient.instance_id(),
+                ingredient.add_to_claim(&mut claim, self.redactions.clone())?,
+            );
         }
 
         let salt = DefaultSalt::default();
@@ -602,9 +606,36 @@ impl Manifest {
         for manifest_assertion in &self.assertions {
             match manifest_assertion.label() {
                 Actions::LABEL => {
-                    let actions: Actions = manifest_assertion.to_assertion()?;
-                    // todo: fixup parameters field from instance_id to ingredient uri for
+                    let mut actions: Actions = manifest_assertion.to_assertion()?;
+
+                    // fixup parameters field from instance_id to ingredient uri for
                     // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
+                    let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
+                        .actions()
+                        .iter()
+                        .filter(|a| {
+                            matches!(
+                                a.action(),
+                                "c2pa.transcoded" | "c2pa.repackaged" | "c2pa.placed"
+                            )
+                        })
+                        .enumerate()
+                        .filter_map(|(i, a)| {
+                            (a.instance_id().is_some() && a.get_parameter("ingredient").is_none())
+                                .then_some((i, a.clone()))
+                        })
+                        .collect();
+
+                    for (index, action) in needs_ingredient {
+                        if let Some(id) = action.instance_id() {
+                            if let Some(hash_url) = ingredient_map.get(id) {
+                                let update =
+                                    action.set_parameter("ingredient", hash_url.clone())?;
+                                actions = actions.update_action(index, update);
+                            }
+                        }
+                    }
+
                     claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
