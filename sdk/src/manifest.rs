@@ -1085,7 +1085,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_action_assertion_not_retractable() {
+    fn test_action_assertion_redaction_error() {
         let temp_dir = tempdir().expect("temp dir");
         let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
@@ -1113,9 +1113,9 @@ pub(crate) mod tests {
             .expect("set_parent");
         assert!(manifest.add_redaction(ACTIONS).is_ok());
 
-        // Attempt embedding the manifest with the invalid retraction.
-        let retract_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
-        let embed_result = manifest.embed(&retract_output, &retract_output, &signer);
+        // Attempt embedding the manifest with the invalid redaction.
+        let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+        let embed_result = manifest.embed(&redact_output, &redact_output, &signer);
         assert!(matches!(
             embed_result.err().unwrap(),
             Error::AssertionInvalidRedaction
