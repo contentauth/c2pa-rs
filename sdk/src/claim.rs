@@ -737,13 +737,12 @@ impl Claim {
         }
     }
 
-    /// Not ready for use!!!!!
     /// Redact an assertion from a prior claim.
     /// This will remove the assertion from the JUMBF
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
-        if label == assertions::labels::ACTIONS {
+        if label == labels::ACTIONS {
             return Err(Error::AssertionInvalidRedaction);
         }
 
@@ -930,7 +929,7 @@ impl Claim {
             }
         };
 
-        // check for self redacted assertions and illegal readactions
+        // check for self redacted assertions and illegal redactions
         if let Some(redactions) = claim.redactions() {
             for r in redactions {
                 let r_manifest = jumbf::labels::manifest_label_from_uri(r)
@@ -949,7 +948,7 @@ impl Claim {
                 if r.contains(assertions::labels::ACTIONS) {
                     let log_item = log_item!(
                         claim.uri(),
-                        "readaction of action assertions disallowed",
+                        "redaction of action assertions disallowed",
                         "verify_internal"
                     )
                     .error(Error::ClaimDisallowedRedaction)
