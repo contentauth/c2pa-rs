@@ -88,7 +88,7 @@ pub struct Action {
     changed: Option<String>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
-    #[serde(rename = "InstanceId", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -469,7 +469,6 @@ pub mod tests {
     #[test]
     fn test_binary_round_trip() {
         let assertion = Actions::new()
-            // .set_dictionary("http://testdictionary")
             .add_action(
                 Action::new("c2pa.cropped")
                     .set_parameter(
@@ -521,7 +520,8 @@ pub mod tests {
                     }
                   },
                   {
-                    "action": "c2pa.edited",
+                    "action": "c2pa.opened",
+                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
                       "description": "import"
                     },

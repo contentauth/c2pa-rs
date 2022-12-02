@@ -608,17 +608,10 @@ impl Manifest {
                 Actions::LABEL => {
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
 
-                    // fixup parameters field from instance_id to ingredient uri for
-                    // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
+                    // fixup parameters field from instance_id to ingredient uri
                     let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
                         .actions()
                         .iter()
-                        .filter(|a| {
-                            matches!(
-                                a.action(),
-                                "c2pa.transcoded" | "c2pa.repackaged" | "c2pa.placed"
-                            )
-                        })
                         .enumerate()
                         .filter_map(|(i, a)| {
                             (a.instance_id().is_some() && a.get_parameter("ingredient").is_none())

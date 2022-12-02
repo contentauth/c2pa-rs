@@ -218,8 +218,7 @@ impl MakeTestImages {
                 let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
 
                 actions = actions.add_action(
-                    Action::new(c2pa_action::OPENED)
-                        .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
+                    Action::new(c2pa_action::OPENED).set_instance_id(parent.instance_id()),
                 );
                 manifest.set_parent(parent)?;
 
