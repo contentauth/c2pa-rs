@@ -614,8 +614,12 @@ impl Manifest {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, a)| {
-                            (a.instance_id().is_some() && a.get_parameter("ingredient").is_none())
-                                .then_some((i, a.clone()))
+                            if a.instance_id().is_some() && a.get_parameter("ingredient").is_none()
+                            {
+                                Some((i, a.clone()))
+                            } else {
+                                None
+                            }
                         })
                         .collect();
 
