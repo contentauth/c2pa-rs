@@ -24,6 +24,7 @@ use crate::{assertions::labels, Assertion, AssertionBase, AssertionJson, Error, 
 ///  See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_exif_information>
 ///
 /// This does not yet define or validate individual fields, but will ensure the correct assertion structure
+///
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Exif {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
