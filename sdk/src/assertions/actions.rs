@@ -66,7 +66,7 @@ pub mod c2pa_action {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -88,7 +88,7 @@ pub struct Action {
     changed: Option<String>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
-    #[serde(rename = "InstanceId", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -279,6 +279,12 @@ impl Actions {
         self.metadata.as_ref()
     }
 
+    /// Internal method to update actions to meet spec requirements
+    pub(crate) fn update_action(mut self, index: usize, action: Action) -> Self {
+        self.actions[index] = action;
+        self
+    }
+
     /// Adds an [`Action`] to this assertion's list of actions.
     pub fn add_action(mut self, action: Action) -> Self {
         self.actions.push(action);
@@ -463,7 +469,6 @@ pub mod tests {
     #[test]
     fn test_binary_round_trip() {
         let assertion = Actions::new()
-            // .set_dictionary("http://testdictionary")
             .add_action(
                 Action::new("c2pa.cropped")
                     .set_parameter(
@@ -515,7 +520,8 @@ pub mod tests {
                     }
                   },
                   {
-                    "action": "c2pa.edited",
+                    "action": "c2pa.opened",
+                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
                       "description": "import"
                     },
