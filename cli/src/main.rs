@@ -17,6 +17,7 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 ///
+use std::fs::{create_dir_all, remove_dir_all};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -27,6 +28,7 @@ mod info;
 use info::info;
 pub mod manifest_config;
 use manifest_config::ManifestConfig;
+mod fs_report;
 mod signer;
 use signer::get_c2pa_signer;
 
@@ -40,15 +42,15 @@ struct CliArgs {
         long = "manifest",
         help = "Path to manifest definition JSON file."
     )]
-    manifest: Option<std::path::PathBuf>,
+    manifest: Option<PathBuf>,
 
     #[structopt(parse(from_os_str))]
     #[structopt(short = "o", long = "output", help = "Path to output file.")]
-    output: Option<std::path::PathBuf>,
+    output: Option<PathBuf>,
 
     #[structopt(parse(from_os_str))]
     #[structopt(short = "p", long = "parent", help = "Path to a parent file.")]
-    parent: Option<std::path::PathBuf>,
+    parent: Option<PathBuf>,
 
     #[structopt(
         short = "c",
@@ -73,7 +75,7 @@ struct CliArgs {
 
     /// The path to an asset to examine or embed a manifest into.
     #[structopt(parse(from_os_str))]
-    path: std::path::PathBuf,
+    path: PathBuf,
 
     #[structopt(
         short = "r",
@@ -177,7 +179,7 @@ fn main() -> Result<()> {
             // create any needed folders for the output path (embed should do this)
             let mut output_dir = PathBuf::from(&output);
             output_dir.pop();
-            std::fs::create_dir_all(&output_dir)?;
+            create_dir_all(&output_dir)?;
 
             let signer = get_c2pa_signer(&manifest_config)?;
 
@@ -210,12 +212,18 @@ fn main() -> Result<()> {
             }
             println!("{}", ManifestStore::from_manifest(&manifest)?)
         }
-    } else if args.output.is_some()
-        || args.parent.is_some()
-        || args.sidecar
-        || args.remote.is_some()
-        || args.force
-    {
+    } else if let Some(output) = args.output {
+        if output.exists() {
+            if args.force {
+                remove_dir_all(&output)?;
+            } else {
+                bail!("Output already exists, use -f/force to force write");
+            }
+        }
+
+        fs_report::write_report_for_path(&args.path, &output, args.detailed)?;
+        println!("Manifest report written to the directory {:?}", &output);
+    } else if args.parent.is_some() || args.sidecar || args.remote.is_some() || args.force {
         bail!("manifest definition required with these options or flags")
     } else {
         // let extension = path.extension().and_then(|p| p.to_str()).unwrap_or("");

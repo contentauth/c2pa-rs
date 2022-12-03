@@ -85,6 +85,12 @@ c2patool sample/C.jpg
 
 The tool displays the manifest JSON to standard output (stdout).
 
+You may include an `--output` argument to write the contents of the manifest, including the manifest's assertion and ingredient thumbnails, to the provided `output` directory.
+
+```shell
+c2patool sample/C.jpg --output ./report
+```
+
 ### Detailed manifest report
 
 To display a detailed report describing the internal C2PA format of manifests contained in the asset, use the `-d` option; for example, using one of the example images in the `sample` directory:
