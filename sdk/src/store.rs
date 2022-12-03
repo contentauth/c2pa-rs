@@ -2265,7 +2265,6 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use tempfile::tempdir;
-    use thiserror::private::PathAsDisplay;
     use twoway::find_bytes;
 
     use super::*;
@@ -2724,7 +2723,7 @@ pub mod tests {
         let mut report = DetailedStatusTracker::new();
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
-        println!("Error report for {}: {:?}", ap.as_display(), report);
+        println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.get_log().is_empty());
 
         assert!(report_has_err(report.get_log(), Error::UnsupportedType));
@@ -2738,7 +2737,7 @@ pub mod tests {
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         // error report
-        println!("Error report for {}: {:?}", ap.as_display(), report);
+        println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.get_log().is_empty());
 
         assert!(report_has_err(report.get_log(), Error::PrereleaseError));
@@ -2752,7 +2751,7 @@ pub mod tests {
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
         // error report
-        println!("Error report for {}: {:?}", ap.as_display(), report);
+        println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.get_log().is_empty());
 
         let errs = report_split_errors(report.get_log_mut());
@@ -2769,11 +2768,7 @@ pub mod tests {
         let mut report = DetailedStatusTracker::new();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
-        println!(
-            "Error report for {}: {:?}",
-            ap.as_display(),
-            report.get_log()
-        );
+        println!("Error report for {}: {:?}", ap.display(), report.get_log());
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors[0].error_str().unwrap().starts_with("IoError"));
@@ -2785,11 +2780,7 @@ pub mod tests {
         let mut report = DetailedStatusTracker::new();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
-        println!(
-            "Error report for {}: {:?}",
-            ap.as_display(),
-            report.get_log()
-        );
+        println!("Error report for {}: {:?}", ap.display(), report.get_log());
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
@@ -3002,7 +2993,7 @@ pub mod tests {
 
         println!(
             "Error report for {}: {:?}",
-            ap.as_display(),
+            ap.display(),
             report.get_log()
         );
         assert!(report.get_log().is_empty());
