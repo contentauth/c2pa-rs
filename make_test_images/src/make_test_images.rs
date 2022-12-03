@@ -23,7 +23,6 @@ use c2pa::{
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
     SigningAlg,
 };
-use image::GenericImageView;
 use nom::AsBytes;
 use serde::Deserialize;
 use twoway::find_bytes;
@@ -283,7 +282,7 @@ impl MakeTestImages {
                 );
                 manifest.add_ingredient(ingredient);
 
-                x += width;
+                x += width as i64;
             }
             // record what we did as an action (only need to record this once)
             actions = actions.add_action(Action::new(c2pa_action::RESIZED));
