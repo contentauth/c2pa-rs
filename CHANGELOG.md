@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.16.0
+_03 December 2022_
+
+* Updates some cargo dependencies ([#159](https://github.com/contentauth/c2pa-rs/pull/159))
+* makes manifest#add_redaction public; adds test ([#156](https://github.com/contentauth/c2pa-rs/pull/156))
+* Fixes support for instanceId on action and generate parameters.ingredient field when possible ([#158](https://github.com/contentauth/c2pa-rs/pull/158))
+* Support digitalSourceType field in Action ([#154](https://github.com/contentauth/c2pa-rs/pull/154))
+* (MINOR) Add sign feature for signing manifests without file I/O ([#125](https://github.com/contentauth/c2pa-rs/pull/125))
+* TIFF/DNG support ([#152](https://github.com/contentauth/c2pa-rs/pull/152))
+
 ## 0.15.0
 _09 November 2022_
 
