@@ -92,6 +92,9 @@ pub struct Manifest {
 
     #[serde(skip_deserializing, skip_serializing)]
     remote_manifest: Option<RemoteManifest>,
+
+    #[serde(skip_deserializing, skip_serializing)]
+    watermark: bool,
 }
 
 impl Manifest {
@@ -113,9 +116,13 @@ impl Manifest {
             signature_info: None,
             label: None,
             remote_manifest: None,
+            watermark: false,
         }
     }
 
+    pub fn enable_watermark(&mut self) {
+        self.watermark = true;
+    } 
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
@@ -764,6 +771,10 @@ impl Manifest {
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
+
+        if self.watermark {
+            store.enable_watermark();
+        }
 
         // sign and write our store to to the output image file
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
