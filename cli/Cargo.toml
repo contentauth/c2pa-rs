@@ -19,7 +19,7 @@ repository = "https://github.com/contentauth/c2patool"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.15.0",features = ["bmff", "fetch_remote_manifests", "file_io",  "xmp_write"]}
+c2pa = { version = "0.16.0",features = ["bmff", "fetch_remote_manifests", "file_io",  "xmp_write"]}
 env_logger = "0.9"
 log = "0.4" 
 serde = { version = "1.0", features = ["derive"] }

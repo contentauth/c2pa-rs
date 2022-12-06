@@ -60,7 +60,7 @@ pub fn info(path: &Path) -> Result<()> {
         } else {
             println!("Validated");
         }
-        let manifest_store = ManifestStore::from_bytes("c2pa", manifest_data.to_vec(), false)?;
+        let manifest_store = ManifestStore::from_bytes("c2pa", manifest_data, false)?;
         match manifest_store.manifests().len() {
             0 => println!("No manifests"),
             1 => println!("One manifest"),

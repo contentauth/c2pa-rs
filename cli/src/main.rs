@@ -45,7 +45,7 @@ struct CliArgs {
     manifest: Option<PathBuf>,
 
     #[structopt(parse(from_os_str))]
-    #[structopt(short = "o", long = "output", help = "Path to output file.")]
+    #[structopt(short = "o", long = "output", help = "Path to output file or folder.")]
     output: Option<PathBuf>,
 
     #[structopt(parse(from_os_str))]
