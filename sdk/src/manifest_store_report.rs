@@ -56,12 +56,18 @@ impl ManifestStoreReport {
         })
     }
 
-    pub fn dump_tree(store: &Store, asset_name: &str) -> Result<()> {
+    pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
             label: "None".to_string(),
         })?;
 
-        let (tree, root_token) = ManifestStoreReport::to_tree(store, claim, asset_name, false)?;
+        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().to_owned();
+
+        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, false)?;
         fn walk_tree(tree: &Arena<String>, token: &Token) -> treeline::Tree<String> {
             let result = token.children_tokens(tree).fold(
                 treeline::Tree::root(tree[*token].data.clone()),
@@ -84,15 +90,21 @@ impl ManifestStoreReport {
         Ok(())
     }
 
-    pub fn dump_plantuml(store: &Store, asset_name: &str) -> Result<()> {
+    pub fn dump_plantuml<P: AsRef<Path>>(path: P) -> Result<()> {
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
             label: "None".to_string(),
         })?;
 
+        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().to_owned();
+
         let mut objects: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut connections: Vec<u8> = Vec::new();
 
-        let (tree, root_token) = ManifestStoreReport::to_tree(store, claim, asset_name, true)?;
+        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, true)?;
 
         fn walk_tree(
             tree: &Arena<String>,
@@ -158,7 +170,7 @@ impl ManifestStoreReport {
         }
     }
 
-    pub fn dump_svg(store: &Store, asset_name: &str) -> Result<()> {
+    pub fn dump_svg<P: AsRef<Path>>(path: P) -> Result<()> {
         use layout::backends::svg::SVGWriter;
         use layout::core::base::Orientation;
         use layout::core::geometry::Point;
@@ -167,6 +179,12 @@ impl ManifestStoreReport {
         use layout::std_shapes::shapes::*;
         use layout::topo::layout::VisualGraph;
         //use layout::topo::placer::Placer;
+
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
+        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().to_owned();
 
         fn walk_tree(tree: &Arena<String>, token: &Token, vg: &mut VisualGraph) -> Result<()> {
             token.children_tokens(tree).fold(
@@ -207,7 +225,7 @@ impl ManifestStoreReport {
             label: "None".to_string(),
         })?;
 
-        let (tree, root_token) = ManifestStoreReport::to_tree(store, claim, asset_name, true)?;
+        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, true)?;
 
         walk_tree(&tree, &root_token, &mut vg)?;
 
@@ -220,7 +238,10 @@ impl ManifestStoreReport {
         }
     }
 
-    pub fn dump_cert_chain(store: &Store) -> Result<()> {
+    pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
         let cert_str = store.get_provenance_cert_chain()?;
         println!("{}", cert_str);
         Ok(())
@@ -498,47 +519,31 @@ mod tests {
     fn manifest_dump_tree() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)
-            .expect("load_from_asset");
-
-        ManifestStoreReport::dump_tree(&store, asset_name).expect("dump_tree");
+       
+        ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
 
     #[test]
     fn manifest_dump_svg() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)
-            .expect("load_from_asset");
-
-        ManifestStoreReport::dump_svg(&store, asset_name).expect("dump_tree");
+       
+        ManifestStoreReport::dump_svg(path).expect("dump_tree");
     }
 
     #[test]
     fn manifest_dump_plantuml() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)
-            .expect("load_from_asset");
-
-        ManifestStoreReport::dump_plantuml(&store, asset_name).expect("dump_tree");
+       
+        ManifestStoreReport::dump_plantuml(path).expect("dump_tree");
     }
 
     #[test]
     fn manifest_dump_certchain() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)
-            .expect("load_from_asset");
-
-        ManifestStoreReport::dump_cert_chain(&store).expect("dump certs");
+       
+        ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
     }
 }
