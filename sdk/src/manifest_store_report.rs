@@ -220,6 +220,12 @@ impl ManifestStoreReport {
         }
     }
 
+    pub fn dump_cert_chain(store: &Store) -> Result<()> {
+        let cert_str = store.get_provenance_cert_chain()?;
+        println!("{}", cert_str);
+        Ok(())
+    }
+
     /// Creates a ManifestStoreReport from an existing Store and a validation log
     pub(crate) fn from_store_with_log(
         store: &Store,
@@ -522,5 +528,17 @@ mod tests {
             .expect("load_from_asset");
 
         ManifestStoreReport::dump_plantuml(&store, asset_name).expect("dump_tree");
+    }
+
+    #[test]
+    fn manifest_dump_certchain() {
+        let asset_name = "CAIAIIICAICIICAIICICA.jpg";
+        let path = fixture_path(asset_name);
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)
+            .expect("load_from_asset");
+
+        ManifestStoreReport::dump_cert_chain(&store).expect("dump certs");
     }
 }

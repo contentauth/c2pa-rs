@@ -341,6 +341,15 @@ impl Store {
         placeholder
     }
 
+    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+        let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
+       
+        match claim.get_cert_chain() {
+            Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Sign the claim and return signature.
     #[cfg(feature = "sign")]
     pub fn sign_claim(
@@ -1490,31 +1499,72 @@ impl Store {
         Ok(())
     }
 
+
     /*
     #[cfg(feature = "file_io")]
     fn add_stego(&self, image_path: &Path, stego_msg: &str) -> Result<()> {
+        /* *
         let buf = std::fs::read(image_path)?;
 
-        let mut img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
+        let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
 
-        let stego_handler = stego::LSBStego::new(img);
+        let mut stego_handler = stego::LSBStego::new(img.clone());
         let encoded_image = stego_handler.encode_text(stego_msg.to_owned());
+
+        let mut st = stego::LSBStego::new(encoded_image.clone());
+        let _t = st.decode_text();
+
         encoded_image.save(image_path).map_err(|_e| Error::BadParam("could not save image".to_string()))?;
+        */
+        use steganography::encoder::*;
+        use steganography::util::*;
+
+        let image_str = image_path.to_string_lossy().into_owned();
+        let msg_string = stego_msg.to_string();
+
+        //Convert our string to bytes
+        let payload = str_to_bytes(&msg_string);
+        //Load the image where we want to embed our secret message
+        let destination_image = file_as_dynamic_image(image_str.clone());
+        //Create an encoder
+        let enc = Encoder::new(payload, destination_image);
+        //Encode our message into the alpha channel of the image
+        let result = enc.encode_alpha();
+
+        //Save the new image
+        save_image_buffer(result, image_str);
 
         Ok(())
     }
 
     #[cfg(feature = "file_io")]
     fn get_stego(&self, image_path: &Path) -> Result<String> {
+        /*
         let buf = std::fs::read(image_path)?;
 
-        let mut img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
+        let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
 
-        let stego_handler = stego::LSBStego::new(img);
+        let mut stego_handler = stego::LSBStego::from_rgba(img.into_rgba8());
         Ok(stego_handler.decode_text())
+        */
+        use steganography::decoder::*;
+        use steganography::util::*;
+
+        let image_str = image_path.to_string_lossy().into_owned();
+       
+        let encoded_image = file_as_image_buffer(image_str);
+        //Create a decoder
+        let dec = Decoder::new(encoded_image);
+        //Decode the image by reading the alpha channel
+        let out_buffer = dec.decode_alpha();
+        //If there is no alpha, it's set to 255 by default so we filter those out
+        let clean_buffer: Vec<u8> = out_buffer.into_iter().filter(|b| *b != 0xff_u8).collect();
+        //Convert those bytes into a string we can read
+        let message = bytes_to_str(clean_buffer.as_slice());
+
+        Ok(message.to_owned())
     }
     */
-
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
@@ -2747,6 +2797,7 @@ pub mod tests {
 
         // Create claims store.
         let mut store = Store::new();
+        store.enable_watermark();
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();

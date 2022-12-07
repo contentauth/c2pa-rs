@@ -201,6 +201,7 @@ impl MakeTestImages {
         let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         let mut manifest = Manifest::new(generator);
         manifest.set_vendor("contentauth".to_owned()); // needed for generating error cases below
+        manifest.enable_watermark(); // enable watermarking
 
         if let Some(user) = self.config.author.as_ref() {
             let creative_work = CreativeWork::new()

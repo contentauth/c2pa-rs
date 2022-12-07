@@ -886,6 +886,17 @@ impl Claim {
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
+    /// Get the signing certificate chain as PEM bytes
+    pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log = OneShotStatusTracker::new();
+
+        let vi = get_signing_info(sig, &data, &mut validation_log);
+
+        Ok(vi.cert_chain)
+    }
+
     fn verify_internal<'a>(
         claim: &Claim,
         asset_data: &ClaimAssetData<'a>,
