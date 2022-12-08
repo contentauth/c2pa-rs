@@ -1504,7 +1504,9 @@ impl Store {
 
 
     #[cfg(feature = "file_io")]
+    #[allow(unused_variables)]
     fn add_stego(image_path: &Path, stego_msg: &str) -> Result<()> {
+        /* 
         let buf = std::fs::read(image_path)?;
 
         let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
@@ -1513,18 +1515,22 @@ impl Store {
         let encoded_image = stego_handler.encode_text(stego_msg.to_owned());
 
         encoded_image.save(image_path).map_err(|_e| Error::BadParam("could not save image".to_string()))?;
-
+        */
         Ok(())
     }
 
     #[cfg(feature = "file_io")]
+    #[allow(unused_variables)]
     pub fn get_stego(image_path: &Path) -> Result<String> {
+        /*
         let buf = std::fs::read(image_path)?;
 
         let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
 
         let mut stego_handler = stego::LSBStego::new(img);
         Ok(stego_handler.decode_text())
+        */
+        Ok("steganography disabled".to_owned())
     }
     
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
@@ -1884,7 +1890,7 @@ impl Store {
             }
         };
 
-        if self.add_watermark {
+        if self.add_watermark && (ext == "jpg" || ext == "png") {
             self.watermark(&output_path)?;
             if let Some(cwa) = pc.get_assertion(crate::assertions::CreativeWork::LABEL, 0) {
                 let cw = CreativeWork::from_assertion(cwa)?;
