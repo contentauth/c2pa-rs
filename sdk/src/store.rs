@@ -1475,14 +1475,17 @@ impl Store {
         let offset = 20u32;
         let image_str = image_path.to_string_lossy().into_owned();
 
+        let mut img = open_image(&image_str)
+        .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
+  
+        let txt_size = img.get_height() * 3 / 100;
+
         let renderer = TextRenderer::default();
         let text_png = renderer
-            .render_text_to_png_data(wm_text, 18, "slate gray")
+            .render_text_to_png_data(wm_text, txt_size, "darkgray")
             .map_err(|_e| Error::BadParam("could not render text watermark".to_string()))?;
 
-        let mut img = open_image(&image_str)
-            .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-        let wm = open_image_from_bytes(&text_png.data)
+         let wm = open_image_from_bytes(&text_png.data)
             .map_err(|_e| Error::BadParam("could not open watermark".to_string()))?;
 
         let wm_h = wm.get_height();
@@ -1500,10 +1503,8 @@ impl Store {
     }
 
 
-    /*
     #[cfg(feature = "file_io")]
-    fn add_stego(&self, image_path: &Path, stego_msg: &str) -> Result<()> {
-        /* *
+    fn add_stego(image_path: &Path, stego_msg: &str) -> Result<()> {
         let buf = std::fs::read(image_path)?;
 
         let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
@@ -1511,60 +1512,21 @@ impl Store {
         let mut stego_handler = stego::LSBStego::new(img.clone());
         let encoded_image = stego_handler.encode_text(stego_msg.to_owned());
 
-        let mut st = stego::LSBStego::new(encoded_image.clone());
-        let _t = st.decode_text();
-
         encoded_image.save(image_path).map_err(|_e| Error::BadParam("could not save image".to_string()))?;
-        */
-        use steganography::encoder::*;
-        use steganography::util::*;
-
-        let image_str = image_path.to_string_lossy().into_owned();
-        let msg_string = stego_msg.to_string();
-
-        //Convert our string to bytes
-        let payload = str_to_bytes(&msg_string);
-        //Load the image where we want to embed our secret message
-        let destination_image = file_as_dynamic_image(image_str.clone());
-        //Create an encoder
-        let enc = Encoder::new(payload, destination_image);
-        //Encode our message into the alpha channel of the image
-        let result = enc.encode_alpha();
-
-        //Save the new image
-        save_image_buffer(result, image_str);
 
         Ok(())
     }
 
     #[cfg(feature = "file_io")]
-    fn get_stego(&self, image_path: &Path) -> Result<String> {
-        /*
+    pub fn get_stego(image_path: &Path) -> Result<String> {
         let buf = std::fs::read(image_path)?;
 
         let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
 
-        let mut stego_handler = stego::LSBStego::from_rgba(img.into_rgba8());
+        let mut stego_handler = stego::LSBStego::new(img);
         Ok(stego_handler.decode_text())
-        */
-        use steganography::decoder::*;
-        use steganography::util::*;
-
-        let image_str = image_path.to_string_lossy().into_owned();
-       
-        let encoded_image = file_as_image_buffer(image_str);
-        //Create a decoder
-        let dec = Decoder::new(encoded_image);
-        //Decode the image by reading the alpha channel
-        let out_buffer = dec.decode_alpha();
-        //If there is no alpha, it's set to 255 by default so we filter those out
-        let clean_buffer: Vec<u8> = out_buffer.into_iter().filter(|b| *b != 0xff_u8).collect();
-        //Convert those bytes into a string we can read
-        let message = bytes_to_str(clean_buffer.as_slice());
-
-        Ok(message.to_owned())
     }
-    */
+    
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
@@ -1938,6 +1900,10 @@ impl Store {
                     }
                 }
             }
+            // add steo for PNG
+            if ext == "png" {
+                 let _r = Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
+            }
         }
 
         // get the provenance claim changing mutability
@@ -2193,6 +2159,14 @@ impl Store {
                             }
                         }
                     } else {
+                        // check for stego
+                        if ext == "png" {
+                            if let Ok(stego_msg) = Store::get_stego(&in_path) {
+                                if stego_msg.len() < 100 {
+                                    println!("{}", stego_msg);
+                                }
+                            }
+                        }
                         Err(Error::JumbfNotFound)
                     }
                 }

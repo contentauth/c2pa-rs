@@ -91,7 +91,7 @@ text-to-png = "0.2.0"
 photon-rs = "*"
 treeline = "*"
 layout-rs = "*"
-#stego = { path = "../../../stego" }
+stego = { path = "../../../stego" }
 #steganography = "*"
 ring = "0.16.20"
 ureq = "2.4.0"

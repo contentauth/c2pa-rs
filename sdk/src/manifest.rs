@@ -868,6 +868,11 @@ impl Manifest {
         use crate::jumbf_io::remove_jumbf_from_file;
         remove_jumbf_from_file(asset_path.as_ref())
     }
+
+    #[cfg(feature = "file_io")]
+    pub fn dump_stego<P: AsRef<Path>>(asset_path: P) -> Result<String> {
+        Store::get_stego(asset_path.as_ref())
+    }
 }
 
 impl std::fmt::Display for Manifest {
