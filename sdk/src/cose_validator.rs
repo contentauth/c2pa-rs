@@ -567,24 +567,31 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 }
 
 // internal util function to dump the cert chain in PEM format
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(feature = "file_io")]
-#[allow(dead_code)]
+#[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
-    let mut out_buf: Vec<u8> = Vec::new();
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut out_buf: Vec<u8> = Vec::new();
 
-    for der_bytes in certs {
-        let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
-        let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
-
-        out_buf.append(&mut c_pem);
+        for der_bytes in certs {
+            let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+            let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+    
+            out_buf.append(&mut c_pem);
+        }
+    
+        if let Some(op) = output_path {
+            std::fs::write(op, &out_buf).map_err(Error::IoError)?;
+        }
+        Ok(out_buf)
     }
 
-    if let Some(op) = output_path {
-        std::fs::write(op, &out_buf).map_err(Error::IoError)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let out_buf: Vec<u8> = Vec::new();   
+        Ok(out_buf)
     }
-
-    Ok(out_buf)
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
@@ -743,6 +750,7 @@ pub async fn verify_cose_async(
     Ok(result)
 }
 
+#[allow(unused_variables)]
 pub fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],

@@ -56,6 +56,7 @@ impl ManifestStoreReport {
     }
 
     /// Prints tree view of manifest store
+    #[cfg(feature = "file_io")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -94,6 +95,7 @@ impl ManifestStoreReport {
     }
 
     /// Prints the certificate chain use to sign the active manifest
+    #[cfg(feature = "file_io")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -152,6 +154,7 @@ impl ManifestStoreReport {
         json
     }
 
+    #[allow(dead_code)]
     fn populate_node(
         tree: &mut Arena<String>,
         store: &Store,
@@ -212,6 +215,7 @@ impl ManifestStoreReport {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn to_tree(
         store: &Store,
         claim: &Claim,
