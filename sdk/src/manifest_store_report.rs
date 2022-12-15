@@ -64,7 +64,10 @@ impl ManifestStoreReport {
             label: "None".to_string(),
         })?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or(crate::Error::BadParam("bad filename".to_string()))?;
         let asset_name = os_filename.to_string_lossy().to_owned();
 
         let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, false)?;
@@ -98,7 +101,10 @@ impl ManifestStoreReport {
             label: "None".to_string(),
         })?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or(crate::Error::BadParam("bad filename".to_string()))?;
         let asset_name = os_filename.to_string_lossy().to_owned();
 
         let mut objects: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -183,7 +189,10 @@ impl ManifestStoreReport {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or(crate::Error::BadParam("bad filename".to_string()))?;
         let asset_name = os_filename.to_string_lossy().to_owned();
 
         fn walk_tree(tree: &Arena<String>, token: &Token, vg: &mut VisualGraph) -> Result<()> {
@@ -519,7 +528,7 @@ mod tests {
     fn manifest_dump_tree() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
 
@@ -527,7 +536,7 @@ mod tests {
     fn manifest_dump_svg() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_svg(path).expect("dump_tree");
     }
 
@@ -535,7 +544,7 @@ mod tests {
     fn manifest_dump_plantuml() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_plantuml(path).expect("dump_tree");
     }
 
@@ -543,7 +552,7 @@ mod tests {
     fn manifest_dump_certchain() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
     }
 }

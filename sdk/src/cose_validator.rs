@@ -582,7 +582,7 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
 
     if let Some(op) = output_path {
         std::fs::write(op, &out_buf).map_err(Error::IoError)?;
-    } 
+    }
 
     Ok(out_buf)
 }
@@ -785,7 +785,7 @@ pub fn get_signing_info(
             Ok(s) => match get_sign_certs(&s) {
                 Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
                 Err(_) => Vec::new(),
-            }
+            },
             Err(_e) => Vec::new(),
         };
 
@@ -797,8 +797,6 @@ pub fn get_signing_info(
             cert_chain: certs,
         }
     }
-    
-
 }
 
 /// Validate a COSE_SIGN1 byte vector and verify against expected data
