@@ -772,10 +772,6 @@ impl Manifest {
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
-        if self.watermark {
-            store.enable_watermark();
-        }
-
         // sign and write our store to to the output image file
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
@@ -867,11 +863,6 @@ impl Manifest {
     pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
         use crate::jumbf_io::remove_jumbf_from_file;
         remove_jumbf_from_file(asset_path.as_ref())
-    }
-
-    #[cfg(feature = "file_io")]
-    pub fn dump_stego<P: AsRef<Path>>(asset_path: P) -> Result<String> {
-        Store::get_stego(asset_path.as_ref())
     }
 }
 

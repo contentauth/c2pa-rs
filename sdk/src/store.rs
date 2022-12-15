@@ -69,7 +69,6 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    add_watermark: bool,
 }
 
 struct ManifestInfo<'a> {
@@ -112,7 +111,6 @@ impl Store {
             claims: Vec::new(),
             label: label.to_string(),
             provenance_path: None,
-            add_watermark: false,
         }
     }
 
@@ -138,10 +136,6 @@ impl Store {
     fn set_provenance_path(&mut self, claim_label: &str) {
         let path = Claim::to_claim_uri(claim_label);
         self.provenance_path = Some(path);
-    }
-
-    pub fn enable_watermark(&mut self) {
-        self.add_watermark = true;
     }
 
     /// get the list of claims for this store
@@ -1442,100 +1436,6 @@ impl Store {
         Ok(())
     }
 
-    #[cfg(feature = "file_io")]
-    fn watermark(&self, image_path: &Path) -> Result<()> {
-        use photon_rs::{
-            multiple::watermark,
-            native::{open_image, save_image},
-        };
-
-        let image_str = image_path.to_string_lossy().into_owned();
-
-        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/fixtures/Watermarking");
-        path.push("L1@2x.png");
-        let logo_str = path.to_string_lossy().into_owned();
-
-        let mut img = open_image(&image_str)
-            .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-        let wm = open_image(&logo_str)
-            .map_err(|_e| Error::BadParam("could not open watermark".to_string()))?;
-
-        watermark(&mut img, &wm, 10, 10);
-
-        save_image(img, &image_str);
-
-        Ok(())
-    }
-
-    #[cfg(feature = "file_io")]
-    fn watermark_text(&self, image_path: &Path, wm_text: &str) -> Result<()> {
-        use photon_rs::{
-            multiple::watermark,
-            native::{open_image, open_image_from_bytes, save_image},
-        };
-        use text_to_png::TextRenderer;
-
-        let offset = 20u32;
-        let image_str = image_path.to_string_lossy().into_owned();
-
-        let mut img = open_image(&image_str)
-            .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-
-        let txt_size = img.get_height() * 3 / 100;
-
-        let renderer = TextRenderer::default();
-        let text_png = renderer
-            .render_text_to_png_data(wm_text, txt_size, "darkgray")
-            .map_err(|_e| Error::BadParam("could not render text watermark".to_string()))?;
-
-        let wm = open_image_from_bytes(&text_png.data)
-            .map_err(|_e| Error::BadParam("could not open watermark".to_string()))?;
-
-        let wm_h = wm.get_height();
-        let wm_w = wm.get_width();
-
-        let img_h = img.get_height();
-        let img_w = img.get_width();
-
-        if wm_h < img_h - offset && wm_w < img_w {
-            watermark(&mut img, &wm, img_w - wm_w - offset, img_h - wm_h - offset);
-            save_image(img, &image_str);
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "file_io")]
-    #[allow(unused_variables)]
-    fn add_stego(image_path: &Path, stego_msg: &str) -> Result<()> {
-        /*
-        let buf = std::fs::read(image_path)?;
-
-        let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-
-        let mut stego_handler = stego::LSBStego::new(img.clone());
-        let encoded_image = stego_handler.encode_text(stego_msg.to_owned());
-
-        encoded_image.save(image_path).map_err(|_e| Error::BadParam("could not save image".to_string()))?;
-        */
-        Ok(())
-    }
-
-    #[cfg(feature = "file_io")]
-    #[allow(unused_variables)]
-    pub fn get_stego(image_path: &Path) -> Result<String> {
-        /*
-        let buf = std::fs::read(image_path)?;
-
-        let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-
-        let mut stego_handler = stego::LSBStego::new(img);
-        Ok(stego_handler.decode_text())
-        */
-        Ok("steganography disabled".to_owned())
-    }
-
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
@@ -1825,10 +1725,6 @@ impl Store {
         dest_path: &Path,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        // clone the source to working copy if requested
-
-        use crate::assertions::CreativeWork;
-
         // force generate external manifests for unknown types
         let ext = match get_supported_file_extension(dest_path) {
             Some(ext) => ext,
@@ -1839,6 +1735,7 @@ impl Store {
             }
         };
 
+        // clone the source to working copy if requested
         if asset_path != dest_path {
             fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
@@ -1896,28 +1793,6 @@ impl Store {
                 }
             }
         };
-
-        if self.add_watermark && (ext == "jpg" || ext == "png") {
-            self.watermark(&output_path)?;
-            if let Some(cwa) = pc.get_assertion(crate::assertions::CreativeWork::LABEL, 0) {
-                let cw = CreativeWork::from_assertion(cwa)?;
-
-                if let Some(author) = cw.author() {
-                    if !author.is_empty() {
-                        if let Some(a) = author[0].name() {
-                            self.watermark_text(
-                                &output_path,
-                                &format!("Content Credentials produced by: {}", a),
-                            )?;
-                        }
-                    }
-                }
-            }
-            // add steo for PNG
-            if ext == "png" {
-                Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
-            }
-        }
 
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -2180,14 +2055,6 @@ impl Store {
                             }
                         }
                     } else {
-                        // check for stego
-                        if ext == "png" {
-                            if let Ok(stego_msg) = Store::get_stego(in_path) {
-                                if stego_msg.len() < 100 {
-                                    println!("{}", stego_msg);
-                                }
-                            }
-                        }
                         Err(Error::JumbfNotFound)
                     }
                 }
@@ -2469,7 +2336,6 @@ pub mod tests {
 
         // Create claims store.
         let mut store = Store::new();
-        store.enable_watermark();
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -2853,7 +2719,6 @@ pub mod tests {
 
         // Create claims store.
         let mut store = Store::new();
-        store.enable_watermark();
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();

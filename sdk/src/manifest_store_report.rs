@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{collections::HashMap, io::Write};
 
 use atree::{Arena, Token};
 use extfmt::Hexlify;
@@ -55,6 +55,7 @@ impl ManifestStoreReport {
         })
     }
 
+    /// Prints tree view of manifest store
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -92,159 +93,7 @@ impl ManifestStoreReport {
         Ok(())
     }
 
-    pub fn dump_plantuml<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-
-        let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
-            label: "None".to_string(),
-        })?;
-
-        let os_filename = path
-            .as_ref()
-            .file_name()
-            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
-        let asset_name = os_filename.to_string_lossy().into_owned();
-
-        let mut objects: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut connections: Vec<u8> = Vec::new();
-
-        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, true)?;
-
-        fn walk_tree(
-            tree: &Arena<String>,
-            token: &Token,
-            parent: Option<&String>,
-            objects: &mut std::collections::HashSet<String>,
-            connections: &mut Vec<u8>,
-        ) -> Result<()> {
-            // add object
-            objects.insert(tree[*token].data.clone());
-
-            token
-                .children_tokens(tree)
-                .fold(tree[*token].data.clone(), |root, entry_token| {
-                    if entry_token.is_leaf(tree) {
-                        let leaf = &tree[entry_token].data;
-                        if !leaf.starts_with("Assertion:") {
-                            objects.insert(leaf.clone());
-                            writeln!(connections, "{} --> {}", root, leaf).unwrap();
-                        }
-                        root
-                    } else {
-                        let node = &tree[entry_token].data;
-                        objects.insert(node.clone());
-
-                        if !entry_token.is_leaf(tree) {
-                            let _r =
-                                walk_tree(tree, &entry_token, Some(node), objects, connections);
-                        }
-                        if let Some(p) = parent {
-                            let _r = writeln!(connections, "{} --> {}", p, node);
-                        } else {
-                            let _r = writeln!(connections, "{} --> {}", root, node);
-                        }
-
-                        root
-                    }
-                });
-
-            Ok(())
-        }
-
-        match walk_tree(&tree, &root_token, None, &mut objects, &mut connections) {
-            Ok(_) => {
-                let mut output = Vec::new();
-
-                writeln!(&mut output, "@startuml").unwrap();
-                for o in objects {
-                    writeln!(&mut output, "object {}", o).unwrap();
-                }
-                output.append(&mut connections);
-                writeln!(&mut output, "@enduml").unwrap();
-
-                println!(
-                    "Plant UML:\n{}",
-                    String::from_utf8(output).map_err(|_e| crate::Error::BadParam(
-                        "could not generate plant uml".to_string()
-                    ))?
-                );
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    pub fn dump_svg<P: AsRef<Path>>(path: P) -> Result<()> {
-        use layout::{
-            backends::svg::SVGWriter,
-            core::{base::Orientation, geometry::Point, style::*, utils::save_to_file},
-            std_shapes::shapes::*,
-            topo::layout::VisualGraph,
-        };
-        //use layout::topo::placer::Placer;
-
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-
-        let os_filename = path
-            .as_ref()
-            .file_name()
-            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
-        let asset_name = os_filename.to_string_lossy().into_owned();
-
-        fn walk_tree(tree: &Arena<String>, token: &Token, vg: &mut VisualGraph) -> Result<()> {
-            token.children_tokens(tree).fold(
-                vg.add_node(Element::create(
-                    ShapeKind::new_box(&tree[*token].data),
-                    StyleAttr::simple(),
-                    Orientation::LeftToRight,
-                    Point::new(200., 100.),
-                )),
-                |root, entry_token| {
-                    if entry_token.is_leaf(tree) {
-                        let _d = &tree[*token].data;
-                        //let _node = vg.add_node(Element::create(ShapeKind::new_box(&tree[*token].data), StyleAttr::simple(), Orientation::LeftToRight, Point::new(100., 100.)));
-                        root
-                    } else {
-                        let node = vg.add_node(Element::create(
-                            ShapeKind::new_box(&tree[entry_token].data),
-                            StyleAttr::simple(),
-                            Orientation::LeftToRight,
-                            Point::new(200., 100.),
-                        ));
-
-                        let arrow = Arrow::simple("");
-
-                        //walk_tree(tree, &entry_token, vg).unwrap();
-                        vg.add_edge(arrow, root, node);
-                        node
-                    }
-                },
-            );
-
-            Ok(())
-        }
-
-        let mut vg = VisualGraph::new(Orientation::TopToBottom);
-
-        let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
-            label: "None".to_string(),
-        })?;
-
-        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, true)?;
-
-        walk_tree(&tree, &root_token, &mut vg)?;
-
-        let mut svg = SVGWriter::new();
-        vg.do_it(false, false, false, &mut svg);
-
-        match save_to_file("/Users/mfisher/Downloads/graph.svg", &svg.finalize()) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(crate::error::Error::IoError(e)),
-        }
-    }
-
+    /// Prints the certificate chain use to sign the active manifest
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -529,23 +378,6 @@ mod tests {
 
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
-
-    #[test]
-    fn manifest_dump_svg() {
-        let asset_name = "CAIAIIICAICIICAIICICA.jpg";
-        let path = fixture_path(asset_name);
-
-        ManifestStoreReport::dump_svg(path).expect("dump_tree");
-    }
-
-    #[test]
-    fn manifest_dump_plantuml() {
-        let asset_name = "CAIAIIICAICIICAIICICA.jpg";
-        let path = fixture_path(asset_name);
-
-        ManifestStoreReport::dump_plantuml(path).expect("dump_tree");
-    }
-
     #[test]
     fn manifest_dump_certchain() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
