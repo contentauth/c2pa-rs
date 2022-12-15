@@ -1444,8 +1444,10 @@ impl Store {
 
     #[cfg(feature = "file_io")]
     fn watermark(&self, image_path: &Path) -> Result<()> {
-        use photon_rs::multiple::watermark;
-        use photon_rs::native::{open_image, save_image};
+        use photon_rs::{
+            multiple::watermark,
+            native::{open_image, save_image},
+        };
 
         let image_str = image_path.to_string_lossy().into_owned();
 
@@ -1468,8 +1470,10 @@ impl Store {
 
     #[cfg(feature = "file_io")]
     fn watermark_text(&self, image_path: &Path, wm_text: &str) -> Result<()> {
-        use photon_rs::multiple::watermark;
-        use photon_rs::native::{open_image, open_image_from_bytes, save_image};
+        use photon_rs::{
+            multiple::watermark,
+            native::{open_image, open_image_from_bytes, save_image},
+        };
         use text_to_png::TextRenderer;
 
         let offset = 20u32;
@@ -1911,7 +1915,7 @@ impl Store {
             }
             // add steo for PNG
             if ext == "png" {
-                let _r = Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
+                Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
             }
         }
 
@@ -2178,7 +2182,7 @@ impl Store {
                     } else {
                         // check for stego
                         if ext == "png" {
-                            if let Ok(stego_msg) = Store::get_stego(&in_path) {
+                            if let Ok(stego_msg) = Store::get_stego(in_path) {
                                 if stego_msg.len() < 100 {
                                     println!("{}", stego_msg);
                                 }
