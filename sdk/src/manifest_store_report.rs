@@ -376,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn manifest_dump_tree() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
@@ -383,6 +384,7 @@ mod tests {
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
     #[test]
+    #[cfg(feature = "file_io")]
     fn manifest_dump_certchain() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
