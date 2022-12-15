@@ -230,7 +230,6 @@ impl CAILoader for PngIO {
                         0u8;
                         pcp.length as usize
                             - (key.len() + _langtag.len() + _transkey.len() + 5)
-                                as usize
                     ]; // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
                     if asset_reader.read_exact(&mut data).is_err() {
                         return false;

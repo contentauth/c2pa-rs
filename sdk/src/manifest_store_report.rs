@@ -221,7 +221,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
                 "{}\"{}\": \"{}\"{}",
                 &json[..index],
                 tag,
-                base64::encode(&bytes),
+                base64::encode(bytes),
                 &json[index + idx2 + 1..]
             );
         }
