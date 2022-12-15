@@ -815,7 +815,7 @@ mod tests_file_io {
         // std::env::set_var("RUST_LOG", "debug");
         // env_logger::init();
         let ap = fixture_path("Purple Square.psd");
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -829,7 +829,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_manifest_jpg() {
         let ap = fixture_path(MANIFEST_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -845,7 +845,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_no_manifest_jpg() {
         let ap = fixture_path(NO_MANIFEST_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -874,7 +874,7 @@ mod tests_file_io {
         }
 
         let ap = fixture_path(MANIFEST_JPEG);
-        let ingredient = Ingredient::from_file_with_options(&ap, &MyOptions {}).expect("from_file");
+        let ingredient = Ingredient::from_file_with_options(ap, &MyOptions {}).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -891,7 +891,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_png_no_claim() {
         let ap = fixture_path("libpng-test.png");
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -905,7 +905,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_jpg_bad_signature() {
         let ap = fixture_path(BAD_SIGNATURE_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         //println!("ingredient = {}", ingredient);
@@ -926,7 +926,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_jpg_prerelease() {
         let ap = fixture_path(PRERELEASE_JPEG);
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
         println!("ingredient = {}", ingredient);
@@ -946,7 +946,7 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
-        let ingredient = Ingredient::from_file(&ap).expect("from_file");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);
     }

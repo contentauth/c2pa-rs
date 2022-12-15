@@ -436,7 +436,7 @@ pub mod tests {
 
         let png_io = PngIO {};
         let xmp = png_io
-            .read_xmp(&mut std::fs::File::open(&ap).unwrap())
+            .read_xmp(&mut std::fs::File::open(ap).unwrap())
             .unwrap();
 
         // make sure we can parse it
@@ -476,7 +476,7 @@ pub mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
         let png_io = PngIO {};
 
         png_io.remove_cai_store(&output).unwrap();

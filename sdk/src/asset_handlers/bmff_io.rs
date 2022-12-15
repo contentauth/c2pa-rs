@@ -1299,7 +1299,7 @@ pub mod tests {
         if let Ok(temp_dir) = tempdir() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
+            if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
                 //let test_data =  bmff.read_cai_store(&source).unwrap();
@@ -1349,7 +1349,7 @@ pub mod tests {
         if let Ok(temp_dir) = tempdir() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
+            if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
                 if let Ok(source_data) = bmff.read_cai_store(&output) {
@@ -1376,7 +1376,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
         let bmff_io = BmffIO::new("mp4");
 
         bmff_io.remove_cai_store(&output).unwrap();

@@ -82,7 +82,7 @@ mod tests {
     fn sign_and_validate_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -92,7 +92,7 @@ mod tests {
         assert!(signature.len() >= 64);
         assert!(signature.len() <= signer.reserve_size());
 
-        let cert_bytes = std::fs::read(&cert_path).unwrap();
+        let cert_bytes = std::fs::read(cert_path).unwrap();
 
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
@@ -105,7 +105,7 @@ mod tests {
     fn sign_and_validate_es384() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es384, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -115,7 +115,7 @@ mod tests {
         assert!(signature.len() >= 64);
         assert!(signature.len() <= signer.reserve_size());
 
-        let cert_bytes = std::fs::read(&cert_path).unwrap();
+        let cert_bytes = std::fs::read(cert_path).unwrap();
 
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
@@ -128,7 +128,7 @@ mod tests {
     fn sign_and_validate_es512() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es512, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -138,7 +138,7 @@ mod tests {
         assert!(signature.len() >= 64);
         assert!(signature.len() <= signer.reserve_size());
 
-        let cert_bytes = std::fs::read(&cert_path).unwrap();
+        let cert_bytes = std::fs::read(cert_path).unwrap();
 
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
@@ -151,7 +151,7 @@ mod tests {
     fn bad_sig_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -159,7 +159,7 @@ mod tests {
 
         signature.push(10);
 
-        let cert_bytes = std::fs::read(&cert_path).unwrap();
+        let cert_bytes = std::fs::read(cert_path).unwrap();
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
@@ -172,7 +172,7 @@ mod tests {
     fn bad_data_es256() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256, None);
 
         let mut data = b"some sample content to sign".to_vec();
         println!("data len = {}", data.len());
@@ -181,7 +181,7 @@ mod tests {
         data[5] = 10;
         data[6] = 11;
 
-        let cert_bytes = std::fs::read(&cert_path).unwrap();
+        let cert_bytes = std::fs::read(cert_path).unwrap();
         let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 

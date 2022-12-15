@@ -351,7 +351,7 @@ pub mod tests {
             .set_when("2015-06-26T16:43:23+0200")
             .set_parameter(
                 "foo".to_owned(),
-                &r#"{
+                r#"{
                 "left": 0,
                 "right": 2000,
                 "top": 1000,
@@ -360,7 +360,7 @@ pub mod tests {
                 .to_owned(),
             )
             .unwrap()
-            .set_parameter("ingredient".to_owned(), &make_hashed_uri1())
+            .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
             .set_changed(Some(&["this", "that"].to_vec()))
             .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
