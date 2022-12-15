@@ -2330,7 +2330,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_jumbf_generation() {
         // test adding to actual image
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 

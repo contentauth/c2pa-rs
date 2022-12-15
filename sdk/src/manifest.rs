@@ -92,9 +92,6 @@ pub struct Manifest {
 
     #[serde(skip_deserializing, skip_serializing)]
     remote_manifest: Option<RemoteManifest>,
-
-    #[serde(skip_deserializing, skip_serializing)]
-    watermark: bool,
 }
 
 impl Manifest {
@@ -116,12 +113,7 @@ impl Manifest {
             signature_info: None,
             label: None,
             remote_manifest: None,
-            watermark: false,
         }
-    }
-
-    pub fn enable_watermark(&mut self) {
-        self.watermark = true;
     }
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
