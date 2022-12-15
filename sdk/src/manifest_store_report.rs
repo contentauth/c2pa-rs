@@ -383,7 +383,7 @@ mod tests {
 
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
-    
+
     #[test]
     #[cfg(feature = "file_io")]
     fn manifest_dump_certchain() {
