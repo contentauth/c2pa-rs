@@ -569,18 +569,18 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 // internal util function to dump the cert chain in PEM format
 #[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
-    
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut out_buf: Vec<u8> = Vec::new();
 
         for der_bytes in certs {
-            let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+            let c =
+                openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
             let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
-    
+
             out_buf.append(&mut c_pem);
         }
-    
+
         if let Some(op) = output_path {
             std::fs::write(op, &out_buf).map_err(Error::IoError)?;
         }
@@ -589,7 +589,7 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
 
     #[cfg(target_arch = "wasm32")]
     {
-        let out_buf: Vec<u8> = Vec::new();   
+        let out_buf: Vec<u8> = Vec::new();
         Ok(out_buf)
     }
 }
