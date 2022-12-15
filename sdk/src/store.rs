@@ -343,7 +343,7 @@ impl Store {
 
     pub fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
-       
+
         match claim.get_cert_chain() {
             Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
             Err(e) => Err(e),
@@ -1444,8 +1444,10 @@ impl Store {
 
     #[cfg(feature = "file_io")]
     fn watermark(&self, image_path: &Path) -> Result<()> {
-        use photon_rs::multiple::watermark;
-        use photon_rs::native::{open_image, save_image};
+        use photon_rs::{
+            multiple::watermark,
+            native::{open_image, save_image},
+        };
 
         let image_str = image_path.to_string_lossy().into_owned();
 
@@ -1468,16 +1470,18 @@ impl Store {
 
     #[cfg(feature = "file_io")]
     fn watermark_text(&self, image_path: &Path, wm_text: &str) -> Result<()> {
-        use photon_rs::multiple::watermark;
-        use photon_rs::native::{open_image, open_image_from_bytes, save_image};
+        use photon_rs::{
+            multiple::watermark,
+            native::{open_image, open_image_from_bytes, save_image},
+        };
         use text_to_png::TextRenderer;
 
         let offset = 20u32;
         let image_str = image_path.to_string_lossy().into_owned();
 
         let mut img = open_image(&image_str)
-        .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
-  
+            .map_err(|_e| Error::BadParam("could not open image".to_string()))?;
+
         let txt_size = img.get_height() * 3 / 100;
 
         let renderer = TextRenderer::default();
@@ -1485,7 +1489,7 @@ impl Store {
             .render_text_to_png_data(wm_text, txt_size, "darkgray")
             .map_err(|_e| Error::BadParam("could not render text watermark".to_string()))?;
 
-         let wm = open_image_from_bytes(&text_png.data)
+        let wm = open_image_from_bytes(&text_png.data)
             .map_err(|_e| Error::BadParam("could not open watermark".to_string()))?;
 
         let wm_h = wm.get_height();
@@ -1502,11 +1506,10 @@ impl Store {
         Ok(())
     }
 
-
     #[cfg(feature = "file_io")]
     #[allow(unused_variables)]
     fn add_stego(image_path: &Path, stego_msg: &str) -> Result<()> {
-        /* 
+        /*
         let buf = std::fs::read(image_path)?;
 
         let img = image::load_from_memory(&buf).map_err(|_e| Error::BadParam("could not open image".to_string()))?;
@@ -1532,7 +1535,7 @@ impl Store {
         */
         Ok("steganography disabled".to_owned())
     }
-    
+
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
@@ -1908,7 +1911,7 @@ impl Store {
             }
             // add steo for PNG
             if ext == "png" {
-                 let _r = Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
+                Store::add_stego(&output_path, "File contained Content Authenticity which may be recovered at: https://verify.contentauthenticity.org/inspect")?;
             }
         }
 
@@ -2167,7 +2170,7 @@ impl Store {
                     } else {
                         // check for stego
                         if ext == "png" {
-                            if let Ok(stego_msg) = Store::get_stego(&in_path) {
+                            if let Ok(stego_msg) = Store::get_stego(in_path) {
                                 if stego_msg.len() < 100 {
                                     println!("{}", stego_msg);
                                 }

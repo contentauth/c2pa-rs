@@ -16,7 +16,6 @@ use std::path::Path;
 use std::{collections::HashMap, io::Write};
 
 use atree::{Arena, Token};
-
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,8 +63,11 @@ impl ManifestStoreReport {
             label: "None".to_string(),
         })?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
-        let asset_name = os_filename.to_string_lossy().to_owned();
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().into_owned();
 
         let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, false)?;
         fn walk_tree(tree: &Arena<String>, token: &Token) -> treeline::Tree<String> {
@@ -98,8 +100,11 @@ impl ManifestStoreReport {
             label: "None".to_string(),
         })?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
-        let asset_name = os_filename.to_string_lossy().to_owned();
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().into_owned();
 
         let mut objects: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut connections: Vec<u8> = Vec::new();
@@ -171,20 +176,22 @@ impl ManifestStoreReport {
     }
 
     pub fn dump_svg<P: AsRef<Path>>(path: P) -> Result<()> {
-        use layout::backends::svg::SVGWriter;
-        use layout::core::base::Orientation;
-        use layout::core::geometry::Point;
-        use layout::core::style::*;
-        use layout::core::utils::save_to_file;
-        use layout::std_shapes::shapes::*;
-        use layout::topo::layout::VisualGraph;
+        use layout::{
+            backends::svg::SVGWriter,
+            core::{base::Orientation, geometry::Point, style::*, utils::save_to_file},
+            std_shapes::shapes::*,
+            topo::layout::VisualGraph,
+        };
         //use layout::topo::placer::Placer;
 
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
-        let os_filename = path.as_ref().file_name().ok_or(crate::Error::BadParam("bad filename".to_string()))?;
-        let asset_name = os_filename.to_string_lossy().to_owned();
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().into_owned();
 
         fn walk_tree(tree: &Arena<String>, token: &Token, vg: &mut VisualGraph) -> Result<()> {
             token.children_tokens(tree).fold(
@@ -519,7 +526,7 @@ mod tests {
     fn manifest_dump_tree() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
     }
 
@@ -527,7 +534,7 @@ mod tests {
     fn manifest_dump_svg() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_svg(path).expect("dump_tree");
     }
 
@@ -535,7 +542,7 @@ mod tests {
     fn manifest_dump_plantuml() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_plantuml(path).expect("dump_tree");
     }
 
@@ -543,7 +550,7 @@ mod tests {
     fn manifest_dump_certchain() {
         let asset_name = "CAIAIIICAICIICAIICICA.jpg";
         let path = fixture_path(asset_name);
-       
+
         ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
     }
 }
