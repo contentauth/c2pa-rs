@@ -335,6 +335,7 @@ impl Store {
         placeholder
     }
 
+    /// Return certificate chain for the provenance claim
     pub fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
