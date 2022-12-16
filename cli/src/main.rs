@@ -75,7 +75,7 @@ struct CliArgs {
 
     /// The path to an asset to examine or embed a manifest into.
     #[structopt(parse(from_os_str))]
-    path: PathBuf,
+    path: Vec<PathBuf>,
 
     #[structopt(
         short = "r",
@@ -120,8 +120,8 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
-    if args.info && args.path.exists() {
-        return info(&args.path);
+    if args.info && !args.path.is_empty() {
+        return info(&args.path[0]);
     }
 
     // get manifest config from either the -manifest option or the -config option
@@ -142,16 +142,17 @@ fn main() -> Result<()> {
             manifest_config.parent = Some(parent_path)
         }
 
+        for path in args.path {
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
         // note: This could be treated as an update manifest eventually since the image is the same
-        let source_ingredient = c2pa::Ingredient::from_file(&args.path)?;
+        let source_ingredient = c2pa::Ingredient::from_file(&path)?;
         if source_ingredient.manifest_data().is_some() && manifest_config.parent.is_none() {
-            manifest_config.parent = Some(std::fs::canonicalize(&args.path)?);
+            manifest_config.parent = Some(std::fs::canonicalize(&path)?);
         }
 
         let mut manifest = manifest_config.to_manifest()?;
 
-        if let Some(remote) = args.remote {
+        if let Some(ref remote) = args.remote {
             if args.sidecar {
                 manifest.set_embedded_manifest_with_remote_ref(remote);
             } else {
@@ -161,8 +162,8 @@ fn main() -> Result<()> {
             manifest.set_sidecar_manifest();
         }
 
-        if let Some(output) = args.output {
-            if output.extension() != args.path.extension() {
+        if let Some(ref output) = args.output {
+            if output.extension() != path.extension() {
                 bail!("output type must match source type");
             }
             if output.exists() && !args.force {
@@ -184,18 +185,21 @@ fn main() -> Result<()> {
             let signer = get_c2pa_signer(&manifest_config)?;
 
             manifest
-                .embed(&args.path, &output, signer.as_ref())
+                .embed(&path, &output, signer.as_ref())
                 .context("embedding manifest")?;
 
             // generate a report on the output file
-            println!("{}", report_from_path(&output, args.detailed)?);
+            match report_from_path(&output, args.detailed) {
+                Ok(result) => println!("{result}"),
+                Err(err) => println!("{err}"),
+            }
+            //println!("{}", report_from_path(&output, args.detailed)?);
         } else if args.detailed {
             bail!("detailed report not supported for preview");
         } else {
             // normally the output file provides the title, format and other manifest fields
             // since there is no output file, gather some information from the source
-            if let Some(extension) = args
-                .path
+            if let Some(extension) = path
                 .extension()
                 .map(|e| e.to_string_lossy().to_string())
             {
@@ -212,6 +216,7 @@ fn main() -> Result<()> {
             }
             println!("{}", ManifestStore::from_manifest(&manifest)?)
         }
+        }
     } else if let Some(output) = args.output {
         if output.exists() {
             if args.force {
@@ -220,15 +225,22 @@ fn main() -> Result<()> {
                 bail!("Output already exists, use -f/force to force write");
             }
         }
-
-        fs_report::write_report_for_path(&args.path, &output, args.detailed)?;
-        println!("Manifest report written to the directory {:?}", &output);
+        for path in args.path {
+            //let manifest_path = output.join()
+            fs_report::write_report_for_path(&path, &output, args.detailed)?;
+            println!("Manifest report written to the directory {:?}", &output);
+        }
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() || args.force {
         bail!("manifest definition required with these options or flags")
     } else {
         // let extension = path.extension().and_then(|p| p.to_str()).unwrap_or("");
         // just report from file if no manifest configuration given
-        println!("{}", report_from_path(&args.path, args.detailed)?);
+        for path in args.path {
+            match report_from_path(&path, args.detailed) {
+                Ok(result) => println!("{path:?}:\n{result}"),
+                Err(err) => println!("{path:?}: {err}"),
+            }
+        }
     }
     Ok(())
 }
