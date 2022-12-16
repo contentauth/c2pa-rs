@@ -23,7 +23,6 @@ use c2pa::{
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
     SigningAlg,
 };
-use image::GenericImageView;
 use nom::AsBytes;
 use serde::Deserialize;
 use twoway::find_bytes;
@@ -218,14 +217,13 @@ impl MakeTestImages {
                 let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
 
                 actions = actions.add_action(
-                    Action::new(c2pa_action::OPENED)
-                        .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
+                    Action::new(c2pa_action::OPENED).set_instance_id(parent.instance_id()),
                 );
                 manifest.set_parent(parent)?;
 
                 // load the image for editing
                 let mut img =
-                    image::open(&src_path).context(format!("opening parent {:?}", src_path))?;
+                    image::open(src_path).context(format!("opening parent {:?}", src_path))?;
 
                 // adjust brightness to show we made an edit
                 img = img.brighten(30);
@@ -272,21 +270,19 @@ impl MakeTestImages {
 
                 // get the bits of the ingredient, resize it and overlay it on the base image
                 let img_ingredient =
-                    image::open(&ing_path).context(format!("opening ingredient {:?}", ing_path))?;
+                    image::open(ing_path).context(format!("opening ingredient {:?}", ing_path))?;
                 let img_small = img_ingredient.thumbnail(width, height);
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
                 // create and add the ingredient
                 let ingredient =
                     Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
-                actions =
-                    actions.add_action(Action::new(c2pa_action::PLACED).set_parameter(
-                        "identifier".to_owned(),
-                        ingredient.instance_id().to_owned(),
-                    )?);
+                actions = actions.add_action(
+                    Action::new(c2pa_action::PLACED).set_instance_id(ingredient.instance_id()),
+                );
                 manifest.add_ingredient(ingredient);
 
-                x += width;
+                x += width as i64;
             }
             // record what we did as an action (only need to record this once)
             actions = actions.add_action(Action::new(c2pa_action::RESIZED));
@@ -316,8 +312,8 @@ impl MakeTestImages {
         let jumbf = jumbf_io::load_jumbf_from_file(&PathBuf::from(src_path))
             .context(format!("loading OGP {:?}", src_path))?;
         // save the edited image to our destination file
-        let mut img = image::open(&Path::new(src_path))
-            .context(format!("loading OGP image{:?}", src_path))?;
+        let mut img =
+            image::open(Path::new(src_path)).context(format!("loading OGP image{:?}", src_path))?;
         img = img.grayscale();
         img.save(&dst_path)
             .context(format!("saving OGP image{:?}", &dst_path))?;

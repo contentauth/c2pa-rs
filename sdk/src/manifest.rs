@@ -20,8 +20,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-#[cfg(feature = "file_io")]
-use crate::Signer;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
@@ -33,6 +31,8 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
+#[cfg(feature = "sign")]
+use crate::{asset_io::CAIReadWrite, Signer};
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
 use crate::{AsyncSigner, RemoteSigner};
 
@@ -364,7 +364,6 @@ impl Manifest {
     }
 
     /// Retrieves an assertion by label and instance if it exists or Error::NotFound
-    ///
     pub fn find_assertion_with_instance<T: DeserializeOwned>(
         &self,
         label: &str,
@@ -381,9 +380,9 @@ impl Manifest {
         }
     }
 
-    // keep this private until we support it externally
-    #[allow(dead_code)]
-    pub(crate) fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
+    /// Redacts an assertion from the parent [Ingredient] of this manifest using the provided
+    /// assertion label.
+    pub fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
         // todo: any way to verify if this assertion exists in the parent claim here?
         match self.redactions.as_mut() {
             Some(redactions) => redactions.push(label.into()),
@@ -597,9 +596,13 @@ impl Manifest {
             }
         }
 
+        let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
-            ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            ingredient_map.insert(
+                ingredient.instance_id(),
+                ingredient.add_to_claim(&mut claim, self.redactions.clone())?,
+            );
         }
 
         let salt = DefaultSalt::default();
@@ -608,9 +611,33 @@ impl Manifest {
         for manifest_assertion in &self.assertions {
             match manifest_assertion.label() {
                 Actions::LABEL => {
-                    let actions: Actions = manifest_assertion.to_assertion()?;
-                    // todo: fixup parameters field from instance_id to ingredient uri for
-                    // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
+                    let mut actions: Actions = manifest_assertion.to_assertion()?;
+
+                    // fixup parameters field from instance_id to ingredient uri
+                    let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
+                        .actions()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, a)| {
+                            if a.instance_id().is_some() && a.get_parameter("ingredient").is_none()
+                            {
+                                Some((i, a.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    for (index, action) in needs_ingredient {
+                        if let Some(id) = action.instance_id() {
+                            if let Some(hash_url) = ingredient_map.get(id) {
+                                let update =
+                                    action.set_parameter("ingredient", hash_url.clone())?;
+                                actions = actions.update_action(index, update);
+                            }
+                        }
+                    }
+
                     claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
@@ -748,6 +775,53 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the bytes of the  manifest that was embedded
+    #[cfg(feature = "sign")]
+    pub fn embed_from_memory(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // first make a copy of the asset that will contain our modified result
+        // todo:: see if we can pass a trait with to_vec support like we to for Strings
+        let asset = asset.to_vec();
+        let mut stream = std::io::Cursor::new(asset);
+        self.embed_stream(format, &mut stream, signer)?;
+        Ok(stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the bytes of the  manifest that was embedded
+    #[cfg(feature = "sign")]
+    pub fn embed_stream(
+        &mut self,
+        format: &str,
+        stream: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        self.set_format(format);
+        // todo:: read instance_id from xmp from stream
+        self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+
+        // generate thumbnail if we don't already have one
+        if self.thumbnail().is_none() {
+            #[cfg(feature = "add_thumbnails")]
+            if let Ok((format, image)) =
+                crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+            {
+                self.set_thumbnail(format, image);
+            }
+        }
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        store.save_to_stream(format, stream, signer)
+    }
+
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
     #[cfg(feature = "async_signer")]
@@ -810,19 +884,21 @@ pub(crate) mod tests {
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
 
+    #[cfg(feature = "sign")]
+    use crate::utils::test::temp_signer;
+    #[cfg(feature = "file_io")]
+    use crate::{
+        assertions::labels::ACTIONS,
+        error::Error,
+        status_tracker::{DetailedStatusTracker, StatusTracker},
+        store::Store,
+        utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
+        validation_status, Ingredient,
+    };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         utils::test::TEST_VC,
         Manifest, Result,
-    };
-    #[cfg(feature = "file_io")]
-    use crate::{
-        status_tracker::{DetailedStatusTracker, StatusTracker},
-        store::Store,
-        utils::test::{
-            fixture_path, temp_dir_path, temp_fixture_path, temp_signer, TEST_SMALL_JPEG,
-        },
-        validation_status, Ingredient,
     };
 
     // example of random data structure as an assertion
@@ -1015,11 +1091,6 @@ pub(crate) mod tests {
             .set_parent(Ingredient::from_file(&output).expect("from_file"))
             .expect("set_parent");
 
-        // todo: add a test to validate that actions assertions cannot be redacted
-        // let mut actions = Actions::new();
-        // actions.add_action(Action::new(C2PA_ACTION_EDITED).parameters("gaussian_blur"));
-        // ws.add_assertion("c2pa.actions", &actions).expect("add_assertion"); // must use .get() with Actions
-
         // redact the assertion
         manifest2
             .add_redaction(ASSERTION_LABEL)
@@ -1044,6 +1115,45 @@ pub(crate) mod tests {
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
         assert!(claim1.get_claim_assertion(redacted_uri, 0).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_action_assertion_redaction_error() {
+        let temp_dir = tempdir().expect("temp dir");
+        let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        // Create parent with a c2pa_action type assertion.
+        let mut parent_manifest = test_manifest();
+        let actions = Actions::new().add_action(
+            Action::new(c2pa_action::FILTERED)
+                .set_parameter("name".to_owned(), "gaussian blur")
+                .unwrap()
+                .set_when("2015-06-26T16:43:23+0200"),
+        );
+        parent_manifest
+            .add_assertion(&actions)
+            .expect("add_assertion");
+
+        let signer = temp_signer();
+        parent_manifest
+            .embed(&parent_output, &parent_output, &signer)
+            .expect("embed");
+
+        // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
+        let mut manifest = test_manifest();
+        manifest
+            .set_parent(Ingredient::from_file(&parent_output).expect("from_file"))
+            .expect("set_parent");
+        assert!(manifest.add_redaction(ACTIONS).is_ok());
+
+        // Attempt embedding the manifest with the invalid redaction.
+        let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+        let embed_result = manifest.embed(&redact_output, &redact_output, &signer);
+        assert!(matches!(
+            embed_result.err().unwrap(),
+            Error::AssertionInvalidRedaction
+        ));
     }
 
     #[test]
@@ -1096,7 +1206,7 @@ pub(crate) mod tests {
 
         #[async_trait::async_trait]
         impl crate::signer::RemoteSigner for MyRemoteSigner {
-            async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+            async fn sign_remote(&self, claim_bytes: &[u8]) -> Result<Vec<u8>> {
                 let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(
                     crate::SigningAlg::Ps256,
                 );
@@ -1164,12 +1274,52 @@ pub(crate) mod tests {
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store =
-            crate::ManifestStore::from_bytes("c2pa", c2pa_data, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("c2pa", &c2pa_data, true).expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
+    }
+
+    #[test]
+    #[cfg(feature = "sign")]
+    fn test_embed_stream() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image.to_vec());
+        // let mut image = image.to_vec();
+        // let mut stream = std::io::Cursor::new(image.as_mut_slice());
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        manifest
+            .embed_stream("jpeg", &mut stream, &signer)
+            .expect("embed_stream");
+
+        // get the updated image
+        let image = stream.into_inner();
+
+        let manifest_store =
+            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "EmbedStream"
+        );
+        #[cfg(feature = "add_thumbnails")]
+        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+
+        println!("{}", manifest_store);
     }
 
     #[cfg(feature = "file_io")]

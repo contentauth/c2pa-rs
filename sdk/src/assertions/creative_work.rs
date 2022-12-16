@@ -63,7 +63,7 @@ impl CreativeWork {
     }
 
     pub fn set_author(self, author: &[SchemaDotOrgPerson]) -> Result<Self> {
-        self.insert(CW_AUTHOR.to_owned(), &author)
+        self.insert(CW_AUTHOR.to_owned(), author)
     }
 
     pub fn add_author(self, author: SchemaDotOrgPerson) -> Result<Self> {
