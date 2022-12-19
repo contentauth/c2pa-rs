@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.16.1
+_19 December 2022_
+
+* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
+* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
+
 ## 0.16.0
 _03 December 2022_
 

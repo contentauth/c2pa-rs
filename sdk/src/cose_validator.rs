@@ -1080,16 +1080,16 @@ pub mod tests {
         let mut validation_log = DetailedStatusTracker::new();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(&cert_path).unwrap();
+        let es256_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(&cert_path).unwrap();
+        let es384_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(&cert_path).unwrap();
+        let es512_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
+        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
