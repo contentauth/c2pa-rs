@@ -221,7 +221,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
                 "{}\"{}\": \"{}\"{}",
                 &json[..index],
                 tag,
-                base64::encode(&bytes),
+                base64::encode(bytes),
                 &json[index + idx2 + 1..]
             );
         }
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn manifest_store_report() {
         let path = fixture_path("CIE-sig-CA.jpg");
-        let report = ManifestStoreReport::from_file(&path).expect("load_from_asset");
+        let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
         println!("{}", report);
     }
 }

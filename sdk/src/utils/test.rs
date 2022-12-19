@@ -175,7 +175,7 @@ pub fn temp_dir_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
     let fixture_src = fixture_path(file_name);
     let fixture_copy = temp_dir_path(temp_dir, file_name);
-    std::fs::copy(&fixture_src, &fixture_copy).unwrap();
+    std::fs::copy(fixture_src, &fixture_copy).unwrap();
     fixture_copy
 }
 

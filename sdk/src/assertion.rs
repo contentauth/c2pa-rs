@@ -170,10 +170,10 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
     }
 }
 
-/// Assertion data as binary cbor or json depending upon
+/// Assertion data as binary CBOR or JSON depending upon
 /// the Assertion type (see spec).
-/// for Json assertions the data is a Json string and Vec<u8> for
-/// binary data and json data to be cbor encoded.
+/// For JSON assertions the data is a JSON string and a Vec of u8 values for
+/// binary data and JSON data to be CBOR encoded.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 pub enum AssertionData {
     Json(String),          // json encoded data

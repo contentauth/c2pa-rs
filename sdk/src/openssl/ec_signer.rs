@@ -203,7 +203,7 @@ mod tests {
     fn es256_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (signer, _) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -218,7 +218,7 @@ mod tests {
     fn es384_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let (signer, _) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es384, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
@@ -233,7 +233,7 @@ mod tests {
     fn es512_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let (signer, _) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es512, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());

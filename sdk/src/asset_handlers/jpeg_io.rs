@@ -491,7 +491,7 @@ pub mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
         let jpeg_io = JpegIO {};
 
         jpeg_io.remove_cai_store(&output).unwrap();

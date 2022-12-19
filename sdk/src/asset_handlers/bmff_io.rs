@@ -916,7 +916,7 @@ impl AssetIO for BmffIO {
         let root_box = BoxInfo {
             path: "".to_string(),
             offset: 0,
-            size: size as u64,
+            size,
             box_type: BoxType::Empty,
             parent: None,
             user_type: None,
@@ -928,13 +928,7 @@ impl AssetIO for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(
-            &mut input,
-            size as u64,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-        )?;
+        build_bmff_tree(&mut input, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
         // get ftyp location
         // start after ftyp
@@ -1019,7 +1013,7 @@ impl AssetIO for BmffIO {
                 let root_box = BoxInfo {
                     path: "".to_string(),
                     offset: 0,
-                    size: size as u64,
+                    size,
                     box_type: BoxType::Empty,
                     parent: None,
                     user_type: None,
@@ -1035,7 +1029,7 @@ impl AssetIO for BmffIO {
                 temp_file.seek(SeekFrom::Start(0))?;
                 build_bmff_tree(
                     &mut temp_file,
-                    size as u64,
+                    size,
                     &mut output_bmff_tree,
                     &root_token,
                     &mut output_bmff_map,
@@ -1076,7 +1070,7 @@ impl AssetIO for BmffIO {
         let root_box = BoxInfo {
             path: "".to_string(),
             offset: 0,
-            size: size as u64,
+            size,
             box_type: BoxType::Empty,
             parent: None,
             user_type: None,
@@ -1088,13 +1082,7 @@ impl AssetIO for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(
-            &mut input,
-            size as u64,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-        )?;
+        build_bmff_tree(&mut input, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
@@ -1156,7 +1144,7 @@ impl AssetIO for BmffIO {
                 let root_box = BoxInfo {
                     path: "".to_string(),
                     offset: 0,
-                    size: size as u64,
+                    size,
                     box_type: BoxType::Empty,
                     parent: None,
                     user_type: None,
@@ -1172,7 +1160,7 @@ impl AssetIO for BmffIO {
                 temp_file.seek(SeekFrom::Start(0))?;
                 build_bmff_tree(
                     &mut temp_file,
-                    size as u64,
+                    size,
                     &mut output_bmff_tree,
                     &root_token,
                     &mut output_bmff_map,
@@ -1211,7 +1199,7 @@ impl AssetPatch for BmffIO {
         let root_box = BoxInfo {
             path: "".to_string(),
             offset: 0,
-            size: size as u64,
+            size,
             box_type: BoxType::Empty,
             parent: None,
             user_type: None,
@@ -1223,13 +1211,7 @@ impl AssetPatch for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(
-            &mut asset,
-            size as u64,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-        )?;
+        build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
@@ -1261,7 +1243,7 @@ impl AssetPatch for BmffIO {
             let new_c2pa_box_size = new_c2pa_box.len();
 
             if new_c2pa_box_size as u64 == manifest_length {
-                asset.seek(SeekFrom::Start(c2pa_start as u64))?;
+                asset.seek(SeekFrom::Start(c2pa_start))?;
                 asset.write_all(&new_c2pa_box)?;
                 Ok(())
             } else {
@@ -1317,7 +1299,7 @@ pub mod tests {
         if let Ok(temp_dir) = tempdir() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
+            if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
                 //let test_data =  bmff.read_cai_store(&source).unwrap();
@@ -1367,7 +1349,7 @@ pub mod tests {
         if let Ok(temp_dir) = tempdir() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-            if let Ok(_size) = std::fs::copy(&source, &output) {
+            if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
                 if let Ok(source_data) = bmff.read_cai_store(&output) {
@@ -1394,7 +1376,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
         let bmff_io = BmffIO::new("mp4");
 
         bmff_io.remove_cai_store(&output).unwrap();

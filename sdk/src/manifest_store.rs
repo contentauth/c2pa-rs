@@ -228,7 +228,7 @@ impl std::fmt::Display for ManifestStore {
                         "{}\"{}\": \"{}\"{}",
                         &json[..index],
                         tag,
-                        base64::encode(&bytes),
+                        base64::encode(bytes),
                         &json[index + idx2 + 1..]
                     );
                 }

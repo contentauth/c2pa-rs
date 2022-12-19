@@ -202,7 +202,7 @@ pub trait BMFFBox: Any {
         let mut size = if self.box_type() != b"    " { 8 } else { 0 };
         size += self.box_payload_size()?;
 
-        Ok(size as u32)
+        Ok(size)
     }
 
     /// Payload size of the box.

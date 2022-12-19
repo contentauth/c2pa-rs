@@ -230,7 +230,6 @@ impl CAILoader for PngIO {
                         0u8;
                         pcp.length as usize
                             - (key.len() + _langtag.len() + _transkey.len() + 5)
-                                as usize
                     ]; // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
                     if asset_reader.read_exact(&mut data).is_err() {
                         return false;
@@ -437,7 +436,7 @@ pub mod tests {
 
         let png_io = PngIO {};
         let xmp = png_io
-            .read_xmp(&mut std::fs::File::open(&ap).unwrap())
+            .read_xmp(&mut std::fs::File::open(ap).unwrap())
             .unwrap();
 
         // make sure we can parse it
@@ -477,7 +476,7 @@ pub mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
         let png_io = PngIO {};
 
         png_io.remove_cai_store(&output).unwrap();

@@ -983,7 +983,7 @@ pub(crate) mod tests {
         let ap = fixture_path(TEST_SMALL_JPEG);
         let temp_dir = tempdir().expect("temp dir");
         let test_output = temp_dir_path(&temp_dir, "ws_bad_assertion.jpg");
-        std::fs::copy(&ap, &test_output).expect("copy");
+        std::fs::copy(ap, test_output).expect("copy");
 
         let mut manifest = test_manifest();
 

@@ -1521,7 +1521,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 
@@ -1543,7 +1543,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 
