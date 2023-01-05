@@ -262,7 +262,7 @@ impl MakeTestImages {
                 0 | 1 => img.width() / 2,
                 _ => img.width() / ing_vec.len() as u32,
             };
-            let height = img.height() as u32 / 2;
+            let height = img.height() / 2;
 
             let mut x = 0;
             for ing in ing_vec {
@@ -361,7 +361,7 @@ impl MakeTestImages {
             _ => panic!("bad parameter"),
         };
 
-        std::fs::copy(&self.make_path(src), &dst_path).context("copying for make_err")?;
+        std::fs::copy(self.make_path(src), &dst_path).context("copying for make_err")?;
 
         Self::patch_file(&dst_path, search_bytes, replace_bytes)
             .context(format!("patching {}", op))?;
@@ -394,7 +394,7 @@ impl MakeTestImages {
                 "copy" => self.make_copy(recipe)?,
                 _ => return Err(Error::BadParam(recipe.op.to_string()).into()),
             };
-            let manifest_store = ManifestStore::from_file(&dst_path);
+            let manifest_store = ManifestStore::from_file(dst_path);
 
             if recipe.op.as_str() != "copy" {
                 println!("{}", manifest_store?);

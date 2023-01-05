@@ -114,7 +114,7 @@ mod tests {
     fn ed25519_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let (signer, _) = temp_signer::get_ed_signer(cert_dir, SigningAlg::Ed25519, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());
