@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
-    asset_store::{skip_serializing_thumbnails, AssetMap, AssetRef, AssetStore},
+    asset_store::{skip_serializing_thumbnails, AssetRef, AssetThing},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -91,7 +91,7 @@ pub struct Manifest {
     /// container for binary assets (like thumbnails)
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    assets: AssetMap,
+    assets: AssetThing,
 }
 
 impl Manifest {
@@ -113,7 +113,7 @@ impl Manifest {
             signature_info: None,
             label: None,
             remote_manifest: None,
-            assets: AssetMap::new(),
+            assets: AssetThing::default(),
         }
     }
 

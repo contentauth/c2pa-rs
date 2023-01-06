@@ -33,7 +33,10 @@ use crate::{
     validation_status::{self, ValidationStatus},
 };
 #[cfg(feature = "file_io")]
-use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
+use crate::{
+    asset_store::AssetFolder, error::wrap_io_err, validation_status::status_for_store,
+    xmp_inmemory_utils::XmpInfo,
+};
 #[derive(Debug, Deserialize, Serialize)]
 /// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
@@ -136,6 +139,13 @@ impl Ingredient {
             manifest_data: None,
             assets: AssetThing::default(),
         }
+    }
+
+    /// Changes the Ingredient to have folder based assets
+    #[cfg(feature = "file_io")]
+    pub fn with_path<P: AsRef<Path>>(&mut self, path: P) -> &mut Self {
+        self.assets = AssetThing::AssetFolder(AssetFolder::new(path));
+        self
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -963,6 +973,16 @@ mod tests_file_io {
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
+        println!("ingredient = {}", ingredient);
+        assert_eq!(ingredient.validation_status(), None);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_jpg_with_path() {
+        let ap = fixture_path("CIE-sig-CA.jpg");
+        let mut ingredient = Ingredient::from_file(ap).expect("from_file");
+        ingredient.with_path("target");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);
     }

@@ -20,7 +20,7 @@ use crate::{Error, Result};
 /// Function that is used by serde to determine whether or not we should serialize
 /// thumbnail data based on the `serialize_thumbnails` flag.
 /// (Serialization is disabled by default.)
-pub(crate) fn skip_serializing_thumbnails(_: &AssetMap) -> bool {
+pub(crate) fn skip_serializing_thumbnails(_: &AssetThing) -> bool {
     !cfg!(feature = "serialize_thumbnails")
 }
 
@@ -74,20 +74,24 @@ impl AssetStore for AssetMap {
     }
 }
 
+#[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 #[derive(Debug, Default, Serialize)]
+#[cfg(feature = "file_io")]
 pub(crate) struct AssetFolder {
     base_path: PathBuf,
 }
 
+#[cfg(feature = "file_io")]
 impl AssetFolder {
-    pub fn _new<P: AsRef<Path>>(base_path: P) -> Self {
+    pub fn new<P: AsRef<Path>>(base_path: P) -> Self {
         Self {
             base_path: PathBuf::from(base_path.as_ref()),
         }
     }
 }
 
+#[cfg(feature = "file_io")]
 impl AssetStore for AssetFolder {
     fn add(&mut self, value: Vec<u8>) -> Result<String> {
         let id = uuid_b64::UuidB64::new().to_string();
@@ -105,18 +109,24 @@ impl AssetStore for AssetFolder {
 #[derive(Debug, Serialize)]
 pub(crate) enum AssetThing {
     AssetMap(AssetMap),
+    #[cfg(feature = "file_io")]
+    AssetFolder(AssetFolder),
 }
 
 impl AssetThing {
     pub fn get(&self, id: &str) -> Result<Cow<[u8]>> {
         match self {
             Self::AssetMap(m) => m.get(id),
+            #[cfg(feature = "file_io")]
+            Self::AssetFolder(m) => m.get(id),
         }
     }
 
     pub fn add(&mut self, value: Vec<u8>) -> Result<String> {
         match self {
             Self::AssetMap(m) => m.add(value),
+            #[cfg(feature = "file_io")]
+            Self::AssetFolder(m) => m.add(value),
         }
     }
 }
@@ -128,6 +138,7 @@ impl Default for AssetThing {
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
@@ -135,9 +146,10 @@ pub mod tests {
     use super::*;
 
     #[test]
+
     fn asset_folder() {
         const DATA: &[u8] = b"foo";
-        let mut af = AssetFolder::_new("../target/tmp");
+        let mut af = AssetFolder::new("../target/tmp");
         let id = af.add(DATA.to_vec()).expect("add");
         let foo = af.get(&id).expect("get");
         assert_eq!(Cow::Borrowed(DATA), foo)
