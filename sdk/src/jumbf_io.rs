@@ -30,7 +30,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 24] = [
+static SUPPORTED_TYPES: [&str; 27] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -55,7 +55,7 @@ static SUPPORTED_TYPES: [&str; 24] = [
     "application/font-sfnt",
     "otf",
     "ttf",
-    "font/ttf"
+    "font/ttf",
     "image/tiff",
     "image/dng",
 ];

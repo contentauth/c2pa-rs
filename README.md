@@ -62,6 +62,8 @@ If you want to support OTF font files, add the `otf` dependency to your `Cargo.t
 c2pa = {version = "0.11.0", features = ["otf"] }
 ```
 
+NOTE: Font support is early in stages and currently only considered a proof of concept for now, utilizing the `'name'` table as a temporary placeholder.
+
 ## Crate features
 
 The Rust SDK crate provides:
