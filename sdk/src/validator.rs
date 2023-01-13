@@ -22,7 +22,8 @@ pub struct ValidationInfo {
     pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
     pub issuer_org: Option<String>,
-    pub validated: bool, // claim signature is valid
+    pub validated: bool,     // claim signature is valid
+    pub cert_chain: Vec<u8>, // certificate chain used to validate signature
 }
 
 /// Trait to support validating a signature against the provided data
