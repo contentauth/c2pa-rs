@@ -115,7 +115,6 @@ impl Manifest {
             remote_manifest: None,
         }
     }
-
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
@@ -851,6 +850,11 @@ impl Manifest {
         store
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await
+    }
+    #[cfg(feature = "file_io")]
+    pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
+        use crate::jumbf_io::remove_jumbf_from_file;
+        remove_jumbf_from_file(asset_path.as_ref())
     }
 }
 

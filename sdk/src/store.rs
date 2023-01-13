@@ -335,6 +335,16 @@ impl Store {
         placeholder
     }
 
+    /// Return certificate chain for the provenance claim
+    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+        let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
+
+        match claim.get_cert_chain() {
+            Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Sign the claim and return signature.
     #[cfg(feature = "sign")]
     pub fn sign_claim(
@@ -1716,8 +1726,6 @@ impl Store {
         dest_path: &Path,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        // clone the source to working copy if requested
-
         // force generate external manifests for unknown types
         let ext = match get_supported_file_extension(dest_path) {
             Some(ext) => ext,
@@ -1728,6 +1736,7 @@ impl Store {
             }
         };
 
+        // clone the source to working copy if requested
         if asset_path != dest_path {
             fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
