@@ -143,79 +143,76 @@ fn main() -> Result<()> {
         }
 
         for path in args.path {
-        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-        // note: This could be treated as an update manifest eventually since the image is the same
-        let source_ingredient = c2pa::Ingredient::from_file(&path)?;
-        if source_ingredient.manifest_data().is_some() && manifest_config.parent.is_none() {
-            manifest_config.parent = Some(std::fs::canonicalize(&path)?);
-        }
-
-        let mut manifest = manifest_config.to_manifest()?;
-
-        if let Some(ref remote) = args.remote {
-            if args.sidecar {
-                manifest.set_embedded_manifest_with_remote_ref(remote);
-            } else {
-                manifest.set_remote_manifest(remote);
-            }
-        } else if args.sidecar {
-            manifest.set_sidecar_manifest();
-        }
-
-        if let Some(ref output) = args.output {
-            if output.extension() != path.extension() {
-                bail!("output type must match source type");
-            }
-            if output.exists() && !args.force {
-                bail!("Output already exists, use -f/force to force write");
+            // If the source file has a manifest store, and no parent is specified treat the source as a parent.
+            // note: This could be treated as an update manifest eventually since the image is the same
+            let source_ingredient = c2pa::Ingredient::from_file(&path)?;
+            if source_ingredient.manifest_data().is_some() && manifest_config.parent.is_none() {
+                manifest_config.parent = Some(std::fs::canonicalize(&path)?);
             }
 
-            if output.file_name().is_none() {
-                bail!("Missing filename on output");
-            }
-            if output.extension().is_none() {
-                bail!("Missing extension output");
-            }
+            let mut manifest = manifest_config.to_manifest()?;
 
-            // create any needed folders for the output path (embed should do this)
-            let mut output_dir = PathBuf::from(&output);
-            output_dir.pop();
-            create_dir_all(&output_dir)?;
-
-            let signer = get_c2pa_signer(&manifest_config)?;
-
-            manifest
-                .embed(&path, &output, signer.as_ref())
-                .context("embedding manifest")?;
-
-            // generate a report on the output file
-            match report_from_path(&output, args.detailed) {
-                Ok(result) => println!("{result}"),
-                Err(err) => println!("{err}"),
-            }
-            //println!("{}", report_from_path(&output, args.detailed)?);
-        } else if args.detailed {
-            bail!("detailed report not supported for preview");
-        } else {
-            // normally the output file provides the title, format and other manifest fields
-            // since there is no output file, gather some information from the source
-            if let Some(extension) = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_string())
-            {
-                // set the format field
-                match extension.as_str() {
-                    "jpg" | "jpeg" => {
-                        manifest.set_format("image/jpeg");
-                    }
-                    "png" => {
-                        manifest.set_format("image/png");
-                    }
-                    _ => (),
+            if let Some(ref remote) = args.remote {
+                if args.sidecar {
+                    manifest.set_embedded_manifest_with_remote_ref(remote);
+                } else {
+                    manifest.set_remote_manifest(remote);
                 }
+            } else if args.sidecar {
+                manifest.set_sidecar_manifest();
             }
-            println!("{}", ManifestStore::from_manifest(&manifest)?)
-        }
+
+            if let Some(ref output) = args.output {
+                if output.extension() != path.extension() {
+                    bail!("output type must match source type");
+                }
+                if output.exists() && !args.force {
+                    bail!("Output already exists, use -f/force to force write");
+                }
+
+                if output.file_name().is_none() {
+                    bail!("Missing filename on output");
+                }
+                if output.extension().is_none() {
+                    bail!("Missing extension output");
+                }
+
+                // create any needed folders for the output path (embed should do this)
+                let mut output_dir = PathBuf::from(&output);
+                output_dir.pop();
+                create_dir_all(&output_dir)?;
+
+                let signer = get_c2pa_signer(&manifest_config)?;
+
+                manifest
+                    .embed(&path, output, signer.as_ref())
+                    .context("embedding manifest")?;
+
+                // generate a report on the output file
+                match report_from_path(&output, args.detailed) {
+                    Ok(result) => println!("{result}"),
+                    Err(err) => println!("{err}"),
+                }
+                //println!("{}", report_from_path(&output, args.detailed)?);
+            } else if args.detailed {
+                bail!("detailed report not supported for preview");
+            } else {
+                // normally the output file provides the title, format and other manifest fields
+                // since there is no output file, gather some information from the source
+                if let Some(extension) = path.extension().map(|e| e.to_string_lossy().to_string()) {
+                    // set the format field
+                    match extension.as_str() {
+                        "jpg" | "jpeg" => {
+                            manifest.set_format("image/jpeg");
+                        }
+                        "png" => {
+                            manifest.set_format("image/png");
+                        }
+                        _ => (),
+                    }
+                }
+                println!("{}", ManifestStore::from_manifest(&manifest)?)
+            }
         }
     } else if let Some(output) = args.output {
         if output.exists() {
