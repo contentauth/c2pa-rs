@@ -16,7 +16,7 @@
 //use std::ops::Deref;
 use std::borrow::Cow;
 #[cfg(feature = "file_io")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
@@ -183,6 +183,19 @@ impl Ingredient {
         None
     }
 
+    /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
+    ///
+    #[allow(clippy::type_complexity)]
+    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<[u8]>)>> {
+        match self.thumbnail.as_ref() {
+            Some(thumbnail) => match self.assets.get(&thumbnail.identifier) {
+                Ok(c) => Ok(Some((&thumbnail.content_type, c))),
+                Err(e) => Err(e),
+            },
+            None => Ok(None),
+        }
+    }
+
     /// Returns an optional hash to uniquely identify this asset
     pub fn hash(&self) -> Option<&str> {
         self.hash.as_deref()
@@ -262,8 +275,13 @@ impl Ingredient {
 
     /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        if let Ok(identifier) = self.assets.add(thumbnail) {
-            self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+        match self.assets.add(thumbnail) {
+            Ok(identifier) => {
+                self.thumbnail = Some(AssetRef::new(format.into(), identifier));
+            }
+            Err(e) => {
+                dbg!("{}", e);
+            }
         }
         self
     }
@@ -385,7 +403,18 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     /// Creates an `Ingredient` from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_file_with_options(path.as_ref(), &DefaultOptions {})
+        Self::from_file_with_options(path.as_ref(), &DefaultOptions { base: None })
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Creates an `Ingredient` from a file path.
+    pub fn from_file_with_folder<P: AsRef<Path>>(path: P, folder: P) -> Result<Self> {
+        Self::from_file_with_options(
+            path.as_ref(),
+            &DefaultOptions {
+                base: Some(PathBuf::from(folder.as_ref())),
+            },
+        )
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
@@ -425,6 +454,10 @@ impl Ingredient {
             return Err(Error::FileNotFound(ingredient.title));
         }
 
+        // configure for writing to folders if that option is set
+        if let Some(folder) = options.base_path().as_ref() {
+            ingredient.with_files(folder)?;
+        }
         // if options includes a title, use it
         if let Some(opt_title) = options.title(path) {
             ingredient.title = opt_title;
@@ -485,7 +518,6 @@ impl Ingredient {
                 }
                 ingredient.manifest_data =
                     manifest_bytes.and_then(|bytes| ingredient.assets.add(bytes).ok());
-                dbg!(&ingredient.manifest_data);
 
                 ingredient.validation_status = if statuses.is_empty() {
                     None
@@ -682,7 +714,7 @@ impl Ingredient {
 
         // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
         if thumbnail.is_none() {
-            if let Some((format, image)) = &self.thumbnail() {
+            if let Some((format, image)) = &self.try_thumbnail()? {
                 let hash_url = claim.add_assertion(&Thumbnail::new(
                     &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
                     image.to_vec(),
@@ -705,6 +737,14 @@ impl Ingredient {
         ingredient_assertion.metadata = self.metadata.clone();
         ingredient_assertion.validation_status = self.validation_status.clone();
         claim.add_assertion(&ingredient_assertion)
+    }
+
+    /// Converts the Ingredient to file assets in base_path
+    #[cfg(feature = "file_io")]
+    pub fn with_files<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+        std::fs::create_dir_all(&base_path)?;
+        self.assets = AssetThing::AssetFolder(AssetFolder::new(base_path));
+        Ok(self)
     }
 }
 
@@ -744,15 +784,29 @@ pub trait IngredientOptions {
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }
+
+    /// Returns an optional folder path
+    ///
+    /// If Some, binary data will be stored in files in the given folder
+    fn base_path(&self) -> Option<&Path> {
+        None
+    }
 }
 
 #[cfg(feature = "file_io")]
 /// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
 ///
 /// This can be use with Ingredient::from_file_with_options
-pub struct DefaultOptions {}
+pub struct DefaultOptions {
+    base: Option<std::path::PathBuf>,
+}
+
 #[cfg(feature = "file_io")]
-impl IngredientOptions for DefaultOptions {}
+impl IngredientOptions for DefaultOptions {
+    fn base_path(&self) -> Option<&Path> {
+        self.base.as_deref()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -981,7 +1035,9 @@ mod tests_file_io {
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
         let ap = fixture_path("CIE-sig-CA.jpg");
-        let mut ingredient = Ingredient::from_file(ap).expect("from_file");
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("../target/tmp/ingredient");
+        let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         ingredient.with_path("target");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);

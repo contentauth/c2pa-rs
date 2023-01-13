@@ -21,7 +21,7 @@ use crate::{Error, Result};
 /// thumbnail data based on the `serialize_thumbnails` flag.
 /// (Serialization is disabled by default.)
 pub(crate) fn skip_serializing_thumbnails(_: &AssetThing) -> bool {
-    !cfg!(feature = "serialize_thumbnails")
+    !cfg!(feature = "serialize_thumbnails") || !cfg!(test)
 }
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -42,6 +42,7 @@ impl AssetRef {
 
 pub trait AssetStore {
     fn add(&mut self, value: Vec<u8>) -> Result<String>;
+    fn add_with_id<S: Into<String>>(&mut self, id: S, value: Vec<u8>) -> Result<()>;
 
     fn get(&self, id: &str) -> Result<Cow<[u8]>>;
 }
@@ -64,6 +65,10 @@ impl AssetStore for AssetMap {
         let key = uuid_b64::UuidB64::new().to_string();
         self.assets.insert(key.clone(), value);
         Ok(key)
+    }
+    fn add_with_id<S: Into<String>>(&mut self, id: S, value: Vec<u8>) -> Result<()> {
+        self.assets.insert(id.into(), value);
+        Ok(())
     }
 
     fn get(&self, id: &str) -> Result<Cow<[u8]>> {
@@ -100,6 +105,12 @@ impl AssetStore for AssetFolder {
         Ok(id)
     }
 
+    fn add_with_id<S: Into<String>>(&mut self, id: S, value: Vec<u8>) -> Result<()> {
+        let path = self.base_path.join(id.into());
+        std::fs::write(path, value)?;
+        Ok(())
+    }
+
     fn get(&self, id: &str) -> Result<Cow<[u8]>> {
         let path = self.base_path.join(id);
         Ok(std::fs::read(path)?.into())
@@ -122,6 +133,13 @@ impl AssetThing {
         }
     }
 
+    pub fn _add_with_id<S: Into<String>>(&mut self, id: S, value: Vec<u8>) -> Result<()> {
+        match self {
+            Self::AssetMap(m) => m.add_with_id(id, value),
+            #[cfg(feature = "file_io")]
+            Self::AssetFolder(m) => m.add_with_id(id, value),
+        }
+    }
     pub fn add(&mut self, value: Vec<u8>) -> Result<String> {
         match self {
             Self::AssetMap(m) => m.add(value),

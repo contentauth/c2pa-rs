@@ -31,6 +31,8 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
+#[cfg(feature = "file_io")]
+use crate::asset_store::AssetFolder;
 #[cfg(feature = "sign")]
 use crate::{asset_io::CAIReadWrite, Signer};
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
@@ -150,6 +152,19 @@ impl Manifest {
             }
         }
         None
+    }
+
+    /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
+    ///
+    #[allow(clippy::type_complexity)]
+    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<[u8]>)>> {
+        match self.thumbnail.as_ref() {
+            Some(thumbnail) => match self.assets.get(&thumbnail.identifier) {
+                Ok(c) => Ok(Some((&thumbnail.content_type, c))),
+                Err(e) => Err(e),
+            },
+            None => Ok(None),
+        }
     }
 
     /// Returns the [Ingredient]s used by this Manifest
@@ -420,6 +435,22 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.time)
     }
 
+    /// Creates a Manifest from a JSON string formatted as a Manifest
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_slice(json.as_bytes()).map_err(Error::JsonError)
+    }
+
+    /// Converts the Manifest to file assets in base_path
+    #[cfg(feature = "file_io")]
+    pub fn with_files<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+        std::fs::create_dir_all(&base_path)?;
+        self.assets = AssetThing::AssetFolder(AssetFolder::new(&base_path));
+        for i in 0..self.ingredients.len() {
+            self.ingredients[i].with_files(&base_path)?;
+        }
+        Ok(self)
+    }
+
     // Generates a Manifest given a store and a manifest label
     pub(crate) fn from_store(store: &Store, manifest_label: &str) -> Result<Self> {
         let claim = store
@@ -579,7 +610,7 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some((format, image)) = self.thumbnail() {
+        if let Some((format, image)) = self.try_thumbnail()? {
             claim.add_assertion(&Thumbnail::new(
                 &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
                 image.to_vec(),
@@ -1319,7 +1350,7 @@ pub(crate) mod tests {
         #[cfg(feature = "add_thumbnails")]
         assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
 
-        println!("{}", manifest_store);
+        //println!("{}", manifest_store);
     }
 
     #[cfg(feature = "file_io")]
@@ -1395,5 +1426,85 @@ pub(crate) mod tests {
         let (format, thumb) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(thumb, vec![1, 2, 3]);
+    }
+
+    #[cfg(feature = "file_io")]
+    const MANIFEST_JSON: &str = r#"{
+        "claim_generator": "test",
+        "format" : "image/jpeg",
+        "instance_id": "12345",
+        "assertions": [],
+        "thumbnail": {
+            "content_type": "image/jpeg",
+            "identifier": "IMG_0003.jpg"
+        },
+        "ingredients": [{
+            "title": "A.jpg",
+            "format": "image/jpeg",
+            "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+            "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+            "is_parent": true,
+            "thumbnail": {
+                "content_type": "image/png",
+                "identifier": "exp-test1.png"
+            }
+        }]
+    }"#;
+
+    #[test]
+    #[cfg(feature = "sign")]
+    fn from_json_with_thumbs() {
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        //let mut assets = manifest.assets;
+        manifest
+            .assets
+            ._add_with_id("IMG_0003.jpg", b"my value".to_vec())
+            .expect("add_with_id");
+        manifest
+            .assets
+            ._add_with_id("exp-test1.png", b"my value".to_vec())
+            .expect("add_with_id");
+
+        println!("{manifest}");
+
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image.to_vec());
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        manifest
+            .embed_stream("jpeg", &mut stream, &signer)
+            .expect_err("embed_stream");
+        /*
+        // get the updated image
+        let image = stream.into_inner();
+
+        let manifest_store =
+            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
+        let m = manifest_store.get_active().unwrap();
+
+        assert!(m.thumbnail().is_some());
+        let (format, image) = m.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+        assert_eq!(image, b"my value");
+        // println!("{manifest_store}");
+        */
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn from_json_with_files() {
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures"); // the path we want to read files from
+        manifest.with_files(path).expect("with_files");
+        println!("{manifest}");
+        // convert the manifest to a store
+        let store = manifest.to_store().expect("to store");
+        let m2 =
+            Manifest::from_store(&store, &store.provenance_label().unwrap()).expect("from store");
+        assert!(m2.thumbnail().is_some());
+        assert!(m2.ingredients()[0].thumbnail().is_some());
     }
 }
