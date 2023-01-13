@@ -141,6 +141,21 @@ impl Ingredient {
         }
     }
 
+    /// foo
+    pub fn add_asset(&mut self, value: Vec<u8>) -> Result<String> {
+        self.assets.add(value)
+    }
+
+    /// foo
+    pub fn add_asset_with_id(&mut self, id: &str, value: Vec<u8>) -> Result<()> {
+        self.assets.add_with_id(id, value)
+    }
+
+    /// bar
+    pub fn get_asset(&self, id: &str) -> std::result::Result<Cow<'_, [u8]>, Error> {
+        self.assets.get(id)
+    }
+
     /// Changes the Ingredient to have folder based assets
     #[cfg(feature = "file_io")]
     pub fn with_path<P: AsRef<Path>>(&mut self, path: P) -> &mut Self {

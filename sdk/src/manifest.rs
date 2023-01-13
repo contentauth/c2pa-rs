@@ -20,6 +20,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::asset_store::AssetFolder;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
@@ -31,8 +33,6 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
-#[cfg(feature = "file_io")]
-use crate::asset_store::AssetFolder;
 #[cfg(feature = "sign")]
 use crate::{asset_io::CAIReadWrite, Signer};
 #[cfg(all(feature = "async_signer", feature = "file_io"))]
@@ -171,6 +171,12 @@ impl Manifest {
     /// This can include a parent as well as any placed assets
     pub fn ingredients(&self) -> &[Ingredient] {
         &self.ingredients
+    }
+
+        /// Returns the [Ingredient]s used by this Manifest
+    /// This can include a parent as well as any placed assets
+    pub fn ingredients_mut(&mut self) -> &mut [Ingredient] {
+        &mut self.ingredients
     }
 
     /// Returns Assertions for this Manifest
@@ -1453,16 +1459,15 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "sign")]
+    /// tests and illustrates how to add assets to a non-file based manifest
     fn from_json_with_thumbs() {
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
-        //let mut assets = manifest.assets;
         manifest
             .assets
-            ._add_with_id("IMG_0003.jpg", b"my value".to_vec())
+            .add_with_id("IMG_0003.jpg", b"my value".to_vec())
             .expect("add_with_id");
-        manifest
-            .assets
-            ._add_with_id("exp-test1.png", b"my value".to_vec())
+        manifest.ingredients_mut()[0]
+            .add_asset_with_id("exp-test1.png", b"my value".to_vec())
             .expect("add_with_id");
 
         println!("{manifest}");
@@ -1475,8 +1480,8 @@ pub(crate) mod tests {
         // Embed a manifest using the signer.
         manifest
             .embed_stream("jpeg", &mut stream, &signer)
-            .expect_err("embed_stream");
-        /*
+            .expect("embed_stream");
+
         // get the updated image
         let image = stream.into_inner();
 
@@ -1489,7 +1494,6 @@ pub(crate) mod tests {
         assert_eq!(format, "image/jpeg");
         assert_eq!(image, b"my value");
         // println!("{manifest_store}");
-        */
     }
 
     #[test]
