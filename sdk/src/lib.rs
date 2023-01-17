@@ -106,6 +106,9 @@ pub use manifest_store::ManifestStore;
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
+mod resource_store;
+pub use resource_store::{ResourceRef, ResourceStore};
+
 mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
@@ -127,7 +130,6 @@ pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 /// crate private declarations
-pub(crate) mod asset_store;
 pub(crate) mod claim;
 
 #[cfg(feature = "sign")]

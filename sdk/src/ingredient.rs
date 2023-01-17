@@ -12,8 +12,6 @@
 // each license.
 
 #![deny(missing_docs)]
-
-//use std::ops::Deref;
 use std::borrow::Cow;
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
@@ -24,19 +22,16 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
-    asset_store::{AssetRef, AssetThing},
     claim::Claim,
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf,
+    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     validation_status::{self, ValidationStatus},
 };
 #[cfg(feature = "file_io")]
-use crate::{
-    asset_store::AssetFolder, error::wrap_io_err, validation_status::status_for_store,
-    xmp_inmemory_utils::XmpInfo,
-};
+use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
 #[derive(Debug, Deserialize, Serialize)]
 /// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
@@ -61,7 +56,7 @@ pub struct Ingredient {
     ///
     /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
     #[serde(skip_serializing_if = "Option::is_none")]
-    thumbnail: Option<AssetRef>,
+    thumbnail: Option<ResourceRef>,
 
     /// An optional hash of the asset to prevent duplicates.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,10 +94,9 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<String>,
 
-    // #[serde(skip_deserializing)]
-    // #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    #[serde(skip)]
-    assets: AssetThing,
+    #[serde(skip_deserializing)]
+    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    resources: ResourceStore,
 }
 
 impl Ingredient {
@@ -137,30 +131,8 @@ impl Ingredient {
             metadata: None,
             active_manifest: None,
             manifest_data: None,
-            assets: AssetThing::default(),
+            resources: ResourceStore::default(),
         }
-    }
-
-    /// foo
-    pub fn add_asset(&mut self, value: Vec<u8>) -> Result<String> {
-        self.assets.add(value)
-    }
-
-    /// foo
-    pub fn add_asset_with_id(&mut self, id: &str, value: Vec<u8>) -> Result<()> {
-        self.assets.add_with_id(id, value)
-    }
-
-    /// bar
-    pub fn get_asset(&self, id: &str) -> std::result::Result<Cow<'_, [u8]>, Error> {
-        self.assets.get(id)
-    }
-
-    /// Changes the Ingredient to have folder based assets
-    #[cfg(feature = "file_io")]
-    pub fn with_path<P: AsRef<Path>>(&mut self, path: P) -> &mut Self {
-        self.assets = AssetThing::AssetFolder(AssetFolder::new(path));
-        self
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -189,9 +161,9 @@ impl Ingredient {
     }
 
     /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
+    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         if let Some(thumbnail) = self.thumbnail.as_ref() {
-            if let Ok(Cow::Borrowed(image)) = self.assets.get(&thumbnail.identifier) {
+            if let Ok(image) = self.resources.get(&thumbnail.identifier) {
                 return Some((&thumbnail.content_type, image));
             }
         }
@@ -201,9 +173,9 @@ impl Ingredient {
     /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
     ///
     #[allow(clippy::type_complexity)]
-    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<[u8]>)>> {
+    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<Vec<u8>>)>> {
         match self.thumbnail.as_ref() {
-            Some(thumbnail) => match self.assets.get(&thumbnail.identifier) {
+            Some(thumbnail) => match self.resources.get(&thumbnail.identifier) {
                 Ok(c) => Ok(Some((&thumbnail.content_type, c))),
                 Err(e) => Err(e),
             },
@@ -244,9 +216,9 @@ impl Ingredient {
     /// Returns a reference to C2PA manifest data if it exists.
     ///
     /// This is the binary form of a manifest store in .c2pa format.
-    pub fn manifest_data(&self) -> Option<&[u8]> {
+    pub fn manifest_data(&self) -> Option<Cow<Vec<u8>>> {
         if let Some(identifier) = self.manifest_data.as_ref() {
-            if let Ok(Cow::Borrowed(data)) = self.assets.get(identifier) {
+            if let Ok(data) = self.resources.get(identifier) {
                 return Some(data);
             }
         }
@@ -289,16 +261,16 @@ impl Ingredient {
     }
 
     /// Sets the thumbnail format and image data.
-    pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        match self.assets.add(thumbnail) {
-            Ok(identifier) => {
-                self.thumbnail = Some(AssetRef::new(format.into(), identifier));
-            }
-            Err(e) => {
-                dbg!("{}", e);
-            }
-        }
-        self
+    pub fn set_thumbnail<S: Into<String>>(
+        &mut self,
+        format: S,
+        thumbnail: Vec<u8>,
+    ) -> Result<&mut Self> {
+        let format: String = format.into();
+        let id = ResourceStore::format_id(&format);
+        self.resources.add(id.clone(), thumbnail)?;
+        self.thumbnail = Some(ResourceRef::new(format, id));
+        Ok(self)
     }
 
     /// Sets the hash value generated from the entire asset.
@@ -329,11 +301,22 @@ impl Ingredient {
     }
 
     /// Sets the Manifest C2PA data for this ingredient.
-    pub fn set_manifest_data(&mut self, data: Vec<u8>) -> &mut Self {
-        let identifier = self.assets.add(data).unwrap_or_default();
-        self.manifest_data = Some(identifier);
+    pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+        let id = ResourceStore::format_id("c2pa");
+        self.resources.add(id.clone(), data)?;
+        self.manifest_data = Some(id);
         dbg!(&self.manifest_data);
-        self
+        Ok(self)
+    }
+
+    /// Return an immutable reference to the ingredient resources
+    pub fn resources(&self) -> &ResourceStore {
+        &self.resources
+    }
+
+    /// Return an mutable reference to the ingredient resources
+    pub fn resources_mut(&mut self) -> &mut ResourceStore {
+        &mut self.resources
     }
 
     /// Gathers filename, extension, and format from a file path.
@@ -471,7 +454,7 @@ impl Ingredient {
 
         // configure for writing to folders if that option is set
         if let Some(folder) = options.base_path().as_ref() {
-            ingredient.with_files(folder)?;
+            ingredient.with_base_path(folder)?;
         }
         // if options includes a title, use it
         if let Some(opt_title) = options.title(path) {
@@ -526,13 +509,16 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            ingredient.set_thumbnail(format, image);
+                            ingredient.set_thumbnail(format, image)?;
                         }
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data =
-                    manifest_bytes.and_then(|bytes| ingredient.assets.add(bytes).ok());
+                if let Some(bytes) = manifest_bytes {
+                    let id = ResourceStore::format_id("c2pa");
+                    ingredient.resources.add(id.clone(), bytes)?;
+                    ingredient.manifest_data = Some(id);
+                }
 
                 ingredient.validation_status = if statuses.is_empty() {
                     None
@@ -565,7 +551,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_thumbnail(format, image);
+                ingredient.set_thumbnail(format, image)?;
             }
         }
 
@@ -573,7 +559,11 @@ impl Ingredient {
     }
 
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
-    pub(crate) fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
+    pub(crate) fn from_ingredient_uri(
+        store: &Store,
+        ingredient_uri: &str,
+        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+    ) -> Result<Self> {
         let assertion =
             store
                 .get_assertion_from_uri(ingredient_uri)
@@ -627,8 +617,14 @@ impl Ingredient {
             &ingredient_assertion.instance_id,
         );
         ingredient.document_id = ingredient_assertion.document_id;
+
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = resource_path {
+            ingredient.resources_mut().set_base_path(base_path)
+        }
+
         if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail(format, image);
+            ingredient.set_thumbnail(format, image)?;
         }
 
         ingredient.is_parent = is_parent;
@@ -669,7 +665,7 @@ impl Ingredient {
                 };
 
                 // have Store check and load ingredients and add them to a claim
-                Store::load_ingredient_to_claim(claim, &manifest_label, buffer, redactions)?;
+                Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -754,11 +750,13 @@ impl Ingredient {
         claim.add_assertion(&ingredient_assertion)
     }
 
-    /// Converts the Ingredient to file assets in base_path
+    /// Setting a base path will make the ingredient use resource files instead of memory buffers
+    ///
+    /// The files will be relative to the given base path
     #[cfg(feature = "file_io")]
-    pub fn with_files<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+    pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
         std::fs::create_dir_all(&base_path)?;
-        self.assets = AssetThing::AssetFolder(AssetFolder::new(base_path));
+        self.resources.set_base_path(base_path.as_ref());
         Ok(self)
     }
 }
@@ -842,8 +840,10 @@ mod tests {
             .set_is_parent()
             .set_metadata(Metadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
+            .unwrap()
             .set_active_manifest("active_manifest")
             .set_manifest_data("data".as_bytes().to_vec())
+            .expect("set_manifest")
             .add_validation_status(ValidationStatus::new("status_code"));
         assert_eq!(ingredient.title(), "title2");
         assert_eq!(ingredient.format(), "format");
@@ -855,10 +855,13 @@ mod tests {
         assert!(ingredient.metadata().is_some());
         assert_eq!(
             ingredient.thumbnail(),
-            Some(("format", "thumbnail".as_bytes()))
+            Some(("format", Cow::Owned("thumbnail".as_bytes().to_vec())))
         );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
-        assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
+        assert_eq!(
+            ingredient.manifest_data(),
+            Some(Cow::Owned("data".as_bytes().to_vec()))
+        );
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
             "status_code"
@@ -1052,8 +1055,7 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
-        let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
-        ingredient.with_path("target");
+        let ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);
     }

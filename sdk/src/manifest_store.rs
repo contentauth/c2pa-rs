@@ -77,10 +77,34 @@ impl ManifestStore {
         self.validation_status.as_deref()
     }
 
-    /// creates a ManifestStore from a Store
+    /// creates a ManifestStore from a Store with validation
     pub(crate) fn from_store(
         store: &Store,
         validation_log: &mut impl StatusTracker,
+    ) -> ManifestStore {
+        Self::from_store_impl(
+            store,
+            validation_log,
+            #[cfg(feature = "file_io")]
+            None,
+        )
+    }
+
+    /// creates a ManifestStore from a Store writing resources to resource_path
+    #[cfg(feature = "file_io")]
+    pub fn from_store_with_resources(
+        store: &Store,
+        validation_log: &mut impl StatusTracker,
+        resource_path: &Path,
+    ) -> ManifestStore {
+        Self::from_store_impl(store, validation_log, Some(resource_path))
+    }
+
+    // internal implementation of from_store
+    fn from_store_impl(
+        store: &Store,
+        validation_log: &mut impl StatusTracker,
+        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
         let mut statuses = status_for_store(store, validation_log);
 
@@ -89,7 +113,11 @@ impl ManifestStore {
 
         for claim in store.claims() {
             let manifest_label = claim.label();
-            match Manifest::from_store(store, manifest_label) {
+            #[cfg(feature = "file_io")]
+            let result = Manifest::from_store(store, manifest_label, resource_path);
+            #[cfg(not(feature = "file_io"))]
+            let result = Manifest::from_store(store, manifest_label);
+            match result {
                 Ok(manifest) => {
                     manifest_store
                         .manifests
@@ -112,7 +140,12 @@ impl ManifestStore {
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use crate::status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
-        Ok(Self::from_store(&store, &mut OneShotStatusTracker::new()))
+        Ok(Self::from_store_impl(
+            &store,
+            &mut OneShotStatusTracker::new(),
+            #[cfg(feature = "file_io")]
+            manifest.resources().base_path(),
+        ))
     }
 
     /// generate a Store from a format string and bytes
@@ -141,6 +174,33 @@ impl ManifestStore {
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store(&store, &mut validation_log))
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Loads a ManifestStore from a file adding resources to a folder
+    /// Example:
+    ///
+    /// ```
+    /// # use c2pa::Result;
+    /// use c2pa::ManifestStore;
+    /// # fn main() -> Result<()> {
+    /// let manifest_store = ManifestStore::from_file_with_resources("tests/fixtures/C.jpg","../target/tmp/ms")?;
+    /// println!("{}", manifest_store);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_file_with_resources<P: AsRef<Path>>(
+        path: P,
+        resource_path: P,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        Ok(Self::from_store_with_resources(
+            &store,
+            &mut validation_log,
+            resource_path.as_ref(),
+        ))
     }
 
     /// Loads a ManifestStore from a file
@@ -345,5 +405,25 @@ mod tests {
         assert!(!manifest_store.manifests().is_empty());
         assert!(manifest_store.validation_status().is_none());
         println!("{}", manifest_store);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_report_from_file_with_resources() {
+        let manifest_store = ManifestStore::from_file_with_resources(
+            "tests/fixtures/CIE-sig-CA.jpg",
+            "../target/tmp/manifest_store",
+        )
+        .expect("from_store_with_resources");
+        println!("{}", manifest_store);
+
+        assert!(manifest_store.active_label().is_some());
+        assert!(manifest_store.get_active().is_some());
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        let manifest = manifest_store.get_active().unwrap();
+        assert!(!manifest.ingredients().is_empty());
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
+        assert!(manifest.time().is_some());
     }
 }
