@@ -37,7 +37,7 @@ use crate::{asset_io::CAIReadWrite, Signer};
 use crate::{AsyncSigner, RemoteSigner};
 
 /// A Manifest represents all the information in a c2pa manifest
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Manifest {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
@@ -52,9 +52,11 @@ pub struct Manifest {
     title: Option<String>,
 
     /// The format of the source file as a MIME type.
+    #[serde(default = "default_format")]
     format: String,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+    #[serde(default = "default_instance_id")]
     instance_id: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,6 +66,7 @@ pub struct Manifest {
     thumbnail: Option<ResourceRef>,
 
     /// A List of ingredients
+    #[serde(default = "default_vec")]
     ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
@@ -71,6 +74,7 @@ pub struct Manifest {
     credentials: Option<Vec<Value>>,
 
     /// A list of assertions
+    #[serde(default = "default_vec")]
     assertions: Vec<ManifestAssertion>,
 
     /// A list of redactions - URIs to a redacted assertions
@@ -94,26 +98,27 @@ pub struct Manifest {
     resources: ResourceStore,
 }
 
+fn default_instance_id() -> String {
+    format!("xmp:iid:{}", Uuid::new_v4())
+}
+
+fn default_format() -> String {
+    "application/octet-stream".to_owned()
+}
+
+fn default_vec<T>() -> Vec<T> {
+    Vec::new()
+}
+
 impl Manifest {
     /// Create a new Manifest
     /// requires a claim_generator string (User Agent))
     pub fn new<S: Into<String>>(claim_generator: S) -> Self {
         Self {
-            vendor: None,
-            title: None,
-            format: "application/octet-stream".to_owned(),
-            instance_id: format!("xmp:iid:{}", Uuid::new_v4()),
             claim_generator: claim_generator.into(),
-            claim_generator_hints: None,
-            thumbnail: None,
-            ingredients: Vec::new(),
-            assertions: Vec::new(),
-            redactions: None,
-            credentials: None,
-            signature_info: None,
-            label: None,
-            remote_manifest: None,
-            resources: ResourceStore::default(),
+            format: default_format(),
+            instance_id: default_instance_id(),
+            ..Default::default()
         }
     }
 
@@ -1480,8 +1485,6 @@ pub(crate) mod tests {
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "format" : "image/jpeg",
-        "instance_id": "12345",
-        "assertions": [],
         "thumbnail": {
             "content_type": "image/jpeg",
             "identifier": "IMG_0003.jpg"
@@ -1490,7 +1493,6 @@ pub(crate) mod tests {
             "title": "A.jpg",
             "format": "image/jpeg",
             "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-            "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
             "is_parent": true,
             "thumbnail": {
                 "content_type": "image/png",
@@ -1560,5 +1562,27 @@ pub(crate) mod tests {
         .expect("from store");
         assert!(m2.thumbnail().is_some());
         assert!(m2.ingredients()[0].thumbnail().is_some());
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_embed_from_json() {
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures"); // the path we want to read files from
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+        manifest.with_base_path(fixtures).expect("with_base");
+        manifest.embed(&output, &output, &signer).expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        let (format, _thumb) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
     }
 }

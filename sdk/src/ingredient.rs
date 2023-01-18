@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
@@ -32,13 +33,14 @@ use crate::{
 };
 #[cfg(feature = "file_io")]
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 /// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
     /// A human-readable title, generally source filename.
     title: String,
 
     /// The format of the source file as a MIME type.
+    #[serde(default = "default_format")]
     format: String,
 
     /// Document ID from `xmpMM:DocumentID` in XMP metadata.
@@ -46,6 +48,7 @@ pub struct Ingredient {
     document_id: Option<String>,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+    #[serde(default = "default_instance_id")]
     instance_id: String,
 
     /// URI from `dcterms:provenance` in XMP metadata.
@@ -99,6 +102,14 @@ pub struct Ingredient {
     resources: ResourceStore,
 }
 
+fn default_instance_id() -> String {
+    format!("xmp:iid:{}", Uuid::new_v4())
+}
+
+fn default_format() -> String {
+    "application/octet-stream".to_owned()
+}
+
 impl Ingredient {
     /// Constructs a new `Ingredient`.
     ///
@@ -121,17 +132,8 @@ impl Ingredient {
         Self {
             title: title.into(),
             format: format.into(),
-            document_id: None,
             instance_id: instance_id.into(),
-            provenance: None,
-            thumbnail: None,
-            hash: None,
-            is_parent: None,
-            validation_status: None,
-            metadata: None,
-            active_manifest: None,
-            manifest_data: None,
-            resources: ResourceStore::default(),
+            ..Default::default()
         }
     }
 
@@ -373,7 +375,6 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         fn make_id(id_type: &str) -> String {
-            use uuid::Uuid;
             let uuid = Uuid::new_v4();
             //warn!("Generating fake id {}", uuid);
             format!("xmp:{}id:{}", id_type, uuid)
@@ -456,6 +457,7 @@ impl Ingredient {
         if let Some(folder) = options.base_path().as_ref() {
             ingredient.with_base_path(folder)?;
         }
+
         // if options includes a title, use it
         if let Some(opt_title) = options.title(path) {
             ingredient.title = opt_title;
