@@ -87,8 +87,7 @@ impl CAILoader for OtfIO {
     #[allow(unused_variables)]
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data: Vec<u8> = Vec::new();
-        let mut font_file: Font = font::load(asset_reader)
-            .map_err(|_err| Error::FontLoadError)?;
+        let mut font_file: Font = font::load(asset_reader).map_err(|_err| Error::FontLoadError)?;
 
         if let Table::Name(name_table) = font_file
             .get_table(NAME_TABLE_TAG)
@@ -118,10 +117,8 @@ impl CAILoader for OtfIO {
     }
 }
 
-
 /// OTF/TTF implementations for the AssetIO trait.
 impl AssetIO for OtfIO {
-
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut f: File = File::open(asset_path)?;
         self.read_cai(&mut f)
@@ -167,8 +164,9 @@ impl AssetIO for OtfIO {
         // Verify the font has a valid version in it before assuming the rest is
         // valid (NOTE: we don't actually do anything with it, just as a safety check).
         let sfnt_u32: u32 = read_u32(&data[0..4])?;
-        let sfnt_version: FontVersion = <u32 as std::convert::TryInto<FontVersion>>::try_into(sfnt_u32)
-            .map_err(|_err|Error::UnsupportedFontError)?;
+        let sfnt_version: FontVersion =
+            <u32 as std::convert::TryInto<FontVersion>>::try_into(sfnt_u32)
+                .map_err(|_err| Error::UnsupportedFontError)?;
         let num_tables: u16 = read_u16(&data[4..6])?;
         // Get the slice of the table array
         let tables: &[u8] = &data[12..];
@@ -204,7 +202,7 @@ impl AssetIO for OtfIO {
 
             // If we have iterated over all of our tables, bail
             if table_counter >= num_tables as usize {
-                break
+                break;
             }
         }
         Err(Error::NotFound)

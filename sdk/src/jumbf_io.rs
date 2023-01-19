@@ -18,9 +18,7 @@ use std::{
 };
 
 #[cfg(feature = "otf")]
-use crate::{
-    asset_handlers::otf_io::OtfIO
-};
+use crate::asset_handlers::otf_io::OtfIO;
 
 use crate::{
     asset_handlers::{
@@ -127,7 +125,7 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "png" => Some(Box::new(PngIO {})),
         "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
         #[cfg(feature = "otf")]
-        "otf" | "ttf" => Some(Box::new(OtfIO{})),
+        "otf" | "ttf" => Some(Box::new(OtfIO {})),
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
         _ => None,
     }
@@ -142,9 +140,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
         #[cfg(feature = "otf")]
-        "otf" | "application/font-sfnt" | "ttf" | "font/ttf" => {
-            Some(Box::new(OtfIO {}))
-        },
+        "otf" | "application/font-sfnt" | "ttf" | "font/ttf" => Some(Box::new(OtfIO {})),
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
         | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
             if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
