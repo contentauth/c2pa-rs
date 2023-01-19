@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{borrow::Cow, collections::HashMap};
 
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -148,27 +148,22 @@ impl Manifest {
     }
 
     /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
-        if let Some(thumbnail) = self.thumbnail.as_ref() {
-            if let Ok(image) = self.resources.get(&thumbnail.identifier) {
-                return Some((&thumbnail.content_type, image));
-            }
-        }
-        None
+    pub fn thumbnail(&self) -> Option<&ResourceRef> {
+        self.thumbnail.as_ref()
     }
 
     /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
     ///
-    #[allow(clippy::type_complexity)]
-    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<Vec<u8>>)>> {
-        match self.thumbnail.as_ref() {
-            Some(thumbnail) => match self.resources.get(&thumbnail.identifier) {
-                Ok(c) => Ok(Some((&thumbnail.content_type, c))),
-                Err(e) => Err(e),
-            },
-            None => Ok(None),
-        }
-    }
+    // #[allow(clippy::type_complexity)]
+    // pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<Vec<u8>>)>> {
+    //     match self.thumbnail.as_ref() {
+    //         Some(thumbnail) => match self.resources.get(&thumbnail.identifier) {
+    //             Ok(c) => Ok(Some((&thumbnail.content_type, c))),
+    //             Err(e) => Err(e),
+    //         },
+    //         None => Ok(None),
+    //     }
+    // }
 
     /// Returns immutable [Ingredient]s used by this Manifest
     /// This can include a parent as well as any placed assets
@@ -239,7 +234,7 @@ impl Manifest {
         thumbnail: Vec<u8>,
     ) -> Result<&mut Self> {
         let format: String = format.into();
-        let id = ResourceStore::format_id(&format);
+        let id = ResourceStore::content_type_id(&format);
         self.resources.add(id.clone(), thumbnail)?;
         self.thumbnail = Some(ResourceRef::new(format, id));
         Ok(self)
@@ -651,10 +646,11 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some((format, image)) = self.try_thumbnail()? {
+        if let Some(thumbnail) = self.thumbnail() {
+            let thumb = self.resources.get(&thumbnail.identifier)?;
             claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
-                image.to_vec(),
+                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumbnail.content_type),
+                thumb.to_vec(),
             ))?;
         }
 
@@ -1476,8 +1472,12 @@ pub(crate) mod tests {
         manifest.embed(&output, &output, &signer).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
-        let (format, thumb) = active_manifest.thumbnail().unwrap();
-        assert_eq!(format, "image/jpeg");
+        let thumb_ref = active_manifest.thumbnail().unwrap();
+        let thumb = active_manifest
+            .resources()
+            .get(&thumb_ref.identifier)
+            .unwrap();
+        assert_eq!(thumb_ref.content_type, "image/jpeg");
         assert_eq!(thumb.into_owned(), thumb_data);
     }
 
@@ -1536,9 +1536,10 @@ pub(crate) mod tests {
         let m = manifest_store.get_active().unwrap();
 
         assert!(m.thumbnail().is_some());
-        let (format, image) = m.thumbnail().unwrap();
-        assert_eq!(format, "image/jpeg");
-        assert_eq!(image.to_vec(), b"my value");
+        let thumbnail = m.thumbnail().unwrap();
+        let thumb_image = m.resources().get(&thumbnail.identifier).expect("get thumb");
+        assert_eq!(thumbnail.content_type, "image/jpeg");
+        assert_eq!(thumb_image.to_vec(), b"my value");
         // println!("{manifest_store}");
     }
 
@@ -1582,7 +1583,7 @@ pub(crate) mod tests {
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let active_manifest = manifest_store.get_active().unwrap();
-        let (format, _thumb) = active_manifest.thumbnail().unwrap();
-        assert_eq!(format, "image/jpeg");
+        let thumb = active_manifest.thumbnail().unwrap();
+        assert_eq!(thumb.content_type, "image/jpeg");
     }
 }

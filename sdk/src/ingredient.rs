@@ -163,25 +163,16 @@ impl Ingredient {
     }
 
     /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
-        if let Some(thumbnail) = self.thumbnail.as_ref() {
-            if let Ok(image) = self.resources.get(&thumbnail.identifier) {
-                return Some((&thumbnail.content_type, image));
-            }
-        }
-        None
+    pub fn thumbnail(&self) -> Option<&ResourceRef> {
+        self.thumbnail.as_ref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
+    /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
     ///
-    #[allow(clippy::type_complexity)]
-    pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<Vec<u8>>)>> {
+    pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
         match self.thumbnail.as_ref() {
-            Some(thumbnail) => match self.resources.get(&thumbnail.identifier) {
-                Ok(c) => Ok(Some((&thumbnail.content_type, c))),
-                Err(e) => Err(e),
-            },
-            None => Ok(None),
+            Some(thumbnail) => self.resources.get(&thumbnail.identifier),
+            None => Err(Error::NotFound),
         }
     }
 
@@ -262,16 +253,22 @@ impl Ingredient {
         self
     }
 
-    /// Sets the thumbnail format and image data.
-    pub fn set_thumbnail<S: Into<String>>(
+    /// Sets the thumbnail from a ResourceRef.
+    pub fn set_thumbnail(&mut self, thumbnail: ResourceRef) -> &mut Self {
+        self.thumbnail = Some(thumbnail);
+        self
+    }
+
+    /// Sets the thumbnail content_type and image data.
+    pub fn set_thumbnail_from_bytes<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
-        format: S,
-        thumbnail: Vec<u8>,
+        content_type: S,
+        bytes: B,
     ) -> Result<&mut Self> {
-        let format: String = format.into();
-        let id = ResourceStore::format_id(&format);
-        self.resources.add(id.clone(), thumbnail)?;
-        self.thumbnail = Some(ResourceRef::new(format, id));
+        let content_type: String = content_type.into();
+        let thumb_ref = ResourceRef::from_content_type(&content_type);
+        self.resources.add(&thumb_ref.identifier, bytes)?;
+        self.thumbnail = Some(thumb_ref);
         Ok(self)
     }
 
@@ -304,7 +301,7 @@ impl Ingredient {
 
     /// Sets the Manifest C2PA data for this ingredient.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let id = ResourceStore::format_id("c2pa");
+        let id = ResourceStore::content_type_id("c2pa");
         self.resources.add(id.clone(), data)?;
         self.manifest_data = Some(id);
         dbg!(&self.manifest_data);
@@ -511,13 +508,15 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            ingredient.set_thumbnail(format, image)?;
+                            let thumb_ref = ResourceRef::from_content_type(format);
+                            ingredient.resources.add(&thumb_ref.identifier, image)?;
+                            ingredient.set_thumbnail(thumb_ref);
                         }
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
                 if let Some(bytes) = manifest_bytes {
-                    let id = ResourceStore::format_id("c2pa");
+                    let id = ResourceStore::content_type_id("c2pa");
                     ingredient.resources.add(id.clone(), bytes)?;
                     ingredient.manifest_data = Some(id);
                 }
@@ -553,7 +552,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_thumbnail(format, image)?;
+                ingredient.set_thumbnail_from_bytes(format, image)?;
             }
         }
 
@@ -626,7 +625,7 @@ impl Ingredient {
         }
 
         if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail(format, image)?;
+            ingredient.set_thumbnail_from_bytes(format, image)?;
         }
 
         ingredient.is_parent = is_parent;
@@ -727,10 +726,13 @@ impl Ingredient {
 
         // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
         if thumbnail.is_none() {
-            if let Some((format, image)) = &self.try_thumbnail()? {
+            if let Some(thumb_ref) = self.thumbnail() {
                 let hash_url = claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
-                    image.to_vec(),
+                    &labels::add_thumbnail_format(
+                        labels::INGREDIENT_THUMBNAIL,
+                        &thumb_ref.content_type,
+                    ),
+                    self.resources.get(&thumb_ref.identifier)?.to_vec(),
                 ))?;
 
                 thumbnail = Some(hash_url);
@@ -841,7 +843,7 @@ mod tests {
             .set_provenance("provenance")
             .set_is_parent()
             .set_metadata(Metadata::new())
-            .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
+            .set_thumbnail_from_bytes("format", "thumbnail".as_bytes().to_vec())
             .unwrap()
             .set_active_manifest("active_manifest")
             .set_manifest_data("data".as_bytes().to_vec())
@@ -855,10 +857,11 @@ mod tests {
         assert_eq!(ingredient.hash(), Some("hash"));
         assert!(ingredient.is_parent());
         assert!(ingredient.metadata().is_some());
-        assert_eq!(
-            ingredient.thumbnail(),
-            Some(("format", Cow::Owned("thumbnail".as_bytes().to_vec())))
-        );
+        assert_eq!(ingredient.thumbnail().unwrap().content_type, "format");
+        // assert_eq!(ingredient.thumbnail().)
+        //     ResourceRef::new
+        //     Some(("format", Cow::Owned("thumbnail".as_bytes().to_vec())))
+        // );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
         assert_eq!(
             ingredient.manifest_data(),
@@ -886,7 +889,13 @@ mod tests_file_io {
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
-        let thumb_size = ingredient.thumbnail().map_or(0, |(_, image)| image.len());
+        let thumb_size = ingredient.thumbnail().map_or(0, |thumb_ref| {
+            ingredient
+                .resources()
+                .get(&thumb_ref.identifier)
+                .map(|i| i.len())
+                .unwrap_or(0)
+        });
         let manifest_data_size = ingredient.manifest_data().map_or(0, |v| v.len());
 
         println!(
@@ -903,7 +912,7 @@ mod tests_file_io {
     fn test_thumbnail(ingredient: &Ingredient, format: &str) {
         if cfg!(feature = "add_thumbnails") {
             assert!(ingredient.thumbnail().is_some());
-            assert_eq!(ingredient.thumbnail().unwrap().0, format);
+            assert_eq!(ingredient.thumbnail().unwrap().content_type, format);
         } else {
             assert!(ingredient.thumbnail().is_none());
         }

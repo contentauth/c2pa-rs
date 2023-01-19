@@ -28,7 +28,7 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
 }
 
 /// A reference to a resource to be used in JSON serialization
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ResourceRef {
     pub content_type: String,
     pub identifier: String,
@@ -39,6 +39,15 @@ impl ResourceRef {
         Self {
             content_type: content_type.into(),
             identifier: identifier.into(),
+        }
+    }
+
+    pub fn from_content_type<S: Into<String>>(content_type: S) -> Self {
+        let content_type = content_type.into();
+        let identifier = ResourceStore::content_type_id(&content_type);
+        Self {
+            content_type,
+            identifier,
         }
     }
 }
@@ -73,8 +82,8 @@ impl ResourceStore {
         self.base_path = Some(base_path.into());
     }
 
-    ///  generate a unique id for a given format (adds a file extension)
-    pub fn format_id(format: &str) -> String {
+    ///  generate a unique id for a given content type (adds a file extension)
+    pub fn content_type_id(format: &str) -> String {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
@@ -115,6 +124,12 @@ impl ResourceStore {
         self.resources
             .get(id)
             .map_or_else(|| Err(Error::NotFound), |v| Ok(Cow::Borrowed(v)))
+    }
+
+    #[cfg(feature = "file_io")]
+    // return the full path for an id
+    pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
+        self.base_path.as_ref().map(|base| base.join(id))
     }
 }
 
