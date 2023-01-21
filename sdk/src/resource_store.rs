@@ -35,7 +35,7 @@ pub struct ResourceRef {
 }
 
 impl ResourceRef {
-    pub fn new<S: Into<String>>(content_type: S, identifier: S) -> Self {
+    pub fn new<S: Into<String>, I: Into<String>>(content_type: S, identifier: I) -> Self {
         Self {
             content_type: content_type.into(),
             identifier: identifier.into(),
@@ -126,6 +126,24 @@ impl ResourceStore {
             .map_or_else(|| Err(Error::NotFound), |v| Ok(Cow::Borrowed(v)))
     }
 
+    /// Returns true if the resource has been added or exists as file
+    pub fn exists(&self, id: &str) -> bool {
+        if !self.resources.contains_key(id) {
+            #[cfg(feature = "file_io")]
+            match self.base_path.as_ref() {
+                Some(base) => {
+                    let path = base.join(id);
+                    path.exists()
+                }
+                None => false,
+            }
+            #[cfg(not(feature = "file_io"))]
+            false
+        } else {
+            true
+        }
+    }
+
     #[cfg(feature = "file_io")]
     // return the full path for an id
     pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
@@ -156,6 +174,8 @@ mod tests {
         let v = c.get("abc123.jpg").unwrap();
         assert_eq!(v.to_vec(), b"my value");
         c.add("cba321.jpg", value.to_vec()).expect("add");
+        assert!(c.exists("cba321.jpg"));
+        assert!(!c.exists("foo"));
 
         let json = r#"{
             "claim_generator": "test",

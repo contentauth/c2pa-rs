@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
+use std::{borrow::Cow, collections::HashMap};
 
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -147,23 +147,18 @@ impl Manifest {
         self.title.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<&ResourceRef> {
-        self.thumbnail.as_ref()
+    /// Returns thumbnail tuple with Some((content_type, bytes)) or None
+    ///
+    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+        self.thumbnail
+            .as_ref()
+            .and_then(|t| Some(t.content_type.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
-    /// Returns a tuple with thumbnail format and image bytes, Ok(None) or Err(Error::NotFound)`.
-    ///
-    // #[allow(clippy::type_complexity)]
-    // pub fn try_thumbnail(&self) -> Result<Option<(&str, Cow<Vec<u8>>)>> {
-    //     match self.thumbnail.as_ref() {
-    //         Some(thumbnail) => match self.resources.get(&thumbnail.identifier) {
-    //             Ok(c) => Ok(Some((&thumbnail.content_type, c))),
-    //             Err(e) => Err(e),
-    //         },
-    //         None => Ok(None),
-    //     }
-    // }
+    /// Returns a thumbnail ResourceRef or `None`.
+    pub fn thumbnail_ref(&self) -> Option<&ResourceRef> {
+        self.thumbnail.as_ref()
+    }
 
     /// Returns immutable [Ingredient]s used by this Manifest
     /// This can include a parent as well as any placed assets
@@ -227,11 +222,21 @@ impl Manifest {
         self
     }
 
+    /// Sets the thumbnail from a ResourceRef.
+    pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&thumbnail.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.thumbnail = Some(thumbnail);
+        Ok(self)
+    }
+
     /// Sets the thumbnail format and image data.
-    pub fn set_thumbnail<S: Into<String>>(
+    pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
         format: S,
-        thumbnail: Vec<u8>,
+        thumbnail: B,
     ) -> Result<&mut Self> {
         let format: String = format.into();
         let id = ResourceStore::content_type_id(&format);
@@ -646,11 +651,10 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some(thumbnail) = self.thumbnail() {
-            let thumb = self.resources.get(&thumbnail.identifier)?;
+        if let Some((content_type, data)) = self.thumbnail() {
             claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumbnail.content_type),
-                thumb.to_vec(),
+                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, content_type),
+                data.to_vec(),
             ))?;
         }
 
@@ -956,6 +960,7 @@ pub(crate) mod tests {
     use crate::{
         assertions::labels::ACTIONS,
         error::Error,
+        resource_store::ResourceRef,
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
@@ -1472,13 +1477,9 @@ pub(crate) mod tests {
         manifest.embed(&output, &output, &signer).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
-        let thumb_ref = active_manifest.thumbnail().unwrap();
-        let thumb = active_manifest
-            .resources()
-            .get(&thumb_ref.identifier)
-            .unwrap();
-        assert_eq!(thumb_ref.content_type, "image/jpeg");
-        assert_eq!(thumb.into_owned(), thumb_data);
+        let (content_type, image) = active_manifest.thumbnail().unwrap();
+        assert_eq!(content_type, "image/jpeg");
+        assert_eq!(image.into_owned(), thumb_data);
     }
 
     #[cfg(feature = "file_io")]
@@ -1536,10 +1537,9 @@ pub(crate) mod tests {
         let m = manifest_store.get_active().unwrap();
 
         assert!(m.thumbnail().is_some());
-        let thumbnail = m.thumbnail().unwrap();
-        let thumb_image = m.resources().get(&thumbnail.identifier).expect("get thumb");
-        assert_eq!(thumbnail.content_type, "image/jpeg");
-        assert_eq!(thumb_image.to_vec(), b"my value");
+        let (content_type, image) = m.thumbnail().unwrap();
+        assert_eq!(content_type, "image/jpeg");
+        assert_eq!(image.to_vec(), b"my value");
         // println!("{manifest_store}");
     }
 
@@ -1583,7 +1583,26 @@ pub(crate) mod tests {
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let active_manifest = manifest_store.get_active().unwrap();
-        let thumb = active_manifest.thumbnail().unwrap();
-        assert_eq!(thumb.content_type, "image/jpeg");
+        let (content_type, _) = active_manifest.thumbnail().unwrap();
+        assert_eq!(content_type, "image/jpeg");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_crate_file_based_ingredient() {
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("tests/fixtures");
+        let mut manifest = Manifest::new("claim_generator");
+        manifest.resources.set_base_path(folder);
+        // verify we can't set a references that don't exist
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(manifest.thumbnail_ref().is_none());
+        // verify we can set a references that do exist
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .is_ok());
+        assert!(manifest.thumbnail_ref().is_some());
     }
 }

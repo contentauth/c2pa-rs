@@ -95,7 +95,7 @@ pub struct Ingredient {
     ///
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
-    manifest_data: Option<String>,
+    manifest_data: Option<ResourceRef>,
 
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
@@ -162,9 +162,17 @@ impl Ingredient {
         self.provenance.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<&ResourceRef> {
+    /// Returns a ResourceRef or `None`.
+    pub fn thumbnail_ref(&self) -> Option<&ResourceRef> {
         self.thumbnail.as_ref()
+    }
+
+    /// Returns thumbnail tuple Some((content_type, bytes)) or None
+    ///
+    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
+        self.thumbnail
+            .as_ref()
+            .and_then(|t| Some(t.content_type.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
@@ -208,14 +216,18 @@ impl Ingredient {
 
     /// Returns a reference to C2PA manifest data if it exists.
     ///
-    /// This is the binary form of a manifest store in .c2pa format.
+    /// manifest_data is the binary form of a manifest store in .c2pa format.
+    pub fn manifest_data_ref(&self) -> Option<&ResourceRef> {
+        self.manifest_data.as_ref()
+    }
+
+    /// Returns a copy on write ref to the manifest data bytes or None`.
+    ///
+    /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<Vec<u8>>> {
-        if let Some(identifier) = self.manifest_data.as_ref() {
-            if let Ok(data) = self.resources.get(identifier) {
-                return Some(data);
-            }
-        }
-        None
+        self.manifest_data
+            .as_ref()
+            .and_then(|r| self.resources.get(&r.identifier).ok())
     }
 
     /// Sets a human-readable title for this ingredient.
@@ -254,13 +266,17 @@ impl Ingredient {
     }
 
     /// Sets the thumbnail from a ResourceRef.
-    pub fn set_thumbnail(&mut self, thumbnail: ResourceRef) -> &mut Self {
+    pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&thumbnail.identifier) {
+            return Err(Error::NotFound);
+        };
         self.thumbnail = Some(thumbnail);
-        self
+        Ok(self)
     }
 
     /// Sets the thumbnail content_type and image data.
-    pub fn set_thumbnail_from_bytes<S: Into<String>, B: Into<Vec<u8>>>(
+    pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
         content_type: S,
         bytes: B,
@@ -299,11 +315,21 @@ impl Ingredient {
         self
     }
 
-    /// Sets the Manifest C2PA data for this ingredient.
+    /// Sets a reference to Manifest C2PA data - does not verify the resource exists
+    pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&data_ref.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.manifest_data = Some(data_ref);
+        Ok(self)
+    }
+
+    /// Sets the Manifest C2PA data for this ingredient with bytes
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let id = ResourceStore::content_type_id("c2pa");
-        self.resources.add(id.clone(), data)?;
-        self.manifest_data = Some(id);
+        let manifest_ref = ResourceRef::from_content_type("c2pa");
+        self.resources.add(manifest_ref.identifier.clone(), data)?;
+        self.manifest_data = Some(manifest_ref);
         dbg!(&self.manifest_data);
         Ok(self)
     }
@@ -508,17 +534,13 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            let thumb_ref = ResourceRef::from_content_type(format);
-                            ingredient.resources.add(&thumb_ref.identifier, image)?;
-                            ingredient.set_thumbnail(thumb_ref);
+                            ingredient.set_thumbnail(format, image)?;
                         }
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
                 if let Some(bytes) = manifest_bytes {
-                    let id = ResourceStore::content_type_id("c2pa");
-                    ingredient.resources.add(id.clone(), bytes)?;
-                    ingredient.manifest_data = Some(id);
+                    ingredient.set_manifest_data(bytes)?;
                 }
 
                 ingredient.validation_status = if statuses.is_empty() {
@@ -552,7 +574,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_thumbnail_from_bytes(format, image)?;
+                ingredient.set_thumbnail(format, image)?;
             }
         }
 
@@ -625,7 +647,7 @@ impl Ingredient {
         }
 
         if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail_from_bytes(format, image)?;
+            ingredient.set_thumbnail(format, image)?;
         }
 
         ingredient.is_parent = is_parent;
@@ -726,13 +748,10 @@ impl Ingredient {
 
         // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
         if thumbnail.is_none() {
-            if let Some(thumb_ref) = self.thumbnail() {
+            if let Some((format, data)) = self.thumbnail() {
                 let hash_url = claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(
-                        labels::INGREDIENT_THUMBNAIL,
-                        &thumb_ref.content_type,
-                    ),
-                    self.resources.get(&thumb_ref.identifier)?.to_vec(),
+                    &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
+                    data.to_vec(),
                 ))?;
 
                 thumbnail = Some(hash_url);
@@ -843,7 +862,7 @@ mod tests {
             .set_provenance("provenance")
             .set_is_parent()
             .set_metadata(Metadata::new())
-            .set_thumbnail_from_bytes("format", "thumbnail".as_bytes().to_vec())
+            .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
             .unwrap()
             .set_active_manifest("active_manifest")
             .set_manifest_data("data".as_bytes().to_vec())
@@ -857,16 +876,17 @@ mod tests {
         assert_eq!(ingredient.hash(), Some("hash"));
         assert!(ingredient.is_parent());
         assert!(ingredient.metadata().is_some());
-        assert_eq!(ingredient.thumbnail().unwrap().content_type, "format");
-        // assert_eq!(ingredient.thumbnail().)
-        //     ResourceRef::new
-        //     Some(("format", Cow::Owned("thumbnail".as_bytes().to_vec())))
-        // );
-        assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+        assert_eq!(ingredient.thumbnail().unwrap().0, "format");
         assert_eq!(
-            ingredient.manifest_data(),
-            Some(Cow::Owned("data".as_bytes().to_vec()))
+            *ingredient.thumbnail().unwrap().1,
+            "thumbnail".as_bytes().to_vec()
         );
+        assert_eq!(
+            *ingredient.thumbnail_bytes().unwrap(),
+            "thumbnail".as_bytes().to_vec()
+        );
+        assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
             "status_code"
@@ -889,14 +909,8 @@ mod tests_file_io {
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
-        let thumb_size = ingredient.thumbnail().map_or(0, |thumb_ref| {
-            ingredient
-                .resources()
-                .get(&thumb_ref.identifier)
-                .map(|i| i.len())
-                .unwrap_or(0)
-        });
-        let manifest_data_size = ingredient.manifest_data().map_or(0, |v| v.len());
+        let thumb_size = ingredient.thumbnail_bytes().map_or(0, |i| i.len());
+        let manifest_data_size = ingredient.manifest_data().map_or(0, |r| r.len());
 
         println!(
             "  {} instance_id: {}, thumb size: {}, manifest_data size: {}",
@@ -912,7 +926,7 @@ mod tests_file_io {
     fn test_thumbnail(ingredient: &Ingredient, format: &str) {
         if cfg!(feature = "add_thumbnails") {
             assert!(ingredient.thumbnail().is_some());
-            assert_eq!(ingredient.thumbnail().unwrap().content_type, format);
+            assert_eq!(ingredient.thumbnail().unwrap().0, format);
         } else {
             assert!(ingredient.thumbnail().is_none());
         }
@@ -1066,8 +1080,50 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
-        let ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
+        let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.validation_status(), None);
+
+        // verify we can't set a references that don't exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        // verify we can set a references that do exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_crate_file_based_ingredient() {
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("tests/fixtures");
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        ingredient.resources.set_base_path(folder);
+        // verify we can't set a references that don't exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(ingredient.thumbnail_ref().is_none());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(ingredient.manifest_data_ref().is_none());
+        // verify we can set a references that do exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .is_ok());
+        assert!(ingredient.thumbnail_ref().is_some());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("c2pa", "cloud_manifest.c2pa"))
+            .is_ok());
+        assert!(ingredient.manifest_data_ref().is_some());
     }
 }
