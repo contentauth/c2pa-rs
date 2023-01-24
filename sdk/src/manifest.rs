@@ -46,6 +46,7 @@ pub struct Manifest {
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
+    #[serde(default = "default_claim_generator")]
     pub claim_generator: String,
 
     /// A human-readable title, generally source filename.
@@ -96,6 +97,10 @@ pub struct Manifest {
     #[serde(skip_deserializing)]
     #[serde(skip_serializing_if = "skip_serializing_resources")]
     resources: ResourceStore,
+}
+
+fn default_claim_generator() -> String {
+    format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 }
 
 fn default_instance_id() -> String {
@@ -238,10 +243,14 @@ impl Manifest {
         format: S,
         thumbnail: B,
     ) -> Result<&mut Self> {
-        let format: String = format.into();
-        let id = ResourceStore::content_type_id(&format);
-        self.resources.add(id.clone(), thumbnail)?;
-        self.thumbnail = Some(ResourceRef::new(format, id));
+        let base_id = self
+            .label()
+            .unwrap_or_else(|| self.instance_id())
+            .to_string();
+        self.thumbnail = Some(
+            self.resources
+                .add_with(&base_id, &format.into(), thumbnail)?,
+        );
         Ok(self)
     }
 
@@ -273,10 +282,15 @@ impl Manifest {
         self.signature_info.as_ref()
     }
 
+    /// Returns the parent ingredient if it exists
+    pub fn parent(&self) -> Option<&Ingredient> {
+        self.ingredients.iter().find(|i| i.is_parent())
+    }
+
     /// Sets the parent ingredient, assuring it is first and setting the is_parent flag
     pub fn set_parent(&mut self, mut ingredient: Ingredient) -> Result<&mut Self> {
         // there should only be one parent so return an error if we already have one
-        if self.ingredients.iter().any(|i| i.is_parent()) {
+        if self.parent().is_some() {
             error!("parent already added");
             return Err(Error::BadParam("Parent parent already added".to_owned()));
         }

@@ -281,10 +281,11 @@ impl Ingredient {
         content_type: S,
         bytes: B,
     ) -> Result<&mut Self> {
-        let content_type: String = content_type.into();
-        let thumb_ref = ResourceRef::from_content_type(&content_type);
-        self.resources.add(&thumb_ref.identifier, bytes)?;
-        self.thumbnail = Some(thumb_ref);
+        let base_id = self.instance_id().to_string();
+        self.thumbnail = Some(
+            self.resources
+                .add_with(&base_id, &content_type.into(), bytes)?,
+        );
         Ok(self)
     }
 
@@ -327,10 +328,8 @@ impl Ingredient {
 
     /// Sets the Manifest C2PA data for this ingredient with bytes
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let manifest_ref = ResourceRef::from_content_type("c2pa");
-        self.resources.add(manifest_ref.identifier.clone(), data)?;
-        self.manifest_data = Some(manifest_ref);
-        dbg!(&self.manifest_data);
+        let base_id = self.instance_id().to_string();
+        self.manifest_data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
         Ok(self)
     }
 

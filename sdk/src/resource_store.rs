@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
-use uuid_b64::UuidB64;
 
 use crate::{Error, Result};
 
@@ -41,21 +40,9 @@ impl ResourceRef {
             identifier: identifier.into(),
         }
     }
-
-    pub fn from_content_type<S: Into<String>>(content_type: S) -> Self {
-        let content_type = content_type.into();
-        let identifier = ResourceStore::content_type_id(&content_type);
-        Self {
-            content_type,
-            identifier,
-        }
-    }
 }
 
-#[derive(Default)]
-pub struct Config {}
-
-/// Resource store to contain binary objects referenced from JSON structures
+/// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
@@ -83,16 +70,37 @@ impl ResourceStore {
     }
 
     ///  generate a unique id for a given content type (adds a file extension)
-    pub fn content_type_id(format: &str) -> String {
+    pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
             "c2pa" | "application/x-c2pa-manifest-store" => ".cp2a",
             _ => "",
         };
-        UuidB64::new().to_string() + ext
+        // clean string for possible filesystem use
+        let mut id = key.replace(['/', ':'], "-") + ext;
+
+        // ensure it is unique in this store
+        let count = 1;
+        while self.exists(&id) {
+            id = format!("{id}-{count}{ext}");
+        }
+        id
     }
 
+    /// Adds a resource, generating a resource ref from a key and format.
+    ///
+    /// The generated identifier may be different from the key
+    pub fn add_with<R>(&mut self, key: &str, format: &str, value: R) -> crate::Result<ResourceRef>
+    where
+        R: Into<Vec<u8>>,
+    {
+        let id = self.id_from(key, format);
+        self.add(id.clone(), value)?;
+        Ok(ResourceRef::new(format, id))
+    }
+
+    /// Adds a resource, using a given id value.
     pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<()>
     where
         S: Into<String>,
@@ -108,6 +116,9 @@ impl ResourceStore {
         Ok(())
     }
 
+    /// Returns a copy on write reference to the resource if found.
+    ///
+    /// returns Error::NotFound if it cannot find a resource matching that id
     pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
@@ -126,7 +137,7 @@ impl ResourceStore {
             .map_or_else(|| Err(Error::NotFound), |v| Ok(Cow::Borrowed(v)))
     }
 
-    /// Returns true if the resource has been added or exists as file
+    /// Returns true if the resource has been added or exists as file.
     pub fn exists(&self, id: &str) -> bool {
         if !self.resources.contains_key(id) {
             #[cfg(feature = "file_io")]
