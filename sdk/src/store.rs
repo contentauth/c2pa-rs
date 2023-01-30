@@ -1047,15 +1047,13 @@ impl Store {
                         "ingredient_checks"
                     )
                     .error(Error::ClaimVerification(format!(
-                        "ingredient: {} is missing",
-                        label
+                        "ingredient: {label} is missing"
                     )))
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::ClaimVerification(format!(
-                            "ingredient: {} is missing",
-                            label
+                            "ingredient: {label} is missing"
                         ))),
                     )?;
                 }
@@ -1150,15 +1148,13 @@ impl Store {
                         "ingredient_checks_async"
                     )
                     .error(Error::ClaimVerification(format!(
-                        "ingredient: {} is missing",
-                        label
+                        "ingredient: {label} is missing"
                     )))
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::ClaimVerification(format!(
-                            "ingredient: {} is missing",
-                            label
+                            "ingredient: {label} is missing"
                         ))),
                     )?;
                 }
@@ -1256,7 +1252,7 @@ impl Store {
         }
 
         let stream_len = stream.seek(SeekFrom::End(0))?;
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
 
         let mut hashes: Vec<DataHash> = Vec::new();
 
@@ -1974,8 +1970,7 @@ impl Store {
                 resp.status_text()
             ))),
             Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(format!(
-                "fetch failed: url: {}",
-                url
+                "fetch failed: url: {url}"
             ))),
         }
     }
@@ -2916,7 +2911,7 @@ pub mod tests {
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
         let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&path, true, &mut report); // errs are in report
-        println!("report: {:?}", report);
+        println!("report: {report:?}");
         report
     }
 
@@ -3087,7 +3082,7 @@ pub mod tests {
         let ap = fixture_path("CA.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        println!("store = {}", store);
+        println!("store = {store}");
     }
 
     #[test]

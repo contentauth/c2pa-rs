@@ -488,7 +488,7 @@ impl Claim {
                 if let Some(append_val) = hint_value.as_str() {
                     map.insert(
                         hint_key.to_string(),
-                        Value::String(format!("{}, {}", curr_val, append_val)),
+                        Value::String(format!("{curr_val}, {append_val}")),
                     );
                 }
                 return;
@@ -1090,15 +1090,15 @@ impl Claim {
                             Err(e) => {
                                 let log_item = log_item!(
                                     claim.assertion_uri(&dh_assertion.label()),
-                                    format!("asset hash error, name: {}, error: {}", name, e),
+                                    format!("asset hash error, name: {name}, error: {e}"),
                                     "verify_internal"
                                 )
-                                .error(Error::HashMismatch(format!("Asset hash failure: {}", e)))
+                                .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
                                 .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
 
                                 validation_log.log(
                                     log_item,
-                                    Some(Error::HashMismatch(format!("Asset hash failure: {}", e))),
+                                    Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
                                 )?;
                             }
                         }
@@ -1133,15 +1133,15 @@ impl Claim {
                         Err(e) => {
                             let log_item = log_item!(
                                 claim.assertion_uri(&dh_assertion.label()),
-                                format!("asset hash error, name: {}, error: {}", name, e),
+                                format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
-                            .error(Error::HashMismatch(format!("Asset hash failure: {}", e)))
+                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
                             .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,
-                                Some(Error::HashMismatch(format!("Asset hash failure: {}", e))),
+                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
                             )?;
                         }
                     }
@@ -1550,7 +1550,7 @@ impl Claim {
             let tn_type = get_thumbnail_image_type(label);
             format!("{}__{}.{}", get_thumbnail_type(label), instance, tn_type)
         } else {
-            format!("{}__{}", label, instance)
+            format!("{label}__{instance}")
         }
     }
 
@@ -1675,7 +1675,7 @@ pub mod tests {
         let restored_binary = restored_claim.data().expect("failure returning data");
 
         assert_eq!(orig_binary, restored_binary);
-        println!("Restored Claim: {:?}", restored_claim);
+        println!("Restored Claim: {restored_claim:?}");
 
         // NOTE: I added a separate mirror of original data because a third-party's
         // JSON serialization could differ from our re-serialization of that same data.
@@ -1689,7 +1689,7 @@ pub mod tests {
             .to_json(AssertionStoreJsonFormat::OrderedList, true)
             .expect("could not generate json");
 
-        println!("Claim: {}", json_str);
+        println!("Claim: {json_str}");
     }
 
     #[test]
