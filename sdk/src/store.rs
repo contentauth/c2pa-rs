@@ -993,10 +993,10 @@ impl Store {
     }
 
     // wake the ingredients and validate
-    fn ingredient_checks<'a>(
+    fn ingredient_checks(
         store: &Store,
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
@@ -1200,9 +1200,9 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
-    pub fn verify_store<'a>(
+    pub fn verify_store(
         store: &Store,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -1904,9 +1904,9 @@ impl Store {
     /// asset_path: path to input asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
     #[cfg(feature = "file_io")]
-    pub fn verify_from_path<'a>(
+    pub fn verify_from_path(
         &mut self,
-        asset_path: &'a Path,
+        asset_path: &'_ Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         Store::verify_store(self, &ClaimAssetData::PathData(asset_path), validation_log)
@@ -2150,9 +2150,9 @@ impl Store {
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    pub fn load_from_memory<'a>(
+    pub fn load_from_memory(
         asset_type: &str,
-        data: &'a [u8],
+        data: &'_ [u8],
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {

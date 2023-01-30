@@ -849,9 +849,9 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub fn verify_claim<'a>(
+    pub fn verify_claim(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -897,9 +897,9 @@ impl Claim {
         Ok(vi.cert_chain)
     }
 
-    fn verify_internal<'a>(
+    fn verify_internal(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
