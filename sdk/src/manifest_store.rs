@@ -412,7 +412,7 @@ mod tests {
     fn manifest_report_from_file_with_resources() {
         let manifest_store = ManifestStore::from_file_with_resources(
             "tests/fixtures/CIE-sig-CA.jpg",
-            "../target/tmp/manifest_store",
+            "../target/tmp/ms",
         )
         .expect("from_store_with_resources");
         println!("{manifest_store}");
