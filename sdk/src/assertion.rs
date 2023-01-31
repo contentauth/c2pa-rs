@@ -641,7 +641,7 @@ pub mod tests {
                 Action::new("c2pa.cropped")
                     .set_parameter(
                         "coordinate".to_owned(),
-                        r#"{"left": 0,"right": 2000,"top": 1000,"botton": 4000}"#,
+                        serde_json::json!({"left": 0,"right": 2000,"top": 1000,"bottom": 4000}),
                     )
                     .unwrap(),
             )
