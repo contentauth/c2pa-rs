@@ -187,14 +187,14 @@ pub fn version(label: &str) -> Option<usize> {
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
     match format {
-        "image/jpeg" | "jpeg" | "jpg" => format!("{}.jpeg", label),
-        "image/png" | "png" => format!("{}.png", label),
+        "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
+        "image/png" | "png" => format!("{label}.png"),
         _ => {
             let p: Vec<&str> = format.split('/').collect();
             if p.len() == 2 && p[0] == "image" {
                 format!("{}/{}", label, p[1]) // try to parse other image types
             } else {
-                format!("{}/{}", label, format)
+                format!("{label}/{format}")
             }
         }
     }

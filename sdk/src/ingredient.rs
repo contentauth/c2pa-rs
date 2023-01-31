@@ -337,7 +337,7 @@ impl Ingredient {
             use uuid::Uuid;
             let uuid = Uuid::new_v4();
             //warn!("Generating fake id {}", uuid);
-            format!("xmp:{}id:{}", id_type, uuid)
+            format!("xmp:{id_type}id:{uuid}")
         }
 
         // get required information from the file path
@@ -818,7 +818,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "Purple Square.psd");
         assert_eq!(ingredient.format(), "image/vnd.adobe.photoshop");
         assert!(ingredient.thumbnail().is_none()); // should always be none
@@ -832,7 +832,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
@@ -848,7 +848,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, NO_MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
@@ -877,7 +877,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file_with_options(ap, &MyOptions {}).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "MyTitle");
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.hash().is_some());
@@ -894,7 +894,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "libpng-test.png");
         test_thumbnail(&ingredient, "image/png");
         assert!(ingredient.provenance().is_none());
@@ -929,7 +929,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), PRERELEASE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
@@ -947,7 +947,7 @@ mod tests_file_io {
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
     }
 }

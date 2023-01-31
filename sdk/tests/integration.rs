@@ -91,7 +91,7 @@ mod integration_1 {
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
 
         assert!(manifest_store.get_active().is_some());
         if let Some(manifest) = manifest_store.get_active() {

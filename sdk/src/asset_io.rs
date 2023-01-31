@@ -28,7 +28,7 @@ pub enum HashBlockObjectType {
 
 impl fmt::Display for HashBlockObjectType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 #[derive(Debug)]

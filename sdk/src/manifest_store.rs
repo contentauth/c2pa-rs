@@ -201,7 +201,7 @@ impl std::fmt::Display for ManifestStore {
         let mut json = serde_json::to_string_pretty(self).unwrap_or_default();
 
         fn omit_tag(mut json: String, tag: &str) -> String {
-            while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+            while let Some(index) = json.find(&format!("\"{tag}\": [")) {
                 if let Some(idx2) = json[index..].find(']') {
                     json = format!(
                         "{}\"{}\": \"<omitted>\"{}",
@@ -216,7 +216,7 @@ impl std::fmt::Display for ManifestStore {
 
         // Make a base64 hash from Vec<u8> values.
         fn b64_tag(mut json: String, tag: &str) -> String {
-            while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+            while let Some(index) = json.find(&format!("\"{tag}\": [")) {
                 if let Some(idx2) = json[index..].find(']') {
                     let idx3 = json[index..].find('[').unwrap_or_default();
 
@@ -276,7 +276,7 @@ mod tests {
 
         let full_report = manifest_store.to_string();
         assert!(!full_report.is_empty());
-        println!("{}", full_report);
+        println!("{full_report}");
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn manifest_report_from_file() {
         let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
@@ -344,6 +344,6 @@ mod tests {
                 .unwrap();
         assert!(!manifest_store.manifests().is_empty());
         assert!(manifest_store.validation_status().is_none());
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
     }
 }

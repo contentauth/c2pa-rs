@@ -192,7 +192,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
             let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
             let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
 
-            let out_name = format!("{}-c2pa.{}", filename, ext);
+            let out_name = format!("{filename}-c2pa.{ext}");
             in_path.to_owned().with_file_name(out_name)
         }
     };

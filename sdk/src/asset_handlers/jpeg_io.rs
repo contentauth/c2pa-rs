@@ -11,11 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    fs::File,
-    io::{Cursor, SeekFrom},
-    path::*,
-};
+use std::{fs::File, io::Cursor, path::*};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use img_parts::{
@@ -68,9 +64,9 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
 
 fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
     let mut buf: Vec<u8> = Vec::new();
-    stream.seek(SeekFrom::Start(0))?;
+    stream.rewind()?;
     stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    stream.seek(SeekFrom::Start(0))?;
+    stream.rewind()?;
 
     let dimg_opt = DynImage::from_bytes(buf.into())
         .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
@@ -153,7 +149,7 @@ impl CAILoader for JpegIO {
 
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
-        asset_reader.seek(SeekFrom::Start(0))?;
+        asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into())
@@ -238,7 +234,7 @@ impl CAIWriter for JpegIO {
         //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
         stream.read_to_end(&mut buf).map_err(Error::IoError)?;
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
@@ -289,7 +285,7 @@ impl CAIWriter for JpegIO {
             jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
         }
 
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
         jpeg.encoder()
             .write_to(stream)
             .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
@@ -310,9 +306,9 @@ impl CAIWriter for JpegIO {
         add_required_segs_to_stream(stream)?;
 
         let mut buf: Vec<u8> = Vec::new();
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
         stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
 
         let dimg = DynImage::from_bytes(buf.into())
             .map_err(|e| Error::OtherError(Box::new(e)))?

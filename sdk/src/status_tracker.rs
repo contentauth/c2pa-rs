@@ -42,7 +42,7 @@ impl LogItem {
     // add an error value
     pub fn error(self, err: Error) -> Self {
         LogItem {
-            err_val: Some(format!("{:?}", err)),
+            err_val: Some(format!("{err:?}")),
             ..self
         }
     }
@@ -50,7 +50,7 @@ impl LogItem {
     // add an error value
     pub fn set_error(self, err: &Error) -> Self {
         LogItem {
-            err_val: Some(format!("{:?}", err)),
+            err_val: Some(format!("{err:?}")),
             ..self
         }
     }
