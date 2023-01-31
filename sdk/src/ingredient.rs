@@ -12,11 +12,13 @@
 // each license.
 
 #![deny(missing_docs)]
-
-use std::ops::Deref;
+use std::borrow::Cow;
+#[cfg(feature = "file_io")]
+use std::path::{Path, PathBuf};
 
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
@@ -25,27 +27,20 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf,
+    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
     validation_status::{self, ValidationStatus},
 };
 #[cfg(feature = "file_io")]
 use crate::{error::wrap_io_err, validation_status::status_for_store, xmp_inmemory_utils::XmpInfo};
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// thumbnail data based on the "serialize_thumbnails" flag (serialization is disabled by default)
-fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || value.is_none()
-}
-
-#[cfg(feature = "file_io")]
-use std::path::Path;
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 /// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
     /// A human-readable title, generally source filename.
     title: String,
 
     /// The format of the source file as a MIME type.
+    #[serde(default = "default_format")]
     format: String,
 
     /// Document ID from `xmpMM:DocumentID` in XMP metadata.
@@ -53,6 +48,7 @@ pub struct Ingredient {
     document_id: Option<String>,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+    #[serde(default = "default_instance_id")]
     instance_id: String,
 
     /// URI from `dcterms:provenance` in XMP metadata.
@@ -62,8 +58,8 @@ pub struct Ingredient {
     /// A thumbnail image capturing the visual state at the time of import.
     ///
     /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
-    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    thumbnail: Option<(String, Vec<u8>)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thumbnail: Option<ResourceRef>,
 
     /// An optional hash of the asset to prevent duplicates.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,8 +94,20 @@ pub struct Ingredient {
     /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
     ///
     /// [`ManifestStore`]: crate::ManifestStore
-    #[serde(skip_serializing)]
-    manifest_data: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_data: Option<ResourceRef>,
+
+    #[serde(skip_deserializing)]
+    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    resources: ResourceStore,
+}
+
+fn default_instance_id() -> String {
+    format!("xmp:iid:{}", Uuid::new_v4())
+}
+
+fn default_format() -> String {
+    "application/octet-stream".to_owned()
 }
 
 impl Ingredient {
@@ -124,16 +132,8 @@ impl Ingredient {
         Self {
             title: title.into(),
             format: format.into(),
-            document_id: None,
             instance_id: instance_id.into(),
-            provenance: None,
-            thumbnail: None,
-            hash: None,
-            is_parent: None,
-            validation_status: None,
-            metadata: None,
-            active_manifest: None,
-            manifest_data: None,
+            ..Default::default()
         }
     }
 
@@ -162,11 +162,26 @@ impl Ingredient {
         self.provenance.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
+    /// Returns a ResourceRef or `None`.
+    pub fn thumbnail_ref(&self) -> Option<&ResourceRef> {
+        self.thumbnail.as_ref()
+    }
+
+    /// Returns thumbnail tuple Some((content_type, bytes)) or None
+    ///
+    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
-            .map(|(format, image)| (format.as_str(), image.deref()))
+            .and_then(|t| Some(t.content_type.as_str()).zip(self.resources.get(&t.identifier).ok()))
+    }
+
+    /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
+    ///
+    pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
+        match self.thumbnail.as_ref() {
+            Some(thumbnail) => self.resources.get(&thumbnail.identifier),
+            None => Err(Error::NotFound),
+        }
     }
 
     /// Returns an optional hash to uniquely identify this asset
@@ -201,9 +216,18 @@ impl Ingredient {
 
     /// Returns a reference to C2PA manifest data if it exists.
     ///
-    /// This is the binary form of a manifest store in .c2pa format.
-    pub fn manifest_data(&self) -> Option<&[u8]> {
-        self.manifest_data.as_deref()
+    /// manifest_data is the binary form of a manifest store in .c2pa format.
+    pub fn manifest_data_ref(&self) -> Option<&ResourceRef> {
+        self.manifest_data.as_ref()
+    }
+
+    /// Returns a copy on write ref to the manifest data bytes or None`.
+    ///
+    /// manifest_data is the binary form of a manifest store in .c2pa format.
+    pub fn manifest_data(&self) -> Option<Cow<Vec<u8>>> {
+        self.manifest_data
+            .as_ref()
+            .and_then(|r| self.resources.get(&r.identifier).ok())
     }
 
     /// Sets a human-readable title for this ingredient.
@@ -241,10 +265,28 @@ impl Ingredient {
         self
     }
 
-    /// Sets the thumbnail format and image data.
-    pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format.into(), thumbnail));
-        self
+    /// Sets the thumbnail from a ResourceRef.
+    pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&thumbnail.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.thumbnail = Some(thumbnail);
+        Ok(self)
+    }
+
+    /// Sets the thumbnail content_type and image data.
+    pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
+        &mut self,
+        content_type: S,
+        bytes: B,
+    ) -> Result<&mut Self> {
+        let base_id = self.instance_id().to_string();
+        self.thumbnail = Some(
+            self.resources
+                .add_with(&base_id, &content_type.into(), bytes)?,
+        );
+        Ok(self)
     }
 
     /// Sets the hash value generated from the entire asset.
@@ -274,10 +316,31 @@ impl Ingredient {
         self
     }
 
-    /// Sets the Manifest C2PA data for this ingredient.
-    pub fn set_manifest_data(&mut self, data: Vec<u8>) -> &mut Self {
-        self.manifest_data = Some(data);
-        self
+    /// Sets a reference to Manifest C2PA data - does not verify the resource exists
+    pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&data_ref.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.manifest_data = Some(data_ref);
+        Ok(self)
+    }
+
+    /// Sets the Manifest C2PA data for this ingredient with bytes
+    pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+        let base_id = self.instance_id().to_string();
+        self.manifest_data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
+        Ok(self)
+    }
+
+    /// Return an immutable reference to the ingredient resources
+    pub fn resources(&self) -> &ResourceStore {
+        &self.resources
+    }
+
+    /// Return an mutable reference to the ingredient resources
+    pub fn resources_mut(&mut self) -> &mut ResourceStore {
+        &mut self.resources
     }
 
     /// Gathers filename, extension, and format from a file path.
@@ -334,7 +397,6 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         fn make_id(id_type: &str) -> String {
-            use uuid::Uuid;
             let uuid = Uuid::new_v4();
             //warn!("Generating fake id {}", uuid);
             format!("xmp:{id_type}id:{uuid}")
@@ -362,7 +424,18 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     /// Creates an `Ingredient` from a file path.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_file_with_options(path.as_ref(), &DefaultOptions {})
+        Self::from_file_with_options(path.as_ref(), &DefaultOptions { base: None })
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Creates an `Ingredient` from a file path.
+    pub fn from_file_with_folder<P: AsRef<Path>>(path: P, folder: P) -> Result<Self> {
+        Self::from_file_with_options(
+            path.as_ref(),
+            &DefaultOptions {
+                base: Some(PathBuf::from(folder.as_ref())),
+            },
+        )
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
@@ -400,6 +473,11 @@ impl Ingredient {
 
         if !path.exists() {
             return Err(Error::FileNotFound(ingredient.title));
+        }
+
+        // configure for writing to folders if that option is set
+        if let Some(folder) = options.base_path().as_ref() {
+            ingredient.with_base_path(folder)?;
         }
 
         // if options includes a title, use it
@@ -455,12 +533,15 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            ingredient.set_thumbnail(format, image);
+                            ingredient.set_thumbnail(format, image)?;
                         }
                     }
                     ingredient.active_manifest = Some(claim.label().to_string());
                 }
-                ingredient.manifest_data = manifest_bytes;
+                if let Some(bytes) = manifest_bytes {
+                    ingredient.set_manifest_data(bytes)?;
+                }
+
                 ingredient.validation_status = if statuses.is_empty() {
                     None
                 } else {
@@ -492,7 +573,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_thumbnail(format, image);
+                ingredient.set_thumbnail(format, image)?;
             }
         }
 
@@ -500,7 +581,11 @@ impl Ingredient {
     }
 
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
-    pub(crate) fn from_ingredient_uri(store: &Store, ingredient_uri: &str) -> Result<Self> {
+    pub(crate) fn from_ingredient_uri(
+        store: &Store,
+        ingredient_uri: &str,
+        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+    ) -> Result<Self> {
         let assertion =
             store
                 .get_assertion_from_uri(ingredient_uri)
@@ -554,8 +639,14 @@ impl Ingredient {
             &ingredient_assertion.instance_id,
         );
         ingredient.document_id = ingredient_assertion.document_id;
+
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = resource_path {
+            ingredient.resources_mut().set_base_path(base_path)
+        }
+
         if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail(format, image);
+            ingredient.set_thumbnail(format, image)?;
         }
 
         ingredient.is_parent = is_parent;
@@ -596,7 +687,7 @@ impl Ingredient {
                 };
 
                 // have Store check and load ingredients and add them to a claim
-                Store::load_ingredient_to_claim(claim, &manifest_label, buffer, redactions)?;
+                Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -656,10 +747,10 @@ impl Ingredient {
 
         // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
         if thumbnail.is_none() {
-            if let Some((format, image)) = &self.thumbnail() {
+            if let Some((format, data)) = self.thumbnail() {
                 let hash_url = claim.add_assertion(&Thumbnail::new(
                     &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
-                    image.to_vec(),
+                    data.to_vec(),
                 ))?;
 
                 thumbnail = Some(hash_url);
@@ -679,6 +770,16 @@ impl Ingredient {
         ingredient_assertion.metadata = self.metadata.clone();
         ingredient_assertion.validation_status = self.validation_status.clone();
         claim.add_assertion(&ingredient_assertion)
+    }
+
+    /// Setting a base path will make the ingredient use resource files instead of memory buffers
+    ///
+    /// The files will be relative to the given base path
+    #[cfg(feature = "file_io")]
+    pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+        std::fs::create_dir_all(&base_path)?;
+        self.resources.set_base_path(base_path.as_ref());
+        Ok(self)
     }
 }
 
@@ -718,15 +819,32 @@ pub trait IngredientOptions {
         #[cfg(not(feature = "add_thumbnails"))]
         None
     }
+
+    /// Returns an optional folder path
+    ///
+    /// If Some, binary data will be stored in files in the given folder
+    fn base_path(&self) -> Option<&Path> {
+        None
+    }
 }
 
-#[cfg(feature = "file_io")]
 /// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
 ///
 /// This can be use with Ingredient::from_file_with_options
-pub struct DefaultOptions {}
 #[cfg(feature = "file_io")]
-impl IngredientOptions for DefaultOptions {}
+pub struct DefaultOptions {
+    /// If Some, the ingredient will read/write binary assets using this folder.
+    ///
+    /// If None, the assets will be kept in memory.
+    pub base: Option<std::path::PathBuf>,
+}
+
+#[cfg(feature = "file_io")]
+impl IngredientOptions for DefaultOptions {
+    fn base_path(&self) -> Option<&Path> {
+        self.base.as_deref()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -747,8 +865,10 @@ mod tests {
             .set_is_parent()
             .set_metadata(Metadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
+            .unwrap()
             .set_active_manifest("active_manifest")
             .set_manifest_data("data".as_bytes().to_vec())
+            .expect("set_manifest")
             .add_validation_status(ValidationStatus::new("status_code"));
         assert_eq!(ingredient.title(), "title2");
         assert_eq!(ingredient.format(), "format");
@@ -758,12 +878,17 @@ mod tests {
         assert_eq!(ingredient.hash(), Some("hash"));
         assert!(ingredient.is_parent());
         assert!(ingredient.metadata().is_some());
+        assert_eq!(ingredient.thumbnail().unwrap().0, "format");
         assert_eq!(
-            ingredient.thumbnail(),
-            Some(("format", "thumbnail".as_bytes()))
+            *ingredient.thumbnail().unwrap().1,
+            "thumbnail".as_bytes().to_vec()
+        );
+        assert_eq!(
+            *ingredient.thumbnail_bytes().unwrap(),
+            "thumbnail".as_bytes().to_vec()
         );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
-        assert_eq!(ingredient.manifest_data(), Some("data".as_bytes()));
+
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
             "status_code"
@@ -786,8 +911,8 @@ mod tests_file_io {
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
-        let thumb_size = ingredient.thumbnail().map_or(0, |(_, image)| image.len());
-        let manifest_data_size = ingredient.manifest_data().map_or(0, |v| v.len());
+        let thumb_size = ingredient.thumbnail_bytes().map_or(0, |i| i.len());
+        let manifest_data_size = ingredient.manifest_data().map_or(0, |r| r.len());
 
         println!(
             "  {} instance_id: {}, thumb size: {}, manifest_data size: {}",
@@ -949,5 +1074,58 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_jpg_with_path() {
+        let ap = fixture_path("CIE-sig-CA.jpg");
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("../target/tmp/ingredient");
+        let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
+        println!("ingredient = {ingredient}");
+        assert_eq!(ingredient.validation_status(), None);
+
+        // verify we can't set a references that don't exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        // verify we can set a references that do exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
+            .is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_crate_file_based_ingredient() {
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("tests/fixtures");
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        ingredient.resources.set_base_path(folder);
+        // verify we can't set a references that don't exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(ingredient.thumbnail_ref().is_none());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(ingredient.manifest_data_ref().is_none());
+        // verify we can set a references that do exist
+        assert!(ingredient
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .is_ok());
+        assert!(ingredient.thumbnail_ref().is_some());
+        assert!(ingredient
+            .set_manifest_data_ref(ResourceRef::new("c2pa", "cloud_manifest.c2pa"))
+            .is_ok());
+        assert!(ingredient.manifest_data_ref().is_some());
     }
 }
