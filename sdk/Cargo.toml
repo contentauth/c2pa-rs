@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.16.1"
+version = "0.16.2"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
@@ -84,7 +84,6 @@ treeline = "0.1.0"
 twoway = "0.2.1"
 url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
-uuid-b64 = "0.1.1"
 x509-parser = "0.11.0"
 x509-certificate = "0.12.0"
 

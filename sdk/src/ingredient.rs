@@ -828,12 +828,15 @@ pub trait IngredientOptions {
     }
 }
 
-#[cfg(feature = "file_io")]
 /// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
 ///
 /// This can be use with Ingredient::from_file_with_options
+#[cfg(feature = "file_io")]
 pub struct DefaultOptions {
-    base: Option<std::path::PathBuf>,
+    /// If Some, the ingredient will read/write binary assets using this folder.
+    ///
+    /// If None, the assets will be kept in memory.
+    pub base: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "file_io")]
