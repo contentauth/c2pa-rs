@@ -223,12 +223,12 @@ mod tests {
     fn add_xmp() {
         let xmp = add_provenance(XMP_DATA, PROVENANCE).expect("adding provenance");
         let unicorn = extract_provenance(&xmp);
-        println!("{}", xmp);
+        println!("{xmp}");
         assert_eq!(unicorn, Some(PROVENANCE.to_string()));
 
         let xmp = add_provenance(MIN_XMP, PROVENANCE).expect("adding provenance");
         let unicorn = extract_provenance(&xmp);
-        println!("{}", xmp);
+        println!("{xmp}");
         assert_eq!(unicorn, Some(PROVENANCE.to_string()));
     }
 }

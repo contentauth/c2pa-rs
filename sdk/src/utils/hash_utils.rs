@@ -203,7 +203,7 @@ pub fn hash_stream_by_alg(
     };
 
     let data_len = data.seek(SeekFrom::End(0))?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
 
     let ranges = match exclusions {
         Some(mut e) if !e.is_empty() => {
@@ -377,9 +377,9 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
 // Fast implementation for Blake3 hashing that can handle large assets
 pub fn blake3_from_asset(path: &Path) -> Result<String> {
     let mut data = File::open(path)?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
     let data_len = data.seek(SeekFrom::End(0))?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
 
     let mut hasher = blake3::Hasher::new();
 

@@ -101,7 +101,7 @@ impl ManifestStoreReport {
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
-        println!("{}", cert_str);
+        println!("{cert_str}");
         Ok(())
     }
 
@@ -168,7 +168,7 @@ impl ManifestStoreReport {
             let (label, instance) = Claim::assertion_label_from_link(&hashlink);
             let label = Claim::label_with_instance(&label, instance);
 
-            current_token.append(tree, format!("Assertion:{}", label));
+            current_token.append(tree, format!("Assertion:{label}"));
         }
 
         // recurse down ingredients
@@ -206,7 +206,7 @@ impl ManifestStoreReport {
                 let data = if name_only {
                     asset_name.to_string()
                 } else {
-                    format!("Asset:{}", asset_name)
+                    format!("Asset:{asset_name}")
                 };
                 current_token.append(tree, data);
             }
@@ -327,7 +327,7 @@ struct SignatureReport {
 
 // replace the value of any field in the json string with a given key with the string <omitted>
 fn omit_tag(mut json: String, tag: &str) -> String {
-    while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+    while let Some(index) = json.find(&format!("\"{tag}\": [")) {
         if let Some(idx2) = json[index..].find(']') {
             json = format!(
                 "{}\"{}\": \"<omitted>\"{}",
@@ -342,7 +342,7 @@ fn omit_tag(mut json: String, tag: &str) -> String {
 
 // make a base64 hash from the value of any field in the json string with key base64 hash
 fn b64_tag(mut json: String, tag: &str) -> String {
-    while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+    while let Some(index) = json.find(&format!("\"{tag}\": [")) {
         if let Some(idx2) = json[index..].find(']') {
             let idx3 = json[index..].find('[').unwrap_or_default(); // ok since we just found it
             let bytes: Vec<u8> =
@@ -372,7 +372,7 @@ mod tests {
     fn manifest_store_report() {
         let path = fixture_path("CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
-        println!("{}", report);
+        println!("{report}");
     }
 
     #[test]

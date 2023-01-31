@@ -253,7 +253,7 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
 }
 
 fn box_start(reader: &mut dyn CAIRead) -> Result<u64> {
-    Ok(reader.seek(SeekFrom::Current(0))? - HEADER_SIZE)
+    Ok(reader.stream_position()? - HEADER_SIZE)
 }
 
 fn _skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
@@ -364,7 +364,7 @@ pub fn bmff_to_jumbf_exclusions(
     reader: &mut dyn CAIRead,
     bmff_exclusions: &[ExclusionsMap],
 ) -> Result<Vec<Exclusion>> {
-    let start = reader.seek(SeekFrom::Current(0))?;
+    let start = reader.stream_position()?;
     let size = reader.seek(SeekFrom::End(0))?;
     reader.seek(SeekFrom::Start(start))?;
 
@@ -502,7 +502,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
     bmff_path_map: &HashMap<String, Vec<Token>>,
     adjust: i32,
 ) -> Result<()> {
-    let start_pos = output.seek(SeekFrom::Current(0))?; // save starting point
+    let start_pos = output.stream_position()?; // save starting point
 
     // handle 32 bit offsets
     if let Some(stco_list) = bmff_path_map.get("/moov/trak/mdia/minf/stbl/stco") {
@@ -529,7 +529,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             let entry_count = output.read_u32::<BigEndian>()?;
 
             // read and patch offsets
-            let entry_start_pos = output.seek(SeekFrom::Current(0))?;
+            let entry_start_pos = output.stream_position()?;
             let mut entries: Vec<u32> = Vec::new();
             for _e in 0..entry_count {
                 let offset = output.read_u32::<BigEndian>()?;
@@ -580,7 +580,7 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             let entry_count = output.read_u32::<BigEndian>()?;
 
             // read and patch offsets
-            let entry_start_pos = output.seek(SeekFrom::Current(0))?;
+            let entry_start_pos = output.stream_position()?;
             let mut entries: Vec<u64> = Vec::new();
             for _e in 0..entry_count {
                 let offset = output.read_u64::<BigEndian>()?;
@@ -620,7 +620,7 @@ pub(crate) fn build_bmff_tree(
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
 ) -> Result<()> {
-    let start = reader.seek(SeekFrom::Current(0))?;
+    let start = reader.stream_position()?;
 
     let mut current = start;
     while current < end {
@@ -716,18 +716,18 @@ pub(crate) fn build_bmff_tree(
                 add_token_to_cache(bmff_path_map, path, new_token);
 
                 // consume all sub-boxes
-                let mut current = reader.seek(SeekFrom::Current(0))?;
+                let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
                     build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
-                    current = reader.seek(SeekFrom::Current(0))?;
+                    current = reader.stream_position()?;
                 }
 
                 // position seek pointer
                 skip_bytes_to(reader, start + s)?;
             }
             _ => {
-                let start = reader.seek(SeekFrom::Current(0))? - HEADER_SIZE;
+                let start = reader.stream_position()? - HEADER_SIZE;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
                     let (version, flags) = read_box_header_ext(reader)?; // box extensions
@@ -763,7 +763,7 @@ pub(crate) fn build_bmff_tree(
                 skip_bytes_to(reader, start + s)?;
             }
         }
-        current = reader.seek(SeekFrom::Current(0))?;
+        current = reader.stream_position()?;
     }
 
     Ok(())
@@ -793,7 +793,7 @@ fn get_manifest_token(
 
 impl CAILoader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let start = reader.seek(SeekFrom::Current(0))?;
+        let start = reader.stream_position()?;
         let size = reader.seek(SeekFrom::End(0))?;
         reader.seek(SeekFrom::Start(start))?;
 
@@ -910,7 +910,7 @@ impl AssetIO for BmffIO {
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input = File::open(asset_path)?;
         let size = input.seek(SeekFrom::End(0))?;
-        input.seek(SeekFrom::Start(0))?;
+        input.rewind()?;
 
         // create root node
         let root_box = BoxInfo {
@@ -974,7 +974,7 @@ impl AssetIO for BmffIO {
         };
 
         // write content before ContentProvenanceBox
-        input.seek(SeekFrom::Start(0))?;
+        input.rewind()?;
         let mut b = vec![0u8; start];
         input.read_exact(&mut b)?;
         temp_file.write_all(&b)?;
@@ -1026,7 +1026,7 @@ impl AssetIO for BmffIO {
                 let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
                 let size = temp_file.seek(SeekFrom::End(0))?;
-                temp_file.seek(SeekFrom::Start(0))?;
+                temp_file.rewind()?;
                 build_bmff_tree(
                     &mut temp_file,
                     size,
@@ -1064,7 +1064,7 @@ impl AssetIO for BmffIO {
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let mut input = File::open(asset_path)?;
         let size = input.seek(SeekFrom::End(0))?;
-        input.seek(SeekFrom::Start(0))?;
+        input.rewind()?;
 
         // create root node
         let root_box = BoxInfo {
@@ -1112,7 +1112,7 @@ impl AssetIO for BmffIO {
         };
 
         // write content before ContentProvenanceBox
-        input.seek(SeekFrom::Start(0))?;
+        input.rewind()?;
         let mut b = vec![0u8; start];
         input.read_exact(&mut b)?;
         temp_file.write_all(&b)?;
@@ -1157,7 +1157,7 @@ impl AssetIO for BmffIO {
                 let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
                 let size = temp_file.seek(SeekFrom::End(0))?;
-                temp_file.seek(SeekFrom::Start(0))?;
+                temp_file.rewind()?;
                 build_bmff_tree(
                     &mut temp_file,
                     size,
@@ -1193,7 +1193,7 @@ impl AssetPatch for BmffIO {
             .create(false)
             .open(asset_path)?;
         let size = asset.seek(SeekFrom::End(0))?;
-        asset.seek(SeekFrom::Start(0))?;
+        asset.rewind()?;
 
         // create root node
         let root_box = BoxInfo {
@@ -1286,7 +1286,7 @@ pub mod tests {
         assert!(errors.is_empty());
 
         if let Ok(s) = store {
-            print!("Store: \n{}", s);
+            print!("Store: \n{s}");
         }
     }
 

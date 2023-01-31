@@ -52,7 +52,7 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
     let mut chunk_positions: Vec<PngChunkPos> = Vec::new();
 
     // move to beginning of file
-    f.seek(SeekFrom::Start(0))?;
+    f.rewind()?;
 
     let mut buf4 = [0; 4];
     let mut hdr = [0; 8];
