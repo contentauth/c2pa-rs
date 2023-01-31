@@ -40,7 +40,7 @@ fn get_mutable_label(var_label: &str) -> (String, Option<usize>) {
                         let (ver, ver_inst_str) = last.split_at(1);
                         if ver == "v" {
                             if let Ok(ver_inst) = ver_inst_str.parse::<usize>() {
-                                let ver_trim = format!(".{}", last);
+                                let ver_trim = format!(".{last}");
                                 let root_label = var_label.trim_end_matches(&ver_trim);
                                 return (root_label.to_string(), Some(ver_inst));
                             }
@@ -185,10 +185,10 @@ pub enum AssertionData {
 impl fmt::Debug for AssertionData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Json(s) => write!(f, "{:?}", s), // json encoded data
+            Self::Json(s) => write!(f, "{s:?}"), // json encoded data
             Self::Binary(_) => write!(f, "<omitted>"),
             Self::Uuid(uuid, _) => {
-                write!(f, "uuid: {}, <omitted>", uuid)
+                write!(f, "uuid: {uuid}, <omitted>")
             }
             Self::Cbor(s) => {
                 let buf: Vec<u8> = Vec::new();
@@ -286,7 +286,7 @@ impl Assertion {
         // thumbnails need the image_type added
         match get_thumbnail_image_type(&self.label).as_str() {
             "none" => label,
-            image_type => format!("{}.{}", label, image_type),
+            image_type => format!("{label}.{image_type}"),
         }
     }
 
@@ -297,7 +297,7 @@ impl Assertion {
             Some(v) => {
                 if v > 1 {
                     // c2pa does not include v1 labels
-                    format!("{}.v{}", base_label, v)
+                    format!("{base_label}.v{v}")
                 } else {
                     base_label
                 }
