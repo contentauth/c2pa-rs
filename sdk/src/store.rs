@@ -1074,10 +1074,10 @@ impl Store {
     }
 
     // wake the ingredients and validate
-    fn ingredient_checks<'a>(
+    fn ingredient_checks(
         store: &Store,
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
@@ -1139,15 +1139,13 @@ impl Store {
                         "ingredient_checks"
                     )
                     .error(Error::ClaimVerification(format!(
-                        "ingredient: {} is missing",
-                        label
+                        "ingredient: {label} is missing"
                     )))
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::ClaimVerification(format!(
-                            "ingredient: {} is missing",
-                            label
+                            "ingredient: {label} is missing"
                         ))),
                     )?;
                 }
@@ -1242,15 +1240,13 @@ impl Store {
                         "ingredient_checks_async"
                     )
                     .error(Error::ClaimVerification(format!(
-                        "ingredient: {} is missing",
-                        label
+                        "ingredient: {label} is missing"
                     )))
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::ClaimVerification(format!(
-                            "ingredient: {} is missing",
-                            label
+                            "ingredient: {label} is missing"
                         ))),
                     )?;
                 }
@@ -1296,9 +1292,9 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
-    pub fn verify_store<'a>(
+    pub fn verify_store(
         store: &Store,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -1348,7 +1344,7 @@ impl Store {
         }
 
         let stream_len = stream.seek(SeekFrom::End(0))?;
-        stream.seek(SeekFrom::Start(0))?;
+        stream.rewind()?;
 
         let mut hashes: Vec<DataHash> = Vec::new();
 
@@ -2000,9 +1996,9 @@ impl Store {
     /// asset_path: path to input asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned  
     #[cfg(feature = "file_io")]
-    pub fn verify_from_path<'a>(
+    pub fn verify_from_path(
         &mut self,
-        asset_path: &'a Path,
+        asset_path: &'_ Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         Store::verify_store(self, &ClaimAssetData::PathData(asset_path), validation_log)
@@ -2066,8 +2062,7 @@ impl Store {
                 resp.status_text()
             ))),
             Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(format!(
-                "fetch failed: url: {}",
-                url
+                "fetch failed: url: {url}"
             ))),
         }
     }
@@ -2247,9 +2242,9 @@ impl Store {
     /// data: reference to bytes of the the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    pub fn load_from_memory<'a>(
+    pub fn load_from_memory(
         asset_type: &str,
-        data: &'a [u8],
+        data: &'_ [u8],
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
@@ -3009,7 +3004,7 @@ pub mod tests {
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
         let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&path, true, &mut report); // errs are in report
-        println!("report: {:?}", report);
+        println!("report: {report:?}");
         report
     }
 
@@ -3180,7 +3175,7 @@ pub mod tests {
         let ap = fixture_path("tp1.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        println!("store = {}", store);
+        println!("store = {store}");
     }
 
     #[test]

@@ -1714,7 +1714,7 @@ const TOGGLE_SIZE: u64 = 1;
 
 /// method for getting the current position
 pub fn current_pos<R: Seek>(seeker: &mut R) -> JumbfParseResult<u64> {
-    Ok(seeker.seek(SeekFrom::Current(0))?)
+    Ok(seeker.stream_position()?)
 }
 
 /// method for seeking back to the start of the box (header)
@@ -2145,7 +2145,7 @@ impl BoxReader {
         let box_label = jdesc.label();
         debug!(
             "{}",
-            format!("START#Label: {:?}", box_label /*jdesc.label()*/)
+            format!("START#Label: {box_label:?}" /*jdesc.label()*/)
         );
         let mut sbox = JUMBFSuperBox::from(jdesc);
 
@@ -2223,10 +2223,7 @@ impl BoxReader {
             }
         }
 
-        debug!(
-            "{}",
-            format!("END#Label: {:?}", box_label /*jdesc.label()*/)
-        );
+        debug!("{}", format!("END#Label: {box_label:?}" /*jdesc.label()*/));
 
         // return the filled out sbox
         Ok(sbox)

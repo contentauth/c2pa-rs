@@ -1005,7 +1005,7 @@ pub(crate) mod tests {
         // convert to store
         let result = manifest.to_store();
 
-        println!("{:?}", result);
+        println!("{result:?}");
         assert!(result.is_err())
     }
 
@@ -1037,8 +1037,8 @@ pub(crate) mod tests {
 
         let _manifest2 =
             Manifest::from_store(&store, &store.provenance_label().unwrap()).expect("from_store");
-        println!("{}", store);
-        println!("{:?}", _manifest2);
+        println!("{store}");
+        println!("{_manifest2:?}");
         let cbor2: UserCbor = manifest.find_assertion(LABEL).expect("get_assertion");
         assert_eq!(cbor, cbor2);
     }
@@ -1165,10 +1165,10 @@ pub(crate) mod tests {
 
         // convert to a store and read back again
         let store = manifest.to_store().expect("to_store");
-        println!("{}", store);
+        println!("{store}");
         let active_label = store.provenance_label().unwrap();
         let manifest2 = Manifest::from_store(&store, &active_label).expect("from_store");
-        println!("{}", manifest2);
+        println!("{manifest2}");
         // now check to see if we have three separate assertions with different instances
         let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
         assert!(action2.is_ok());
@@ -1317,7 +1317,7 @@ pub(crate) mod tests {
         #[cfg(feature = "add_thumbnails")]
         assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
     }
 
     #[cfg(feature = "file_io")]
@@ -1340,7 +1340,7 @@ pub(crate) mod tests {
         manifest.add_ingredient(ingredient);
         manifest.embed(&output, &output, &signer).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         let manifest = manifest_store.get_active().unwrap();
         let ingredient_status = manifest.ingredients()[0].validation_status();
         assert_eq!(
