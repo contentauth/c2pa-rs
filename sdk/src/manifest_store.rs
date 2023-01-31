@@ -415,7 +415,7 @@ mod tests {
             "../target/tmp/manifest_store",
         )
         .expect("from_store_with_resources");
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());

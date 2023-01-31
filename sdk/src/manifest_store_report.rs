@@ -292,7 +292,7 @@ impl ManifestReport {
         Ok(Self {
             claim: serde_json::to_value(claim)?, // todo:  this will lose tagging info
             assertion_store,
-            credential_store: (!credential_store.is_empty()).then(|| credential_store),
+            credential_store: (!credential_store.is_empty()).then_some(credential_store),
             signature,
         })
     }

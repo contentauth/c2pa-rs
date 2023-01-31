@@ -1080,7 +1080,7 @@ mod tests_file_io {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
         let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
 
         // verify we can't set a references that don't exist

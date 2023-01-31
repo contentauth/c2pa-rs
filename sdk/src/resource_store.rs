@@ -108,7 +108,7 @@ impl ResourceStore {
     {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            let path = base.join(&id.into());
+            let path = base.join(id.into());
             std::fs::write(path, value.into())?;
             return Ok(());
         }
