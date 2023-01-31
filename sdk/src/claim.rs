@@ -23,7 +23,11 @@ use crate::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
         AssertionBase, AssertionData,
     },
-    assertions::{self, labels, BmffHash, DataHash},
+    assertions::{
+        self,
+        labels::{self, CLAIM},
+        BmffHash, DataHash,
+    },
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -32,8 +36,9 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
+        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    salt::{SaltGenerator, NO_SALT},
+    salt::{SaltGenerator, NO_SALT, DefaultSalt},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
@@ -211,6 +216,10 @@ pub struct Claim {
     #[serde(skip_deserializing, skip_serializing)]
     original_bytes: Option<Vec<u8>>,
 
+    // original JUMBF box order need to recalculate JUMBF box hash
+    #[serde(skip_deserializing, skip_serializing)]
+    original_box_order: Option<Vec<&'static str>>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
@@ -294,6 +303,7 @@ impl Claim {
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
+            original_box_order: None,
             redacted_assertions: None,
             alg: Some(BUILD_HASH_ALG.to_string()),
             alg_soft: None,
@@ -325,6 +335,7 @@ impl Claim {
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
+            original_box_order: None,
             redacted_assertions: None,
             alg: Some(BUILD_HASH_ALG.into()),
             alg_soft: None,
@@ -411,6 +422,22 @@ impl Claim {
     /// get title
     pub fn title(&self) -> Option<&String> {
         self.title.as_ref()
+    }
+
+    /// order for which to generate the JUMBF boxes with writing manifest
+    pub fn set_box_order(&mut self, box_order: Vec<&'static str>) {
+        self.original_box_order = Some(box_order);
+    }
+
+    /// order to process
+    pub fn get_box_order(&self) -> &[&str] {
+        const DEFAULT_MANIFEST_ORDER: [&str; 4] = [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS];
+
+        if let Some(bo) = &self.original_box_order {
+            bo
+        } else {
+            &DEFAULT_MANIFEST_ORDER
+        }
     }
 
     /// get algorithm
@@ -503,7 +530,7 @@ impl Claim {
         self.claim_generator_hints.as_ref()
     }
 
-    pub fn calc_box_hash(
+    pub fn calc_assertion_box_hash(
         label: &str,
         assertion: &Assertion,
         salt: Option<Vec<u8>>,
@@ -578,7 +605,7 @@ impl Claim {
         // Get salted hash of the assertion's contents.
         let salt = salt_generator.generate_salt();
 
-        let hash = Claim::calc_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
+        let hash = Claim::calc_assertion_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
 
         // Build hash link.
         let link = jumbf::labels::to_assertion_uri(self.label(), &as_label);
@@ -623,20 +650,26 @@ impl Claim {
     // the "id" value will be used as the label in the vcstore
     pub fn add_verifiable_credential(&mut self, vc_json: &str) -> Result<HashedUri> {
         let id = Claim::vc_id(vc_json)?;
-
-        let hash = hash_by_alg(self.alg(), vc_json.as_bytes(), None);
+        let credential = AssertionData::Json(vc_json.to_string());
 
         let link = jumbf::labels::to_verifiable_credential_uri(self.label(), &id);
 
+        // salt box for 1.2 VC redaction support
+        let ds = DefaultSalt::default();
+        let salt = ds.generate_salt();
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;        
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt, self.alg())?; 
+        
         let c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
 
         // add credential to vcstore
-        let credential = AssertionData::Json(vc_json.to_string());
         self.vc_store.push(credential);
 
         Ok(c2pa_assertion)
     }
-
+    
     pub fn get_verifiable_credentials(&self) -> &Vec<AssertionData> {
         &self.vc_store
     }
@@ -669,7 +702,7 @@ impl Claim {
                 data_hash.pad_to_size(original_len)?;
                 replacement_assertion = data_hash.to_assertion()?;
 
-                let replacement_hash = Claim::calc_box_hash(
+                let replacement_hash = Claim::calc_assertion_box_hash(
                     &dh_assertion.label(),
                     &replacement_assertion,
                     dh_assertion.salt().clone(),
@@ -709,7 +742,7 @@ impl Claim {
             Some(ref mut bmff_assertion) => {
                 let original_hash = bmff_assertion.hash().to_vec();
 
-                let replacement_hash = Claim::calc_box_hash(
+                let replacement_hash = Claim::calc_assertion_box_hash(
                     &bmff_assertion.label(),
                     &replacement_assertion,
                     bmff_assertion.salt().clone(),
