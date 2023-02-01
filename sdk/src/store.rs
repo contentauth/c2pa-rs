@@ -723,13 +723,15 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let mut hash_bytes = Vec::with_capacity(4096);
 
+        // build box
         let mut cai_store = Store::build_manfiest_box(claim, 0)?;
 
-        // build box
+        // add salt if requested
         if let Some(salt) = salt {
             cai_store.set_salt(salt)?;
         }
 
+        // box content as Vec
         cai_store.super_box().write_box_payload(&mut hash_bytes)?;
 
         Ok(hash_by_alg(alg, &hash_bytes, None))
@@ -3176,6 +3178,7 @@ pub mod tests {
 
     #[test]
     fn test_legacy_ingredient_hash() {
+        // test 1.0 ingredient hash
         let ap = fixture_path("legacy_ingredient_hash.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
