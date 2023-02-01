@@ -23,22 +23,10 @@ use log::error;
 use crate::embedded_xmp;
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
-#[cfg(feature = "sign")]
 use crate::{
-    assertion::AssertionData,
-    assertions::DataHash,
-    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
-    cose_sign::cose_sign,
-    cose_validator::verify_cose,
-    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
-    utils::{
-        hash_utils::{hash256, Exclusion},
-        patch::patch_bytes,
+    assertion::{
+        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
     },
-    Signer,
-};
-use crate::{
-    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{
         labels::{self, CLAIM},
         Ingredient, Relationship,
@@ -53,7 +41,18 @@ use crate::{
     },
     jumbf_io::load_jumbf_from_memory,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    utils::hash_utils::hash256,
     validation_status, ManifestStoreReport,
+};
+#[cfg(feature = "sign")]
+use crate::{
+    assertions::DataHash,
+    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    cose_sign::cose_sign,
+    cose_validator::verify_cose,
+    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
+    utils::{hash_utils::Exclusion, patch::patch_bytes},
+    Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -157,7 +156,7 @@ impl Store {
         if let Some(bh) = self.manifest_box_hash_cache.get(claim.label()) {
             bh.clone()
         } else {
-            Store::calc_manifest_box_hash(&claim, None, claim.alg()).unwrap_or(Vec::new())
+            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or(Vec::new())
         }
     }
 
@@ -342,7 +341,6 @@ impl Store {
 
     // Returns placeholder that will be searched for and replaced
     // with actual signature data.
-    #[cfg(feature = "sign")]
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
         let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
@@ -463,7 +461,6 @@ impl Store {
         self.claims_map.insert(label, index);
     }
 
-    #[cfg(feature = "sign")]
     fn add_assertion_to_jumbf_store(
         store: &mut CAIAssertionStore,
         claim_assertion: &ClaimAssertion,
@@ -649,7 +646,6 @@ impl Store {
         }
     }
 
-    #[cfg(feature = "sign")]
     fn build_manfiest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIStore> {
         // box label
         let label = claim.label();
@@ -3172,7 +3168,15 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("tp1.jpg");
+        let ap = fixture_path("CA.jpg");
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+        println!("store = {store}");
+    }
+
+    #[test]
+    fn test_legacy_ingredient_hash() {
+        let ap = fixture_path("legacy_ingredient_hash.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");

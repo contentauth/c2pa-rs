@@ -38,7 +38,7 @@ use crate::{
         },
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    salt::{SaltGenerator, NO_SALT, DefaultSalt},
+    salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
@@ -659,9 +659,9 @@ impl Claim {
         let salt = ds.generate_salt();
 
         // assertion JUMBF box hash for 1.2 validation
-        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;        
-        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt, self.alg())?; 
-        
+        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt, self.alg())?;
+
         let c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
 
         // add credential to vcstore
@@ -669,7 +669,7 @@ impl Claim {
 
         Ok(c2pa_assertion)
     }
-    
+
     pub fn get_verifiable_credentials(&self) -> &Vec<AssertionData> {
         &self.vc_store
     }
