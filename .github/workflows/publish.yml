@@ -24,13 +24,11 @@ jobs:
         semver_only: true
 
     - name: Set new version
-      uses: paulhatch/semantic-version@v4.0.2
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/PaulHatch/semantic-version/issues/66.
+      uses: paulhatch/semantic-version@v5.0.2
       id: set-version
       with:
         tag_prefix: "v"
-        format: "${major}.${minor}.${patch}"
+        version_format: "${major}.${minor}.${patch}"
         major_pattern: "(MAJOR)"
         minor_pattern: "(MINOR)"
 
