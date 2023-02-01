@@ -101,7 +101,7 @@ impl ManifestConfig {
 
         // if the config has a claim_generator, add it as the first entry
         if let Some(generator) = self.claim_generator.as_deref() {
-            claim_generator = format!("{} {}", generator, claim_generator);
+            claim_generator = format!("{generator} {claim_generator}");
         }
 
         let mut manifest = Manifest::new(claim_generator);

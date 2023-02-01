@@ -106,8 +106,7 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "Manifest report written to the directory {:?}",
-            path
+            "Manifest report written to the directory {path:?}"
         )));
 
     // Ensure manifest directories exist.
@@ -122,7 +121,7 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     );
 
     let manifest_json = path.join("manifest.json");
-    let contents = fs::read_to_string(&manifest_json)?;
+    let contents = fs::read_to_string(manifest_json)?;
     let json: Value = serde_json::from_str(&contents)?;
     assert_eq!(
         json.as_object()
@@ -149,12 +148,11 @@ fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> 
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "Manifest report written to the directory {:?}",
-            path
+            "Manifest report written to the directory {path:?}"
         )));
 
     let manifest_json = path.join("manifest.json");
-    let contents = fs::read_to_string(&manifest_json)?;
+    let contents = fs::read_to_string(manifest_json)?;
     let json: Value = serde_json::from_str(&contents)?;
     assert!(json.as_object().unwrap().get("validation_status").is_some());
 

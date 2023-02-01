@@ -30,9 +30,9 @@ pub fn info(path: &Path) -> Result<()> {
     if let Some(provenance) = ingredient.provenance() {
         is_cloud_manifest = !provenance.starts_with("self#jumbf=");
         if is_cloud_manifest {
-            println!("Cloud URL = {}", provenance);
+            println!("Cloud URL = {provenance}");
         } else {
-            println!("Provenance URI = {}", provenance);
+            println!("Provenance URI = {provenance}");
         }
     }
 
@@ -64,7 +64,7 @@ pub fn info(path: &Path) -> Result<()> {
         match manifest_store.manifests().len() {
             0 => println!("No manifests"),
             1 => println!("One manifest"),
-            n => println!("{} manifests", n),
+            n => println!("{n} manifests"),
         }
     } else if is_cloud_manifest {
         println!("Unable to fetch cloud manifest");

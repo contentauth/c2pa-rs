@@ -77,7 +77,7 @@ pub(crate) fn write_report_for_path(
             let label = manifest
                 .label()
                 .map(str::to_string)
-                .unwrap_or_else(|| format!("manifest_{}", i))
+                .unwrap_or_else(|| format!("manifest_{i}"))
                 .replace(['/', ':'], "-");
 
             let claim_path = destination_path.join(label);
