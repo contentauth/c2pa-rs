@@ -629,7 +629,7 @@ impl Store {
 
         // Add claims and assertions in this store to the JUMBF store.
         for claim in &self.claims {
-            let cai_store = Store::build_manfiest_box(claim, min_reserve_size)?;
+            let cai_store = Store::build_manifest_box(claim, min_reserve_size)?;
 
             // add the completed CAI store into the CAI block.
             cai_block.add_box(Box::new(cai_store));
@@ -646,7 +646,7 @@ impl Store {
         }
     }
 
-    fn build_manfiest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIStore> {
+    fn build_manifest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIStore> {
         // box label
         let label = claim.label();
 
@@ -724,7 +724,7 @@ impl Store {
         let mut hash_bytes = Vec::with_capacity(4096);
 
         // build box
-        let mut cai_store = Store::build_manfiest_box(claim, 0)?;
+        let mut cai_store = Store::build_manifest_box(claim, 0)?;
 
         // add salt if requested
         if let Some(salt) = salt {
