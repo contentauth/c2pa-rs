@@ -205,7 +205,7 @@ pub struct Claim {
     // Internal list of verifiable credentials for claim.
     // These are serialized manually based on need.
     #[serde(skip_deserializing, skip_serializing)]
-    vc_store: Vec<AssertionData>,
+    vc_store: Vec<(HashedUri, AssertionData)>,
 
     claim_generator: String, // generator of this claim
 
@@ -611,7 +611,8 @@ impl Claim {
         let link = jumbf::labels::to_assertion_uri(self.label(), &as_label);
         let link_relative = jumbf::labels::to_relative_uri(&link);
 
-        let c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
+        let mut c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
+        c2pa_assertion.add_salt(salt.clone());
 
         // Add to assertion store.
         let (_l, instance) = Claim::assertion_label_from_link(&as_label);
@@ -660,17 +661,46 @@ impl Claim {
 
         // assertion JUMBF box hash for 1.2 validation
         let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;
-        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt, self.alg())?;
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt.clone(), self.alg())?;
 
-        let c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        let mut c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        c2pa_assertion.add_salt(salt);
 
         // add credential to vcstore
-        self.vc_store.push(credential);
+        self.vc_store.push((c2pa_assertion.clone(), credential));
 
         Ok(c2pa_assertion)
     }
 
-    pub fn get_verifiable_credentials(&self) -> &Vec<AssertionData> {
+    /// Load known VC with optional salt
+    pub fn put_verifiable_credential(
+        &mut self,
+        vc_json: &str,
+        salt: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let id = Claim::vc_id(vc_json)?;
+        let credential = AssertionData::Json(vc_json.to_string());
+
+        let link = jumbf::labels::to_verifiable_credential_uri(self.label(), &id);
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt.clone(), self.alg())?;
+
+        let mut c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        c2pa_assertion.add_salt(salt);
+
+        // add credential to vcstore
+        self.vc_store.push((c2pa_assertion, credential));
+
+        Ok(())
+    }
+
+    pub fn get_verifiable_credentials(&self) -> Vec<&AssertionData> {
+        self.vc_store.iter().map(|t| &t.1).collect::<Vec<_>>()
+    }
+
+    pub fn get_verifiable_credentials_store(&self) -> &Vec<(HashedUri, AssertionData)> {
         &self.vc_store
     }
 

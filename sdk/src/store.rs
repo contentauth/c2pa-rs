@@ -694,12 +694,17 @@ impl Store {
                         let mut vc_store = CAIVerifiableCredentialStore::new();
 
                         // Add assertions to CAI assertion store.
-                        let vcs = claim.get_verifiable_credentials();
-                        for assertion_data in vcs {
+                        let vcs = claim.get_verifiable_credentials_store();
+                        for (uri, assertion_data) in vcs {
                             if let AssertionData::Json(j) = assertion_data {
                                 let id = Claim::vc_id(j)?;
                                 let mut json_data = CAIJSONAssertionBox::new(&id);
                                 json_data.add_json(j.as_bytes().to_vec());
+
+                                if let Some(salt) = uri.salt() {
+                                    json_data.set_salt(salt.clone())?;
+                                }
+
                                 vc_store.add_credential(Box::new(json_data));
                             } else {
                                 return Err(Error::BadParam("VC data must be JSON".to_string()));
@@ -1045,7 +1050,9 @@ impl Store {
                     let json_str = String::from_utf8(vc_json.json().to_vec())
                         .map_err(|_| InvalidClaimError::VerifiableCredentialStoreInvalid)?;
 
-                    claim.add_verifiable_credential(&json_str)?;
+                    let salt = vc_desc_box.get_salt();
+
+                    claim.put_verifiable_credential(&json_str, salt)?;
                 }
             }
 
