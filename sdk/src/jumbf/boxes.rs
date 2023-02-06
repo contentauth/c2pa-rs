@@ -1384,6 +1384,10 @@ impl CAIStore {
         // we REALLY want to return a CAIAssertionStore but can't do to referencing...
         self.store.data_box_as_superbox(0)
     }
+
+    pub fn set_salt(&mut self, salt: Vec<u8>) -> JumbfParseResult<()> {
+        self.store.desc_box.set_salt(salt)
+    }
 }
 
 // ANCHOR CAI Block
@@ -2070,7 +2074,14 @@ impl BoxReader {
                     None => (buf, None),
                 }
             }
-            _ => (buf, None),
+            _ => {
+                // we do not store the trailing 0 on load
+                if buf[buf.len() - 1] == 0 {
+                    buf.pop();
+                }
+
+                (buf, None)
+            }
         };
 
         Ok(JUMBFEmbeddedFileDescriptionBox::from(

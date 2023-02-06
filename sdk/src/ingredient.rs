@@ -687,7 +687,8 @@ impl Ingredient {
                 };
 
                 // have Store check and load ingredients and add them to a claim
-                Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
+                let ingredient_store =
+                    Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -697,7 +698,9 @@ impl Ingredient {
                             .iter()
                             .find(|c| c.label() == manifest_label)
                         {
-                            let hash = ingredient_active_claim.hash();
+                            let hash =
+                                ingredient_store.get_manifest_box_hash(ingredient_active_claim); // get C2PA 1.2 JUMBF box hash
+
                             let uri = jumbf::labels::to_manifest_uri(&manifest_label);
 
                             // if there are validations and they have all passed, then use the parent claim thumbnail if available

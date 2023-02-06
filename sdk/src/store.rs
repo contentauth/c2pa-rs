@@ -23,30 +23,36 @@ use log::error;
 use crate::embedded_xmp;
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
+use crate::{
+    assertion::{
+        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
+    },
+    assertions::{
+        labels::{self, CLAIM},
+        Ingredient, Relationship,
+    },
+    claim::{Claim, ClaimAssertion, ClaimAssetData},
+    error::{Error, Result},
+    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    jumbf::{
+        self,
+        boxes::*,
+        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+    },
+    jumbf_io::load_jumbf_from_memory,
+    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    utils::hash_utils::hash256,
+    validation_status, ManifestStoreReport,
+};
 #[cfg(feature = "sign")]
 use crate::{
-    assertion::AssertionData,
     assertions::DataHash,
     asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
     jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
-    utils::{
-        hash_utils::{hash256, Exclusion},
-        patch::patch_bytes,
-    },
+    utils::{hash_utils::Exclusion, patch::patch_bytes},
     Signer,
-};
-use crate::{
-    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
-    assertions::{labels, Ingredient, Relationship},
-    claim::{Claim, ClaimAssertion, ClaimAssetData},
-    error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
-    jumbf::{self, boxes::*},
-    jumbf_io::load_jumbf_from_memory,
-    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    validation_status, ManifestStoreReport,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -66,6 +72,7 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 #[derive(Debug, PartialEq)]
 pub struct Store {
     claims_map: HashMap<String, usize>,
+    manifest_box_hash_cache: HashMap<String, Vec<u8>>,
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
@@ -108,6 +115,7 @@ impl Store {
     pub fn new_with_label(label: &str) -> Self {
         Store {
             claims_map: HashMap::new(),
+            manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
             provenance_path: None,
@@ -141,6 +149,15 @@ impl Store {
     /// get the list of claims for this store
     pub fn claims(&self) -> &Vec<Claim> {
         &self.claims
+    }
+
+    /// the JUMBF manifest box hash (spec 1.2)
+    pub fn get_manifest_box_hash(&self, claim: &Claim) -> Vec<u8> {
+        if let Some(bh) = self.manifest_box_hash_cache.get(claim.label()) {
+            bh.clone()
+        } else {
+            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or(Vec::new())
+        }
     }
 
     /// Add a new Claim to this Store. The function
@@ -324,8 +341,7 @@ impl Store {
 
     // Returns placeholder that will be searched for and replaced
     // with actual signature data.
-    #[cfg(feature = "sign")]
-    fn sign_claim_placeholder(&self, claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
+    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
         let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
 
@@ -445,7 +461,6 @@ impl Store {
         self.claims_map.insert(label, index);
     }
 
-    #[cfg(feature = "sign")]
     fn add_assertion_to_jumbf_store(
         store: &mut CAIAssertionStore,
         claim_assertion: &ClaimAssertion,
@@ -536,7 +551,7 @@ impl Store {
                     .data_box_as_json_box(0)
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion = Assertion::from_data_json(&raw_label, json_box.json())?;
-                let hash = Claim::calc_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
             }
             CAI_EMBEDDED_FILE_UUID => {
@@ -549,7 +564,7 @@ impl Store {
                 let media_type = ef_box.media_type();
                 let assertion =
                     Assertion::from_data_binary(&raw_label, &media_type, data_box.data());
-                let hash = Claim::calc_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
             }
             CAI_CBOR_ASSERTION_UUID => {
@@ -557,7 +572,7 @@ impl Store {
                     .data_box_as_cbor_box(0)
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
-                let hash = Claim::calc_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
             }
             CAI_UUID_ASSERTION_UUID => {
@@ -567,7 +582,7 @@ impl Store {
                 let uuid_str = hex::encode(uuid_box.uuid());
                 let assertion = Assertion::from_data_uuid(&raw_label, &uuid_str, uuid_box.data());
 
-                let hash = Claim::calc_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
             }
             _ => Err(Error::JumbfCreationError),
@@ -614,65 +629,9 @@ impl Store {
 
         // Add claims and assertions in this store to the JUMBF store.
         for claim in &self.claims {
-            let label = claim.label();
+            let cai_store = Store::build_manifest_box(claim, min_reserve_size)?;
 
-            let mut cai_store = CAIStore::new(label, claim.update_manifest());
-
-            // Add claim box. Note the order of the boxes are set by the spec
-            let mut cb = CAIClaimBox::new();
-
-            // Create the CAI assertion store.
-            let mut a_store = CAIAssertionStore::new();
-
-            // Add assertions to CAI assertion store.
-            let cas = claim.claim_assertion_store();
-            for assertion in cas {
-                Store::add_assertion_to_jumbf_store(&mut a_store, assertion)?;
-            }
-
-            // Add the CAI assertion store to the CAI store.
-            cai_store.add_box(Box::new(a_store));
-
-            // Add the Claim json
-            let claim_cbor_bytes = claim.data()?;
-            let c_cbor = JUMBFCBORContentBox::new(claim_cbor_bytes);
-            cb.add_claim(Box::new(c_cbor));
-            cai_store.add_box(Box::new(cb));
-
-            // Create a signature and add placeholder data to the CAI store.
-            let mut sigb = CAISignatureBox::new();
-            let signed_data = match claim.signature_val().is_empty() {
-                false => claim.signature_val().clone(), // existing claims have sig values
-                true => self.sign_claim_placeholder(claim, min_reserve_size), // empty is the new sig to be replaced
-            };
-
-            let sigc = JUMBFCBORContentBox::new(signed_data);
-            sigb.add_signature(Box::new(sigc));
-            cai_store.add_box(Box::new(sigb));
-
-            // add vc_store if needed
-            if !claim.get_verifiable_credentials().is_empty() {
-                // Create VC store.
-                let mut vc_store = CAIVerifiableCredentialStore::new();
-
-                // Add assertions to CAI assertion store.
-                let vcs = claim.get_verifiable_credentials();
-                for assertion_data in vcs {
-                    if let AssertionData::Json(j) = assertion_data {
-                        let id = Claim::vc_id(j)?;
-                        let mut json_data = CAIJSONAssertionBox::new(&id);
-                        json_data.add_json(j.as_bytes().to_vec());
-                        vc_store.add_credential(Box::new(json_data));
-                    } else {
-                        return Err(Error::BadParam("VC data must be JSON".to_string()));
-                    }
-                }
-
-                // Add the CAI assertion store to the CAI store.
-                cai_store.add_box(Box::new(vc_store));
-            }
-
-            // Finally add the completed CAI store into the CAI block.
+            // add the completed CAI store into the CAI block.
             cai_block.add_box(Box::new(cai_store));
         }
 
@@ -685,6 +644,102 @@ impl Store {
         } else {
             Ok(mem_box)
         }
+    }
+
+    fn build_manifest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIStore> {
+        // box label
+        let label = claim.label();
+
+        let mut cai_store = CAIStore::new(label, claim.update_manifest());
+
+        for manifest_box in claim.get_box_order() {
+            match *manifest_box {
+                ASSERTIONS => {
+                    let mut a_store = CAIAssertionStore::new();
+
+                    // add assertions to CAI assertion store.
+                    let cas = claim.claim_assertion_store();
+                    for assertion in cas {
+                        Store::add_assertion_to_jumbf_store(&mut a_store, assertion)?;
+                    }
+
+                    cai_store.add_box(Box::new(a_store)); // add the assertion store to the manifest
+                }
+                CLAIM => {
+                    let mut cb = CAIClaimBox::new();
+
+                    // Add the Claim json
+                    let claim_cbor_bytes = claim.data()?;
+                    let c_cbor = JUMBFCBORContentBox::new(claim_cbor_bytes);
+                    cb.add_claim(Box::new(c_cbor));
+
+                    cai_store.add_box(Box::new(cb)); // add claim to manifest
+                }
+                SIGNATURE => {
+                    // create a signature and add placeholder data to the CAI store.
+                    let mut sigb = CAISignatureBox::new();
+                    let signed_data = match claim.signature_val().is_empty() {
+                        false => claim.signature_val().clone(), // existing claims have sig values
+                        true => Store::sign_claim_placeholder(claim, min_reserve_size), // empty is the new sig to be replaced
+                    };
+
+                    let sigc = JUMBFCBORContentBox::new(signed_data);
+                    sigb.add_signature(Box::new(sigc));
+
+                    cai_store.add_box(Box::new(sigb)); // add signature to manifest
+                }
+                CREDENTIALS => {
+                    // add vc_store if needed
+                    if !claim.get_verifiable_credentials().is_empty() {
+                        let mut vc_store = CAIVerifiableCredentialStore::new();
+
+                        // Add assertions to CAI assertion store.
+                        let vcs = claim.get_verifiable_credentials_store();
+                        for (uri, assertion_data) in vcs {
+                            if let AssertionData::Json(j) = assertion_data {
+                                let id = Claim::vc_id(j)?;
+                                let mut json_data = CAIJSONAssertionBox::new(&id);
+                                json_data.add_json(j.as_bytes().to_vec());
+
+                                if let Some(salt) = uri.salt() {
+                                    json_data.set_salt(salt.clone())?;
+                                }
+
+                                vc_store.add_credential(Box::new(json_data));
+                            } else {
+                                return Err(Error::BadParam("VC data must be JSON".to_string()));
+                            }
+                        }
+                        cai_store.add_box(Box::new(vc_store)); // add the CAI assertion store to manifest
+                    }
+                }
+                _ => return Err(Error::ClaimInvalidContent),
+            }
+        }
+
+        Ok(cai_store)
+    }
+
+    // calculate the hash of the manifest JUMBF box
+    pub fn calc_manifest_box_hash(
+        claim: &Claim,
+        salt: Option<Vec<u8>>,
+        alg: &str,
+    ) -> Result<Vec<u8>> {
+        let mut hash_bytes = Vec::with_capacity(4096);
+
+        // build box
+        let mut cai_store = Store::build_manifest_box(claim, 0)?;
+
+        // add salt if requested
+        if let Some(salt) = salt {
+            cai_store.set_salt(salt)?;
+        }
+
+        // box content as Vec
+        cai_store.super_box().write_box_payload(&mut hash_bytes)?;
+
+        Ok(hash_by_alg(alg, &hash_bytes, None))
     }
 
     fn manifest_map<'a>(sb: &'a JUMBFSuperBox) -> Result<HashMap<String, ManifestInfo<'a>>> {
@@ -761,6 +816,9 @@ impl Store {
                 continue;
             }
 
+            // remember the order of the boxes to insure the box hashes can be regenerated
+            let mut box_order: Vec<&str> = Vec::new();
+
             // make sure there are not multiple claim boxes
             let mut claim_box_cnt = 0;
             for i in 0..cai_store_box.data_box_count() {
@@ -790,6 +848,23 @@ impl Store {
                     return Err(Error::InvalidClaim(
                         InvalidClaimError::C2paMultipleClaimBoxes,
                     ));
+                }
+
+                match desc_box.label().as_ref() {
+                    ASSERTIONS => box_order.push(ASSERTIONS),
+                    CLAIM => box_order.push(CLAIM),
+                    SIGNATURE => box_order.push(SIGNATURE),
+                    CREDENTIALS => box_order.push(CREDENTIALS),
+                    _ => {
+                        let log_item =
+                            log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
+                                .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
+                                .validation_status(validation_status::CLAIM_MULTIPLE);
+                        validation_log.log(
+                            log_item,
+                            Some(Error::InvalidClaim(InvalidClaimError::ClaimBoxData)),
+                        )?;
+                    }
                 }
             }
 
@@ -901,6 +976,9 @@ impl Store {
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
 
+            // set order to process JUMBF boxes
+            claim.set_box_order(box_order);
+
             // retrieve & set signature for each claim
             claim.set_signature_val(sig_data.cbor().clone()); // load the stored signature
 
@@ -972,9 +1050,17 @@ impl Store {
                     let json_str = String::from_utf8(vc_json.json().to_vec())
                         .map_err(|_| InvalidClaimError::VerifiableCredentialStoreInvalid)?;
 
-                    claim.add_verifiable_credential(&json_str)?;
+                    let salt = vc_desc_box.get_salt();
+
+                    claim.put_verifiable_credential(&json_str, salt)?;
                 }
             }
+
+            // save the hash of the loaded manifest for ingredient validation
+            store.manifest_box_hash_cache.insert(
+                claim.label().to_owned(),
+                Store::calc_manifest_box_hash(&claim, None, claim.alg())?,
+            );
 
             // add claim to store
             store.insert_restored_claim(cai_store_desc_box.label(), claim);
@@ -1019,7 +1105,18 @@ impl Store {
                         Some(a) => a,
                         None => ingredient.alg().to_owned(),
                     };
-                    if !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None) {
+
+                    // get the 1.1-1.2 box hash
+                    let no_hash: Vec<u8> = Vec::new();
+                    let box_hash = store
+                        .manifest_box_hash_cache
+                        .get(&label)
+                        .unwrap_or(&no_hash);
+
+                    // test for 1.1 hash then 1.0 version
+                    if !vec_compare(&c2pa_manifest.hash(), box_hash)
+                        && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                    {
                         let log_item = log_item!(
                             &c2pa_manifest.url(),
                             "ingredient hash incorrect",
@@ -1448,7 +1545,7 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
-        let sig_placeholder = self.sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match self.finish_save_stream(jumbf_bytes, format, stream, sig, &sig_placeholder) {
             Ok((s, m)) => {
@@ -1483,7 +1580,7 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
-        let sig_placeholder = self.sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
@@ -1540,7 +1637,7 @@ impl Store {
         let sig = self
             .sign_claim_async(pc, signer, signer.reserve_size())
             .await?;
-        let sig_placeholder = self.sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
@@ -1596,7 +1693,7 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = remote_signer.sign_remote(&pc.data()?).await?;
 
-        let sig_placeholder = self.sign_claim_placeholder(pc, remote_signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
@@ -2198,10 +2295,11 @@ impl Store {
         provenance_label: &str,
         data: &[u8],
         redactions: Option<Vec<String>>,
-    ) -> Result<()> {
+    ) -> Result<Store> {
         let mut report = OneShotStatusTracker::new();
         let store = Store::from_jumbf(data, &mut report)?;
-        claim.add_ingredient_data(provenance_label, store.claims, redactions)
+        claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
+        Ok(store)
     }
 }
 
@@ -3080,6 +3178,15 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+        println!("store = {store}");
+    }
+
+    #[test]
+    fn test_legacy_ingredient_hash() {
+        // test 1.0 ingredient hash
+        let ap = fixture_path("legacy_ingredient_hash.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
