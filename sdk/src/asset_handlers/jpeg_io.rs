@@ -73,7 +73,7 @@ fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
         // check for JUMBF Seg
-       let cai_app11 = get_cai_segments(&jpeg)?;  // make sure we only check for C2PA segments
+        let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
 
         if cai_app11.is_empty() {
             // create dummy JUMBF seg
