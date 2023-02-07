@@ -52,16 +52,16 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
     let mut chunk_positions: Vec<PngChunkPos> = Vec::new();
 
     // move to beginning of file
-    f.seek(SeekFrom::Start(0))?;
+    f.rewind()?;
 
     let mut buf4 = [0; 4];
     let mut hdr = [0; 8];
 
     // check PNG signature
     f.read_exact(&mut hdr)
-        .map_err(|_err| Error::BadParam("PNG invalid".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("PNG invalid".to_string()))?;
     if hdr != PNG_ID {
-        return Err(Error::BadParam("PNG invalid".to_string()));
+        return Err(Error::InvalidAsset("PNG invalid".to_string()));
     }
 
     loop {
@@ -70,23 +70,23 @@ fn get_png_chunk_positions(f: &mut dyn CAIRead) -> Result<Vec<PngChunkPos>> {
         // read the chunk length
         let length = f
             .read_u32::<BigEndian>()
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         // read the chunk type
         f.read_exact(&mut buf4)
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
         let name = buf4;
 
         // seek past data
         f.seek(SeekFrom::Current(length as i64))
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         // read crc
         f.read_exact(&mut buf4)
-            .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
         let chunk_name = String::from_utf8(name.to_vec())
-            .map_err(|_err| Error::BadParam("PNG bad chunk name".to_string()))?;
+            .map_err(|_err| Error::InvalidAsset("PNG bad chunk name".to_string()))?;
 
         let pcp = PngChunkPos {
             start: current_pos,
@@ -131,7 +131,7 @@ fn get_cai_data(f: &mut dyn CAIRead) -> Result<Vec<u8>> {
 
     let mut data: Vec<u8> = vec![0; length];
     f.read_exact(&mut data[..])
-        .map_err(|_err| Error::BadParam("PNG out of range".to_string()))?;
+        .map_err(|_err| Error::InvalidAsset("PNG out of range".to_string()))?;
 
     Ok(data)
 }
@@ -148,6 +148,28 @@ fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
         }
     }
 }
+
+fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> {
+    let mut bytes_read: u32 = 0;
+    let mut s: Vec<u8> = Vec::with_capacity(80);
+
+    loop {
+        let c = asset_reader.read_u8()?;
+        if c == 0 {
+            break;
+        }
+
+        s.push(c);
+
+        bytes_read += 1;
+
+        if bytes_read == max_read {
+            break;
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&s).to_string())
+}
 pub struct PngIO {}
 
 impl CAILoader for PngIO {
@@ -158,15 +180,92 @@ impl CAILoader for PngIO {
 
     // Get XMP block
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let chunks = png_pong::Decoder::new(asset_reader).ok()?.into_chunks();
-        for chunk_r in chunks.flatten() {
-            if let png_pong::chunk::Chunk::InternationalText(c) = chunk_r {
-                if c.key == XMP_KEY {
-                    return Some(c.val);
+        const ITXT_CHUNK: [u8; 4] = *b"iTXt";
+
+        let ps = get_png_chunk_positions(asset_reader).ok()?;
+        let mut xmp_str: Option<String> = None;
+
+        ps.into_iter().find(|pcp| {
+            if pcp.name == ITXT_CHUNK {
+                // seek to start of chunk
+                if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                    // move +8 to get past header
+                    return false;
                 }
+
+                // parse the iTxt block
+                if let Ok(key) = read_string(asset_reader, pcp.length) {
+                    if key.is_empty() || key.len() > 79 {
+                        return false;
+                    }
+
+                    // is this an XMP key
+                    if key != XMP_KEY {
+                        return false;
+                    }
+
+                    // parse rest of iTxt to get the xmp value
+                    let compressed = match asset_reader.read_u8() {
+                        Ok(c) => c != 0,
+                        Err(_) => return false,
+                    };
+
+                    let _compression_method = match asset_reader.read_u8() {
+                        Ok(c) => c != 0,
+                        Err(_) => return false,
+                    };
+
+                    let _langtag = match read_string(asset_reader, pcp.length) {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+
+                    let _transkey = match read_string(asset_reader, pcp.length) {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+
+                    // read iTxt data
+                    let mut data = vec![
+                        0u8;
+                        pcp.length as usize
+                            - (key.len() + _langtag.len() + _transkey.len() + 5)
+                    ]; // data len - size of key - size of land - size of transkey - 3 "0" string terminators - compressed u8 - compression method u8
+                    if asset_reader.read_exact(&mut data).is_err() {
+                        return false;
+                    }
+
+                    // convert to string, decompress if needed
+                    let val = if compressed {
+                        /*  should not be needed for current XMP
+                        use flate2::read::GzDecoder;
+
+                        let cursor = Cursor::new(data);
+
+                        let mut d = GzDecoder::new(cursor);
+                        let mut s = String::new();
+                        if d.read_to_string(&mut s).is_err() {
+                            return false;
+                        }
+                        s
+                        */
+                        return false;
+                    } else {
+                        String::from_utf8_lossy(&data).to_string()
+                    };
+
+                    xmp_str = Some(val);
+
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             }
-        }
-        None
+        });
+
+        xmp_str
     }
 }
 
@@ -203,7 +302,7 @@ impl AssetIO for PngIO {
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
                 chunk identifier (4 byte character sequence)
-                chunk data (0 - n bytes of chunck data)
+                chunk data (0 - n bytes of chunk data)
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
@@ -213,10 +312,10 @@ impl AssetIO for PngIO {
         if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
             // replace existing CAI
             let start = usize::value_from(existing_cai.start)
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
 
             let end = usize::value_from(existing_cai.end())
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(start..end, empty_buf.iter().cloned());
         }
@@ -230,7 +329,7 @@ impl AssetIO for PngIO {
         // add new cai data after image header chunk
         if let Some(img_hdr) = iter.find(|pcp| pcp.name == IMG_HDR) {
             let end = usize::value_from(img_hdr.end())
-                .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
             png_buf.splice(end..end, cai_data.iter().cloned());
         } else {
@@ -238,8 +337,7 @@ impl AssetIO for PngIO {
         }
 
         // save png data
-        std::fs::write(asset_path, png_buf)
-            .map_err(|_err| Error::BadParam("PNG write error".to_owned()))?;
+        std::fs::write(asset_path, png_buf)?;
 
         Ok(())
     }
@@ -284,6 +382,43 @@ impl AssetIO for PngIO {
 
         Ok(positions)
     }
+
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+        // get png byte
+        let mut png_buf = std::fs::read(asset_path).map_err(|_err| Error::EmbeddingError)?;
+
+        let mut cursor = Cursor::new(png_buf);
+        let ps = get_png_chunk_positions(&mut cursor)?;
+
+        // get back buffer
+        png_buf = cursor.into_inner();
+
+        /*  splice in new chunk.  Each PNG chunk has the following format:
+                chunk data length (4 bytes big endian)
+                chunk identifier (4 byte character sequence)
+                chunk data (0 - n bytes of chunk data)
+                chunk crc (4 bytes in crc in format defined in PNG spec)
+        */
+
+        // erase existing
+        let empty_buf = Vec::new();
+        let mut iter = ps.into_iter();
+        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
+            // replace existing CAI
+            let start = usize::value_from(existing_cai.start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::value_from(existing_cai.end())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            png_buf.splice(start..end, empty_buf.iter().cloned());
+        }
+
+        // save png data
+        std::fs::write(asset_path, png_buf)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -295,6 +430,20 @@ pub mod tests {
 
     use super::*;
 
+    #[test]
+    fn test_png_xmp() {
+        let ap = crate::utils::test::fixture_path("libpng-test_with_url.png");
+
+        let png_io = PngIO {};
+        let xmp = png_io
+            .read_xmp(&mut std::fs::File::open(ap).unwrap())
+            .unwrap();
+
+        // make sure we can parse it
+        let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
+
+        assert!(provenance.contains("libpng-test"));
+    }
     #[test]
     fn test_png_parse() {
         let ap = crate::utils::test::fixture_path("libpng-test.png");
@@ -317,6 +466,25 @@ pub mod tests {
                     hop.name_str, hop.start, hop.length
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_remove_c2pa() {
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
+
+        std::fs::copy(source, &output).unwrap();
+        let png_io = PngIO {};
+
+        png_io.remove_cai_store(&output).unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        match png_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
         }
     }
 }

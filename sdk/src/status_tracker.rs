@@ -22,7 +22,7 @@ pub struct LogItem {
     pub function: String, // Function where failure occurred
     pub line: String,  // Line number for error
     pub description: String, // Description of the failure
-    pub err_val: Option<Error>, // Actual error code
+    err_val: Option<String>, // Actual error code as string
     pub validation_status: Option<String>, // C2PA code if available
 }
 
@@ -42,9 +42,22 @@ impl LogItem {
     // add an error value
     pub fn error(self, err: Error) -> Self {
         LogItem {
-            err_val: Some(err),
+            err_val: Some(format!("{err:?}")),
             ..self
         }
+    }
+
+    // add an error value
+    pub fn set_error(self, err: &Error) -> Self {
+        LogItem {
+            err_val: Some(format!("{err:?}")),
+            ..self
+        }
+    }
+
+    /// returns a reference to the error string if there is one
+    pub fn error_str(&self) -> Option<&str> {
+        self.err_val.as_deref()
     }
 
     // add an error value
@@ -191,14 +204,12 @@ pub fn report_has_status(report: &[LogItem], val: &str) -> bool {
 }
 
 /// Check to see if report contains a specific error
-/// Note: Only the out error object is matched for nested errors like
-/// "Error::InvalidClaim(InvalidClaimError::ClaimSignatureDescriptionBoxInvalid)".
-/// In this case any "InvalidClaim" would match
 #[allow(dead_code)] // in case we make use of these or export this
 pub fn report_has_err(report: &[LogItem], err: Error) -> bool {
+    let err_type = format!("{:?}", &err);
     report.iter().any(|vi| {
         if let Some(e) = &vi.err_val {
-            std::mem::discriminant(e) == std::mem::discriminant(&err)
+            e == &err_type
         } else {
             false
         }

@@ -42,7 +42,7 @@ impl AssetIO for C2paIO {
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         // just save the data in a file
-        std::fs::write(asset_path, &store_bytes)
+        std::fs::write(asset_path, store_bytes)
             .map_err(|_err| Error::BadParam("C2PA write error".to_owned()))?;
 
         Ok(())
@@ -59,6 +59,10 @@ impl AssetIO for C2paIO {
         };
 
         Ok(vec![hop])
+    }
+
+    fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
+        Ok(())
     }
 }
 

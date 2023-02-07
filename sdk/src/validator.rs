@@ -13,7 +13,7 @@
 
 use chrono::{DateTime, Utc};
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -22,7 +22,8 @@ pub struct ValidationInfo {
     pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
     pub issuer_org: Option<String>,
-    pub validated: bool, // claim signature is valid
+    pub validated: bool,     // claim signature is valid
+    pub cert_chain: Vec<u8>, // certificate chain used to validate signature
 }
 
 /// Trait to support validating a signature against the provided data
@@ -51,8 +52,8 @@ impl CoseValidator for DummyValidator {
 // • RS512	RSASSA-PKCS1-v1_5 using SHA-512
 // • ED25519 Edwards Curve ED25519
 
-/// return validator for supported C2PA  algorthms
-#[cfg(feature = "file_io")]
+/// return validator for supported C2PA  algorithms
+#[cfg(feature = "openssl")]
 pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
@@ -68,7 +69,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(not(feature = "file_io"))]
+#[cfg(not(feature = "sign"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)

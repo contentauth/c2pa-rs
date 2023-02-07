@@ -66,7 +66,7 @@ pub mod c2pa_action {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -88,7 +88,7 @@ pub struct Action {
     changed: Option<String>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
-    #[serde(rename = "InstanceId", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -98,6 +98,10 @@ pub struct Action {
     /// An array of the creators that undertook this action.
     #[serde(skip_serializing_if = "Option::is_none")]
     actors: Option<Vec<Actor>>,
+
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
+    #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
+    source_type: Option<String>,
 }
 
 impl Action {
@@ -114,6 +118,7 @@ impl Action {
             instance_id: None,
             parameters: None,
             actors: None,
+            source_type: None,
         }
     }
 
@@ -161,6 +166,11 @@ impl Action {
     /// An array of the [`Actor`]s that undertook this action.
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
+    }
+
+    /// Returns a digitalSourceType as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    pub fn source_type(&self) -> Option<&str> {
+        self.source_type.as_deref()
     }
 
     /// Sets the timestamp for when the action occurred.
@@ -219,6 +229,12 @@ impl Action {
         self.actors = actors.cloned();
         self
     }
+
+    /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    pub fn set_source_type<S: Into<String>>(mut self, uri: S) -> Self {
+        self.source_type = Some(uri.into());
+        self
+    }
 }
 
 /// An `Actions` assertion provides information on edits and other
@@ -261,6 +277,12 @@ impl Actions {
     /// Returns the assertion's [`Metadata`], if it exists.
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
+    }
+
+    /// Internal method to update actions to meet spec requirements
+    pub(crate) fn update_action(mut self, index: usize, action: Action) -> Self {
+        self.actions[index] = action;
+        self
     }
 
     /// Adds an [`Action`] to this assertion's list of actions.
@@ -329,7 +351,7 @@ pub mod tests {
             .set_when("2015-06-26T16:43:23+0200")
             .set_parameter(
                 "foo".to_owned(),
-                &r#"{
+                r#"{
                 "left": 0,
                 "right": 2000,
                 "top": 1000,
@@ -338,7 +360,7 @@ pub mod tests {
                 .to_owned(),
             )
             .unwrap()
-            .set_parameter("ingredient".to_owned(), &make_hashed_uri1())
+            .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
             .set_changed(Some(&["this", "that"].to_vec()))
             .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
@@ -357,9 +379,10 @@ pub mod tests {
             .add_action(make_action1())
             .add_action(
                 Action::new("c2pa.filtered")
-                    .set_parameter("name".to_owned(), &"gaussian blur")
+                    .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
-                    .set_when("2015-06-26T16:43:23+0200"),
+                    .set_when("2015-06-26T16:43:23+0200")
+                    .set_source_type("digsrctype:algorithmicMedia"),
             )
             .add_metadata(
                 Metadata::new()
@@ -387,6 +410,10 @@ pub mod tests {
             original.actions[1].parameters.as_ref().unwrap().get("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
+        assert_eq!(
+            result.actions[1].source_type().unwrap(),
+            "digsrctype:algorithmicMedia"
+        );
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
@@ -442,7 +469,6 @@ pub mod tests {
     #[test]
     fn test_binary_round_trip() {
         let assertion = Actions::new()
-            // .set_dictionary("http://testdictionary")
             .add_action(
                 Action::new("c2pa.cropped")
                     .set_parameter(
@@ -494,10 +520,12 @@ pub mod tests {
                     }
                   },
                   {
-                    "action": "c2pa.edited",
+                    "action": "c2pa.opened",
+                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
                       "description": "import"
-                    }
+                    },
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
                   },
                 ],
             "metadata": {

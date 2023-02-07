@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: main
+  schedule:
+    - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
   tests:
@@ -14,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
+        rust_version: [1.61.0, stable]
 
     steps:
       - name: Checkout repository
@@ -39,44 +41,9 @@ jobs:
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
         with:
-          fail_ci_if_error: ${{ matrix.os != 'macos-latest' }}
-            # Disregard build errors on Mac until
-            # https://github.com/codecov/codecov-action/issues/745
-            # is fixed.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
           verbose: true
-
-  tests-msrv:
-    name: Unit tests
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [1.58.0]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust_version }}
-          override: true
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
-
-      # Note that we do not run code coverage because
-      # it was not stabilized as of 1.58.0.
-
-      - name: Run self tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          # args: --all-targets --all-features --workspace (waiting on bug fix)
-          args: --all-features --workspace
 
   wasm_tests:
     name: Wasm tests
@@ -240,3 +207,56 @@ jobs:
         with:
           version: latest
           args: --all-targets --all-features
+
+  version_bump:
+    name: Ensure (MINOR) tag is used when making an API breaking change
+    # Change all of these steps to (MAJOR) after 1.0 release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Get latest existing tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+        with:
+          semver_only: true
+
+      - name: Set new version
+        uses: paulhatch/semantic-version@v5.0.2
+        id: set-version
+        with:
+          tag_prefix: "v"
+          version_format: "${major}.${minor}.${patch}"
+          major_pattern: "(MAJOR)"
+          minor_pattern: "(MINOR)"
+
+      - name: Generate changelog since last tag
+        uses: mathiasvr/command-output@v1
+          ## NEEDS UPDATE for set-output deprecation.
+          ## See https://github.com/mathiasvr/command-output/issues/4.
+        id: changelog
+        with:
+          run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD
+
+      - name: "Bump crate version (NOTE: Not pushed back to repo!)"
+        continue-on-error: true # If no change to crate version, ignore git commit error
+        run: |
+          sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
+          git config user.email "nobody@example.com"
+          git config --global user.name "PR validation bot"
+          git add .
+          git commit -m "DO NOT PUSH BACK TO PR: Bump crate version"
+        env:
+          VERSION: ${{ steps.set-version.outputs.version }}
+
+      - name: If this step fails, change title of the PR to include (MINOR) tag
+        uses: obi1kenobi/cargo-semver-checks-action@v1
+        with:
+          crate-name: c2pa

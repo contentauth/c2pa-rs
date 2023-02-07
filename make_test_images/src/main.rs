@@ -25,7 +25,7 @@ fn main() -> Result<()> {
     } else {
         "make_test_images/tests.json"
     };
-    let buf = std::fs::read_to_string(&path).context(format!("Reading {}", path))?;
+    let buf = std::fs::read_to_string(path).context(format!("Reading {path}"))?;
     let config: make_test_images::Config =
         serde_json::from_str(&buf).context("Config file format")?;
 

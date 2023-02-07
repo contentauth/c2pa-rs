@@ -306,7 +306,7 @@ fn check_cert(
         }
     }
 
-    // check modulus minumum length (for RSA & PSS algorithms)
+    // check modulus minimum length (for RSA & PSS algorithms)
     if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
         let (_, skpi_ber) = parse_ber_sequence(pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
@@ -410,7 +410,7 @@ fn check_cert(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
-    // popluate needed extension info
+    // populate needed extension info
     for e in signcert.extensions() {
         match e.parsed_extension() {
             ParsedExtension::AuthorityKeyIdentifier(_aki) => {
@@ -493,41 +493,31 @@ fn check_cert(
 pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
     match cs1.protected.header.alg {
-        Some(ref alg) => {
-            match alg {
-                coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-                    -39 => Ok(SigningAlg::Ps512),
-                    -38 => Ok(SigningAlg::Ps384),
-                    -37 => Ok(SigningAlg::Ps256),
-                    -36 => Ok(SigningAlg::Es512),
-                    -35 => Ok(SigningAlg::Es384),
-                    -7 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // -259 => "rs512",
-                    // -258 => "rs384",
-                    // -257 => "rs256",
-                    -8 => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
-                    coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
-                    coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
-                    coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
-                    coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
-                    coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
-                    coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
-                    // todo: deprecated  figure out lecacy support for RS signatures
-                    // coset::iana::Algorithm::RS512 => "rs512",
-                    // coset::iana::Algorithm::RS384 => "rs384",
-                    // coset::iana::Algorithm::RS256 => "rs256",
-                    coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
-                    _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-                },
-                coset::RegisteredLabelWithPrivate::Text(a) => a
-                    .parse()
-                    .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
-            }
-        }
+        Some(ref alg) => match alg {
+            coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
+                -39 => Ok(SigningAlg::Ps512),
+                -38 => Ok(SigningAlg::Ps384),
+                -37 => Ok(SigningAlg::Ps256),
+                -36 => Ok(SigningAlg::Es512),
+                -35 => Ok(SigningAlg::Es384),
+                -7 => Ok(SigningAlg::Es256),
+                -8 => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
+                coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
+                coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
+                coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
+                coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
+                coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
+                coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
+                coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
+                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
+            },
+            coset::RegisteredLabelWithPrivate::Text(a) => a
+                .parse()
+                .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
+        },
         None => Err(Error::CoseSignatureAlgorithmNotSupported),
     }
 }
@@ -573,6 +563,34 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
         }
     } else {
         Err(Error::CoseX5ChainMissing)
+    }
+}
+
+// internal util function to dump the cert chain in PEM format
+#[allow(unused_variables)]
+fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
+    #[cfg(feature = "sign")]
+    {
+        let mut out_buf: Vec<u8> = Vec::new();
+
+        for der_bytes in certs {
+            let c =
+                openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+            let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+
+            out_buf.append(&mut c_pem);
+        }
+
+        if let Some(op) = output_path {
+            std::fs::write(op, &out_buf).map_err(Error::IoError)?;
+        }
+        Ok(out_buf)
+    }
+
+    #[cfg(not(feature = "sign"))]
+    {
+        let out_buf: Vec<u8> = Vec::new();
+        Ok(out_buf)
     }
 }
 
@@ -724,11 +742,15 @@ pub async fn verify_cose_async(
 
         // parse the temp time for now util we have TA
         result.date = get_signing_time(&sign1, &data);
+
+        // return cert chain
+        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?, None)?;
     }
 
     Ok(result)
 }
 
+#[allow(unused_variables)]
 pub fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
@@ -738,7 +760,7 @@ pub fn get_signing_info(
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
 
-    let _ = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
         let der_bytes = get_sign_cert(&sign1)?;
 
@@ -755,11 +777,33 @@ pub fn get_signing_info(
         Ok(sign1)
     });
 
-    ValidationInfo {
-        issuer_org,
-        date,
-        alg,
-        validated: false,
+    #[cfg(target_arch = "wasm32")]
+    {
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: Vec::new(),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let certs = match sign1 {
+            Ok(s) => match get_sign_certs(&s) {
+                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            },
+            Err(_e) => Vec::new(),
+        };
+
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: certs,
+        }
     }
 }
 
@@ -854,6 +898,9 @@ pub fn verify_cose(
 
             // parse the temp time for now util we have TA
             result.date = get_signing_time(&sign1, data);
+
+            // return cert chain
+            result.cert_chain = dump_cert_chain(&certs, None)?;
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
@@ -887,7 +934,7 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
@@ -906,7 +953,7 @@ async fn validate_with_cert_async(
     let pk_der = pk.raw;
 
     if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
@@ -928,7 +975,7 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert)?)
+        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
     } else {
         Err(Error::CoseSignature)
     }
@@ -1033,16 +1080,16 @@ pub mod tests {
         let mut validation_log = DetailedStatusTracker::new();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(&cert_path).unwrap();
+        let es256_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(&cert_path).unwrap();
+        let es384_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(&cert_path).unwrap();
+        let es512_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
+        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();

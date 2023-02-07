@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use c2pa::{
-    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, SchemaDotOrgPerson},
+    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
 
@@ -28,7 +28,7 @@ const INDENT_SPACE: usize = 2;
 fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: usize) -> Result<()> {
     let indent = " ".repeat(level * INDENT_SPACE);
 
-    println!("{}manifest_label: {}", indent, manifest_label);
+    println!("{indent}manifest_label: {manifest_label}");
     if let Some(manifest) = manifest_store.get(manifest_label) {
         println!(
             "{}title: {} , format: {}, instance_id: {}",
@@ -52,12 +52,12 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
                     if let Some(authors) = creative_work.author() {
                         for author in authors {
                             if let Some(name) = author.name() {
-                                println!("{}author = {} ", indent, name);
+                                println!("{indent}author = {name} ");
                             }
                         }
                     }
                     if let Some(url) = creative_work.get::<String>("url") {
-                        println!("{}url = {} ", indent, url);
+                        println!("{indent}url = {url} ");
                     }
                 }
                 _ => {}
@@ -100,13 +100,28 @@ pub fn main() -> Result<()> {
     let creative_work =
         CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
+    let exif = Exif::from_json_str(
+        r#"{
+        "@context" : {
+          "exif": "http://ns.adobe.com/exif/1.0/"
+        },
+        "exif:GPSVersionID": "2.2.0.0",
+        "exif:GPSLatitude": "39,21.102N",
+        "exif:GPSLongitude": "74,26.5737W",
+        "exif:GPSAltitudeRef": 0,
+        "exif:GPSAltitude": "100963/29890",
+        "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
+    }"#,
+    )?;
+
     // create a new Manifest
     let mut manifest = Manifest::new(GENERATOR.to_owned());
     // add parent and assertions
     manifest
         .set_parent(parent)?
         .add_assertion(&actions)?
-        .add_assertion(&creative_work)?;
+        .add_assertion(&creative_work)?
+        .add_assertion(&exif)?;
 
     // sign and embed into the target file
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
@@ -118,7 +133,7 @@ pub fn main() -> Result<()> {
     let manifest_store = ManifestStore::from_file(&dest)?;
 
     // example of how to print out the whole manifest as json
-    println!("{}\n", manifest_store);
+    println!("{manifest_store}\n");
 
     // walk through the manifest and access data.
     if let Some(manifest_label) = manifest_store.active_label() {

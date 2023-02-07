@@ -164,8 +164,6 @@ pub enum Error {
     #[error("thread receive error")]
     ThreadReceiveError,
 
-    /// No JUMBF data found.
-    /// TODO before merging PR: Does this error case need to be part of the public API?
     #[error("no JUMBF data found")]
     JumbfNotFound,
 
@@ -174,6 +172,9 @@ pub enum Error {
 
     #[error("could not fetch the remote manifest")]
     RemoteManifestFetch(String),
+
+    #[error("must fetch remote manifests from url")]
+    RemoteManifestUrl(String),
 
     #[error("stopped because of logged error")]
     LogStop,
@@ -215,6 +216,9 @@ pub enum Error {
     #[error(transparent)]
     InvalidClaim(#[from] crate::store::InvalidClaimError),
 
+    #[error("asset could not be parsed: {0}")]
+    InvalidAsset(String),
+
     #[error(transparent)]
     JumbfParseError(#[from] crate::jumbf::boxes::JumbfParseError),
 
@@ -240,7 +244,7 @@ pub enum Error {
     CborError(#[from] serde_cbor::Error),
 
     #[error(transparent)]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl")]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
     #[error(transparent)]
@@ -253,11 +257,12 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(feature = "file_io")]
 pub(crate) fn wrap_io_err(err: std::io::Error) -> Error {
     Error::IoError(err)
 }
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }

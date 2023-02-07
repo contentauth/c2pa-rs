@@ -86,7 +86,7 @@ pub mod assertions;
 
 mod cose_validator;
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub mod create_signer;
 
 mod error;
@@ -106,30 +106,33 @@ pub use manifest_store::ManifestStore;
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
 
+mod resource_store;
+pub use resource_store::{ResourceRef, ResourceStore};
+
 mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub(crate) mod ocsp_utils;
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 mod openssl;
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 mod signer;
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub use signer::Signer;
 #[cfg(feature = "async_signer")]
 pub use signer::{AsyncSigner, RemoteSigner};
-/// crate private declarations
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+/// crate private declarations
 pub(crate) mod claim;
 
-#[cfg(feature = "file_io")]
+#[cfg(feature = "sign")]
 pub mod cose_sign;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]

@@ -24,6 +24,10 @@ pub struct HashedUri {
     alg: Option<String>,
     #[serde(with = "serde_bytes")]
     hash: Vec<u8>, // hash stored as cbor byte string
+
+    // salt used to generate hash
+    #[serde(skip_deserializing, skip_serializing)]
+    salt: Option<Vec<u8>>,
 }
 
 impl HashedUri {
@@ -32,6 +36,7 @@ impl HashedUri {
             url,
             alg,
             hash: hash_bytes.to_vec(),
+            salt: None,
         }
     }
 
@@ -50,9 +55,17 @@ impl HashedUri {
         self.hash.clone()
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "sign")]
     pub(crate) fn update_hash(&mut self, hash: Vec<u8>) {
         self.hash = hash;
+    }
+
+    pub fn add_salt(&mut self, salt: Option<Vec<u8>>) {
+        self.salt = salt;
+    }
+
+    pub fn salt(&self) -> &Option<Vec<u8>> {
+        &self.salt
     }
 }
 
