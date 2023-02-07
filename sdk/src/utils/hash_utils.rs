@@ -35,11 +35,16 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 pub struct Exclusion {
     start: usize,
     length: usize,
+    offset: Option<u64>, // optional offset position to include in BMFF_V2 hashes
 }
 
 impl Exclusion {
     pub fn new(start: usize, length: usize) -> Self {
-        Exclusion { start, length }
+        Exclusion {
+            start,
+            length,
+            offset: None,
+        }
     }
 
     /// update the start value
@@ -56,6 +61,16 @@ impl Exclusion {
     /// return length as usize
     pub fn length(&self) -> usize {
         self.length
+    }
+
+    // set offset for BMFF_V2 to be hashed in addition to data
+    pub fn set_offset(&mut self, offset: u64) {
+        self.offset = Some(offset);
+    }
+
+    // get option offset for BMFF_V2 hash
+    pub fn offset(&self) -> Option<u64> {
+        self.offset
     }
 }
 

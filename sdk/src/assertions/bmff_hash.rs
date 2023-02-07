@@ -30,7 +30,7 @@ use crate::{
     Error,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 1;
+const ASSERTION_CREATION_VERSION: usize = 2;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ExclusionsMap {
@@ -200,7 +200,8 @@ impl BmffHash {
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, ASSERTION_CREATION_VERSION > 1)?;
 
         let hash = hash_asset_by_alg(&alg, asset_path, Some(exclusions))?;
 
@@ -225,7 +226,11 @@ impl BmffHash {
         let mut data_reader = Cursor::new(data);
 
         // convert BMFF exclusion map to flat exclusion list
-        let exclusions = bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions)?;
+        let exclusions = bmff_to_jumbf_exclusions(
+            &mut data_reader,
+            bmff_exclusions,
+            ASSERTION_CREATION_VERSION > 1,
+        )?;
 
         if verify_by_alg(&curr_alg, &self.hash, data, Some(exclusions)) {
             Ok(())
@@ -241,7 +246,8 @@ impl BmffHash {
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, ASSERTION_CREATION_VERSION > 1)?;
 
         if verify_asset_by_alg(curr_alg, &self.hash, asset_path, Some(exclusions)) {
             Ok(())

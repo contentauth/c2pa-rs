@@ -363,6 +363,7 @@ fn path_from_token(bmff_tree: &mut Arena<BoxInfo>, current_node_token: &Token) -
 pub fn bmff_to_jumbf_exclusions(
     reader: &mut dyn CAIRead,
     bmff_exclusions: &[ExclusionsMap],
+    with_offset: bool,
 ) -> Result<Vec<Exclusion>> {
     let start = reader.stream_position()?;
     let size = reader.seek(SeekFrom::End(0))?;
