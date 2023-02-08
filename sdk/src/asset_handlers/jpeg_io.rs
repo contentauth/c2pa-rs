@@ -73,8 +73,9 @@ fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
         // check for JUMBF Seg
-        let app11 = jpeg.segment_by_marker(markers::APP11);
-        if app11.is_none() {
+        let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
+
+        if cai_app11.is_empty() {
             // create dummy JUMBF seg
             let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
             no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
@@ -114,8 +115,8 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
                 cai_segs.push(i);
             } else {
                 // check if this is a CAI JUMBF block
-                let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
-                let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                let jumb_type = &raw_vec.as_mut_slice()[24..28];
+                let is_cai = vec_compare(&C2PA_MARKER, jumb_type);
                 if is_cai {
                     cai_segs.push(i);
                     cai_seg_cnt = 1;
@@ -188,8 +189,8 @@ impl CAILoader for JpegIO {
                             } else if raw_vec.len() > 28 {
                                 // must be at least 28 bytes for this to be a valid JUMBF box
                                 // check if this is a CAI JUMBF block
-                                let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
-                                let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                                let jumb_type = &raw_vec.as_mut_slice()[24..28];
+                                let is_cai = vec_compare(&C2PA_MARKER, jumb_type);
                                 if is_cai {
                                     if manifest_store_cnt == 1 {
                                         return Err(Error::TooManyManifestStores);
