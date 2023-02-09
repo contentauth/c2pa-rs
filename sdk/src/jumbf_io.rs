@@ -74,6 +74,19 @@ static BMFF_TYPES: [&str; 12] = [
     "video/mp4",
 ];
 
+#[cfg(all(feature = "otf", feature = "file_io"))]
+static FONT_TYPES: [&str; 4] = [
+    "otf",
+    "ttf",
+    "application/font-sfnt",
+    "font/ttf",
+];
+
+#[cfg(all(feature = "otf", feature = "file_io"))]
+pub(crate) fn is_font_type(asset_type: &str) -> bool {
+    FONT_TYPES.contains(&asset_type)
+}
+
 #[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     BMFF_TYPES.contains(&asset_type)

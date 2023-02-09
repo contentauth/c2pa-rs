@@ -57,6 +57,12 @@ use crate::{
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
+#[cfg(all(feature = "otf", feature = "file_io"))]
+use crate:: {
+    jumbf_io::{
+        is_font_type,
+    },
+};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
@@ -1728,6 +1734,14 @@ impl Store {
             }
         };
 
+        // XMP doesn't make sense in the form of a font file, so we skip the creation of XMP
+        // for fonts
+        let is_font_type = match cfg!(feature = "otf") && cfg!(feature = "file_io") {
+            #[cfg(all(feature = "otf", feature = "file_io"))]
+            true => is_font_type(&ext),
+            _ => false,
+        };
+
         if asset_path != dest_path {
             fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
@@ -1742,8 +1756,10 @@ impl Store {
                 // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                 #[cfg(feature = "xmp_write")]
                 if let Some(provenance) = self.provenance_path() {
-                    // update XMP info & add xmp hash to provenance claim
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
+                    if !is_font_type {
+                        // update XMP info & add xmp hash to provenance claim
+                        embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
+                    }
                 } else {
                     return Err(Error::XmpWriteError);
                 }
@@ -1759,7 +1775,7 @@ impl Store {
                 }
             }
             crate::claim::RemoteManifest::Remote(_url) => {
-                if cfg!(feature = "xmp_write") {
+                if cfg!(feature = "xmp_write") && !is_font_type {
                     let d = dest_path.with_extension(MANIFEST_STORE_EXT);
                     // remove any previous c2pa manifest from the asset
                     remove_jumbf_from_file(dest_path)?;
@@ -1773,7 +1789,7 @@ impl Store {
                 }
             }
             crate::claim::RemoteManifest::EmbedWithRemote(_url) => {
-                if cfg!(feature = "xmp_write") {
+                if cfg!(feature = "xmp_write") && !is_font_type {
                     // even though this block is protected by the outer cfg!(feature = "xmp_write")
                     // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
                     #[cfg(feature = "xmp_write")]
