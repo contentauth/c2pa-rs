@@ -28,7 +28,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 27] = [
+static SUPPORTED_TYPES: [&str; 30] = [
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -50,9 +50,12 @@ static SUPPORTED_TYPES: [&str; 27] = [
     "image/jpeg",
     "image/png",
     "video/mp4",
-    "application/font-sfnt",
     "otf",
     "ttf",
+    "sfnt",
+    "application/font-sfnt",
+    "font/otf",
+    "font/sfnt",
     "font/ttf",
     "image/tiff",
     "image/dng",
@@ -73,6 +76,22 @@ static BMFF_TYPES: [&str; 12] = [
     "image/heif",
     "video/mp4",
 ];
+
+#[cfg(feature = "otf")]
+static FONT_TYPES: [&str; 7] = [
+    "otf",
+    "ttf",
+    "sfnt",
+    "application/font-sfnt",
+    "font/otf",
+    "font/sfnt",
+    "font/ttf",
+];
+
+#[cfg(all(feature = "otf", feature = "file_io"))]
+pub(crate) fn is_font_type(asset_type: &str) -> bool {
+    FONT_TYPES.contains(&asset_type)
+}
 
 #[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
@@ -125,7 +144,7 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "png" => Some(Box::new(PngIO {})),
         "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
         #[cfg(feature = "otf")]
-        "otf" | "ttf" => Some(Box::new(OtfIO {})),
+        "otf" | "ttf" | "sfnt" => Some(Box::new(OtfIO {})),
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
         _ => None,
     }
@@ -140,7 +159,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
         "png" | "image/png" => Some(Box::new(PngIO {})),
         #[cfg(feature = "otf")]
-        "otf" | "application/font-sfnt" | "ttf" | "font/ttf" => Some(Box::new(OtfIO {})),
+        _ if FONT_TYPES.contains(&asset_type.as_ref()) => Some(Box::new(OtfIO {})),
         "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
         | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
             if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
