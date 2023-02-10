@@ -1736,6 +1736,9 @@ impl Store {
 
         // XMP doesn't make sense in the form of a font file, so we skip the creation of XMP
         // for fonts
+        // This is temporary and not meant to be final production code, we plan to work
+        // on abstracting the writing/reading of the remote manifest URI at some other
+        // point.
         let is_font_type = match cfg!(feature = "otf") && cfg!(feature = "file_io") {
             #[cfg(all(feature = "otf", feature = "file_io"))]
             true => is_font_type(&ext),
@@ -1784,6 +1787,8 @@ impl Store {
                     #[cfg(feature = "xmp_write")]
                     embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
                     d
+                } else if is_font_type {
+                    return Err(Error::RemoteManifestNotSupported);
                 } else {
                     return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
                 }
@@ -1796,6 +1801,8 @@ impl Store {
                     embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
 
                     dest_path.to_path_buf()
+                } else if is_font_type {
+                    return Err(Error::RemoteManifestNotSupported);
                 } else {
                     return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
                 }
