@@ -250,7 +250,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(r.start()) && (r.end() - r.start()) == 0 {
+            if bmff_v2_starts.contains(start) && (end - start) == 0 {
                 hasher_enum.update(&r.start().to_be_bytes());
             }
 
@@ -278,7 +278,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(r.start()) && (r.end() - r.start()) == 0 {
+            if bmff_v2_starts.contains(start) && (end - start) == 0 {
                 hasher_enum.update(&r.start().to_be_bytes());
             }
 
