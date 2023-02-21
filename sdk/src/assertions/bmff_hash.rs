@@ -277,9 +277,9 @@ impl AssertionBase for BmffHash {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        let mut bmm_hash = Self::from_cbor_assertion(assertion)?;
-        bmm_hash.set_bmff_version(assertion.get_ver().unwrap_or(1));
+        let mut bmff_hash = Self::from_cbor_assertion(assertion)?;
+        bmff_hash.set_bmff_version(assertion.get_ver().unwrap_or(1));
 
-        Ok(bmm_hash)
+        Ok(bmff_hash)
     }
 }
