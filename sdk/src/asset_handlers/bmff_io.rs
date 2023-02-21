@@ -519,8 +519,8 @@ pub fn bmff_to_jumbf_exclusions(
 
                     exclusions.push(exclusion);
 
-                    // for BMFF V2 hashes we do not add hash the offsets for top level boxes
-                    // that are completely excluded so remove from BMFF V2 hash offset calc
+                    // for BMFF V2 hashes we do not add hash offsets for top level boxes
+                    // that are completely excluded, so remove from BMFF V2 hash offset calc
                     if let Some(pos) = tl_offsets.iter().position(|x| *x == exclusion_start) {
                         tl_offsets.remove(pos);
                     }
@@ -529,7 +529,7 @@ pub fn bmff_to_jumbf_exclusions(
         }
     }
 
-    // add remaining top level offsets to be imcluded when generating BMFF V2 hashes
+    // add remaining top level offsets to be included when generating BMFF V2 hashes
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
