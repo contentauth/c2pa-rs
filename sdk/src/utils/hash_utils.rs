@@ -251,7 +251,7 @@ where
 
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&r.start().to_be_bytes());
+                hasher_enum.update(&start.to_be_bytes());
             }
 
             loop {
@@ -279,7 +279,7 @@ where
 
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && (end - start) == 0 {
-                hasher_enum.update(&r.start().to_be_bytes());
+                hasher_enum.update(&start.to_be_bytes());
             }
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];

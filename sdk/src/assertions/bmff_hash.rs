@@ -109,10 +109,10 @@ pub struct BmffHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<UriT>,
 
-    #[serde(skip_deserializing, skip_serializing)]
+    #[serde(skip)]
     pub path: PathBuf,
 
-    #[serde(skip_deserializing, skip_serializing)]
+    #[serde(skip)]
     bmff_version: usize,
 }
 
