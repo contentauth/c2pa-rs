@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::*;
+use std::{
+    io::{Read, Seek},
+    path::*,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
@@ -19,7 +22,6 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    asset_io::CAIReadWrite,
     cbor_types::UriT,
     error::{Error, Result},
     utils::hash_utils::{hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, Exclusion},
@@ -106,7 +108,10 @@ impl DataHash {
     }
 
     /// generate the hash value for the Asset stream using the range from the DataHash
-    pub fn gen_hash_from_stream(&mut self, stream: &mut dyn CAIReadWrite) -> Result<()> {
+    pub fn gen_hash_from_stream<R>(&mut self, stream: &mut R) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
         self.hash = self.hash_from_stream(stream)?;
         Ok(())
     }
@@ -156,7 +161,10 @@ impl DataHash {
 
     /// generate the asset hash from a stream using the constructed
     /// start and length values
-    pub fn hash_from_stream(&mut self, stream: &mut dyn CAIReadWrite) -> Result<Vec<u8>> {
+    pub fn hash_from_stream<R>(&mut self, stream: &mut R) -> Result<Vec<u8>>
+    where
+        R: Read + Seek + ?Sized,
+    {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
                 "asset hash is remote, not yet supported".to_owned(),

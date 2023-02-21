@@ -45,7 +45,8 @@ impl BmffIO {
     }
 }
 
-const HEADER_SIZE: u64 = 8;
+const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
+const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
 const C2PA_UUID: [u8; 16] = [
     0xD8, 0xFE, 0xC3, 0xD6, 0x1B, 0x0E, 0x48, 0x3C, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7E, 0xC4, 0x81,
@@ -165,6 +166,7 @@ struct BoxHeaderLite {
     pub name: BoxType,
     pub size: u64,
     pub fourcc: String,
+    pub large_size: bool,
 }
 
 impl BoxHeaderLite {
@@ -173,6 +175,7 @@ impl BoxHeaderLite {
             name,
             size,
             fourcc: fourcc.to_string(),
+            large_size: false,
         }
     }
     pub fn read<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
@@ -198,14 +201,16 @@ impl BoxHeaderLite {
 
             Ok(BoxHeaderLite {
                 name: BoxType::from(typ),
-                size: largesize - HEADER_SIZE,
+                size: largesize,
                 fourcc,
+                large_size: true,
             })
         } else {
             Ok(BoxHeaderLite {
                 name: BoxType::from(typ),
                 size: size as u64,
                 fourcc,
+                large_size: false,
             })
         }
     }
@@ -252,8 +257,12 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     Ok(4)
 }
 
-fn box_start(reader: &mut dyn CAIRead) -> Result<u64> {
-    Ok(reader.stream_position()? - HEADER_SIZE)
+fn box_start(reader: &mut dyn CAIRead, is_large: bool) -> Result<u64> {
+    if is_large {
+        Ok(reader.stream_position()? - HEADER_SIZE_LARGE)
+    } else {
+        Ok(reader.stream_position()? - HEADER_SIZE)
+    }
 }
 
 fn _skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
@@ -264,12 +273,6 @@ fn _skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
 fn skip_bytes_to(reader: &mut dyn CAIRead, pos: u64) -> Result<u64> {
     let pos = reader.seek(SeekFrom::Start(pos))?;
     Ok(pos)
-}
-
-fn _skip_box(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
-    let start = box_start(reader)?;
-    skip_bytes_to(reader, start + size)?;
-    Ok(())
 }
 
 fn write_c2pa_box<W: Write>(
@@ -360,9 +363,30 @@ fn path_from_token(bmff_tree: &mut Arena<BoxInfo>, current_node_token: &Token) -
     Ok(path)
 }
 
+fn get_top_level_box_offsets(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_path_map: &HashMap<String, Vec<Token>>,
+) -> Vec<u64> {
+    let mut tl_offsets = Vec::new();
+
+    for (p, t) in bmff_path_map {
+        // look for top level offsets
+        if p.matches('/').count() == 1 {
+            for token in t {
+                if let Some(box_info) = bmff_tree.get(*token) {
+                    tl_offsets.push(box_info.data.offset);
+                }
+            }
+        }
+    }
+
+    tl_offsets
+}
+
 pub fn bmff_to_jumbf_exclusions(
     reader: &mut dyn CAIRead,
     bmff_exclusions: &[ExclusionsMap],
+    bmff_v2: bool,
 ) -> Result<Vec<Exclusion>> {
     let start = reader.stream_position()?;
     let size = reader.seek(SeekFrom::End(0))?;
@@ -385,6 +409,10 @@ pub fn bmff_to_jumbf_exclusions(
 
     // build layout of the BMFF structure
     build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+
+    // get top level box offsets
+    let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
+    tl_offsets.sort();
 
     let mut exclusions = Vec::new();
 
@@ -481,14 +509,34 @@ pub fn bmff_to_jumbf_exclusions(
                                 subset.length as u64
                             }) as usize,
                         );
+
                         exclusions.push(exclusion);
                     }
                 } else {
+                    // exclude box in its entirty
                     let exclusion =
                         Exclusion::new(exclusion_start as usize, exclusion_length as usize);
+
                     exclusions.push(exclusion);
+
+                    // for BMFF V2 hashes we do not add hash offsets for top level boxes
+                    // that are completely excluded, so remove from BMFF V2 hash offset calc
+                    if let Some(pos) = tl_offsets.iter().position(|x| *x == exclusion_start) {
+                        tl_offsets.remove(pos);
+                    }
                 }
             }
+        }
+    }
+
+    // add remaining top level offsets to be included when generating BMFF V2 hashes
+    // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
+    if bmff_v2 {
+        for tl_start in tl_offsets {
+            let mut exclusion = Exclusion::new(tl_start as usize, 1);
+            exclusion.set_bmff_offset(tl_start);
+
+            exclusions.push(exclusion);
         }
     }
 
@@ -637,7 +685,7 @@ pub(crate) fn build_bmff_tree(
         // Match and parse the supported atom boxes.
         match header.name {
             BoxType::UuidBox => {
-                let start = box_start(reader)?;
+                let start = box_start(reader, header.large_size)?;
 
                 let mut extended_type = [0u8; 16]; // 16 bytes of UUID
                 reader.read_exact(&mut extended_type)?;
@@ -680,7 +728,7 @@ pub(crate) fn build_bmff_tree(
             | BoxType::MfraBox
             | BoxType::MetaBox
             | BoxType::SchiBox => {
-                let start = box_start(reader)?;
+                let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
                     let (version, flags) = read_box_header_ext(reader)?; // box extensions
@@ -727,7 +775,7 @@ pub(crate) fn build_bmff_tree(
                 skip_bytes_to(reader, start + s)?;
             }
             _ => {
-                let start = reader.stream_position()? - HEADER_SIZE;
+                let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
                     let (version, flags) = read_box_header_ext(reader)?; // box extensions

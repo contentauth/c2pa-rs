@@ -30,7 +30,7 @@ use crate::{
     Error,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 1;
+const ASSERTION_CREATION_VERSION: usize = 2;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ExclusionsMap {
@@ -109,8 +109,11 @@ pub struct BmffHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<UriT>,
 
-    #[serde(skip_deserializing, skip_serializing)]
+    #[serde(skip)]
     pub path: PathBuf,
+
+    #[serde(skip)]
+    bmff_version: usize,
 }
 
 impl BmffHash {
@@ -123,6 +126,7 @@ impl BmffHash {
             name: Some(name.to_string()),
             url,
             path: PathBuf::new(),
+            bmff_version: ASSERTION_CREATION_VERSION,
         }
     }
 
@@ -157,6 +161,14 @@ impl BmffHash {
 
     pub fn url(&self) -> Option<&UriT> {
         self.url.as_ref()
+    }
+
+    pub fn bmff_version(&self) -> usize {
+        self.bmff_version
+    }
+
+    fn set_bmff_version(&mut self, version: usize) {
+        self.bmff_version = version;
     }
 
     /// Returns `true` if this is a remote hash.
@@ -200,7 +212,8 @@ impl BmffHash {
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
 
         let hash = hash_asset_by_alg(&alg, asset_path, Some(exclusions))?;
 
@@ -225,7 +238,8 @@ impl BmffHash {
         let mut data_reader = Cursor::new(data);
 
         // convert BMFF exclusion map to flat exclusion list
-        let exclusions = bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions)?;
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions, self.bmff_version > 1)?;
 
         if verify_by_alg(&curr_alg, &self.hash, data, Some(exclusions)) {
             Ok(())
@@ -241,7 +255,8 @@ impl BmffHash {
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions = bmff_to_jumbf_exclusions(&mut data, bmff_exclusions)?;
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
 
         if verify_asset_by_alg(curr_alg, &self.hash, asset_path, Some(exclusions)) {
             Ok(())
@@ -255,13 +270,16 @@ impl AssertionCbor for BmffHash {}
 
 impl AssertionBase for BmffHash {
     const LABEL: &'static str = Self::LABEL;
-    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION); // todo: this mechanism needs to change since a struct could support different versions
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        Self::from_cbor_assertion(assertion)
+        let mut bmff_hash = Self::from_cbor_assertion(assertion)?;
+        bmff_hash.set_bmff_version(assertion.get_ver().unwrap_or(1));
+
+        Ok(bmff_hash)
     }
 }
