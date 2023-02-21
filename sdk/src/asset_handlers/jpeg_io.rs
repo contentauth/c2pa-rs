@@ -55,8 +55,12 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     if let Ok(jpeg) = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)) {
         let segs = jpeg.segments_by_marker(markers::APP1);
-        let xmp: String = segs.filter_map(extract_xmp).collect();
-        Some(xmp)
+        for seg in segs {
+            if let Some(xmp) = extract_xmp(seg) {
+                return Some(xmp);
+            }
+        }
+        None
     } else {
         None
     }
@@ -223,6 +227,7 @@ impl CAILoader for JpegIO {
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
+        asset_reader.rewind().unwrap_or_default();
         match asset_reader.read_to_end(&mut buf) {
             Ok(_) => xmp_from_bytes(&buf),
             Err(_) => None,
@@ -396,6 +401,30 @@ impl CAIWriter for JpegIO {
 
         Ok(positions)
     }
+
+    fn write_xmp(&self, stream: &mut dyn CAIReadWrite, xmp: Option<&str>) -> Result<()> {
+        let mut buf = Vec::new();
+        // read the whole asset
+        stream.rewind()?;
+        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        let segments = jpeg.segments_mut();
+        segments.retain(|seg| {
+            !(seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE))
+        });
+
+        if let Some(xmp) = xmp {
+            let xmp_bytes = Bytes::from(format!("http://ns.adobe.com/xap/1.0/ {xmp}"));
+            let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
+            segments.insert(3, segment);
+        }
+        stream.rewind()?;
+        jpeg.encoder()
+            .write_to(stream)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+        Ok(())
+    }
 }
 
 impl AssetIO for JpegIO {
@@ -458,11 +487,17 @@ impl AssetIO for JpegIO {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
 
     use img_parts::Bytes;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
 
     use super::*;
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -481,10 +516,37 @@ pub mod tests {
         assert_eq!(result, None);
     }
 
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[test]
+    fn test_jpeg_write_xmp() {
+        let image = include_bytes!("../../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image.to_vec());
+
+        let jpeg_io = JpegIO {};
+
+        let xmp0 = jpeg_io.read_xmp(&mut stream);
+        assert!(xmp0.is_some());
+
+        let xmp = "stuff";
+
+        jpeg_io
+            .write_xmp(&mut stream, Some(xmp))
+            .expect("write_xmp");
+
+        let xmp1 = jpeg_io.read_xmp(&mut stream).unwrap();
+        assert_eq!(xmp, xmp1);
+
+        jpeg_io.write_xmp(&mut stream, None).expect("write_xmp");
+
+        let xmp2 = jpeg_io.read_xmp(&mut stream);
+
+        assert!(xmp2.is_none());
+    }
+
     #[test]
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("CA.jpg");
-
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
 

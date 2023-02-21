@@ -67,6 +67,8 @@ pub trait CAIWriter {
         &self,
         stream: &mut dyn CAIReadWrite,
     ) -> Result<Vec<HashObjectPositions>>;
+
+    fn write_xmp(&self, stream: &mut dyn CAIReadWrite, xmp_bytes: Option<&str>) -> Result<()>;
 }
 
 pub trait AssetIO {
@@ -74,7 +76,7 @@ pub trait AssetIO {
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
 
     // Write the CAI block to an asset
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+    fn save_cai_store(&self, asset_path: &Path, xmp: &[u8]) -> Result<()>;
 
     /// List of standard object offsets
     /// If the offsets exist return the start of those locations other it should
