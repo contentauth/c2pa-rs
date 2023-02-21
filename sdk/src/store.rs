@@ -12,7 +12,7 @@
 // each license.
 
 #[cfg(feature = "sign")]
-use std::io::SeekFrom;
+use std::io::{Read, Seek, SeekFrom};
 use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
@@ -1337,12 +1337,15 @@ impl Store {
 
     // generate a list of AssetHashes based on the location of objects in the stream
     #[cfg(feature = "sign")]
-    fn generate_data_hashes_for_stream(
-        stream: &mut dyn CAIReadWrite,
+    fn generate_data_hashes_for_stream<R>(
+        stream: &mut R,
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
-    ) -> Result<Vec<DataHash>> {
+    ) -> Result<Vec<DataHash>>
+    where
+        R: Read + Seek + ?Sized,
+    {
         if block_locations.is_empty() {
             let out: Vec<DataHash> = vec![];
             return Ok(out);
@@ -1484,6 +1487,17 @@ impl Store {
         trun.subset = Some(subset_trun_vec);
         trun.flags = Some(ByteBuf::from([1, 0, 0]));
         exclusions.push(trun);
+
+        // V2 exclusions
+        // /mdat exclusion
+        let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+        let subset_mdat = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_mdat_vec = vec![subset_mdat];
+        mdat.subset = Some(subset_mdat_vec);
+        exclusions.push(mdat);
 
         if calc_hashes {
             dh.gen_hash(asset_path)?;
@@ -2023,8 +2037,6 @@ impl Store {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
-        use std::io::Read;
-
         use conv::ValueFrom;
         use ureq::Error as uError;
 
@@ -3177,9 +3189,11 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("nested.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+        let _errors = report_split_errors(report.get_log_mut());
+
         println!("store = {store}");
     }
 
@@ -3192,6 +3206,15 @@ pub mod tests {
         println!("store = {store}");
     }
 
+    #[test]
+    #[cfg(all(feature = "file_io", feature = "bmff"))]
+    fn test_bmff_legacy() {
+        // test 1.0 bmff hash
+        let ap = fixture_path("legacy.mp4");
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
+        println!("store = {store}");
+    }
     #[test]
     #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_jumbf_generation() {
