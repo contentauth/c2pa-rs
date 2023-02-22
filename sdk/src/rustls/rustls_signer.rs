@@ -11,22 +11,26 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use super::check_chain_order;
-use super::common::ensure_p1363_sig;
-use super::common::get_certificates;
-use super::common::get_ec_private_keys;
-use crate::rustls::common::get_algorithm_data;
-use crate::signing_alg;
-use crate::SigningAlg;
-use crate::{signer::ConfigurableSigner, Error, Result, Signer};
-use rustls::{sign, PrivateKey};
-use rustls::{sign::CertifiedKey, sign::Signer as SignerTrait, Certificate};
+use std::{fs, io::BufReader, path::Path};
+
+use rustls::{
+    sign,
+    sign::{CertifiedKey, Signer as SignerTrait},
+    Certificate, PrivateKey,
+};
 use rustls_pemfile::pkcs8_private_keys;
-use std::io::BufReader;
-use std::{fs, path::Path};
 use x509_parser::der_parser::{
     self,
     der::{parse_der_integer, parse_der_sequence_defined_g},
+};
+
+use super::{
+    check_chain_order,
+    common::{ensure_p1363_sig, get_certificates, get_ec_private_keys},
+};
+use crate::{
+    rustls::common::get_algorithm_data, signer::ConfigurableSigner, signing_alg, Error, Result,
+    Signer, SigningAlg,
 };
 
 pub struct RustlsSigner {
@@ -179,17 +183,16 @@ fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-    use crate::rustls::temp_signer::get_temp_signer;
-    use crate::signer;
-    use crate::Signer;
     use tempfile::tempdir;
+
+    use super::*;
+    use crate::{rustls::temp_signer::get_temp_signer, signer, Signer};
 
     #[test]
     fn signer_from_files() {
         let temp_dir = tempdir().unwrap();
 
-        let (signer, _) = get_temp_signer(&temp_dir.path());
+        let (signer, _) = get_temp_signer(temp_dir.path());
         let data = b"some sample content to sign";
 
         let signature = signer.sign(data).unwrap();

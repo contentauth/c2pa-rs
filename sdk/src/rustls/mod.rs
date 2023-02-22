@@ -18,14 +18,15 @@ pub mod rustls_signer;
 pub mod signer;
 pub mod temp_signer;
 pub mod validator;
-use self::common::certificate_to_alg;
-use crate::rustls::common::get_algorithm_data;
 // use crate::{error::Result, Error};
 use ring::signature;
 use rustls::Certificate;
 pub(crate) use rustls_signer::RustlsSigner;
 pub(crate) use validator::Validator;
 use x509_parser::parse_x509_certificate;
+
+use self::common::certificate_to_alg;
+use crate::rustls::common::get_algorithm_data;
 
 pub(crate) fn check_chain_order(certs: &Vec<Certificate>) -> bool {
     match _check_chain_order_to_result(certs) {

@@ -1297,7 +1297,7 @@ impl Store {
     /// xmp_str: String containing entire XMP block of the asset
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
-    pub fn verify_store<'a>(
+    pub fn verify_store(
         store: &Store,
         asset_data: &ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
@@ -2392,22 +2392,23 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use crate::error::{Error, Result};
-    use crate::store::{Store, MANIFEST_STORE_EXT};
-    use crate::validation_status;
     use tempfile::tempdir;
     use twoway::find_bytes;
 
+    use super::*;
     use crate::{
         assertions::{Action, Actions, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},
         jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
         status_tracker::*,
-        utils::test::{
-            create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+        utils::{
+            patch::patch_file,
+            test::{
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+            },
         },
+        SigningAlg,
     };
-    use crate::{utils::patch::patch_file, SigningAlg};
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
         let uuid_str = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -2672,9 +2673,7 @@ pub mod tests {
     #[test]
     #[cfg(all(feature = "file_io", feature = "with_rustls"))]
     fn test_sign_with_expired_cert() {
-        use crate::rustls::RustlsSigner;
-        use crate::signer::ConfigurableSigner;
-        use crate::SigningAlg;
+        use crate::{rustls::RustlsSigner, signer::ConfigurableSigner, SigningAlg};
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -2729,8 +2728,6 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_jumbf_replacement_generation() {
         // Create claims store.
-
-        use std::fs;
         let mut store = Store::new();
 
         // Create a new claim.
@@ -3008,7 +3005,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_verifiable_credentials() {
-        use crate::{assertion::AssertionData, utils::test::create_test_store};
+        use crate::utils::test::create_test_store;
 
         let signer = temp_signer();
 
@@ -3053,7 +3050,6 @@ pub mod tests {
         patch_file(&path, search_bytes, replace_bytes).expect("patch_file");
         let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&path, true, &mut report); // errs are in report
-        println!("report: {report:?}");
         report
     }
 

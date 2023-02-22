@@ -119,10 +119,6 @@ pub(crate) mod ocsp_utils;
 mod openssl;
 #[cfg(feature = "file_io")]
 mod rustls;
-#[cfg(feature = "file_io")]
-mod signer;
-#[cfg(feature = "file_io")]
-pub use signer::Signer;
 
 #[cfg(all(feature = "file_io", feature = "with_rustls"))]
 pub use crate::rustls::{

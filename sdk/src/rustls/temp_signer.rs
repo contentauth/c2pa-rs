@@ -38,7 +38,11 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-use crate::{rustls::RustlsSigner, signer::ConfigurableSigner, signer::Signer, SigningAlg};
+use crate::{
+    rustls::RustlsSigner,
+    signer::{ConfigurableSigner, Signer},
+    SigningAlg,
+};
 
 /// Create a signer that can be used for testing purposes.
 ///
@@ -362,10 +366,10 @@ fn process_openssl_output(openssl: Child) {
         eprintln!("openssl exited with status {:?}\n\n", output.status);
 
         if let Ok(stdout) = String::from_utf8(output.stdout) {
-            eprintln!("stdout\n\n{:?}\n\n", stdout);
+            eprintln!("stdout\n\n{stdout:?}\n\n");
         }
         if let Ok(stderr) = String::from_utf8(output.stderr) {
-            eprintln!("stderr\n\n{:?}\n\n", stderr);
+            eprintln!("stderr\n\n{stderr:?}\n\n");
         }
 
         print_mac_openssl_warning();

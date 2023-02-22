@@ -15,11 +15,9 @@ use chrono::{DateTime, Utc};
 
 #[cfg(feature = "sign")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
-
 #[cfg(all(feature = "file_io"))]
 use crate::rustls;
 use crate::{Result, SigningAlg};
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Default)]
 pub struct ValidationInfo {

@@ -11,7 +11,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2018"
-rust-version = "1.61.0"
+rust-version = "1.67.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -30,6 +30,7 @@ serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
+sign = ["openssl"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

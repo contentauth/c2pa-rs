@@ -983,14 +983,13 @@ async fn validate_with_cert_async(
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::{convert::TryFrom, io::BufReader, path::Path};
+
     use ring::{
         io::der,
         signature::{self, EcdsaVerificationAlgorithm, VerificationAlgorithm},
     };
     use rustls_pemfile::certs;
-    use std::io::BufReader;
-    use std::{convert::TryFrom, path::Path};
-
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;

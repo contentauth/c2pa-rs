@@ -11,16 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    cose_validator::{
-        ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ED25519_OID, RSASSA_PSS_OID, SHA256_OID,
-        SHA384_OID, SHA512_OID,
-    },
-    Error, Result, SigningAlg,
-};
+use std::{io::BufReader, iter};
+
 use rustls::Certificate;
 use rustls_pemfile::{read_one, Item};
-use std::{io::BufReader, iter};
 use x509_parser::{
     der_parser::{
         self,
@@ -29,6 +23,14 @@ use x509_parser::{
     parse_x509_certificate,
     traits::FromDer,
     x509::AlgorithmIdentifier,
+};
+
+use crate::{
+    cose_validator::{
+        ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ED25519_OID, RSASSA_PSS_OID, SHA256_OID,
+        SHA384_OID, SHA512_OID,
+    },
+    Error, Result, SigningAlg,
 };
 
 pub(crate) struct AlgorithmData {

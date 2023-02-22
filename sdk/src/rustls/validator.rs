@@ -11,12 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::rustls::common::{ensure_asn_sig, get_algorithm_data};
-use crate::SigningAlg;
-use crate::{validator::CoseValidator, Error, Result};
+use std::convert::TryFrom;
+
 use ring::signature;
 use spki::SubjectPublicKeyInfo;
-use std::convert::TryFrom;
+
+use crate::{
+    rustls::common::{ensure_asn_sig, get_algorithm_data},
+    validator::CoseValidator,
+    Error, Result, SigningAlg,
+};
 
 pub struct Validator {
     alg: SigningAlg,
@@ -48,10 +52,10 @@ impl CoseValidator for Validator {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::*;
-    use crate::rustls::temp_signer;
-    use crate::Signer;
     use x509_parser::parse_x509_certificate;
+
+    use super::*;
+    use crate::{rustls::temp_signer, Signer};
 
     #[test]
     fn verify_signatures() {
@@ -92,7 +96,7 @@ mod tests {
 
         let alg = SigningAlg::Ed25519;
         let cert_dir = crate::utils::test::fixture_path("certs");
-        let (signer, _cert_path) = temp_signer::get_ed_signer(&cert_dir, alg, None);
+        let (signer, _cert_path) = temp_signer::get_ed_signer(cert_dir, alg, None);
         let signature = signer.sign(MESSAGE).unwrap();
 
         let leaf_certificate = match signer.certs() {
