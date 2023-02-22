@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.17.0
+_22 February 2023_
+
+* Disable mdat exclusion ([#187](https://github.com/contentauth/c2pa-rs/pull/187))
+* Bmff v2 ([#186](https://github.com/contentauth/c2pa-rs/pull/186))
+* Fix for using non-c2pa segment when add required segments ([#185](https://github.com/contentauth/c2pa-rs/pull/185))
+* Update Ingredient and VC hashes to 1.2 spec ([#184](https://github.com/contentauth/c2pa-rs/pull/184))
+* (MINOR) Create a ResourceStore for binary assets  ([#180](https://github.com/contentauth/c2pa-rs/pull/180))
+* Fix Clippy warnings from new Rust 1.67 ([#182](https://github.com/contentauth/c2pa-rs/pull/182))
+* Visualizations ([#163](https://github.com/contentauth/c2pa-rs/pull/163))
+
 ## 0.16.1
 _19 December 2022_
 
