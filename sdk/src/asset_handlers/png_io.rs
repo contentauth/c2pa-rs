@@ -139,7 +139,6 @@ fn get_cai_data(f: &mut dyn CAIRead) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-#[allow(dead_code)]
 fn add_required_chunks_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
     let mut buf: Vec<u8> = Vec::new();
     stream.rewind()?;
