@@ -14,14 +14,17 @@
 use std::{
     fs::File,
     io::{Cursor, SeekFrom},
-    path::*,
+    path::Path,
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        AssetIO, CAILoader, CAIRead, CAIReadWrite, CAIWriter, HashBlockObjectType,
+        HashObjectPositions,
+    },
     error::{Error, Result},
 };
 
@@ -136,17 +139,27 @@ fn get_cai_data(f: &mut dyn CAIRead) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
-    let mut f = File::open(asset_path)?;
-    let aio = PngIO {};
+#[allow(dead_code)]
+fn add_required_chunks_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
+    let mut buf: Vec<u8> = Vec::new();
+    stream.rewind()?;
+    stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+    stream.rewind()?;
 
-    match aio.read_cai(&mut f) {
-        Ok(_) => Ok(()),
-        Err(_) => {
+    let img_out = img_parts::DynImage::from_bytes(buf.into())
+        .map_err(|_err| Error::InvalidAsset("Could not parse input PNG".to_owned()))?;
+
+    if let Some(img_parts::DynImage::Png(png)) = img_out {
+        if png.chunk_by_type(CAI_CHUNK).is_none() {
             let no_bytes: Vec<u8> = Vec::new();
-            aio.save_cai_store(asset_path, &no_bytes)
+            let aio = PngIO {};
+            aio.write_cai(stream, &no_bytes)?;
         }
+    } else {
+        return Err(Error::UnsupportedType);
     }
+
+    Ok(())
 }
 
 fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> {
@@ -269,18 +282,14 @@ impl CAILoader for PngIO {
     }
 }
 
-impl AssetIO for PngIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+impl CAIWriter for PngIO {
+    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()> {
         let mut cai_data = Vec::new();
         let mut cai_encoder = png_pong::Encoder::new(&mut cai_data).into_chunk_enc();
 
-        // get png byte
-        let mut png_buf = std::fs::read(asset_path).map_err(|_err| Error::EmbeddingError)?;
+        let mut png_buf = Vec::new();
+        stream.rewind()?;
+        stream.read_to_end(&mut png_buf).map_err(Error::IoError)?;
 
         let mut cursor = Cursor::new(png_buf);
         let mut ps = get_png_chunk_positions(&mut cursor)?;
@@ -288,7 +297,7 @@ impl AssetIO for PngIO {
         // get back buffer
         png_buf = cursor.into_inner();
 
-        // add CAI chunk
+        // create CAI store chunk
         let cai_unknown = png_pong::chunk::Unknown {
             name: CAI_CHUNK,
             data: store_bytes.to_vec(),
@@ -297,7 +306,7 @@ impl AssetIO for PngIO {
         let mut cai_chunk = png_pong::chunk::Chunk::Unknown(cai_unknown);
         cai_encoder
             .encode(&mut cai_chunk)
-            .map_err(|_err| Error::EmbeddingError)?;
+            .map_err(|_| Error::EmbeddingError)?;
 
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
@@ -306,19 +315,19 @@ impl AssetIO for PngIO {
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
-        // erase existing
+        // erase existing cai data
         let empty_buf = Vec::new();
         let mut iter = ps.into_iter();
-        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
-            // replace existing CAI
-            let start = usize::value_from(existing_cai.start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+        if let Some(existing_cai_data) = iter.find(|png_cp| png_cp.name == CAI_CHUNK) {
+            // replace existing CAI data
+            let cai_start = usize::value_from(existing_cai_data.start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
 
-            let end = usize::value_from(existing_cai.end())
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+            let cai_end = usize::value_from(existing_cai_data.end())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
 
-            png_buf.splice(start..end, empty_buf.iter().cloned());
-        }
+            png_buf.splice(cai_start..cai_end, empty_buf.iter().cloned());
+        };
 
         // update positions and reset png_buf
         cursor = Cursor::new(png_buf);
@@ -326,32 +335,41 @@ impl AssetIO for PngIO {
         iter = ps.into_iter();
         png_buf = cursor.into_inner();
 
-        // add new cai data after image header chunk
-        if let Some(img_hdr) = iter.find(|pcp| pcp.name == IMG_HDR) {
-            let end = usize::value_from(img_hdr.end())
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+        // add new cai data after the image header chunk
+        if let Some(img_hdr) = iter.find(|png_cp| png_cp.name == IMG_HDR) {
+            let img_hdr_end = usize::value_from(img_hdr.end())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
 
-            png_buf.splice(end..end, cai_data.iter().cloned());
+            png_buf.splice(img_hdr_end..img_hdr_end, cai_data.iter().cloned());
         } else {
             return Err(Error::EmbeddingError);
         }
 
-        // save png data
-        std::fs::write(asset_path, png_buf)?;
+        stream.rewind()?;
+        stream.write_all(&png_buf)?;
 
         Ok(())
     }
 
-    fn get_object_locations(
+    fn get_object_locations_from_stream(
         &self,
-        asset_path: &std::path::Path,
+        stream: &mut dyn CAIReadWrite,
     ) -> Result<Vec<HashObjectPositions>> {
-        add_required_chunks(asset_path)?;
-
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        let ps = get_png_chunk_positions(&mut f)?;
-
         let mut positions: Vec<HashObjectPositions> = Vec::new();
+
+        // Ensure the stream has the required chunks so we can generate the required offsets.
+        add_required_chunks_to_stream(stream)?;
+
+        let mut png_buf: Vec<u8> = Vec::new();
+        stream.rewind()?;
+        stream.read_to_end(&mut png_buf).map_err(Error::IoError)?;
+        stream.rewind()?;
+
+        let mut cursor = Cursor::new(png_buf);
+        let ps = get_png_chunk_positions(&mut cursor)?;
+
+        // get back buffer
+        png_buf = cursor.into_inner();
 
         let pcp = ps
             .into_iter()
@@ -372,8 +390,8 @@ impl AssetIO for PngIO {
         });
 
         // add position from cai to end
-        let end = pcp.end();
-        let file_end = f.metadata()?.len();
+        let end = pcp.end() as usize;
+        let file_end = png_buf.len();
         positions.push(HashObjectPositions {
             offset: end as usize, // len of cai
             length: (file_end - end) as usize,
@@ -381,6 +399,38 @@ impl AssetIO for PngIO {
         });
 
         Ok(positions)
+    }
+}
+
+impl AssetIO for PngIO {
+    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(asset_path)?;
+        self.read_cai(&mut f)
+    }
+
+    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.write_cai(&mut stream, store_bytes)?;
+
+        Ok(())
+    }
+
+    fn get_object_locations(
+        &self,
+        asset_path: &std::path::Path,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.get_object_locations_from_stream(&mut file)
     }
 
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {

@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::Cursor, path::*};
+use std::{fs::File, io::Cursor, path::Path};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use img_parts::{
@@ -405,7 +405,7 @@ impl AssetIO for JpegIO {
         self.read_cai(&mut f)
     }
 
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut stream = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -418,10 +418,7 @@ impl AssetIO for JpegIO {
         Ok(())
     }
 
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
+    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
         let mut file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -431,7 +428,7 @@ impl AssetIO for JpegIO {
         self.get_object_locations_from_stream(&mut file)
     }
 
-    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let input = std::fs::read(asset_path).map_err(Error::IoError)?;
 
         let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
