@@ -519,6 +519,98 @@ pub mod tests {
     }
 
     #[test]
+    fn test_write_cai_data_to_stream_invalid_type() {
+        let source = crate::utils::test::fixture_path("C.jpg");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output =
+            crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-save-invalid_type.jpg");
+        std::fs::copy(source, &output).unwrap();
+
+        let png_io = PngIO {};
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(output.clone())
+            .unwrap();
+
+        let empty: Vec<u8> = vec![];
+        assert!(matches!(
+            png_io.write_cai(&mut stream, &empty),
+            Err(Error::InvalidAsset(_),)
+        ));
+    }
+
+    #[test]
+    fn test_stream_object_locations() {
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
+        std::fs::copy(source, &output).unwrap();
+
+        let png_io = PngIO {};
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(output.clone())
+            .unwrap();
+
+        let cai_pos = png_io
+            .get_object_locations_from_stream(&mut stream)
+            .unwrap()
+            .into_iter()
+            .find(|pos| pos.htype == HashBlockObjectType::Cai)
+            .unwrap();
+
+        assert_eq!(cai_pos.offset, 33);
+        assert_eq!(cai_pos.length, 3439701);
+    }
+
+    #[test]
+    fn test_stream_object_locations_with_incorrect_file_type() {
+        let source = crate::utils::test::fixture_path("unsupported_type.txt");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.txt");
+        std::fs::copy(source, &output).unwrap();
+
+        let png_io = PngIO {};
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(output)
+            .unwrap();
+
+        assert!(matches!(
+            png_io.get_object_locations_from_stream(&mut stream),
+            Err(Error::UnsupportedType)
+        ));
+    }
+
+    #[test]
+    fn test_stream_object_locations_adds_offsets_to_file_without_claims() {
+        let source = crate::utils::test::fixture_path("libpng-test.png");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-adds-loc.txt");
+        std::fs::copy(source, &output).unwrap();
+
+        let png_io = PngIO {};
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(output)
+            .unwrap();
+
+        assert!(png_io
+            .get_object_locations_from_stream(&mut stream)
+            .unwrap()
+            .into_iter()
+            .find(|chunk| chunk.htype == HashBlockObjectType::Cai)
+            .is_some());
+    }
+
+    #[test]
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
