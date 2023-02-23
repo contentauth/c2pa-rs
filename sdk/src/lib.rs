@@ -86,7 +86,7 @@ pub mod assertions;
 
 mod cose_validator;
 
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 pub mod create_signer;
 
 mod error;
@@ -113,14 +113,12 @@ mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) mod ocsp_utils;
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 mod openssl;
 
-#[cfg(feature = "sign")]
 mod signer;
-#[cfg(feature = "sign")]
 pub use signer::Signer;
 #[cfg(feature = "async_signer")]
 pub use signer::{AsyncSigner, RemoteSigner};
@@ -132,7 +130,6 @@ pub(crate) mod asset_io;
 /// crate private declarations
 pub(crate) mod claim;
 
-#[cfg(feature = "sign")]
 pub mod cose_sign;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]

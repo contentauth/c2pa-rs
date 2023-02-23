@@ -710,7 +710,6 @@ impl Claim {
     }
 
     // crate private function to allow for patching a data hash with final contents
-    #[cfg(feature = "sign")]
     pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
         let mut replacement_assertion = data_hash.to_assertion()?;
 

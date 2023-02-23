@@ -31,9 +31,8 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind,
 };
-#[cfg(feature = "sign")]
 use crate::{asset_io::CAIReadWrite, Signer};
-#[cfg(all(feature = "async_signer", feature = "file_io"))]
+#[cfg(feature = "async_signer")]
 use crate::{AsyncSigner, RemoteSigner};
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -860,7 +859,6 @@ impl Manifest {
 
     /// Embed a signed manifest into a stream using a supplied signer.
     /// returns the bytes of the  manifest that was embedded
-    #[cfg(feature = "sign")]
     pub fn embed_from_memory(
         &mut self,
         format: &str,
@@ -877,7 +875,6 @@ impl Manifest {
 
     /// Embed a signed manifest into a stream using a supplied signer.
     /// returns the bytes of the  manifest that was embedded
-    #[cfg(feature = "sign")]
     pub fn embed_stream(
         &mut self,
         format: &str,
@@ -889,12 +886,14 @@ impl Manifest {
         self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
 
         // generate thumbnail if we don't already have one
-        if self.thumbnail().is_none() {
-            #[cfg(feature = "add_thumbnails")]
-            if let Ok((format, image)) =
-                crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
-            {
-                self.set_thumbnail(format, image)?;
+        #[cfg(feature = "add_thumbnails")] {
+            if self.thumbnail().is_none() {
+                
+                    if let Ok((format, image)) =
+                        crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+                    {
+                        self.set_thumbnail(format, image)?;
+                    }
             }
         }
 
@@ -972,8 +971,7 @@ pub(crate) mod tests {
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
 
-    #[cfg(feature = "sign")]
-    use crate::utils::test::temp_signer;
+   use crate::utils::test::temp_signer;
     #[cfg(feature = "file_io")]
     use crate::{
         assertions::labels::ACTIONS,
@@ -1056,7 +1054,7 @@ pub(crate) mod tests {
         let signer = temp_signer();
 
         let _store = manifest
-            .embed(&source_path, &test_output, &signer)
+            .embed(&source_path, &test_output, signer.as_ref())
             .expect("embed");
 
         assert_eq!(manifest.format(), "image/jpeg");
@@ -1170,7 +1168,7 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest.embed(&output, &output, signer.as_ref()).expect("embed");
         let mut validation_log = DetailedStatusTracker::new();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
@@ -1192,7 +1190,7 @@ pub(crate) mod tests {
 
         //embed a claim in output2
         let signer = temp_signer();
-        let _store2 = manifest2.embed(&output2, &output2, &signer).expect("embed");
+        let _store2 = manifest2.embed(&output2, &output2, signer.as_ref()).expect("embed");
 
         let mut report = DetailedStatusTracker::new();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
@@ -1231,7 +1229,7 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
         parent_manifest
-            .embed(&parent_output, &parent_output, &signer)
+            .embed(&parent_output, &parent_output, signer.as_ref())
             .expect("embed");
 
         // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
@@ -1243,7 +1241,7 @@ pub(crate) mod tests {
 
         // Attempt embedding the manifest with the invalid redaction.
         let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
-        let embed_result = manifest.embed(&redact_output, &redact_output, &signer);
+        let embed_result = manifest.embed(&redact_output, &redact_output, signer.as_ref());
         assert!(matches!(
             embed_result.err().unwrap(),
             Error::AssertionInvalidRedaction
@@ -1349,7 +1347,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
@@ -1372,7 +1370,7 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
         manifest.set_remote_manifest(url);
-        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest.embed(&output, &output, signer.as_ref()).expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store =
@@ -1385,7 +1383,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[cfg(feature = "sign")]
     fn test_embed_stream() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -1406,7 +1403,7 @@ pub(crate) mod tests {
         let signer = temp_signer();
         // Embed a manifest using the signer.
         manifest
-            .embed_stream("jpeg", &mut stream, &signer)
+            .embed_stream("jpeg", &mut stream, signer.as_ref())
             .expect("embed_stream");
 
         // get the updated image
@@ -1441,7 +1438,7 @@ pub(crate) mod tests {
             validation_status::ASSERTION_DATAHASH_MISMATCH
         );
         manifest.add_ingredient(ingredient);
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let manifest = manifest_store.get_active().unwrap();
@@ -1470,7 +1467,7 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
         manifest.set_remote_manifest(url);
-        let _c2pa_data = manifest.embed(&source, &output, &signer).expect("embed");
+        let _c2pa_data = manifest.embed(&source, &output, signer.as_ref()).expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -1493,7 +1490,7 @@ pub(crate) mod tests {
         manifest
             .set_thumbnail("image/jpeg", thumb_data.clone())
             .expect("set_thumbnail");
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
         let (content_type, image) = active_manifest.thumbnail().unwrap();
@@ -1522,7 +1519,7 @@ pub(crate) mod tests {
     }"#;
 
     #[test]
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     /// tests and illustrates how to add assets to a non-file based manifest
     fn from_json_with_memory() {
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
@@ -1545,7 +1542,7 @@ pub(crate) mod tests {
         let signer = temp_signer();
         // Embed a manifest using the signer.
         manifest
-            .embed_stream("jpeg", &mut stream, &signer)
+            .embed_stream("jpeg", &mut stream, signer.as_ref())
             .expect("embed_stream");
 
         // get the updated image
@@ -1597,7 +1594,7 @@ pub(crate) mod tests {
 
         let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
         manifest.with_base_path(fixtures).expect("with_base");
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
 
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");

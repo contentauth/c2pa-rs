@@ -19,16 +19,17 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["add_thumbnails"]
+default = []
 add_thumbnails = ["image"]
 async_signer = ["async-trait", "file_io"]
 bmff = []
-file_io = ["sign"]
+file_io = ["add_thumbnails", "openssl_sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
-sign = ["openssl"]
+openssl_sign = ["openssl"]
+remote_wasm_sign = ["no_interleaved_io", "async-trait"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -71,6 +72,7 @@ multihash = "0.11.4"
 png_pong = "0.8.2"
 quick-xml = "0.20.0"
 range-set = "0.0.9"
+ring = "0.16.20"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
@@ -88,7 +90,6 @@ x509-parser = "0.11.0"
 x509-certificate = "0.12.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-ring = "0.16.20"
 ureq = "2.4.0"
 image = { version = "0.24.2", optional = true }
 instant = "0.1.0"

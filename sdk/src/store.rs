@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "sign")]
 use std::io::{Read, Seek, SeekFrom};
 use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
@@ -44,7 +43,6 @@ use crate::{
     utils::hash_utils::hash256,
     validation_status, ManifestStoreReport,
 };
-#[cfg(feature = "sign")]
 use crate::{
     assertions::DataHash,
     asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
@@ -54,6 +52,7 @@ use crate::{
     utils::{hash_utils::Exclusion, patch::patch_bytes},
     Signer,
 };
+
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
@@ -362,7 +361,6 @@ impl Store {
     }
 
     /// Sign the claim and return signature.
-    #[cfg(feature = "sign")]
     pub fn sign_claim(
         &self,
         claim: &Claim,
@@ -622,7 +620,6 @@ impl Store {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
-    #[cfg(feature = "sign")]
     fn to_jumbf_internal(&self, min_reserve_size: usize) -> Result<Vec<u8>> {
         // Create the CAI block.
         let mut cai_block = Cai::new();
@@ -1336,7 +1333,6 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
-    #[cfg(feature = "sign")]
     fn generate_data_hashes_for_stream<R>(
         stream: &mut R,
         alg: &str,
@@ -1548,7 +1544,6 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
-    #[cfg(feature = "sign")]
     pub fn save_to_stream(
         &mut self,
         format: &str,
@@ -1741,7 +1736,6 @@ impl Store {
         }
     }
 
-    #[cfg(feature = "sign")]
     fn start_save_stream(
         &mut self,
         format: &str,
@@ -1804,7 +1798,6 @@ impl Store {
         Ok(data) // return JUMBF data
     }
 
-    #[cfg(feature = "sign")]
     fn finish_save_stream(
         &self,
         mut jumbf_bytes: Vec<u8>,
@@ -2465,11 +2458,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op,signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         // test finding claims by label
         let c1 = store.get_claim(&claim1_label);
@@ -2572,7 +2565,7 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // read from new file
         let new_store =
@@ -2842,11 +2835,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
@@ -2990,7 +2983,7 @@ pub mod tests {
 
         // save to output
         store
-            .save_to_asset(ap.as_path(), &signer, op.as_path())
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         // read back in
@@ -3042,7 +3035,7 @@ pub mod tests {
 
         // save to output
         store
-            .save_to_asset(ap.as_path(), &signer, op.as_path())
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         let mut report = OneShotStatusTracker::default();
@@ -3077,7 +3070,7 @@ pub mod tests {
 
         restored_store.commit_update_manifest(claim).unwrap();
         restored_store
-            .save_to_asset(op.as_path(), &signer, op.as_path())
+            .save_to_asset(op.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         // read back in store with update manifest
@@ -3233,7 +3226,7 @@ pub mod tests {
 
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         let mut report = DetailedStatusTracker::new();
 
@@ -3278,7 +3271,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3322,7 +3315,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3375,7 +3368,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3427,7 +3420,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // delete the sidecar so we can test for url only rea
         // std::fs::remove_file(sidecar);
@@ -3459,8 +3452,7 @@ pub mod tests {
     }
 
     #[actix::test]
-    #[cfg(feature = "sign")]
-    async fn test_jumbf_generation_stream() {
+        async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
@@ -3475,7 +3467,7 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
-        store.save_to_stream("jpeg", &mut buf_io, &signer).unwrap();
+        store.save_to_stream("jpeg", &mut buf_io, signer.as_ref()).unwrap();
 
         // convert our cursor back into a buffer
         let result = buf_io.into_inner();
@@ -3514,11 +3506,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 

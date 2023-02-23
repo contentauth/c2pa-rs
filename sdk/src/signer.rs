@@ -10,9 +10,7 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-#[cfg(feature = "file_io")]
-use crate::Error;
-use crate::{Result, SigningAlg};
+use crate::{Error, Result, SigningAlg};
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.

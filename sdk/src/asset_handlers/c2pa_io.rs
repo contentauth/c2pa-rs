@@ -99,7 +99,7 @@ pub mod tests {
 
         let signer = temp_signer();
 
-        let manifest2 = store.to_jumbf(&signer).expect("to_jumbf");
+        let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
     }
 }

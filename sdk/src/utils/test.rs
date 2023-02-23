@@ -17,17 +17,19 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
+#[cfg(feature = "file_io")]
+use crate::create_signer;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result,
+    Result, Signer,
 };
-#[cfg(feature = "file_io")]
-use crate::{create_signer, Signer};
-#[cfg(feature = "sign")]
-use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+use crate::SigningAlg;
+
+#[cfg(feature = "openssl_sign")]
+use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 
@@ -207,14 +209,44 @@ pub fn temp_signer_file() -> RsaSigner {
         .expect("get_temp_signer")
 }
 
-#[cfg(feature = "sign")]
-pub fn temp_signer() -> RsaSigner {
-    #![allow(clippy::expect_used)]
-    let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
-    let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
+struct TestGoodSigner {}
+impl crate::Signer for TestGoodSigner {
+    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+        Ok(b"not a valid signature".to_vec())
+    }
 
-    RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-        .expect("get_temp_signer")
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024
+    }
+}
+
+pub fn temp_signer() -> Box<dyn Signer> {
+    #[cfg(feature = "openssl_sign")]
+    {
+        #![allow(clippy::expect_used)]
+        let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
+
+        let signer =
+            RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .expect("get_temp_signer");
+
+        Box::new(signer)
+    }
+
+    // todo: the will be a RustTLS signer shortly
+    #[cfg(not(feature = "openssl_sign"))]
+    {
+        Box::new(TestGoodSigner {})
+    }
 }
 
 /// Create a [`Signer`] instance for a specific algorithm that can be used for testing purposes.
