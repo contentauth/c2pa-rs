@@ -981,7 +981,7 @@ async fn validate_with_cert_async(
     }
 }
 #[allow(unused_imports)]
-#[cfg(feature = "file_io")]
+#[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1071,7 +1071,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
 
