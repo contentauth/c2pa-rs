@@ -477,11 +477,13 @@ pub mod tests {
 
     use twoway::find_bytes;
 
+    use crate::utils::test;
+
     use super::*;
 
     #[test]
     fn test_png_xmp() {
-        let ap = crate::utils::test::fixture_path("libpng-test_with_url.png");
+        let ap = test::fixture_path("libpng-test_with_url.png");
 
         let png_io = PngIO {};
         let xmp = png_io
@@ -495,7 +497,7 @@ pub mod tests {
     }
     #[test]
     fn test_png_parse() {
-        let ap = crate::utils::test::fixture_path("libpng-test.png");
+        let ap = test::fixture_path("libpng-test.png");
 
         let png_bytes = std::fs::read(&ap).unwrap();
 
@@ -519,11 +521,32 @@ pub mod tests {
     }
 
     #[test]
-    fn test_write_cai_data_to_stream_invalid_type() {
-        let source = crate::utils::test::fixture_path("C.jpg");
+    fn test_write_cai_using_stream() {
+        let source = test::fixture_path("exp-test1.png");
+
         let temp_dir = tempfile::tempdir().unwrap();
-        let output =
-            crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-save-invalid_type.jpg");
+        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
+        std::fs::copy(source, &output).unwrap();
+
+        let png_io = PngIO {};
+        let mut stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(output.clone())
+            .unwrap();
+
+        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
+        assert!(png_io.write_cai(&mut stream, &data_to_write).is_ok());
+
+        let data_written = png_io.read_cai(&mut stream).unwrap();
+        assert_eq!(data_to_write, data_written);
+    }
+
+    #[test]
+    fn test_write_cai_data_to_stream_wrong_format() {
+        let source = test::fixture_path("C.jpg");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = test::temp_dir_path(&temp_dir, "tmp-stream-save-invalid_type.jpg");
         std::fs::copy(source, &output).unwrap();
 
         let png_io = PngIO {};
@@ -542,10 +565,10 @@ pub mod tests {
 
     #[test]
     fn test_stream_object_locations() {
-        let source = crate::utils::test::fixture_path("exp-test1.png");
+        let source = test::fixture_path("exp-test1.png");
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
+        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
         std::fs::copy(source, &output).unwrap();
 
         let png_io = PngIO {};
@@ -568,10 +591,10 @@ pub mod tests {
 
     #[test]
     fn test_stream_object_locations_with_incorrect_file_type() {
-        let source = crate::utils::test::fixture_path("unsupported_type.txt");
+        let source = test::fixture_path("unsupported_type.txt");
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.txt");
+        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.txt");
         std::fs::copy(source, &output).unwrap();
 
         let png_io = PngIO {};
@@ -589,10 +612,10 @@ pub mod tests {
 
     #[test]
     fn test_stream_object_locations_adds_offsets_to_file_without_claims() {
-        let source = crate::utils::test::fixture_path("libpng-test.png");
+        let source = test::fixture_path("libpng-test.png");
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let output = crate::utils::test::temp_dir_path(&temp_dir, "tmp-stream-obj-adds-loc.txt");
+        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-adds-loc.txt");
         std::fs::copy(source, &output).unwrap();
 
         let png_io = PngIO {};
@@ -612,10 +635,10 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = crate::utils::test::fixture_path("exp-test1.png");
+        let source = test::fixture_path("exp-test1.png");
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
+        let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
 
         std::fs::copy(source, &output).unwrap();
         let png_io = PngIO {};
