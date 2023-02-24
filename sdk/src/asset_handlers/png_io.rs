@@ -477,9 +477,8 @@ pub mod tests {
 
     use twoway::find_bytes;
 
-    use crate::utils::test;
-
     use super::*;
+    use crate::utils::test;
 
     #[test]
     fn test_png_xmp() {
@@ -521,14 +520,43 @@ pub mod tests {
     }
 
     #[test]
-    fn test_write_cai_using_stream() {
+    fn test_write_cai_using_stream_existing_cai_data() {
         let source = test::fixture_path("exp-test1.png");
         let mut stream = Cursor::new(std::fs::read(&source).unwrap());
-        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
-
         let png_io = PngIO {};
+
+        // cai data already exists
+        assert!(matches!(
+            png_io.read_cai(&mut stream),
+            Ok(data) if !data.is_empty(),
+        ));
+
+        // write new data
+        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
         assert!(png_io.write_cai(&mut stream, &data_to_write).is_ok());
 
+        // new data replaces the existing cai data
+        let data_written = png_io.read_cai(&mut stream).unwrap();
+        assert_eq!(data_to_write, data_written);
+    }
+
+    #[test]
+    fn test_write_cai_using_stream_no_cai_data() {
+        let source = test::fixture_path("libpng-test.png");
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let png_io = PngIO {};
+
+        // no cai data present in stream.
+        assert!(matches!(
+            png_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
+
+        // write new data.
+        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
+        assert!(png_io.write_cai(&mut stream, &data_to_write).is_ok());
+
+        // assert new cai data is present.
         let data_written = png_io.read_cai(&mut stream).unwrap();
         assert_eq!(data_to_write, data_written);
     }
@@ -540,7 +568,7 @@ pub mod tests {
         let png_io = PngIO {};
 
         assert!(matches!(
-            png_io.write_cai(&mut stream, &vec![]),
+            png_io.write_cai(&mut stream, &[]),
             Err(Error::InvalidAsset(_),)
         ));
     }
@@ -581,8 +609,7 @@ pub mod tests {
             .get_object_locations_from_stream(&mut stream)
             .unwrap()
             .into_iter()
-            .find(|chunk| chunk.htype == HashBlockObjectType::Cai)
-            .is_some());
+            .any(|chunk| chunk.htype == HashBlockObjectType::Cai));
     }
 
     #[test]
