@@ -20,6 +20,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::AsyncSigner;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
@@ -30,10 +32,8 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    Ingredient, ManifestAssertion, ManifestAssertionKind, Signer,
+    Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
-#[cfg(feature = "async_signer")]
-use crate::{AsyncSigner, RemoteSigner};
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -550,7 +550,7 @@ impl Manifest {
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
-            debug!("assertion = {}", label);
+            debug!("assertion = {}", &label);
             match base_label.as_ref() {
                 labels::INGREDIENT => {
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
@@ -904,9 +904,44 @@ impl Manifest {
         store.save_to_stream(format, stream, signer)
     }
 
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the bytes of the  manifest that was embedded
+    //#[cfg(feature = "remote_wasm_sign")]
+    pub async fn embed_from_memory_remote_signed(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn RemoteSigner,
+    ) -> Result<Vec<u8>> {
+        self.set_format(format);
+        // todo:: read instance_id from xmp from stream
+        self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+
+        // generate thumbnail if we don't already have one
+        #[cfg(feature = "add_thumbnails")]
+        let asset = {
+            let mut stream = std::io::Cursor::new(asset);
+            if self.thumbnail().is_none() {
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
+                {
+                    self.set_thumbnail(format, image)?;
+                }
+            }
+            stream.into_inner()
+        };
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        store
+            .save_to_memory_remote_signed(format, asset, signer)
+            .await
+    }
+
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
-    #[cfg(feature = "async_signer")]
     pub async fn embed_async_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -924,7 +959,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(feature = "file_io")]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -970,6 +1005,11 @@ pub(crate) mod tests {
 
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[cfg(feature = "file_io")]
     use crate::{
@@ -1302,7 +1342,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_embed_remote_sign() {
         struct MyRemoteSigner {}
@@ -1389,6 +1429,53 @@ pub(crate) mod tests {
         );
     }
 
+    struct MyRemoteSigner {}
+
+    #[async_trait::async_trait]
+    impl crate::signer::RemoteSigner for MyRemoteSigner {
+        async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+            use std::io::{Seek, Write};
+
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+
+            sign_bytes.rewind()?;
+            sign_bytes.write_all(claim_bytes)?;
+
+            // fake sig
+            Ok(sign_bytes.into_inner())
+        }
+        fn reserve_size(&self) -> usize {
+            10000
+        }
+    }
+
+    //#[test]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = MyRemoteSigner {};
+        // Embed a manifest using the signer.
+        manifest
+            .embed_from_memory_remote_signed("jpeg", image, &signer)
+            .await
+            .expect("embed_stream");
+
+        println!("It worked");
+    }
+
     #[test]
     fn test_embed_stream() {
         use crate::assertions::User;
@@ -1426,7 +1513,6 @@ pub(crate) mod tests {
         assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
-
     #[cfg(feature = "file_io")]
     #[actix::test]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store

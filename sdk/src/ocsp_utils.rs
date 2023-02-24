@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![cfg(feature = "openssl_sign")]
+
 use std::io::Read;
 
 use chrono::{DateTime, NaiveDateTime, Utc};

@@ -22,8 +22,6 @@ use log::error;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 use crate::embedded_xmp;
-#[cfg(feature = "async_signer")]
-use crate::AsyncSigner;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -43,13 +41,16 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::{load_jumbf_from_memory, object_locations_from_stream, save_jumbf_to_stream},
+    jumbf_io::{
+        load_jumbf_from_memory, object_locations_from_stream, save_jumbf_to_memory,
+        save_jumbf_to_stream,
+    },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
         hash_utils::{hash256, Exclusion},
         patch::patch_bytes,
     },
-    validation_status, ManifestStoreReport, Signer,
+    validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -385,7 +386,6 @@ impl Store {
     }
 
     /// Sign the claim asynchronously and return signature.
-    #[cfg(feature = "async_signer")]
     pub async fn sign_claim_async(
         &self,
         claim: &Claim,
@@ -607,13 +607,11 @@ impl Store {
     }
 
     /// Convert this claims store to a JUMBF box.
-    #[cfg(feature = "file_io")]
     pub fn to_jumbf(&self, signer: &dyn Signer) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Convert this claims store to a JUMBF box.
-    #[cfg(feature = "async_signer")]
     pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
@@ -1568,6 +1566,43 @@ impl Store {
         }
     }
 
+    /// Async RemoteSigner used to embed the claims store and  returns memory representation. Updates XMP with provenance record.
+    /// When called, the stream should contain an asset matching format.
+    /// on return, the stream will contain the new manifest signed with signer
+    /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+    pub(crate) async fn save_to_memory_remote_signed(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        remote_signer: &dyn crate::signer::RemoteSigner,
+    ) -> Result<Vec<u8>> {
+        let mut stream = Cursor::new(asset.to_vec()); // clone here so we have resizable object, todo: this will change once we support separate R/W streams
+
+        let jumbf_bytes =
+            self.start_save_stream(format, &mut stream, remote_signer.reserve_size())?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = remote_signer.sign_remote(&pc.data()?).await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
+
+        match self.finish_save_to_memory(
+            jumbf_bytes,
+            format,
+            stream.into_inner(),
+            sig,
+            &sig_placeholder,
+        ) {
+            Ok((s, output_asset)) => {
+                // save sig so store is up to date
+                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc_mut.set_signature_val(s);
+
+                Ok(output_asset)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
     #[cfg(feature = "file_io")]
     pub fn save_to_asset(
@@ -1624,7 +1659,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an async signer. Updates XMP with provenance record.
-    #[cfg(feature = "async_signer")]
+    #[cfg(feature = "file_io")]
     pub async fn save_to_asset_async(
         &mut self,
         asset_path: &Path,
@@ -1681,7 +1716,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an CoseSign box generated remotely. Updates XMP with provenance record.
-    #[cfg(feature = "async_signer")]
+    #[cfg(feature = "file_io")]
     pub async fn save_to_asset_remote_signed(
         &mut self,
         asset_path: &Path,
@@ -1817,6 +1852,28 @@ impl Store {
         save_jumbf_to_stream(format, stream, &jumbf_bytes)?;
 
         Ok((sig, jumbf_bytes))
+    }
+
+    fn finish_save_to_memory(
+        &self,
+        mut jumbf_bytes: Vec<u8>,
+        format: &str,
+        output_asset: Vec<u8>,
+        sig: Vec<u8>,
+        sig_placeholder: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        // return sig and output
+        Ok((
+            sig,
+            save_jumbf_to_memory(format, output_asset, &jumbf_bytes)?,
+        ))
     }
 
     #[cfg(feature = "file_io")]
@@ -2619,10 +2676,8 @@ pub mod tests {
         }
     }
 
-    #[cfg(feature = "async_signer")]
     struct MyRemoteSigner {}
 
-    #[cfg(feature = "async_signer")]
     #[async_trait::async_trait]
     impl crate::signer::RemoteSigner for MyRemoteSigner {
         async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
@@ -2723,7 +2778,6 @@ pub mod tests {
         assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
     }
 
-    #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_async() {
         let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
@@ -2780,7 +2834,6 @@ pub mod tests {
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
 
-    #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_remote() {
         // test adding to actual image

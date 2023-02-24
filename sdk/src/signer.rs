@@ -70,7 +70,6 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     ) -> Result<Self>;
 }
 
-#[cfg(feature = "async_signer")]
 use async_trait::async_trait;
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
@@ -78,7 +77,6 @@ use async_trait::async_trait;
 /// This trait exists to allow the signature mechanism to be extended.
 ///
 /// Use this when the implementation is asynchronous.
-#[cfg(feature = "async_signer")]
 #[async_trait]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
@@ -109,7 +107,6 @@ pub trait AsyncSigner: Sync {
     }
 }
 
-#[cfg(feature = "async_signer")]
 #[async_trait]
 pub trait RemoteSigner: Sync {
     /// Returns the `CoseSign1` bytes signed by the [`RemoteSigner`].

@@ -207,7 +207,7 @@ pub fn temp_signer_file() -> RsaSigner {
         .expect("get_temp_signer")
 }
 
-struct TestGoodSigner {}
+pub(crate) struct TestGoodSigner {}
 impl crate::Signer for TestGoodSigner {
     fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
