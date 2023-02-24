@@ -392,8 +392,8 @@ impl CAIWriter for PngIO {
         let end = pcp.end() as usize;
         let file_end = png_buf.len();
         positions.push(HashObjectPositions {
-            offset: end as usize, // len of cai
-            length: (file_end - end) as usize,
+            offset: end, // len of cai
+            length: file_end - end,
             htype: HashBlockObjectType::Other,
         });
 
