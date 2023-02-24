@@ -523,19 +523,10 @@ pub mod tests {
     #[test]
     fn test_write_cai_using_stream() {
         let source = test::fixture_path("exp-test1.png");
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
-        std::fs::copy(source, &output).unwrap();
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
 
         let png_io = PngIO {};
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(output.clone())
-            .unwrap();
-
-        let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
         assert!(png_io.write_cai(&mut stream, &data_to_write).is_ok());
 
         let data_written = png_io.read_cai(&mut stream).unwrap();
@@ -545,20 +536,11 @@ pub mod tests {
     #[test]
     fn test_write_cai_data_to_stream_wrong_format() {
         let source = test::fixture_path("C.jpg");
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = test::temp_dir_path(&temp_dir, "tmp-stream-save-invalid_type.jpg");
-        std::fs::copy(source, &output).unwrap();
-
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
         let png_io = PngIO {};
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(output.clone())
-            .unwrap();
 
-        let empty: Vec<u8> = vec![];
         assert!(matches!(
-            png_io.write_cai(&mut stream, &empty),
+            png_io.write_cai(&mut stream, &vec![]),
             Err(Error::InvalidAsset(_),)
         ));
     }
@@ -566,18 +548,8 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations() {
         let source = test::fixture_path("exp-test1.png");
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.png");
-        std::fs::copy(source, &output).unwrap();
-
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
         let png_io = PngIO {};
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(output.clone())
-            .unwrap();
-
         let cai_pos = png_io
             .get_object_locations_from_stream(&mut stream)
             .unwrap()
@@ -592,18 +564,8 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations_with_incorrect_file_type() {
         let source = test::fixture_path("unsupported_type.txt");
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-loc.txt");
-        std::fs::copy(source, &output).unwrap();
-
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
         let png_io = PngIO {};
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(output)
-            .unwrap();
-
         assert!(matches!(
             png_io.get_object_locations_from_stream(&mut stream),
             Err(Error::UnsupportedType)
@@ -613,18 +575,8 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations_adds_offsets_to_file_without_claims() {
         let source = test::fixture_path("libpng-test.png");
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = test::temp_dir_path(&temp_dir, "tmp-stream-obj-adds-loc.txt");
-        std::fs::copy(source, &output).unwrap();
-
+        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
         let png_io = PngIO {};
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(output)
-            .unwrap();
-
         assert!(png_io
             .get_object_locations_from_stream(&mut stream)
             .unwrap()
@@ -636,13 +588,11 @@ pub mod tests {
     #[test]
     fn test_remove_c2pa() {
         let source = test::fixture_path("exp-test1.png");
-
         let temp_dir = tempfile::tempdir().unwrap();
         let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
-
         std::fs::copy(source, &output).unwrap();
-        let png_io = PngIO {};
 
+        let png_io = PngIO {};
         png_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
