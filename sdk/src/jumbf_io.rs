@@ -148,7 +148,7 @@ pub fn get_caiwriter_handler(asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         //     Some(Box::new(C2paIO {}))
         // }
         "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        // "png" | "image/png" => Some(Box::new(PngIO {})),
+        "png" | "image/png" => Some(Box::new(PngIO {})),
         // "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
         // | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
         //     if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
