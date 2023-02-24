@@ -21,7 +21,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIRead, CAIReadWrite, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -74,10 +74,14 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
 
 /// Return jumbf block from in memory asset
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
-    let mut buf_reader = Cursor::new(data);
+    let mut stream = Cursor::new(data);
+    load_jumbf_from_stream(asset_type, &mut stream)
+}
 
+/// Return jumbf block from stream asset
+pub fn load_jumbf_from_stream(asset_type: &str, stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let cai_block = match get_cailoader_handler(asset_type) {
-        Some(asset_handler) => asset_handler.read_cai(&mut buf_reader)?,
+        Some(asset_handler) => asset_handler.read_cai(stream)?,
         None => return Err(Error::UnsupportedType),
     };
     if cai_block.is_empty() {

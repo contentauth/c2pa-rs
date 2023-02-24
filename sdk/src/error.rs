@@ -257,11 +257,6 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "file_io")]
-pub(crate) fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
-}
-
 #[cfg(feature = "openssl_sign")]
 pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
