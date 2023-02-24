@@ -60,7 +60,6 @@ NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 The Rust SDK crate provides:
 
-* `async_signer` enables signing via asynchronous services which require `async` support.
 * `bmff` enables handling of ISO base media file formats (BMFF) used for video. Currently only MP4, M4A, and MOV are enabled for writing.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.

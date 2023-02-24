@@ -123,7 +123,6 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
 }
 
 /// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-#[cfg(feature = "async_signer")]
 pub async fn cose_sign_async(
     signer: &dyn crate::AsyncSigner,
     data: &[u8],

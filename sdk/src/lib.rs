@@ -119,9 +119,7 @@ pub(crate) mod ocsp_utils;
 mod openssl;
 
 mod signer;
-pub use signer::Signer;
-#[cfg(feature = "async_signer")]
-pub use signer::{AsyncSigner, RemoteSigner};
+pub use signer::{AsyncSigner, RemoteSigner, Signer};
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;

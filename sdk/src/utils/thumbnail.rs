@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek};
+
 use image::{io::Reader, ImageFormat};
 
-use crate::Result;
-use crate::{asset_io::CAIReadWrite, Error};
+use crate::{Error, Result};
 
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
@@ -51,9 +52,9 @@ pub fn make_thumbnail(path: &std::path::Path) -> Result<(String, Vec<u8>)> {
 
 ///  utility to generate a thumbnail from a file at path
 /// returns Result (format, image_bits) if successful, otherwise Error
-pub fn make_thumbnail_from_stream(
+pub fn make_thumbnail_from_stream<R: Read + Seek + ?Sized>(
     format: &str,
-    stream: &mut dyn CAIReadWrite,
+    stream: &mut R,
 ) -> Result<(String, Vec<u8>)> {
     let format = ImageFormat::from_extension(format)
         .or_else(|| ImageFormat::from_mime_type(format))

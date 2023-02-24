@@ -38,7 +38,7 @@ pub(crate) mod temp_signer_async;
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "async_signer")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
 
 pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
