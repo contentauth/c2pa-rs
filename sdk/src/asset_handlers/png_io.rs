@@ -522,7 +522,7 @@ pub mod tests {
     #[test]
     fn test_write_cai_using_stream_existing_cai_data() {
         let source = test::fixture_path("exp-test1.png");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
 
         // cai data already exists
@@ -543,7 +543,7 @@ pub mod tests {
     #[test]
     fn test_write_cai_using_stream_no_cai_data() {
         let source = test::fixture_path("libpng-test.png");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
 
         // no cai data present in stream.
@@ -564,7 +564,7 @@ pub mod tests {
     #[test]
     fn test_write_cai_data_to_stream_wrong_format() {
         let source = test::fixture_path("C.jpg");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
 
         assert!(matches!(
@@ -576,7 +576,7 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations() {
         let source = test::fixture_path("exp-test1.png");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
         let cai_pos = png_io
             .get_object_locations_from_stream(&mut stream)
@@ -592,7 +592,7 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations_with_incorrect_file_type() {
         let source = test::fixture_path("unsupported_type.txt");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
         assert!(matches!(
             png_io.get_object_locations_from_stream(&mut stream),
@@ -603,7 +603,7 @@ pub mod tests {
     #[test]
     fn test_stream_object_locations_adds_offsets_to_file_without_claims() {
         let source = test::fixture_path("libpng-test.png");
-        let mut stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut stream = Cursor::new(std::fs::read(source).unwrap());
         let png_io = PngIO {};
         assert!(png_io
             .get_object_locations_from_stream(&mut stream)
