@@ -78,13 +78,16 @@ impl ResourceStore {
             _ => "",
         };
         // clean string for possible filesystem use
-        let mut id = key.replace(['/', ':'], "-") + ext;
+        let id_base = key.replace(['/', ':'], "-");
 
         // ensure it is unique in this store
-        let count = 1;
+        let mut count = 1;
+        let mut id = format!("{id_base}{ext}");
         while self.exists(&id) {
-            id = format!("{id}-{count}{ext}");
+            id = format!("{id_base}-{count}{ext}");
+            count += 1;
         }
+        dbg!(&id);
         id
     }
 
@@ -109,7 +112,9 @@ impl ResourceStore {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
             let path = base.join(id.into());
-            std::fs::write(path, value.into())?;
+            std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
+            #[allow(clippy::expect_used)]
+            std::fs::write(path, value.into()).expect("write failed");
             return Ok(());
         }
         self.resources.insert(id.into(), value.into());
