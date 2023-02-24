@@ -632,13 +632,16 @@ impl Ingredient {
                 (
                     // generate a store from the buffer and then validate from the asset path
                     Store::from_jumbf(&manifest_bytes, &mut validation_log)
-                        //.and_then(|store| {
-                        // todo:: add verify from stream
-                        // verify the store
-                        // store
-                        //     .verify_from_stream(stream, &mut validation_log)
-                        //     .map(|_| store)
-                        //})
+                        .and_then(|mut store| {
+                            // verify the store
+                            //todo, change this when we have a stream version of verify
+                            let mut buf: Vec<u8> = Vec::new();
+                            stream.rewind()?;
+                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+                            store
+                                .verify_from_buffer(&buf, format, &mut validation_log)
+                                .map(|_| store)
+                        })
                         .map_err(|e| {
                             // add a log entry for the error so we act like verify
                             validation_log.log_silent(
@@ -657,11 +660,20 @@ impl Ingredient {
         ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
-        // if ingredient.thumbnail.is_none() {
-        //     if let Some((format, image)) = options.thumbnail(path) {
-        //         ingredient.set_thumbnail(format, image)?;
-        //     }
-        // }
+        #[cfg(feature = "add_thumbnails")]
+        if ingredient.thumbnail.is_none() {
+            stream.rewind()?;
+            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
+                Ok((format, image)) => {
+                    ingredient.set_thumbnail(format, image)?;
+                }
+                Err(err) => {
+                    dbg!(&err);
+                    log::warn!("Could not create thumbnail. {err}");
+                }
+            }
+        }
+
         Ok(ingredient)
     }
 
@@ -939,10 +951,17 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
     use super::*;
     use crate::assertions::Metadata;
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient
@@ -981,6 +1000,53 @@ mod tests {
             ingredient.validation_status().unwrap()[0].code(),
             "status_code"
         );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_stream_jpg() {
+        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let title = "Test Image";
+        let format = "image/jpeg";
+        let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
+        ingredient.set_title(title);
+
+        // #[cfg(target_arch = "wasm32")]
+        // console_log::init_with_level(log::Level::Debug).expect("init log");
+
+        // log::debug!(
+        //     "ingredient = {}",
+        //     ingredient
+        // );
+
+        println!("ingredient = {ingredient}");
+        assert_eq!(&ingredient.title, title);
+        assert_eq!(ingredient.format(), format);
+        //assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+        assert!(ingredient.validation_status().is_none());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_stream_ogp() {
+        let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
+        let title = "XCA.jpg";
+        let format = "image/jpeg";
+        let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
+        ingredient.set_title(title);
+
+        println!("ingredient = {ingredient}");
+        assert_eq!(&ingredient.title, title);
+        assert_eq!(ingredient.format(), format);
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient.thumbnail().is_some());
+        //assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+        assert!(ingredient.validation_status().is_some());
     }
 }
 
@@ -1220,24 +1286,5 @@ mod tests_file_io {
             .set_manifest_data_ref(ResourceRef::new("c2pa", "cloud_manifest.c2pa"))
             .is_ok());
         assert!(ingredient.manifest_data_ref().is_some());
-    }
-
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn test_stream_jpg() {
-        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
-        let title = "Test Image";
-        let format = "image/jpeg";
-        let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
-        ingredient.set_title(title);
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(&ingredient.title, title);
-        assert_eq!(ingredient.format(), format);
-        assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
-        assert!(ingredient.provenance().is_some());
-        assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.metadata().is_none());
     }
 }
