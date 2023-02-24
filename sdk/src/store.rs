@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek, SeekFrom};
-use std::{collections::HashMap, io::Cursor};
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read, Seek, SeekFrom},
+};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
@@ -28,9 +30,12 @@ use crate::{
     },
     assertions::{
         labels::{self, CLAIM},
-        Ingredient, Relationship,
+        DataHash, Ingredient, Relationship,
     },
+    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
     claim::{Claim, ClaimAssertion, ClaimAssetData},
+    cose_sign::cose_sign,
+    cose_validator::verify_cose,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -38,21 +43,14 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::load_jumbf_from_memory,
+    jumbf_io::{load_jumbf_from_memory, object_locations_from_stream, save_jumbf_to_stream},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::hash_utils::hash256,
-    validation_status, ManifestStoreReport,
+    utils::{
+        hash_utils::{hash256, Exclusion},
+        patch::patch_bytes,
+    },
+    validation_status, ManifestStoreReport, Signer,
 };
-use crate::{
-    assertions::DataHash,
-    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
-    cose_sign::cose_sign,
-    cose_validator::verify_cose,
-    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
-    utils::{hash_utils::Exclusion, patch::patch_bytes},
-    Signer,
-};
-
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
@@ -2462,7 +2460,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op,signer.as_ref(), &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
         store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
@@ -3454,7 +3452,7 @@ pub mod tests {
     }
 
     #[actix::test]
-        async fn test_jumbf_generation_stream() {
+    async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
@@ -3469,7 +3467,9 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
-        store.save_to_stream("jpeg", &mut buf_io, signer.as_ref()).unwrap();
+        store
+            .save_to_stream("jpeg", &mut buf_io, signer.as_ref())
+            .unwrap();
 
         // convert our cursor back into a buffer
         let result = buf_io.into_inner();

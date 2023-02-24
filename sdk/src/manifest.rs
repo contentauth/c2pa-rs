@@ -23,15 +23,15 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
+    asset_io::CAIReadWrite,
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    Ingredient, ManifestAssertion, ManifestAssertionKind,
+    Ingredient, ManifestAssertion, ManifestAssertionKind, Signer,
 };
-use crate::{asset_io::CAIReadWrite, Signer};
 #[cfg(feature = "async_signer")]
 use crate::{AsyncSigner, RemoteSigner};
 
@@ -886,14 +886,14 @@ impl Manifest {
         self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
 
         // generate thumbnail if we don't already have one
-        #[cfg(feature = "add_thumbnails")] {
+        #[cfg(feature = "add_thumbnails")]
+        {
             if self.thumbnail().is_none() {
-                
-                    if let Ok((format, image)) =
-                        crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
-                    {
-                        self.set_thumbnail(format, image)?;
-                    }
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+                {
+                    self.set_thumbnail(format, image)?;
+                }
             }
         }
 
@@ -971,7 +971,6 @@ pub(crate) mod tests {
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
 
-   use crate::utils::test::temp_signer;
     #[cfg(feature = "file_io")]
     use crate::{
         assertions::labels::ACTIONS,
@@ -984,7 +983,7 @@ pub(crate) mod tests {
     };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        utils::test::TEST_VC,
+        utils::test::{temp_signer, TEST_VC},
         Manifest, Result,
     };
 
@@ -1168,7 +1167,9 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let c2pa_data = manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        let c2pa_data = manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let mut validation_log = DetailedStatusTracker::new();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
@@ -1190,7 +1191,9 @@ pub(crate) mod tests {
 
         //embed a claim in output2
         let signer = temp_signer();
-        let _store2 = manifest2.embed(&output2, &output2, signer.as_ref()).expect("embed");
+        let _store2 = manifest2
+            .embed(&output2, &output2, signer.as_ref())
+            .expect("embed");
 
         let mut report = DetailedStatusTracker::new();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
@@ -1347,7 +1350,9 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
-        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
@@ -1370,7 +1375,9 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
         manifest.set_remote_manifest(url);
-        let c2pa_data = manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        let c2pa_data = manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store =
@@ -1438,7 +1445,9 @@ pub(crate) mod tests {
             validation_status::ASSERTION_DATAHASH_MISMATCH
         );
         manifest.add_ingredient(ingredient);
-        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let manifest = manifest_store.get_active().unwrap();
@@ -1467,7 +1476,9 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
         manifest.set_remote_manifest(url);
-        let _c2pa_data = manifest.embed(&source, &output, signer.as_ref()).expect("embed");
+        let _c2pa_data = manifest
+            .embed(&source, &output, signer.as_ref())
+            .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -1490,7 +1501,9 @@ pub(crate) mod tests {
         manifest
             .set_thumbnail("image/jpeg", thumb_data.clone())
             .expect("set_thumbnail");
-        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
         let (content_type, image) = active_manifest.thumbnail().unwrap();
@@ -1594,7 +1607,9 @@ pub(crate) mod tests {
 
         let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
         manifest.with_base_path(fixtures).expect("with_base");
-        manifest.embed(&output, &output, signer.as_ref()).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
 
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");

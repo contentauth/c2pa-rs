@@ -24,10 +24,8 @@ use crate::{
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result, Signer,
+    Result, Signer, SigningAlg,
 };
-use crate::SigningAlg;
-
 #[cfg(feature = "openssl_sign")]
 use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
 

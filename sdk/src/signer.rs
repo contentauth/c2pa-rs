@@ -54,7 +54,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         tsa_url: Option<String>,
     ) -> Result<Self> {
         use crate::Error;
-        
+
         let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
         let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
 

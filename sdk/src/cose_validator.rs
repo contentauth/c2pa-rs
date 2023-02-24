@@ -1125,7 +1125,8 @@ pub mod tests {
 
         let signer = crate::utils::test::temp_signer();
 
-        let cose_bytes = crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
         let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 

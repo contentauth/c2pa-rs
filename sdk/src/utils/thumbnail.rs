@@ -13,8 +13,7 @@
 
 use image::{io::Reader, ImageFormat};
 
-use crate::Result;
-use crate::{asset_io::CAIReadWrite, Error};
+use crate::{asset_io::CAIReadWrite, Error, Result};
 
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
