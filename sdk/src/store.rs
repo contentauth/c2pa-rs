@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::{collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
@@ -43,7 +43,7 @@ use crate::{
 };
 use crate::{
     assertions::DataHash,
-    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    asset_io::{HashBlockObjectType, HashObjectPositions},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
     jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
@@ -1541,10 +1541,11 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
-    pub fn save_to_stream(
+    pub fn save_to_stream<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
         &mut self,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        stream: &mut R,
+        output_stream: &mut W,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
         let jumbf_bytes = self.start_save_stream(format, stream, signer.reserve_size())?;
@@ -1553,7 +1554,14 @@ impl Store {
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        match self.finish_save_stream(jumbf_bytes, format, stream, sig, &sig_placeholder) {
+        match self.finish_save_stream(
+            jumbf_bytes,
+            format,
+            stream,
+            output_stream,
+            sig,
+            &sig_placeholder,
+        ) {
             Ok((s, m)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1770,10 +1778,10 @@ impl Store {
         }
     }
 
-    fn start_save_stream(
+    fn start_save_stream<R: Read + Seek + ?Sized>(
         &mut self,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        stream: &mut R,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         let mut data;
@@ -1804,18 +1812,26 @@ impl Store {
         // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
         data = self.to_jumbf_internal(reserve_size)?;
         let jumbf_size = data.len();
-        save_jumbf_to_stream(format, stream, &data)?;
+
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+        save_jumbf_to_stream(format, stream, &mut output_stream, &data)?;
 
         // 4)  determine final object locations and patch the asset hashes with correct offset
         // replace the source with correct asset hashes so that the claim hash will be correct
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // get the final hash ranges, but not for update manifests
-        let mut new_hash_ranges = object_locations_from_stream(format, stream)?;
+        let mut new_hash_ranges = object_locations_from_stream(format, &mut output_stream)?;
         let updated_hashes = if pc.update_manifest() {
             Vec::new()
         } else {
-            Store::generate_data_hashes_for_stream(stream, pc.alg(), &mut new_hash_ranges, true)?
+            Store::generate_data_hashes_for_stream(
+                &mut output_stream,
+                pc.alg(),
+                &mut new_hash_ranges,
+                true,
+            )?
         };
 
         // patch existing claim hash with updated data
@@ -1832,11 +1848,12 @@ impl Store {
         Ok(data) // return JUMBF data
     }
 
-    fn finish_save_stream(
+    fn finish_save_stream<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
         &self,
         mut jumbf_bytes: Vec<u8>,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut R,
+        output_stream: &mut W,
         sig: Vec<u8>,
         sig_placeholder: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -1848,7 +1865,7 @@ impl Store {
             .map_err(|_| Error::JumbfCreationError)?;
 
         // re-save to file
-        save_jumbf_to_stream(format, stream, &jumbf_bytes)?;
+        save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
 
         Ok((sig, jumbf_bytes))
     }
@@ -1871,7 +1888,7 @@ impl Store {
         // return sig and output
         Ok((
             sig,
-            save_jumbf_to_memory(format, output_asset, &jumbf_bytes)?,
+            save_jumbf_to_memory(format, &output_asset, &jumbf_bytes)?,
         ))
     }
 
@@ -2083,7 +2100,6 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
@@ -2199,7 +2215,12 @@ impl Store {
                         let is_remote_url = Store::is_valid_remote_url(&ext_ref);
 
                         if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-                            Store::fetch_remote_manifest(&ext_ref)
+                            // not supported in wasm
+                            if cfg!(target_arch = "wasm32") {
+                                Err(Error::JumbfNotFound)
+                            } else {
+                                Store::fetch_remote_manifest(&ext_ref)
+                            }
                         } else {
                             // return an error with the url that should be read
                             if is_remote_url {
@@ -3519,16 +3540,22 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
+        let mut result: Vec<u8> = Vec::new();
+        let mut result_stream = Cursor::new(result);
+
         store
-            .save_to_stream("jpeg", &mut buf_io, signer.as_ref())
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, signer.as_ref())
             .unwrap();
 
         // convert our cursor back into a buffer
-        let result = buf_io.into_inner();
+        result = result_stream.into_inner();
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_memory("jpeg", &result, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
 
         // std::fs::write("target/test.jpg", result).unwrap();
     }

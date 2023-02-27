@@ -13,7 +13,7 @@
 
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, io::Cursor};
 
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -903,7 +903,12 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store.save_to_stream(format, stream, signer)
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+
+        store.save_to_stream(format, stream, &mut output_stream, signer)?;
+
+        Ok(output_stream.into_inner())
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -919,27 +924,32 @@ impl Manifest {
         // todo:: read instance_id from xmp from stream
         self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
 
+        /*
         // generate thumbnail if we don't already have one
-        let stream = std::io::Cursor::new(asset);
+        #[allow(unused_mut)] // so that this builds with WASM
+        let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
             if self.thumbnail().is_none() {
                 if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &stream)
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
                 {
                     self.set_thumbnail(format, image)?;
                 }
             }
         }
         let asset = stream.into_inner();
+        */
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store
+        let result = store
             .save_to_memory_remote_signed(format, asset, signer)
-            .await
+            .await?;
+
+        Ok(result)
     }
 
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
@@ -1324,7 +1334,7 @@ pub(crate) mod tests {
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_embed_async_sign() {
         let temp_dir = tempdir().expect("temp dir");
@@ -1471,13 +1481,40 @@ pub(crate) mod tests {
             .unwrap();
 
         let signer = MyRemoteSigner {};
+
         // Embed a manifest using the signer.
-        manifest
+        let mut out_vec = manifest
             .embed_from_memory_remote_signed("jpeg", image, &signer)
             .await
             .expect("embed_stream");
 
-        println!("It worked");
+        assert!(out_vec.len() > image.len());
+        assert!(twoway::find_bytes(&out_vec, "org.contentauth.mylabel".as_bytes()).is_some());
+
+        // check to see if we can parse it before loading
+        let mut out_stream = std::io::Cursor::new(out_vec);
+        let ol =
+            crate::jumbf_io::object_locations_from_stream("image/jpeg", &mut out_stream).unwrap();
+
+        let offsets = [
+            2usize, 9964, 20966, 32868, 36620, 39782, 39798, 39932, 39951, 39957, 40377,
+        ];
+
+        for o in &ol {
+            if !offsets.contains(&o.offset) {
+                assert_eq!(
+                    (o.offset, o.length, o.htype),
+                    (0, 0, crate::asset_io::HashBlockObjectType::Cai)
+                );
+            }
+        }
+        assert_eq!(ol.len(), 11);
+
+        out_vec = out_stream.into_inner();
+        let manifest_store =
+            crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
+
+        println!("It worked: {}\n", manifest_store.to_string());
     }
 
     #[test]

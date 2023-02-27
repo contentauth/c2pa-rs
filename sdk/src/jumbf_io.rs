@@ -13,7 +13,7 @@
 
 use std::{
     fs::{self, File},
-    io::Cursor,
+    io::{Cursor, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -21,7 +21,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAILoader, CAIObjectLocations, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -80,6 +80,7 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
         Some(asset_handler) => asset_handler.read_cai(&mut buf_reader)?,
         None => return Err(Error::UnsupportedType),
     };
+    
     if cai_block.is_empty() {
         return Err(Error::JumbfNotFound);
     }
@@ -88,26 +89,33 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 
 /// writes the jumbf data in store_bytes
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
-pub fn save_jumbf_to_stream(
+pub fn save_jumbf_to_stream<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     asset_type: &str,
-    stream: &mut dyn CAIReadWrite,
+    input_stream: &mut R,
+    output_stream: &mut W,
     store_bytes: &[u8],
 ) -> Result<()> {
-    match get_caiwriter_handler(asset_type) {
-        Some(asset_handler) => asset_handler.write_cai(stream, store_bytes),
-        None => Err(Error::UnsupportedType),
+    let asset_type = asset_type.to_lowercase();
+    match asset_type.as_ref() {
+        "jpg" | "jpeg" | "image/jpeg" => {
+            let cai_writer = JpegIO {};
+            cai_writer.write_cai(input_stream, output_stream, store_bytes)
+        }
+        _ => Err(Error::UnsupportedType),
     }
 }
 
 /// writes the jumbf data in store_bytes into an asset in data and the updatedcar data
-pub fn save_jumbf_to_memory(
-    asset_type: &str,
-    data: Vec<u8>,
-    store_bytes: &[u8],
-) -> Result<Vec<u8>> {
-    let mut stream = Cursor::new(data);
-    save_jumbf_to_stream(asset_type, &mut stream, store_bytes)?;
-    Ok(stream.into_inner())
+pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
+    let output: Vec<u8> = Vec::new();
+    let mut output_stream = Cursor::new(output);
+    save_jumbf_to_stream(
+        asset_type,
+        &mut Cursor::new(data),
+        &mut output_stream,
+        store_bytes,
+    )?;
+    Ok(output_stream.into_inner())
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
@@ -137,24 +145,6 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
             Some(Box::new(BmffIO::new(&asset_type)))
         }
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        _ => None,
-    }
-}
-
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<Box<dyn CAIWriter>> {
-    let asset_type = asset_type.to_lowercase();
-    match asset_type.as_ref() {
-        // "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
-        //     Some(Box::new(C2paIO {}))
-        // }
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        // "png" | "image/png" => Some(Box::new(PngIO {})),
-        // "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
-        // | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-        //     if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
-        // {
-        //     Some(Box::new(BmffIO::new(&asset_type)))
-        // }
         _ => None,
     }
 }
@@ -267,12 +257,16 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
     }
 }
 
-pub fn object_locations_from_stream(
-    format: &str,
-    stream: &mut dyn CAIReadWrite,
+pub fn object_locations_from_stream<R: Read + Seek + ?Sized>(
+    asset_type: &str,
+    input_stream: &mut R,
 ) -> Result<Vec<HashObjectPositions>> {
-    match get_caiwriter_handler(format) {
-        Some(handler) => handler.get_object_locations_from_stream(stream),
+    let asset_type = asset_type.to_lowercase();
+    match asset_type.as_ref() {
+        "jpg" | "jpeg" | "image/jpeg" => {
+            let cai_writer = JpegIO {};
+            cai_writer.get_object_locations_from_stream(input_stream)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }

@@ -19,7 +19,7 @@ use std::{
 
 use crate::error::Result;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
     Cai,
     Xmp,
@@ -60,12 +60,19 @@ pub trait CAILoader {
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String>;
 }
 
-pub trait CAIWriter {
-    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()>;
+pub trait CAIWriter<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized> {
+    fn write_cai(
+        &self,
+        input_stream: &mut R,
+        output_stream: &mut W,
+        store_bytes: &[u8],
+    ) -> Result<()>;
+}
 
+pub trait CAIObjectLocations<R: Read + Seek + ?Sized> {
     fn get_object_locations_from_stream(
         &self,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut R,
     ) -> Result<Vec<HashObjectPositions>>;
 }
 
