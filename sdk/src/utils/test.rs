@@ -19,15 +19,13 @@ use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
 use crate::create_signer;
-use crate::SigningAlg;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result, Signer,
+    Result, Signer, SigningAlg,
 };
-
 #[cfg(feature = "openssl_sign")]
 use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
 

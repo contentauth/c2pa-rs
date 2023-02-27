@@ -26,9 +26,12 @@ use crate::{
     },
     assertions::{
         labels::{self, CLAIM},
-        Ingredient, Relationship,
+        DataHash, Ingredient, Relationship,
     },
+    asset_io::{HashBlockObjectType, HashObjectPositions},
     claim::{Claim, ClaimAssertion, ClaimAssetData},
+    cose_sign::cose_sign,
+    cose_validator::verify_cose,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -36,19 +39,16 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::{load_jumbf_from_memory, save_jumbf_to_memory},
+    jumbf_io::{
+        load_jumbf_from_memory, object_locations_from_stream, save_jumbf_to_memory,
+        save_jumbf_to_stream,
+    },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::hash_utils::hash256,
-    validation_status, AsyncSigner, ManifestStoreReport,
-};
-use crate::{
-    assertions::DataHash,
-    asset_io::{HashBlockObjectType, HashObjectPositions},
-    cose_sign::cose_sign,
-    cose_validator::verify_cose,
-    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
-    utils::{hash_utils::Exclusion, patch::patch_bytes},
-    Signer,
+    utils::{
+        hash_utils::{hash256, Exclusion},
+        patch::patch_bytes,
+    },
+    validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
 
 #[cfg(feature = "file_io")]

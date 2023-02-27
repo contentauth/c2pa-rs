@@ -141,8 +141,6 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-#[cfg(feature = "file_io")]
-pub(crate) use utils::xmp_inmemory_utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
