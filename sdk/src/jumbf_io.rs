@@ -105,6 +105,10 @@ pub fn save_jumbf_to_stream<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?S
             let cai_writer = JpegIO {};
             cai_writer.write_cai(input_stream, output_stream, store_bytes)
         }
+        "png" | "image/png" => {
+            let cai_writer = PngIO {};
+            cai_writer.write_cai(input_stream, output_stream, store_bytes)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -269,6 +273,10 @@ pub fn object_locations_from_stream<R: Read + Seek + ?Sized>(
     match asset_type.as_ref() {
         "jpg" | "jpeg" | "image/jpeg" => {
             let cai_writer = JpegIO {};
+            cai_writer.get_object_locations_from_stream(input_stream)
+        }
+        "png" | "image/png" => {
+            let cai_writer = PngIO {};
             cai_writer.get_object_locations_from_stream(input_stream)
         }
         _ => Err(Error::UnsupportedType),
