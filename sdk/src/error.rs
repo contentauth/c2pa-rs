@@ -260,6 +260,10 @@ pub enum Error {
     #[error("Failed to load font")]
     FontLoadError,
 
+    /// Failed to save a font
+    #[error("Failed to save font")]
+    FontSaveError,
+
     /// Failed to parse or de-serialize font data
     #[error("Failed to de-serialize data")]
     DeserializationError,
