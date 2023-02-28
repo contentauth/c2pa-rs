@@ -1457,37 +1457,35 @@ pub(crate) mod tests {
         }
     }
 
-    /*
-        #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-        async fn test_embed_jpeg_stream_wasm() {
-            use crate::assertions::User;
-            let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
-            // convert buffer to cursor with Read/Write/Seek capability
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_jpeg_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
 
-            let mut manifest = Manifest::new("my_app".to_owned());
-            manifest.set_title("EmbedStream");
-            manifest
-                .add_assertion(&User::new(
-                    "org.contentauth.mylabel",
-                    r#"{"my_tag":"Anything I want"}"#,
-                ))
-                .unwrap();
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
 
-            let signer = MyRemoteSigner {};
+        let signer = MyRemoteSigner {};
 
-            // Embed a manifest using the signer.
-            let out_vec = manifest
-                .embed_from_memory_remote_signed("jpeg", image, &signer)
-                .await
-                .expect("embed_stream");
+        // Embed a manifest using the signer.
+        let out_vec = manifest
+            .embed_from_memory_remote_signed("jpeg", image, &signer)
+            .await
+            .expect("embed_stream");
 
-            let manifest_store =
-                crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
+        let manifest_store =
+            crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
 
-            println!("It worked: {}\n", manifest_store.to_string());
-        }
-    */
+        println!("It worked: {manifest_store}\n");
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]

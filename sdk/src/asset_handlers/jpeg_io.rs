@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    convert::{From, TryFrom},
     fs::File,
     io::{Cursor, Read, Seek, Write},
     path::*,
@@ -137,54 +138,11 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
                     cai_segs.push(i);
                     cai_seg_cnt = 1;
                     cai_en = en.clone(); // store the identifier
-                } else {
-                    assert!(twoway::find_bytes(raw_vec.as_slice(), &C2PA_MARKER).is_none());
                 }
             }
         }
     }
-    /*
-        let mut cai_en: Vec<u8> = Vec::new();
-        let mut cai_seg_cnt: u32 = 0;
-        for (i, segment) in jpeg.segments().iter().enumerate() {
-            let raw_bytes = segment.contents();
-            if raw_bytes.len() > 16 {
-                // we need at least 16 bytes in each segment for CAI
-                let mut raw_vec = raw_bytes.to_vec();
-                let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
-                let en = raw_vec.as_mut_slice()[2..4].to_vec();
-                let mut z_vec = Cursor::new(raw_vec.as_mut_slice()[4..8].to_vec());
-                let z = z_vec.read_u32::<BigEndian>()?;
 
-                let is_cai_continuation = vec_compare(&cai_en, &en);
-
-                if cai_seg_cnt > 0 && is_cai_continuation {
-                    // make sure this is a cai segment for additional segments,
-                    if z <= cai_seg_cnt {
-                        // this a non contiguous segment with same "en"" so a bad set of data
-                        // reset and continue to search
-                        cai_en = Vec::new();
-                        continue;
-                    }
-                    cai_seg_cnt += 1;
-                    cai_segs.push(i);
-                } else if raw_vec.len() > 28 {
-                    // must be at least 28 bytes for this to be a valid JUMBF box
-                    // check if this is a CAI JUMBF block
-                    let jumb_type = &raw_vec.as_mut_slice()[24..28];
-                    let is_cai = vec_compare(&C2PA_MARKER, jumb_type);
-
-                    if is_cai {
-                        cai_en = en.clone(); // store the identifier
-                        cai_seg_cnt = 1;
-                        cai_segs.push(i);
-                    } else {
-                        //assert!(twoway::find_bytes(raw_vec.as_slice(), &C2PA_MARKER).is_none());
-                    }
-                }
-            }
-        }
-    */
     Ok(cai_segs)
 }
 
@@ -328,12 +286,13 @@ impl<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized> CAIWriter<R, W> f
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4A, 0x50];
             let en = vec![0x02, 0x11];
-            let z = seg.to_be_bytes();
+            let z: u32 = u32::try_from(seg)
+                .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
-            seg_data.extend(&z[4..]);
+            seg_data.extend(z.to_be_bytes());
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
@@ -355,30 +314,7 @@ impl<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized> CAIWriter<R, W> f
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
             jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
-
-            /*
-            if jpeg.segments_by_marker(markers::APP11).count() != count_before + 1 {
-                for (_i, segment) in jpeg.segments_by_marker(markers::APP11).enumerate() {
-                    let raw_bytes = segment.contents();
-
-                    assert_eq!(raw_bytes.as_ref(), &cloned_data);
-                }
-            }
-            */
         }
-
-        /* *
-        let mut test_output: Vec<u8> = Vec::new();
-        jpeg.encoder()
-            .write_to(&mut test_output)
-            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-
-        assert!(twoway::find_bytes(test_output.as_slice(), store_bytes).is_some());
-        assert_eq!(&buf_clone[0..10000], &test_output[0..10000]);
-        let test_jpeg =
-            Jpeg::from_bytes(test_output.into()).map_err(|_err| Error::EmbeddingError)?;
-        assert!(get_cai_segments(&test_jpeg)?.is_empty());
-        */
 
         output_stream.rewind()?;
         jpeg.encoder()
