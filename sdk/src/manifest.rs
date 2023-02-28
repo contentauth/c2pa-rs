@@ -1439,7 +1439,7 @@ pub(crate) mod tests {
 
     struct MyRemoteSigner {}
 
-    #[async_trait::async_trait]
+    #[async_trait::async_trait(?Send)]
     impl crate::signer::RemoteSigner for MyRemoteSigner {
         async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
             use std::io::{Seek, Write};
