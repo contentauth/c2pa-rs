@@ -39,7 +39,7 @@ fn add_extension(file_name: &str, media_type: &str) -> String {
 fn write_manifest_thumbnail(manifest: &Manifest, destination: &Path) -> Result<()> {
     manifest.thumbnail().map(|(format, bytes)| {
         let name = add_extension(THUMBNAIL_CLAIM_NAME, format);
-        File::create(destination.join(name))?.write_all(bytes)
+        File::create(destination.join(name))?.write_all(&bytes)
     });
     Ok(())
 }
@@ -54,7 +54,7 @@ fn write_ingredient_thumbnails(ingredients: &[Ingredient], destination: &Path) -
                 (title, bytes)
             })
         })
-        .map(|(title, bytes)| File::create(destination.join(title))?.write_all(bytes))
+        .map(|(title, bytes)| File::create(destination.join(title))?.write_all(&bytes))
         .collect::<Result<Vec<()>, io::Error>>()?;
     Ok(())
 }

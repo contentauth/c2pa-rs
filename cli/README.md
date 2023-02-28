@@ -182,7 +182,7 @@ To provide the [manifest definition](#manifest-definition-file) in a command lin
 For example, the following command adds a custom assertion called "org.contentauth.test".
 
 ```shell
-c2patool sample/image.json -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
+c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
 ```
 
 ## Manifest definition file 

@@ -261,9 +261,9 @@ checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
 
 [[package]]
 name = "c2pa"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10379bdc706ed11e6e3368c1edcd387caaaa9a10b73f2f9da161a53f088da241"
+checksum = "5975289a7ff2a92a55aee5dae0a121897821671a144009e1dc4c0d4bebadf3f4"
 dependencies = [
  "atree",
  "base64",
@@ -305,6 +305,7 @@ dependencies = [
  "spki 0.6.0",
  "tempfile",
  "thiserror",
+ "treeline",
  "twoway",
  "ureq",
  "url",
@@ -2033,6 +2034,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "treeline"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7f741b240f1a48843f9b8e0444fb55fb2a4ff67293b50a9179dfd5ea67f8d41"
+
+[[package]]
 name = "twoway"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2349,9 +2356,9 @@ dependencies = [
 
 [[package]]
 name = "xmp_toolkit"
-version = "0.6.0"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22c639009c72fd52b12e0e9edd9a10093f521958571ed7e71c0d1d8503db4a32"
+checksum = "a0e15005dd0db58bc4a86e5f1fb26774372d84058c9f7df60d7723b0694245d9"
 dependencies = [
  "cc",
  "fs_extra",
