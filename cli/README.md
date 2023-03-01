@@ -63,6 +63,7 @@ The following table describes the command-line options.
 
 | CLI&nbsp;option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Short version | Argument | Description |
 |-----|----|----|----|
+| `--certs` | | N/A | Extract a certificate chain to stdout. |
 | `--config` | `-c` | `<config>` | Specifies a manifest definition as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
 | `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#displaying-a-detailed-manifest-report). |
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
@@ -73,6 +74,7 @@ The following table describes the command-line options.
 | `--parent` | `-p` | `<parent_file>` | Specifies path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | Specify URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)|
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
+| `--tree` | | N/A | Create a tree diagram of the manifest store. |
 | `--version` | `-V` | N/A | Display version information. |
 
 ### Displaying manifest data

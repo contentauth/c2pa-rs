@@ -54,7 +54,7 @@ fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
     cmd.arg("test/file/notfound.jpg").arg("--info");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("os error"));
+        .stderr(predicate::str::contains("file not found"));
     Ok(())
 }
 

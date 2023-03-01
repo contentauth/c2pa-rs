@@ -91,11 +91,19 @@ struct CliArgs {
     )]
     sidecar: bool,
 
+    #[structopt(long = "tree", help = "Create a tree diagram of the manifest store.")]
+    tree: bool,
+
+    #[structopt(long = "certs", help = "Extract certificate chain.")]
+    cert_chain: bool,
+
+    // #[structopt(long = "remove", help = "Remove manifest store from asset.")]
+    // remove_manifest: bool,
     #[structopt(long = "info", help = "Show manifest size, XMP url and other stats")]
     info: bool,
 }
 
-// prints the requested kind of report or exits with error
+// Prints the requested kind of report or exits with error.
 fn report_from_path<P: AsRef<Path>>(path: &P, is_detailed: bool) -> Result<String> {
     let report = match is_detailed {
         true => ManifestStoreReport::from_file(path).map(|r| r.to_string()),
@@ -120,9 +128,40 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
-    if args.info && args.path.exists() {
-        return info(&args.path);
+    let path = &args.path;
+
+    if args.info {
+        return info(path);
     }
+
+    if args.cert_chain {
+        ManifestStoreReport::dump_cert_chain(path)?;
+        return Ok(());
+    }
+
+    if args.tree {
+        ManifestStoreReport::dump_tree(path)?;
+        return Ok(());
+    }
+
+    // Remove manifest needs to also remove XMP provenance
+    // if args.remove_manifest {
+    //     match args.output {
+    //         Some(output) => {
+    //             if output.exists() && !args.force {
+    //                 bail!("Output already exists, use -f/force to force write");
+    //             }
+    //             if path != &output {
+    //                 std::fs::copy(path, &output)?;
+    //             }
+    //             Manifest::remove_manifest(&output)?
+    //         },
+    //         None => {
+    //             bail!("The -o/--output argument is required for this operation");
+    //         }
+    //     }
+    //     return Ok(());
+    // }
 
     // get manifest config from either the -manifest option or the -config option
     let config = if let Some(json) = args.config {
