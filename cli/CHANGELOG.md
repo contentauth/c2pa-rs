@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.4.0
+_01 March 2023_
+
+* (MINOR) Add --certs and --tree options ([contentauth/c2patool#106](https://github.com/contentauth/c2patool/pull/106))
+* update to cp2pa 0.17.0 ([contentauth/c2patool#105](https://github.com/contentauth/c2patool/pull/105))
+* Update for Clippy in Rust 1.67 ([contentauth/c2patool#101](https://github.com/contentauth/c2patool/pull/101))
+
 ## 0.3.9
 _06 December 2022_
 
