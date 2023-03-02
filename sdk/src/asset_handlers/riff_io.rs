@@ -54,30 +54,37 @@ where
     vec
 }
 
-fn inject_c2pa<T>(chunk: &Chunk, file: &mut T, data: &[u8]) -> Result<ChunkContents>
+fn inject_c2pa<T>(chunk: &Chunk, file: &mut T, data: &[u8], format: &str) -> Result<ChunkContents>
 where
     T: std::io::Seek + std::io::Read,
 {
     let id = chunk.id();
     if id == riff::RIFF_ID || id == riff::LIST_ID {
-        let chunk_type = chunk
-            .read_type(file)
-            .map_err(|_| Error::InvalidAsset("RIFF handler could not parse file".to_string()))?;
+        let chunk_type = chunk.read_type(file).map_err(|_| {
+            Error::InvalidAsset("RIFF handler could not parse file format {format}".to_string())
+        })?;
         let mut children = read_items(&mut chunk.iter(file));
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         if id == RIFF_ID {
             // remove c2pa manifest store in RIFF chunk
             children.retain(|c| c.id() != C2PA_CHUNK_ID);
+        }
 
-            // add c2pa manifest
-            if !data.is_empty() {
-                children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
-            }
+        // for non webp we can place at the front
+        // add c2pa manifest
+        if !data.is_empty() && !format.contains("webp") {
+            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, file, data)?);
+            children_contents.push(inject_c2pa(&child, file, data, format)?);
+        }
+
+        // for non webp we can place at the front
+        // add c2pa manifest
+        if !data.is_empty() && format.contains("webp") {
+            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
@@ -86,7 +93,7 @@ where
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, file, data)?);
+            children_contents.push(inject_c2pa(&child, file, data, format)?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
@@ -177,7 +184,12 @@ impl AssetIO for RiffIO {
         }
 
         // replace/add manifest in memory
-        let new_contents = inject_c2pa(&top_level_chunks, &mut chunk_reader, store_bytes)?;
+        let new_contents = inject_c2pa(
+            &top_level_chunks,
+            &mut chunk_reader,
+            store_bytes,
+            &self.riff_format,
+        )?;
 
         // save contents
         let mut output = OpenOptions::new()
