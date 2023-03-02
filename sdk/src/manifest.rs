@@ -1031,7 +1031,7 @@ pub(crate) mod tests {
     };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-       utils::test::{temp_signer, TEST_VC},
+        utils::test::{temp_signer, TEST_VC},
         Manifest, Result,
     };
 
