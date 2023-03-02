@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::{collections::HashMap, io::Cursor};
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
+};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
@@ -50,7 +52,6 @@ use crate::{
     },
     validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
-
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
