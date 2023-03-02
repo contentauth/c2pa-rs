@@ -26,7 +26,8 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 26] = [
+static SUPPORTED_TYPES: [&str; 32] = [
+    "avi",
     "avif",
     "c2pa", // stand-alone manifest file
     "heif",
@@ -52,7 +53,12 @@ static SUPPORTED_TYPES: [&str; 26] = [
     "video/mp4",
     "image/tiff",
     "image/dng",
+    "audio/wav",
     "audio/x-wav",
+    "application/x-troff-msvideo",
+    "video/avi",
+    "video/msvideo",
+    "video/x-msvideo",
 ];
 
 #[cfg(feature = "file_io")]
@@ -122,7 +128,7 @@ pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
         "png" => Some(Box::new(PngIO {})),
         "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        "wav" | "riff" | "audio/x-wav" => Some(Box::new(RiffIO::new(&ext))),
+        "wav" | "riff" | "audio/wav" | "audio/x-wav" | "avi" => Some(Box::new(RiffIO::new(&ext))),
         _ => None,
     }
 }
@@ -142,7 +148,7 @@ pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
             Some(Box::new(BmffIO::new(&asset_type)))
         }
         "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        "wav" | "riff" | "audio/x-wav" => Some(Box::new(RiffIO::new(&asset_type))),
+        "wav" | "riff" | "audio/wav" | "audio/x-wav" | "avi" => Some(Box::new(RiffIO::new(&asset_type))),
         _ => None,
     }
 }
