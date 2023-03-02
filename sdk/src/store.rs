@@ -1573,7 +1573,8 @@ impl Store {
         }
     }
 
-    /// Async RemoteSigner used to embed the claims store and  returns memory representation. Updates XMP with provenance record.
+    /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
+    /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
@@ -1582,7 +1583,7 @@ impl Store {
         format: &str,
         asset: &[u8],
         remote_signer: &dyn crate::signer::RemoteSigner,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut stream = Cursor::new(asset.to_vec()); // clone here so we have resizable object, todo: this will change once we support separate R/W streams
 
         let jumbf_bytes =
@@ -1599,12 +1600,12 @@ impl Store {
             sig,
             &sig_placeholder,
         ) {
-            Ok((s, output_asset)) => {
+            Ok((s, output_asset, output_jumbf)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
-                Ok(output_asset)
+                Ok((output_asset, output_jumbf))
             }
             Err(e) => Err(e),
         }
@@ -1877,7 +1878,7 @@ impl Store {
         output_asset: Vec<u8>,
         sig: Vec<u8>,
         sig_placeholder: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>)> {
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
         }
@@ -1889,6 +1890,7 @@ impl Store {
         Ok((
             sig,
             save_jumbf_to_memory(format, &output_asset, &jumbf_bytes)?,
+            jumbf_bytes,
         ))
     }
 
