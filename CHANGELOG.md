@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.18.0
+_02 March 2023_
+
+* Fix issue where value was inadvertently included in Exclusion structure ([#197](https://github.com/contentauth/c2pa-rs/pull/197))
+* (MINOR) Bump MSRV to 1.63.0 ([#198](https://github.com/contentauth/c2pa-rs/pull/198))
+* Fixed unit test failure (invalid unique name generation). ([#190](https://github.com/contentauth/c2pa-rs/pull/190))
+
 ## 0.17.0
 _22 February 2023_
 
