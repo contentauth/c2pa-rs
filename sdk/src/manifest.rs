@@ -910,14 +910,14 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of the  manifest that was embedded
+    /// returns the  asset generated and bytes of the manifest that was embedded
     //#[cfg(feature = "remote_wasm_sign")]
     pub async fn embed_from_memory_remote_signed(
         &mut self,
         format: &str,
         asset: &[u8],
         signer: &dyn RemoteSigner,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
         self.set_format(format);
         // todo:: read instance_id from xmp from stream
         self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
@@ -941,11 +941,11 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        let result = store
+        let (output_asset, output_manifest) = store
             .save_to_memory_remote_signed(format, asset, signer)
             .await?;
 
-        Ok(result)
+        Ok((output_asset, output_manifest))
     }
 
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
@@ -1031,7 +1031,7 @@ pub(crate) mod tests {
     };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        utils::test::{temp_signer, TEST_VC},
+       utils::test::{temp_signer, TEST_VC},
         Manifest, Result,
     };
 
@@ -1476,13 +1476,18 @@ pub(crate) mod tests {
         let signer = MyRemoteSigner {};
 
         // Embed a manifest using the signer.
-        let out_vec = manifest
+        let (out_vec, out_manifest) = manifest
             .embed_from_memory_remote_signed("jpeg", image, &signer)
             .await
             .expect("embed_stream");
 
+        // try to load the image
         let manifest_store =
             crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
+
+        // try to load the manifest
+        let mut validation_log = DetailedStatusTracker::new();
+        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
@@ -1506,12 +1511,17 @@ pub(crate) mod tests {
         let signer = MyRemoteSigner {};
 
         // Embed a manifest using the signer.
-        let out_vec = manifest
+        let (out_vec, out_manifest) = manifest
             .embed_from_memory_remote_signed("png", image, &signer)
             .await
             .expect("embed_stream");
 
+        // try to load the image
         let manifest_store = crate::ManifestStore::from_bytes("image/png", &out_vec, true).unwrap();
+
+        // try to load the manifest
+        let mut validation_log = DetailedStatusTracker::new();
+        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
