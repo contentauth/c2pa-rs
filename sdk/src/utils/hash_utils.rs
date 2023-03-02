@@ -36,7 +36,9 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 pub struct Exclusion {
     start: usize,
     length: usize,
-    bmff_offset: Option<u64>, // optional offset position to include in BMFF_V2 hashes in BE format
+
+    #[serde(skip)]
+    bmff_offset: Option<u64>, // optional tracking of offset positions to include in BMFF_V2 hashes in BE format
 }
 
 impl Exclusion {
