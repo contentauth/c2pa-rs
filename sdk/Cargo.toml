@@ -71,6 +71,7 @@ multihash = "0.11.4"
 png_pong = "0.8.2"
 quick-xml = "0.20.0"
 range-set = "0.0.9"
+riff = "1.0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
