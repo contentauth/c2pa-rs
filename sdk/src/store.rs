@@ -1866,6 +1866,7 @@ impl Store {
                 } else {
                     return Err(Error::XmpWriteError);
                 }
+                */
                 dest_path.to_path_buf()
             }
             crate::claim::RemoteManifest::SideCar => {
