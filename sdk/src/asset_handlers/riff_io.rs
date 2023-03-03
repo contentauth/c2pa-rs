@@ -59,21 +59,23 @@ where
     T: std::io::Seek + std::io::Read,
 {
     let id = chunk.id();
-    if id == riff::RIFF_ID || id == riff::LIST_ID {
+    let is_riff_chunk: bool = id == riff::RIFF_ID;
+
+    if is_riff_chunk || id == riff::LIST_ID {
         let chunk_type = chunk.read_type(file).map_err(|_| {
             Error::InvalidAsset("RIFF handler could not parse file format {format}".to_string())
         })?;
         let mut children = read_items(&mut chunk.iter(file));
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
-        if id == RIFF_ID {
+        if is_riff_chunk {
             // remove c2pa manifest store in RIFF chunk
             children.retain(|c| c.id() != C2PA_CHUNK_ID);
         }
 
         // for non webp we can place at the front
         // add c2pa manifest
-        if !data.is_empty() && !format.contains("webp") {
+        if is_riff_chunk && !data.is_empty() && !format.contains("webp") {
             children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
@@ -83,7 +85,7 @@ where
 
         // for non webp we can place at the front
         // add c2pa manifest
-        if !data.is_empty() && format.contains("webp") {
+        if is_riff_chunk && !data.is_empty() && format.contains("webp") {
             children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
@@ -166,7 +168,7 @@ fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
 
 impl AssetIO for RiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
-        Some(self)
+        None //Some(self)
     }
 
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
