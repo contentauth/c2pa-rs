@@ -15,6 +15,8 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+use atree::{Arena, Token};
+use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -51,6 +53,56 @@ impl ManifestStoreReport {
             manifests,
             validation_status: None,
         })
+    }
+
+    /// Prints tree view of manifest store
+    #[cfg(feature = "file_io")]
+    pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
+        let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
+            label: "None".to_string(),
+        })?;
+
+        let os_filename = path
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
+        let asset_name = os_filename.to_string_lossy().into_owned();
+
+        let (tree, root_token) = ManifestStoreReport::to_tree(&store, claim, &asset_name, false)?;
+        fn walk_tree(tree: &Arena<String>, token: &Token) -> treeline::Tree<String> {
+            let result = token.children_tokens(tree).fold(
+                treeline::Tree::root(tree[*token].data.clone()),
+                |mut root, entry_token| {
+                    if entry_token.is_leaf(tree) {
+                        root.push(treeline::Tree::root(tree[entry_token].data.clone()));
+                    } else {
+                        root.push(walk_tree(tree, &entry_token));
+                    }
+                    root
+                },
+            );
+
+            result
+        }
+
+        // print tree
+        println!("Tree View:\n {}", walk_tree(&tree, &root_token));
+
+        Ok(())
+    }
+
+    /// Prints the certificate chain use to sign the active manifest
+    #[cfg(feature = "file_io")]
+    pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
+        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+
+        let cert_str = store.get_provenance_cert_chain()?;
+        println!("{cert_str}");
+        Ok(())
     }
 
     /// Creates a ManifestStoreReport from an existing Store and a validation log
@@ -100,6 +152,85 @@ impl ManifestStoreReport {
         json = omit_tag(json, "pad");
 
         json
+    }
+
+    #[allow(dead_code)]
+    fn populate_node(
+        tree: &mut Arena<String>,
+        store: &Store,
+        claim: &Claim,
+        current_token: &Token,
+        name_only: bool,
+    ) -> Result<()> {
+        let claim_assertions = claim.claim_assertion_store();
+        for claim_assertion in claim_assertions.iter() {
+            let hashlink = claim_assertion.label();
+            let (label, instance) = Claim::assertion_label_from_link(&hashlink);
+            let label = Claim::label_with_instance(&label, instance);
+
+            current_token.append(tree, format!("Assertion:{label}"));
+        }
+
+        // recurse down ingredients
+        for i in claim.ingredient_assertions() {
+            let ingredient_assertion =
+                <crate::assertions::Ingredient as crate::AssertionBase>::from_assertion(i)?;
+
+            // is this an ingredient
+            if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+                let label = Store::manifest_label_from_path(&c2pa_manifest.url());
+                let hash = &c2pa_manifest.hash()[..5];
+
+                if let Some(ingredient_claim) = store.get_claim(&label) {
+                    // create new node
+                    let data = if name_only {
+                        format!("{}_{}", ingredient_assertion.title, Hexlify(hash))
+                    } else {
+                        format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
+                    };
+                    let new_token = tree.new_node(data);
+                    current_token.append_node(tree, new_token).map_err(|_err| {
+                        crate::Error::InvalidAsset("Bad Manifest graph".to_string())
+                    })?;
+
+                    ManifestStoreReport::populate_node(
+                        tree,
+                        store,
+                        ingredient_claim,
+                        &new_token,
+                        name_only,
+                    )?;
+                }
+            } else {
+                let asset_name = &ingredient_assertion.title;
+                let data = if name_only {
+                    asset_name.to_string()
+                } else {
+                    format!("Asset:{asset_name}")
+                };
+                current_token.append(tree, data);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn to_tree(
+        store: &Store,
+        claim: &Claim,
+        asset_name: &str,
+        name_only: bool,
+    ) -> Result<(Arena<String>, Token)> {
+        let data = if name_only {
+            asset_name.to_string()
+        } else {
+            format!("Asset:{}, Manifest:{}", asset_name, claim.label())
+        };
+
+        let (mut tree, root_token) = Arena::with_data(data);
+        ManifestStoreReport::populate_node(&mut tree, store, claim, &root_token, name_only)?;
+        Ok((tree, root_token))
     }
 }
 
@@ -161,7 +292,11 @@ impl ManifestReport {
         Ok(Self {
             claim: serde_json::to_value(claim)?, // todo:  this will lose tagging info
             assertion_store,
-            credential_store: (!credential_store.is_empty()).then(|| credential_store),
+            credential_store: if !credential_store.is_empty() {
+                Some(credential_store)
+            } else {
+                None
+            },
             signature,
         })
     }
@@ -196,7 +331,7 @@ struct SignatureReport {
 
 // replace the value of any field in the json string with a given key with the string <omitted>
 fn omit_tag(mut json: String, tag: &str) -> String {
-    while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+    while let Some(index) = json.find(&format!("\"{tag}\": [")) {
         if let Some(idx2) = json[index..].find(']') {
             json = format!(
                 "{}\"{}\": \"<omitted>\"{}",
@@ -211,7 +346,7 @@ fn omit_tag(mut json: String, tag: &str) -> String {
 
 // make a base64 hash from the value of any field in the json string with key base64 hash
 fn b64_tag(mut json: String, tag: &str) -> String {
-    while let Some(index) = json.find(&format!("\"{}\": [", tag)) {
+    while let Some(index) = json.find(&format!("\"{tag}\": [")) {
         if let Some(idx2) = json[index..].find(']') {
             let idx3 = json[index..].find('[').unwrap_or_default(); // ok since we just found it
             let bytes: Vec<u8> =
@@ -221,7 +356,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
                 "{}\"{}\": \"{}\"{}",
                 &json[..index],
                 tag,
-                base64::encode(&bytes),
+                base64::encode(bytes),
                 &json[index + idx2 + 1..]
             );
         }
@@ -240,7 +375,25 @@ mod tests {
     #[test]
     fn manifest_store_report() {
         let path = fixture_path("CIE-sig-CA.jpg");
-        let report = ManifestStoreReport::from_file(&path).expect("load_from_asset");
-        println!("{}", report);
+        let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
+        println!("{report}");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_dump_tree() {
+        let asset_name = "CA.jpg";
+        let path = fixture_path(asset_name);
+
+        ManifestStoreReport::dump_tree(path).expect("dump_tree");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_dump_certchain() {
+        let asset_name = "CA.jpg";
+        let path = fixture_path(asset_name);
+
+        ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
     }
 }

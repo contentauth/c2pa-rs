@@ -49,7 +49,7 @@ const JUMBF_PREFIX: &str = "self#jumbf";
 
 // Converts a manifest label to a JUMBF URI.
 pub(crate) fn to_manifest_uri(manifest_label: &str) -> String {
-    format!("{}=/{}/{}", JUMBF_PREFIX, MANIFEST_STORE, manifest_label)
+    format!("{JUMBF_PREFIX}=/{MANIFEST_STORE}/{manifest_label}")
 }
 
 // Converts a manifest label and an assertion label into a JUMBF URI.
@@ -203,7 +203,7 @@ pub mod tests {
         let raw_uri = to_normalized_uri(&absolute_uri);
 
         let raw_uri_no_slash =
-            to_normalized_uri(&format!("{}={}/{}", JUMBF_PREFIX, MANIFEST_STORE, manifest));
+            to_normalized_uri(&format!("{JUMBF_PREFIX}={MANIFEST_STORE}/{manifest}"));
 
         let raw_empty_uri = to_normalized_uri(empty_uri);
 
@@ -231,7 +231,7 @@ pub mod tests {
 
         assert_eq!(
             assertion_relative,
-            format!("{}={}/{}", JUMBF_PREFIX, ASSERTIONS, assertion)
+            format!("{JUMBF_PREFIX}={ASSERTIONS}/{assertion}")
         );
         assert_eq!(
             Some(assertion.to_string()),

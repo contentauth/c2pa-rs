@@ -567,20 +567,31 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 }
 
 // internal util function to dump the cert chain in PEM format
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(feature = "file_io")]
-#[allow(dead_code)]
-fn dump_cert_chain(certs: &[Vec<u8>], output_path: &std::path::Path) -> Result<()> {
-    let mut out_buf: Vec<u8> = Vec::new();
+#[allow(unused_variables)]
+fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
+    #[cfg(feature = "sign")]
+    {
+        let mut out_buf: Vec<u8> = Vec::new();
 
-    for der_bytes in certs {
-        let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
-        let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+        for der_bytes in certs {
+            let c =
+                openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+            let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
 
-        out_buf.append(&mut c_pem);
+            out_buf.append(&mut c_pem);
+        }
+
+        if let Some(op) = output_path {
+            std::fs::write(op, &out_buf).map_err(Error::IoError)?;
+        }
+        Ok(out_buf)
     }
 
-    std::fs::write(output_path, &out_buf).map_err(Error::IoError)
+    #[cfg(not(feature = "sign"))]
+    {
+        let out_buf: Vec<u8> = Vec::new();
+        Ok(out_buf)
+    }
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
@@ -731,11 +742,15 @@ pub async fn verify_cose_async(
 
         // parse the temp time for now util we have TA
         result.date = get_signing_time(&sign1, &data);
+
+        // return cert chain
+        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?, None)?;
     }
 
     Ok(result)
 }
 
+#[allow(unused_variables)]
 pub fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
@@ -745,7 +760,7 @@ pub fn get_signing_info(
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
 
-    let _ = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
         let der_bytes = get_sign_cert(&sign1)?;
 
@@ -762,11 +777,33 @@ pub fn get_signing_info(
         Ok(sign1)
     });
 
-    ValidationInfo {
-        issuer_org,
-        date,
-        alg,
-        validated: false,
+    #[cfg(target_arch = "wasm32")]
+    {
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: Vec::new(),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let certs = match sign1 {
+            Ok(s) => match get_sign_certs(&s) {
+                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            },
+            Err(_e) => Vec::new(),
+        };
+
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: certs,
+        }
     }
 }
 
@@ -861,6 +898,9 @@ pub fn verify_cose(
 
             // parse the temp time for now util we have TA
             result.date = get_signing_time(&sign1, data);
+
+            // return cert chain
+            result.cert_chain = dump_cert_chain(&certs, None)?;
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
@@ -1040,16 +1080,16 @@ pub mod tests {
         let mut validation_log = DetailedStatusTracker::new();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(&cert_path).unwrap();
+        let es256_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(&cert_path).unwrap();
+        let es384_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(&cert_path).unwrap();
+        let es512_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
+        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();

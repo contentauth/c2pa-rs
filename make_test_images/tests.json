@@ -3,7 +3,7 @@
     "tsa_url": "http://timestamp.digicert.com",
     "output_path": "target/images",
     "default_ext": "jpg",
-    "author": "Gavin Peacock",
+    "author": "Adobe make_test",
     "recipes": [
         { "op": "copy", "parent": "sdk/tests/fixtures/IMG_0003.jpg", "output": "A.jpg" },
         { "op": "copy", "parent": "sdk/tests/fixtures/P1000827.jpg", "output": "I.jpg" },

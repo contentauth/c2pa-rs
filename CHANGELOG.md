@@ -6,6 +6,48 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.18.0
+_02 March 2023_
+
+* Fix issue where value was inadvertently included in Exclusion structure ([#197](https://github.com/contentauth/c2pa-rs/pull/197))
+* (MINOR) Bump MSRV to 1.63.0 ([#198](https://github.com/contentauth/c2pa-rs/pull/198))
+* Fixed unit test failure (invalid unique name generation). ([#190](https://github.com/contentauth/c2pa-rs/pull/190))
+
+## 0.17.0
+_22 February 2023_
+
+* Disable mdat exclusion ([#187](https://github.com/contentauth/c2pa-rs/pull/187))
+* Bmff v2 ([#186](https://github.com/contentauth/c2pa-rs/pull/186))
+* Fix for using non-c2pa segment when add required segments ([#185](https://github.com/contentauth/c2pa-rs/pull/185))
+* Update Ingredient and VC hashes to 1.2 spec ([#184](https://github.com/contentauth/c2pa-rs/pull/184))
+* (MINOR) Create a ResourceStore for binary assets  ([#180](https://github.com/contentauth/c2pa-rs/pull/180))
+* Fix Clippy warnings from new Rust 1.67 ([#182](https://github.com/contentauth/c2pa-rs/pull/182))
+* Visualizations ([#163](https://github.com/contentauth/c2pa-rs/pull/163))
+
+## 0.16.1
+_19 December 2022_
+
+* Update xmp-toolkit from 0.6.0 to 1.0.0 ([#165](https://github.com/contentauth/c2pa-rs/pull/165))
+* Prepare 0.16.1 release
+* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
+* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
+
+## 0.16.1
+_19 December 2022_
+
+* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
+* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
+
+## 0.16.0
+_03 December 2022_
+
+* Updates some cargo dependencies ([#159](https://github.com/contentauth/c2pa-rs/pull/159))
+* makes manifest#add_redaction public; adds test ([#156](https://github.com/contentauth/c2pa-rs/pull/156))
+* Fixes support for instanceId on action and generate parameters.ingredient field when possible ([#158](https://github.com/contentauth/c2pa-rs/pull/158))
+* Support digitalSourceType field in Action ([#154](https://github.com/contentauth/c2pa-rs/pull/154))
+* (MINOR) Add sign feature for signing manifests without file I/O ([#125](https://github.com/contentauth/c2pa-rs/pull/125))
+* TIFF/DNG support ([#152](https://github.com/contentauth/c2pa-rs/pull/152))
+
 ## 0.15.0
 _09 November 2022_
 

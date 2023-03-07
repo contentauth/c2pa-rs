@@ -280,7 +280,7 @@ impl TiffStructure {
     {
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
-        let ifd_offset = byte_reader.seek(SeekFrom::Current(0))?;
+        let ifd_offset = byte_reader.stream_position()?;
         //println!("IFD Offset: {:#x}", ifd_offset);
 
         let entry_cnt = if big_tiff {
@@ -341,7 +341,7 @@ where
     R: Read + Seek,
 {
     let _size = input.seek(SeekFrom::End(0))?;
-    input.seek(SeekFrom::Start(0))?;
+    input.rewind()?;
 
     let ts = TiffStructure::load(input)?;
 
@@ -496,7 +496,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 
     fn offset(&mut self) -> Result<u64> {
-        Ok(self.writer.seek(SeekFrom::Current(0))?)
+        Ok(self.writer.stream_position()?)
     }
 
     fn pad_word_boundary(&mut self) -> Result<()> {
@@ -522,13 +522,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u16(43u16)?;
             self.writer.write_u16(8u16)?;
             self.writer.write_u16(0u16)?;
-            offset = self.writer.seek(SeekFrom::Current(0))?; // first ifd offset
+            offset = self.writer.stream_position()?; // first ifd offset
 
             self.writer.write_u64(0)?;
         } else {
             self.writer.write_all(&[boi, boi])?;
             self.writer.write_u16(42u16)?;
-            offset = self.writer.seek(SeekFrom::Current(0))?; // first ifd offset
+            offset = self.writer.stream_position()?; // first ifd offset
 
             self.writer.write_u32(0)?;
         }
@@ -564,7 +564,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             if value_bytes_ref.len() > data_bytes {
                 // get location of entry data start
-                let offset = self.writer.seek(SeekFrom::Current(0))?;
+                let offset = self.writer.stream_position()?;
 
                 // write out the data bytes
                 self.writer.write_all(value_bytes_ref)?;
@@ -599,7 +599,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.pad_word_boundary()?;
 
         // save location of start of IFD
-        let ifd_offset = self.writer.seek(SeekFrom::Current(0))?;
+        let ifd_offset = self.writer.stream_position()?;
 
         // write out the entry count
         self.write_entry_count(target_ifd.len())?;
@@ -703,7 +703,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
 
-                        let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
+                        let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
 
                         // copy the strip to new file
@@ -804,7 +804,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         };
 
-                        let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
+                        let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
 
                         // copy the tile to new file
@@ -1521,7 +1521,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 
@@ -1543,7 +1543,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 

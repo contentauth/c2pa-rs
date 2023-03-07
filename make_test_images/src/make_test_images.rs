@@ -23,7 +23,6 @@ use c2pa::{
     create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
     SigningAlg,
 };
-use image::GenericImageView;
 use nom::AsBytes;
 use serde::Deserialize;
 use twoway::find_bytes;
@@ -79,7 +78,7 @@ impl Config {
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         signcert_path.push(format!("../sdk/tests/fixtures/certs/{}.pub", self.alg));
         let mut pkey_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        pkey_path.push(format!("../sdk/tests/fixtures/certs/{}.pem", alg));
+        pkey_path.push(format!("../sdk/tests/fixtures/certs/{alg}.pem"));
         create_signer::from_files(signcert_path, pkey_path, alg, tsa_url)
     }
 }
@@ -182,7 +181,7 @@ impl MakeTestImages {
     fn make_image(&self, recipe: &Recipe) -> Result<PathBuf> {
         let src = recipe.parent.as_deref();
         let dst_path = self.make_path(&recipe.output);
-        println!("Creating {:?}", dst_path);
+        println!("Creating {dst_path:?}");
         // keep track of all actions here
         let mut actions = Actions::new();
 
@@ -224,7 +223,7 @@ impl MakeTestImages {
 
                 // load the image for editing
                 let mut img =
-                    image::open(src_path).context(format!("opening parent {:?}", src_path))?;
+                    image::open(src_path).context(format!("opening parent {src_path:?}"))?;
 
                 // adjust brightness to show we made an edit
                 img = img.brighten(30);
@@ -263,7 +262,7 @@ impl MakeTestImages {
                 0 | 1 => img.width() / 2,
                 _ => img.width() / ing_vec.len() as u32,
             };
-            let height = img.height() as u32 / 2;
+            let height = img.height() / 2;
 
             let mut x = 0;
             for ing in ing_vec {
@@ -271,7 +270,7 @@ impl MakeTestImages {
 
                 // get the bits of the ingredient, resize it and overlay it on the base image
                 let img_ingredient =
-                    image::open(ing_path).context(format!("opening ingredient {:?}", ing_path))?;
+                    image::open(ing_path).context(format!("opening ingredient {ing_path:?}"))?;
                 let img_small = img_ingredient.thumbnail(width, height);
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
@@ -283,7 +282,7 @@ impl MakeTestImages {
                 );
                 manifest.add_ingredient(ingredient);
 
-                x += width;
+                x += width as i64;
             }
             // record what we did as an action (only need to record this once)
             actions = actions.add_action(Action::new(c2pa_action::RESIZED));
@@ -308,13 +307,13 @@ impl MakeTestImages {
         let src = recipe.parent.as_deref().unwrap_or_default();
         let src_path = &self.make_path(src);
         let dst_path = self.make_path(recipe.output.as_str());
-        println!("Creating OGP {:?}", dst_path);
+        println!("Creating OGP {dst_path:?}");
 
         let jumbf = jumbf_io::load_jumbf_from_file(&PathBuf::from(src_path))
-            .context(format!("loading OGP {:?}", src_path))?;
+            .context(format!("loading OGP {src_path:?}"))?;
         // save the edited image to our destination file
         let mut img =
-            image::open(Path::new(src_path)).context(format!("loading OGP image{:?}", src_path))?;
+            image::open(Path::new(src_path)).context(format!("loading OGP image{src_path:?}"))?;
         img = img.grayscale();
         img.save(&dst_path)
             .context(format!("saving OGP image{:?}", &dst_path))?;
@@ -331,7 +330,7 @@ impl MakeTestImages {
         let op = recipe.op.as_str();
         let src = recipe.parent.as_deref().unwrap_or_default();
         let dst_path = self.make_path(recipe.output.as_str());
-        println!("Creating Error op={} {:?}", op, dst_path);
+        println!("Creating Error op={op} {dst_path:?}");
 
         let (search_bytes, replace_bytes) = match op {
             // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
@@ -362,10 +361,10 @@ impl MakeTestImages {
             _ => panic!("bad parameter"),
         };
 
-        std::fs::copy(&self.make_path(src), &dst_path).context("copying for make_err")?;
+        std::fs::copy(self.make_path(src), &dst_path).context("copying for make_err")?;
 
         Self::patch_file(&dst_path, search_bytes, replace_bytes)
-            .context(format!("patching {}", op))?;
+            .context(format!("patching {op}"))?;
 
         Ok(dst_path)
     }
@@ -373,10 +372,10 @@ impl MakeTestImages {
     /// copies a file from the parent to the output
     fn make_copy(&self, recipe: &Recipe) -> Result<PathBuf> {
         let dst_path = self.make_path(recipe.output.as_str());
-        println!("Copying {:?}", dst_path);
+        println!("Copying {dst_path:?}");
         let src = recipe.parent.as_deref().unwrap_or_default();
         let dst = recipe.output.as_str();
-        std::fs::copy(src, &dst_path).context(format!("copying {} to {}", src, dst))?;
+        std::fs::copy(src, &dst_path).context(format!("copying {src} to {dst}"))?;
         Ok(dst_path)
     }
 
@@ -395,7 +394,7 @@ impl MakeTestImages {
                 "copy" => self.make_copy(recipe)?,
                 _ => return Err(Error::BadParam(recipe.op.to_string()).into()),
             };
-            let manifest_store = ManifestStore::from_file(&dst_path);
+            let manifest_store = ManifestStore::from_file(dst_path);
 
             if recipe.op.as_str() != "copy" {
                 println!("{}", manifest_store?);
