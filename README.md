@@ -35,9 +35,9 @@ The SDK requires **Rust version 1.63.0** or newer.
 
 The SDK has been tested on the following operating systems:
 
-* Windows
+* Windows (Intel only)
 * MacOS (Intel and Apple silicon)
-* Ubuntu Linux
+* Ubuntu Linux (Intel and ARM v8)
 * WebAssembly (Wasm); NOTE: claim _generation_ is not available on Wasm.
 
 ## Usage
@@ -51,7 +51,7 @@ c2pa = "0.18.0"
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
 ```
-c2pa = { version = "0.11.0", features = ["file_io"] }
+c2pa = { version = "0.18.0", features = ["file_io"] }
 ```
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
