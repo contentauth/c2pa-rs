@@ -29,6 +29,7 @@ use crate::{
     error::{Error, Result},
 };
 
+// initialize asset handlers
 lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
@@ -53,6 +54,7 @@ lazy_static! {
     };
 }
 
+// initialize streaming read handlers
 lazy_static! {
     static ref CAI_READERS: HashMap<String, Box<dyn CAIReader>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
@@ -77,6 +79,7 @@ lazy_static! {
     };
 }
 
+// initialize streaming write handlers
 lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
@@ -92,8 +95,8 @@ lazy_static! {
         // build handler map
         for h in handlers {
             // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                if let Some(writer) = h.get_writer(supported_type) {
+            for supported_type in h.supported_types() { 
+                if let Some(writer) = h.get_writer(supported_type) { // get streaming writer if supported
                     handler_map.insert(supported_type.to_string(), writer);
                 }
             }
@@ -147,22 +150,34 @@ pub fn save_jumbf_to_memory(
     Ok(stream.into_inner())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<&Box<dyn AssetIO>> {
+pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    ASSET_HANDLERS.get(&ext)
+    if let Some(h) = ASSET_HANDLERS.get(&ext) {
+        Some(h.as_ref())
+    } else {
+        None
+    }
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<&Box<dyn CAIReader>> {
+pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    CAI_READERS.get(&asset_type) 
+    if let Some(h) = CAI_READERS.get(&asset_type) {
+        Some(h.as_ref())
+    } else {
+        None
+    }
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<&Box<dyn CAIWriter>> {
+pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
 
-    CAI_WRITERS.get(&asset_type)
+    if let Some(h) = CAI_WRITERS.get(&asset_type) {
+        Some(h.as_ref())
+    } else {
+        None
+    }
 }
 
 pub fn get_file_extension(path: &Path) -> Option<String> {
