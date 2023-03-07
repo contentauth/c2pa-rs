@@ -68,9 +68,7 @@ jobs:
         CHANGELOG: ${{ steps.changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Bump crate versions
       run: |
