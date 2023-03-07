@@ -24,7 +24,7 @@ use conv::ValueFrom;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -44,6 +44,8 @@ const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
+
+static SUPPORTED_TYPES: [&str; 3] = ["tif", "tiff", "image/tiff"];
 
 // The type of an IFD entry
 enum IFDEntryType {
@@ -1349,7 +1351,7 @@ where
 }
 pub struct TiffIO {}
 
-impl CAILoader for TiffIO {
+impl CAIReader for TiffIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
         Ok(cai_data)
@@ -1458,6 +1460,25 @@ impl AssetIO for TiffIO {
             }
             None => Ok(()),
         }
+    }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        TiffIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(TiffIO::new(asset_type))
+    }
+
+    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
+        Box::new(TiffIO::new(asset_type))
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
     }
 }
 

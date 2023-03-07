@@ -12,76 +12,101 @@
 // each license.
 
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::Cursor,
     path::{Path, PathBuf},
 };
+
+use lazy_static::lazy_static;
 
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
         tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 34] = [
-    "avi",
-    "avif",
-    "c2pa", // stand-alone manifest file
-    "heif",
-    "heic",
-    "jpg",
-    "jpeg",
-    "mp4",
-    "m4a",
-    "mov",
-    "png",
-    "riff",
-    "tif",
-    "tiff",
-    "wav",
-    "dng",
-    "webp",
-    "application/mp4",
-    "audio/mp4",
-    "image/avif",
-    "image/heic",
-    "image/heif",
-    "image/jpeg",
-    "image/png",
-    "video/mp4",
-    "image/tiff",
-    "image/dng",
-    "audio/wav",
-    "audio/x-wav",
-    "application/x-troff-msvideo",
-    "video/avi",
-    "video/msvideo",
-    "video/x-msvideo",
-    "image/webp",
-];
+lazy_static! {
+    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+        let mut handler_map = HashMap::new();
 
-#[cfg(feature = "file_io")]
-static BMFF_TYPES: [&str; 12] = [
-    "avif",
-    "heif",
-    "heic",
-    "mp4",
-    "m4a",
-    "mov",
-    "application/mp4",
-    "audio/mp4",
-    "image/avif",
-    "image/heic",
-    "image/heif",
-    "video/mp4",
-];
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                handler_map.insert(supported_type.to_string(), h.get_handler(supported_type));
+            }
+        }
+
+        handler_map
+    };
+}
+
+lazy_static! {
+    static ref CAI_READERS: HashMap<String, Box<dyn CAIReader>> = {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+        let mut handler_map = HashMap::new();
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                handler_map.insert(supported_type.to_string(), h.get_reader(supported_type));
+            }
+        }
+
+        handler_map
+    };
+}
+
+lazy_static! {
+    static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+        let mut handler_map = HashMap::new();
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                if let Some(writer) = h.get_writer(supported_type) {
+                    handler_map.insert(supported_type.to_string(), writer);
+                }
+            }
+        }
+
+        handler_map
+    };
+}
 
 #[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    BMFF_TYPES.contains(&asset_type)
+    let bmf_io = BmffIO::new("");
+    bmf_io.supported_types().contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
@@ -122,59 +147,22 @@ pub fn save_jumbf_to_memory(
     Ok(stream.into_inner())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
+pub fn get_assetio_handler(ext: &str) -> Option<&Box<dyn AssetIO>> {
     let ext = ext.to_lowercase();
-    match ext.as_ref() {
-        "c2pa" => Some(Box::new(C2paIO {})),
-        "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
-        "png" => Some(Box::new(PngIO {})),
-        "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
-        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        "wav" | "riff" | "audio/wav" | "audio/x-wav" | "avi" | "webp" => {
-            Some(Box::new(RiffIO::new(&ext)))
-        }
-        _ => None,
-    }
+
+    ASSET_HANDLERS.get(&ext)
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
+pub fn get_cailoader_handler(asset_type: &str) -> Option<&Box<dyn CAIReader>> {
     let asset_type = asset_type.to_lowercase();
-    match asset_type.as_ref() {
-        "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
-            Some(Box::new(C2paIO {}))
-        }
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        "png" | "image/png" => Some(Box::new(PngIO {})),
-        "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
-        | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-            if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
-        {
-            Some(Box::new(BmffIO::new(&asset_type)))
-        }
-        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        "wav" | "riff" | "audio/wav" | "audio/x-wav" | "avi" | "webp" => {
-            Some(Box::new(RiffIO::new(&asset_type)))
-        }
-        _ => None,
-    }
+
+    CAI_READERS.get(&asset_type) 
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+pub fn get_caiwriter_handler(asset_type: &str) -> Option<&Box<dyn CAIWriter>> {
     let asset_type = asset_type.to_lowercase();
-    match asset_type.as_ref() {
-        // "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
-        //     Some(Box::new(C2paIO {}))
-        // }
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        // "png" | "image/png" => Some(Box::new(PngIO {})),
-        // "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
-        // | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-        //     if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
-        // {
-        //     Some(Box::new(BmffIO::new(&asset_type)))
-        // }
-        _ => None,
-    }
+
+    CAI_WRITERS.get(&asset_type)
 }
 
 pub fn get_file_extension(path: &Path) -> Option<String> {
@@ -188,7 +176,7 @@ pub fn get_file_extension(path: &Path) -> Option<String> {
 pub fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if SUPPORTED_TYPES.contains(&ext.as_ref()) {
+    if ASSET_HANDLERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None

@@ -21,11 +21,13 @@ use img_parts::{
 
 use crate::{
     asset_io::{
-        AssetIO, CAILoader, CAIRead, CAIReadWrite, CAIWriter, HashBlockObjectType,
+        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
         HashObjectPositions,
     },
     error::{Error, Result},
 };
+
+static SUPPORTED_TYPES: [&str; 4] = ["jpg", "jpeg", "webp", "image/jpeg"];
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
@@ -142,7 +144,7 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
 
 pub struct JpegIO {}
 
-impl CAILoader for JpegIO {
+impl CAIReader for JpegIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
 
@@ -452,6 +454,29 @@ impl AssetIO for JpegIO {
             .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
 
         Ok(())
+    }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        JpegIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(JpegIO::new(asset_type))
+    }
+
+    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
+        Box::new(JpegIO::new(asset_type))
+    }
+
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(JpegIO::new(asset_type)))
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
     }
 }
 

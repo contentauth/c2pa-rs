@@ -21,22 +21,26 @@ use std::{
 use riff::*;
 
 use crate::{
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
     jumbf_io::get_file_extension,
 };
 
+static SUPPORTED_TYPES: [&str; 9] = [
+    "avi",
+    "wav",
+    "webp",
+    "image/webp",
+    "audio/x-wav",
+    "application/x-troff-msvideo",
+    "video/avi",
+    "video/msvideo",
+    "video/x-msvideo",
+];
+
 pub struct RiffIO {
     #[allow(dead_code)]
     riff_format: String, // can be used for specialized RIFF cases
-}
-
-impl RiffIO {
-    pub fn new(riff_format: &str) -> Self {
-        RiffIO {
-            riff_format: riff_format.to_string(),
-        }
-    }
 }
 
 const C2PA_CHUNK_ID: ChunkId = ChunkId {
@@ -126,7 +130,7 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
     None
 }
 
-impl CAILoader for RiffIO {
+impl CAIReader for RiffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut asset: Vec<u8> = Vec::new();
         reader.rewind()?;
@@ -167,6 +171,20 @@ fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
 }
 
 impl AssetIO for RiffIO {
+    fn new(riff_format: &str) -> Self {
+        RiffIO {
+            riff_format: riff_format.to_string(),
+        }
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(RiffIO::new(asset_type))
+    }
+
+    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
+        Box::new(RiffIO::new(asset_type))
+    }
+
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None //Some(self)
     }
@@ -253,6 +271,10 @@ impl AssetIO for RiffIO {
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         self.save_cai_store(asset_path, &[])
     }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
 }
 
 impl AssetPatch for RiffIO {
@@ -266,7 +288,7 @@ impl AssetPatch for RiffIO {
         let (manifest_pos, manifest_len) =
             get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
 
-        if store_bytes.len() == manifest_len as usize {
+        if store_bytes.len() + 8 == manifest_len as usize {
             asset.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
             asset.write_all(store_bytes)?;
             Ok(())
@@ -293,22 +315,13 @@ pub mod tests {
     };
 
     #[test]
-    fn test_read_wav() {
-        let ap = fixture_path("test.wav");
-
-        let riff_io = RiffIO::new("wav");
-
-        let _manifest = riff_io.read_cai_store(&ap).unwrap();
-    }
-
-    #[test]
     fn test_write_wav() {
         let more_data = "some more test data".as_bytes();
         let source = fixture_path("test.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
-            let output = temp_dir_path(&temp_dir, "wav_test.wav");
+            let output = temp_dir_path(&temp_dir, "test-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let riff_io = RiffIO::new("wav");
@@ -323,30 +336,32 @@ pub mod tests {
         }
         assert!(success)
     }
-    /*
+
     #[test]
-    fn test_patch_c2pa_write_mp4() {
+    fn test_patch_write_wav() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("video1.mp4");
+        let source = fixture_path("test.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
-            let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+            let output = temp_dir_path(&temp_dir, "test-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
-                let bmff = BmffIO::new("mp4");
+                let riff_io = RiffIO::new("wav");
 
-                if let Ok(source_data) = bmff.read_cai_store(&output) {
-                    // create replacement data of same size
-                    let mut new_data = vec![0u8; source_data.len()];
-                    new_data[..test_data.len()].copy_from_slice(test_data);
-                    bmff.patch_cai_store(&output, &new_data).unwrap();
+                if let Ok(()) = riff_io.save_cai_store(&output, test_data) {
+                    if let Ok(source_data) = riff_io.read_cai_store(&output) {
+                        // create replacement data of same size
+                        let mut new_data = vec![0u8; source_data.len()];
+                        new_data[..test_data.len()].copy_from_slice(test_data);
+                        riff_io.patch_cai_store(&output, &new_data).unwrap();
 
-                    let replaced = bmff.read_cai_store(&output).unwrap();
+                        let replaced = riff_io.read_cai_store(&output).unwrap();
 
-                    assert_eq!(new_data, replaced);
+                        assert_eq!(new_data, replaced);
 
-                    success = true;
+                        success = true;
+                    }
                 }
             }
         }
@@ -355,21 +370,20 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("video1.mp4");
+        let source = fixture_path("test.wav");
 
         let temp_dir = tempdir().unwrap();
-        let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
+        let output = temp_dir_path(&temp_dir, "test-wav.wav");
 
         std::fs::copy(source, &output).unwrap();
-        let bmff_io = BmffIO::new("mp4");
+        let riff_io = RiffIO::new("wav");
 
-        bmff_io.remove_cai_store(&output).unwrap();
+        riff_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match bmff_io.read_cai_store(&output) {
+        match riff_io.read_cai_store(&output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
     }
-    */
 }

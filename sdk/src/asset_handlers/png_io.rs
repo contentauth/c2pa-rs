@@ -21,7 +21,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -31,6 +31,8 @@ const IMG_HDR: [u8; 4] = *b"IHDR";
 const XMP_KEY: &str = "XML:com.adobe.xmp";
 const PNG_END: [u8; 4] = *b"IEND";
 const PNG_HDR_LEN: u64 = 12;
+
+static SUPPORTED_TYPES: [&str; 2] = ["png", "image/png"];
 
 #[derive(Clone, Debug)]
 struct PngChunkPos {
@@ -172,7 +174,7 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> 
 }
 pub struct PngIO {}
 
-impl CAILoader for PngIO {
+impl CAIReader for PngIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
         Ok(cai_data)
@@ -418,6 +420,25 @@ impl AssetIO for PngIO {
         std::fs::write(asset_path, png_buf)?;
 
         Ok(())
+    }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        PngIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(PngIO::new(asset_type))
+    }
+
+    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
+        Box::new(PngIO::new(asset_type))
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
     }
 }
 
