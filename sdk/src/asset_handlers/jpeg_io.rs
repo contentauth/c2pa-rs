@@ -485,29 +485,27 @@ impl AssetIO for JpegIO {
 }
 
 impl RemoteRefEmbed for JpegIO {
+    #[allow(unused_variables)]
     fn embed_reference(
         &self,
         asset_path: &Path,
         embed_ref: crate::asset_io::RemoteRefEmbedType,
     ) -> Result<()> {
-        #[cfg(feature = "xmp_write")]
-        {
-            match embed_ref {
-                crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                    #[cfg(feature = "xmp_write")]
-                    {
-                        crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
-                    }
-
-                    #[cfg(not(feature = "xmp_write"))]
-                    {
-                        Err(crate::error::Error::MissingFeature("xmp_write"))
-                    }
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
                 }
-                crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-                crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-                crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
             }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }

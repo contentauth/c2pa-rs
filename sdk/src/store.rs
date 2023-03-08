@@ -19,8 +19,6 @@ use std::{fs, path::Path};
 
 use log::error;
 
-#[cfg(all(feature = "xmp_write", feature = "file_io"))]
-use crate::embedded_xmp;
 #[cfg(feature = "async_signer")]
 use crate::AsyncSigner;
 use crate::{
@@ -1836,6 +1834,8 @@ impl Store {
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         // force generate external manifests for unknown types
+
+        use crate::{asset_io::RemoteRefEmbedType, jumbf_io::get_assetio_handler};
         let ext = match get_supported_file_extension(dest_path) {
             Some(ext) => ext,
             None => {
@@ -1855,20 +1855,7 @@ impl Store {
         // 1) Add DC provenance XMP
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => {
-                // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                /*
-                #[cfg(feature = "xmp_write")]
-                if let Some(provenance) = self.provenance_path() {
-                    // update XMP info & add xmp hash to provenance claim
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
-                } else {
-                    return Err(Error::XmpWriteError);
-                }
-                */
-                dest_path.to_path_buf()
-            }
+            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
             crate::claim::RemoteManifest::SideCar => {
                 // remove any previous c2pa manifest from the asset
                 match remove_jumbf_from_file(dest_path) {
@@ -1879,30 +1866,35 @@ impl Store {
                 }
             }
             crate::claim::RemoteManifest::Remote(_url) => {
-                if cfg!(feature = "xmp_write") {
-                    let d = dest_path.with_extension(MANIFEST_STORE_EXT);
-                    // remove any previous c2pa manifest from the asset
-                    remove_jumbf_from_file(dest_path)?;
-                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                    #[cfg(feature = "xmp_write")]
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
-                    d
+                let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                // remove any previous c2pa manifest from the asset
+                remove_jumbf_from_file(dest_path)?;
+
+                if let Some(h) = get_assetio_handler(&ext) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        external_ref_writer
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(_url))?;
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
                 } else {
-                    return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
+                    return Err(Error::UnsupportedType);
                 }
+
+                d
             }
             crate::claim::RemoteManifest::EmbedWithRemote(_url) => {
-                if cfg!(feature = "xmp_write") {
-                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                    #[cfg(feature = "xmp_write")]
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
-
-                    dest_path.to_path_buf()
+                if let Some(h) = get_assetio_handler(&ext) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        external_ref_writer
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(_url))?;
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
                 } else {
-                    return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
+                    return Err(Error::UnsupportedType);
                 }
+                dest_path.to_path_buf()
             }
         };
 

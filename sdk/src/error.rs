@@ -204,6 +204,9 @@ pub enum Error {
     #[error("XMP write error")]
     XmpWriteError,
 
+    #[error("XMP is not supported")]
+    XmpNotSupported,
+
     #[error("C2PA provenance not found in XMP")]
     ProvenanceMissing,
 
