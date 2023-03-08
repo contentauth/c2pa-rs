@@ -21,7 +21,10 @@ use std::{
 use riff::*;
 
 use crate::{
-    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed,
+    },
     error::{Error, Result},
     jumbf_io::get_file_extension,
 };
@@ -181,12 +184,12 @@ impl AssetIO for RiffIO {
         Box::new(RiffIO::new(asset_type))
     }
 
-    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
-        Box::new(RiffIO::new(asset_type))
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
     }
 
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
-        None //Some(self)
+        Some(self)
     }
 
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
@@ -296,6 +299,34 @@ impl AssetPatch for RiffIO {
             Err(Error::InvalidAsset(
                 "patch_cai_store store size mismatch.".to_string(),
             ))
+        }
+    }
+}
+
+impl RemoteRefEmbed for RiffIO {
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        #[cfg(feature = "xmp_write")]
+        {
+            match embed_ref {
+                crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                    #[cfg(feature = "xmp_write")]
+                    {
+                        crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                    }
+
+                    #[cfg(not(feature = "xmp_write"))]
+                    {
+                        Err(crate::error::Error::MissingFeature("xmp_write"))
+                    }
+                }
+                crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            }
         }
     }
 }

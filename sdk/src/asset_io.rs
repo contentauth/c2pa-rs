@@ -80,7 +80,7 @@ pub trait AssetIO: Sync + Send {
     fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO>;
 
     // return streaming reader for this asset type
-    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader>;
+    fn get_reader(&self) -> &dyn CAIReader;
 
     // return streaming writer if available
     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
@@ -143,11 +143,5 @@ pub enum RemoteRefEmbedType {
 // technique used to embed a reference varies bases on the type of embedding.  Not
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
-    // Embeds a remote manifest reference into an asset.  embed_ref specifies the
-    // type of embedding and the data.
-    fn embed_reference(
-        &self,
-        writer: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
-    ) -> Result<()>;
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
 }

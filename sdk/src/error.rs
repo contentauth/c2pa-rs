@@ -43,6 +43,9 @@ pub enum Error {
     #[error("bad parameter: {0}")]
     BadParam(String),
 
+    #[error("required feature missing")]
+    MissingFeature(String),
+
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,

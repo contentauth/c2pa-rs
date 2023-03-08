@@ -28,7 +28,7 @@ use tempfile::{Builder, NamedTempFile};
 
 use crate::{
     assertions::ExclusionsMap,
-    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashObjectPositions},
+    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashObjectPositions, RemoteRefEmbed},
     error::{Error, Result},
     utils::hash_utils::{vec_compare, Exclusion},
 };
@@ -1253,16 +1253,12 @@ impl AssetIO for BmffIO {
         Box::new(BmffIO::new(asset_type))
     }
 
-    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
-        Box::new(BmffIO::new(asset_type))
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn crate::asset_io::RemoteRefEmbed> {
-        None
     }
 }
 
@@ -1340,6 +1336,33 @@ impl AssetPatch for BmffIO {
     }
 }
 
+impl RemoteRefEmbed for BmffIO {
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        #[cfg(feature = "xmp_write")]
+        {
+            match embed_ref {
+                crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                    #[cfg(feature = "xmp_write")]
+                    {
+                        crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                    }
+
+                    #[cfg(not(feature = "xmp_write"))]
+                    {
+                        Err(crate::error::Error::MissingFeature("xmp_write"))
+                    }
+                }
+                crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            }
+        }
+    }
+}
 #[cfg(feature = "bmff")]
 #[cfg(test)]
 pub mod tests {

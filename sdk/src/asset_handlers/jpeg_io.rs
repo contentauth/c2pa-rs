@@ -22,12 +22,12 @@ use img_parts::{
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions,
+        HashObjectPositions, RemoteRefEmbed,
     },
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 4] = ["jpg", "jpeg", "webp", "image/jpeg"];
+static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 
 const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
@@ -467,16 +467,48 @@ impl AssetIO for JpegIO {
         Box::new(JpegIO::new(asset_type))
     }
 
-    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
-        Box::new(JpegIO::new(asset_type))
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
     }
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         Some(Box::new(JpegIO::new(asset_type)))
     }
 
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+}
+
+impl RemoteRefEmbed for JpegIO {
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        #[cfg(feature = "xmp_write")]
+        {
+            match embed_ref {
+                crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                    #[cfg(feature = "xmp_write")]
+                    {
+                        crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                    }
+
+                    #[cfg(not(feature = "xmp_write"))]
+                    {
+                        Err(crate::error::Error::MissingFeature("xmp_write"))
+                    }
+                }
+                crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+                crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            }
+        }
     }
 }
 
@@ -485,6 +517,8 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use img_parts::Bytes;
+
+    use crate::asset_io::RemoteRefEmbedType;
 
     use super::*;
 
@@ -523,5 +557,36 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_xmp_read_write() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let test_msg = "this some test xmp data";
+        let handler = JpegIO::new("");
+
+        // write xmp
+        let assetio_handler = handler.get_handler("jpg");
+
+        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+
+        remote_ref_handler
+            .embed_reference(&output, RemoteRefEmbedType::Xmp(test_msg.to_string()))
+            .unwrap();
+
+        // read back in XMP
+        let mut file_reader = std::fs::File::open(&output).unwrap();
+        let read_xmp = assetio_handler
+            .get_reader()
+            .read_xmp(&mut file_reader)
+            .unwrap();
+
+        assert!(read_xmp.contains(test_msg));
     }
 }

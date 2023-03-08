@@ -83,8 +83,8 @@ impl AssetIO for C2paIO {
         Box::new(C2paIO::new(asset_type))
     }
 
-    fn get_reader(&self, asset_type: &str) -> Box<dyn CAIReader> {
-        Box::new(C2paIO::new(asset_type))
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
     }
 
     fn supported_types(&self) -> &[&str] {

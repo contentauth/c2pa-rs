@@ -54,31 +54,6 @@ lazy_static! {
     };
 }
 
-// initialize streaming read handlers
-lazy_static! {
-    static ref CAI_READERS: HashMap<String, Box<dyn CAIReader>> = {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
-            Box::new(BmffIO::new("")),
-            Box::new(JpegIO::new("")),
-            Box::new(PngIO::new("")),
-            Box::new(RiffIO::new("")),
-            Box::new(TiffIO::new("")),
-        ];
-        let mut handler_map = HashMap::new();
-
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                handler_map.insert(supported_type.to_string(), h.get_reader(supported_type));
-            }
-        }
-
-        handler_map
-    };
-}
-
 // initialize streaming write handlers
 lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
@@ -95,7 +70,7 @@ lazy_static! {
         // build handler map
         for h in handlers {
             // get the supported types add entry for each
-            for supported_type in h.supported_types() { 
+            for supported_type in h.supported_types() {
                 if let Some(writer) = h.get_writer(supported_type) { // get streaming writer if supported
                     handler_map.insert(supported_type.to_string(), writer);
                 }
@@ -163,8 +138,8 @@ pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
 pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    if let Some(h) = CAI_READERS.get(&asset_type) {
-        Some(h.as_ref())
+    if let Some(h) = ASSET_HANDLERS.get(&asset_type) {
+        Some(h.get_reader())
     } else {
         None
     }
@@ -309,5 +284,84 @@ pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.remove_cai_store(path),
         _ => Err(Error::UnsupportedType),
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    #[test]
+    fn test_get_assetio() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_assetio_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_reader() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_cailoader_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_writer() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![Box::new(JpegIO::new(""))];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_caiwriter_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_writer() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_caiwriter_handler(supported_type).is_none());
+            }
+        }
     }
 }
