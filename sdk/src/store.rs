@@ -29,6 +29,7 @@ use crate::{
         labels::{self, CLAIM},
         Ingredient, Relationship,
     },
+    asset_io::RemoteRefEmbedType,
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -37,7 +38,7 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::load_jumbf_from_memory,
+    jumbf_io::{get_assetio_handler, load_jumbf_from_memory},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::hash256,
     validation_status, ManifestStoreReport,
@@ -57,8 +58,8 @@ use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
     claim::RemoteManifest,
     jumbf_io::{
-        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
+        get_file_extension, get_supported_file_extension, is_bmff_format,
+        load_jumbf_from_file, object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
 
@@ -1835,7 +1836,6 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // force generate external manifests for unknown types
 
-        use crate::{asset_io::RemoteRefEmbedType, jumbf_io::get_assetio_handler};
         let ext = match get_supported_file_extension(dest_path) {
             Some(ext) => ext,
             None => {
@@ -1909,7 +1909,7 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let bmff_hashes = Store::generate_bmff_data_hashes(&output_path, pc.alg(), false)?;
+                let bmff_hashes = Store::generate_bmff_data_hashes(dest_path, pc.alg(), false)?;
                 for hash in bmff_hashes {
                     pc.add_assertion(&hash)?;
                 }
@@ -1930,7 +1930,7 @@ impl Store {
 
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
-                    bmff_hash.gen_hash(&output_path)?;
+                    bmff_hash.gen_hash(dest_path)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }

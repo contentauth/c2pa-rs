@@ -1258,7 +1258,10 @@ impl AssetIO for BmffIO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        Some(self)
+        match self.bmff_format.as_ref() {
+            "heic" | "avif" => None,
+            _ => Some(self),
+        }
     }
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
