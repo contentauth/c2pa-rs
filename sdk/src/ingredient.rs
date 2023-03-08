@@ -463,7 +463,10 @@ impl Ingredient {
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
         // these are declared inside this function in order to isolate them for wasm builds
-        use crate::status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
+        use crate::{
+            status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
+            validation_status::MANIFEST_INACCESSIBLE,
+        };
 
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -555,6 +558,13 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => {} // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => {}
+            Err(Error::RemoteManifestFetch(e)) => {
+                let mut vs = ValidationStatus::new(MANIFEST_INACCESSIBLE).set_explanation(e);
+                if let Some(url) = ingredient.provenance() {
+                    vs = vs.set_url(url.to_string());
+                }
+                ingredient.validation_status = Some([vs].to_vec())
+            }
             Err(e) => {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
@@ -1070,6 +1080,19 @@ mod tests_file_io {
         println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_none());
         assert!(ingredient.manifest_data().is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn test_jpg_cloud_failure() {
+        let ap = fixture_path("cloudx.jpg");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
+        println!("ingredient = {ingredient}");
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::MANIFEST_INACCESSIBLE
+        );
     }
 
     #[test]
