@@ -99,7 +99,7 @@ pub trait AssetIO: Sync + Send {
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
-    // Remove entire CAI block from asset
+    // remove entire C2PA manifest store from asset
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 
     // list of supported extensions and mime types
