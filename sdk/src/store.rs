@@ -1893,11 +1893,11 @@ impl Store {
 
                 d
             }
-            crate::claim::RemoteManifest::EmbedWithRemote(_url) => {
+            crate::claim::RemoteManifest::EmbedWithRemote(url) => {
                 if let Some(h) = get_assetio_handler(&ext) {
                     if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
                         external_ref_writer
-                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(_url))?;
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
                     } else {
                         return Err(Error::XmpNotSupported);
                     }

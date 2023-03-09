@@ -83,8 +83,8 @@ lazy_static! {
 
 #[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    let bmf_io = BmffIO::new("");
-    bmf_io.supported_types().contains(&asset_type)
+    let bmff_io = BmffIO::new("");
+    bmff_io.supported_types().contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
