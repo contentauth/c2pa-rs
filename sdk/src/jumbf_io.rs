@@ -287,6 +287,11 @@ pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     }
 }
 
+/// returns a list of supported file extensions and mime types
+pub fn get_supported_types() -> Vec<String> {
+    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]
@@ -363,5 +368,24 @@ pub mod tests {
                 assert!(get_caiwriter_handler(supported_type).is_none());
             }
         }
+    }
+
+    #[test]
+    fn test_get_supported_list() {
+        let supported = get_supported_types();
+
+        assert!(supported.iter().any(|s| s == "jpg"));
+        assert!(supported.iter().any(|s| s == "jpeg"));
+        assert!(supported.iter().any(|s| s == "png"));
+        assert!(supported.iter().any(|s| s == "mov"));
+        assert!(supported.iter().any(|s| s == "mp4"));
+        assert!(supported.iter().any(|s| s == "m4a"));
+        assert!(supported.iter().any(|s| s == "jpg"));
+        assert!(supported.iter().any(|s| s == "avi"));
+        assert!(supported.iter().any(|s| s == "webp"));
+        assert!(supported.iter().any(|s| s == "wav"));
+        assert!(supported.iter().any(|s| s == "tif"));
+        assert!(supported.iter().any(|s| s == "tiff"));
+        assert!(supported.iter().any(|s| s == "dng"));
     }
 }

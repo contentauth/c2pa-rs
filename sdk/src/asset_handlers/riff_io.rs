@@ -159,7 +159,7 @@ impl CAIReader for RiffIO {
 
     // Get XMP block
     fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+        None // todo: figure out where XMP is stored for supported formats
     }
 }
 
@@ -352,11 +352,11 @@ pub mod tests {
     #[test]
     fn test_write_wav() {
         let more_data = "some more test data".as_bytes();
-        let source = fixture_path("test.wav");
+        let source = fixture_path("sample1.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
-            let output = temp_dir_path(&temp_dir, "test-wav.wav");
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let riff_io = RiffIO::new("wav");
@@ -375,11 +375,11 @@ pub mod tests {
     #[test]
     fn test_patch_write_wav() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("test.wav");
+        let source = fixture_path("sample1.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
-            let output = temp_dir_path(&temp_dir, "test-wav.wav");
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let riff_io = RiffIO::new("wav");
@@ -405,10 +405,10 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("test.wav");
+        let source = fixture_path("sample1.wav");
 
         let temp_dir = tempdir().unwrap();
-        let output = temp_dir_path(&temp_dir, "test-wav.wav");
+        let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
 
         std::fs::copy(source, &output).unwrap();
         let riff_io = RiffIO::new("wav");

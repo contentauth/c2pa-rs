@@ -58,18 +58,19 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 12] = [
-    "avif",
+static SUPPORTED_TYPES: [&str; 6] = [
+    /*"avif",  // disable for now while we test a little more
     "heif",
-    "heic",
+    "heic",*/
     "mp4",
     "m4a",
     "mov",
     "application/mp4",
     "audio/mp4",
+    /*
     "image/avif",
     "image/heic",
-    "image/heif",
+    "image/heif",*/
     "video/mp4",
 ];
 
@@ -950,7 +951,7 @@ impl CAIReader for BmffIO {
 
     // Get XMP block
     fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+        None // todo: figure out where XMP is stored for supported formats
     }
 }
 
@@ -1367,7 +1368,6 @@ impl RemoteRefEmbed for BmffIO {
         }
     }
 }
-#[cfg(feature = "bmff")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -1377,14 +1377,14 @@ pub mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{
-        status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-        store::Store,
-        utils::test::{fixture_path, temp_dir_path},
-    };
+    use crate::utils::test::{fixture_path, temp_dir_path};
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_read_mp4() {
+        use crate::status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker};
+        use crate::store::Store;
+
         let ap = fixture_path("video1.mp4");
 
         let mut log = DetailedStatusTracker::default();

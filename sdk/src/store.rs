@@ -29,7 +29,6 @@ use crate::{
         labels::{self, CLAIM},
         Ingredient, Relationship,
     },
-    asset_io::RemoteRefEmbedType,
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -38,7 +37,7 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::{get_assetio_handler, load_jumbf_from_memory},
+    jumbf_io::load_jumbf_from_memory,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::hash256,
     validation_status, ManifestStoreReport,
@@ -56,9 +55,10 @@ use crate::{
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
+    asset_io::RemoteRefEmbedType,
     claim::RemoteManifest,
     jumbf_io::{
-        get_file_extension, get_supported_file_extension, is_bmff_format,
+        get_assetio_handler, get_file_extension, get_supported_file_extension, is_bmff_format,
         load_jumbf_from_file, object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
@@ -1865,7 +1865,7 @@ impl Store {
                     Err(e) => return Err(e),
                 }
             }
-            crate::claim::RemoteManifest::Remote(_url) => {
+            crate::claim::RemoteManifest::Remote(url) => {
                 let d = dest_path.with_extension(MANIFEST_STORE_EXT);
                 // remove any previous c2pa manifest from the asset
                 remove_jumbf_from_file(dest_path)?;
@@ -1873,7 +1873,7 @@ impl Store {
                 if let Some(h) = get_assetio_handler(&ext) {
                     if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
                         external_ref_writer
-                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(_url))?;
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
                     } else {
                         return Err(Error::XmpNotSupported);
                     }
@@ -2889,9 +2889,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
-        let ap = fixture_path("test.wav");
+        let ap = fixture_path("sample1.wav");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "test.wav");
+        let op = temp_dir_path(&temp_dir, "ssample1.wav");
 
         // Create claims store.
         let mut store = Store::new();
@@ -3037,9 +3037,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_webp_jumbf_generation() {
-        let ap = fixture_path("test.webp");
+        let ap = fixture_path("sample1.webp");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "test.webp");
+        let op = temp_dir_path(&temp_dir, "sample1.webp");
 
         // Create claims store.
         let mut store = Store::new();
@@ -3107,6 +3107,33 @@ pub mod tests {
             }
         }
     }
+
+    /*  enable when we renable HEIC
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_no_xmp_err() {
+            let ap = fixture_path("sample1.heic");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "sample1.heic");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let mut claim1 = create_test_claim().unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            claim1.set_remote_manifest("http://somecompany.com/someasset").unwrap();
+            store.commit_claim(claim1).unwrap();
+            let result = store.save_to_asset(&ap, &signer, &op);
+
+            assert!(result.is_err());
+            assert_eq!(format!("{:?}", result.err().unwrap()), format!("{:?}", &Error::XmpNotSupported));
+        }
+    */
 
     /*  todo: disable until we can generate a valid file with no xmp
     #[test]
@@ -3425,7 +3452,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
@@ -3434,7 +3460,6 @@ pub mod tests {
         println!("store = {store}");
     }
     #[test]
-    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
