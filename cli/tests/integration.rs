@@ -113,7 +113,6 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         path.read_dir()
             .unwrap()
-            .into_iter()
             .map(|dir_entry| dir_entry.unwrap().path())
             .filter(|path| path.is_dir())
             .count(),
