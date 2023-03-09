@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.18.1
+_07 March 2023_
+
+* Update Validation Status codes ([#200](https://github.com/contentauth/c2pa-rs/pull/200))
+* Fix async path to support ingredient box hashing ([#201](https://github.com/contentauth/c2pa-rs/pull/201))
+
 ## 0.18.0
 _02 March 2023_
 

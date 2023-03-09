@@ -1212,12 +1212,22 @@ impl Store {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
-                    if !verify_by_alg(
-                        ingredient.alg(),
-                        &c2pa_manifest.hash(),
-                        &ingredient.data()?,
-                        None,
-                    ) {
+                    let alg = match c2pa_manifest.alg() {
+                        Some(a) => a,
+                        None => ingredient.alg().to_owned(),
+                    };
+
+                    // get the 1.1-1.2 box hash
+                    let no_hash: Vec<u8> = Vec::new();
+                    let box_hash = store
+                        .manifest_box_hash_cache
+                        .get(&label)
+                        .unwrap_or(&no_hash);
+
+                    // test for 1.1 hash then 1.0 version
+                    if !vec_compare(&c2pa_manifest.hash(), box_hash)
+                        && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                    {
                         let log_item = log_item!(
                             &c2pa_manifest.url(),
                             "ingredient hash incorrect",
