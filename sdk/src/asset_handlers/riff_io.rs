@@ -12,13 +12,13 @@
 // each license.
 
 use conv::ValueFrom;
+use riff::*;
+
 use std::{
     fs::{File, OpenOptions},
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
-
-use riff::*;
 
 use crate::{
     asset_io::{

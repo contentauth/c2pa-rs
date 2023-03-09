@@ -1382,8 +1382,10 @@ pub mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_read_mp4() {
-        use crate::status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker};
-        use crate::store::Store;
+        use crate::{
+            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
+            store::Store,
+        };
 
         let ap = fixture_path("video1.mp4");
 

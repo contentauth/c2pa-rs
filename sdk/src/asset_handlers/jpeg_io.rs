@@ -516,9 +516,8 @@ pub mod tests {
 
     use img_parts::Bytes;
 
-    use crate::asset_io::RemoteRefEmbedType;
-
     use super::*;
+    use crate::asset_io::RemoteRefEmbedType;
 
     #[test]
     fn test_extract_xmp() {
