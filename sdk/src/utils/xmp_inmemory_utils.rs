@@ -24,7 +24,7 @@ use crate::{
     Result,
 };
 
-const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
+const RDF_DESCRIPTION: &str = "rdf:Description";
 
 #[derive(Default)]
 pub struct XmpInfo {
@@ -57,16 +57,15 @@ impl XmpInfo {
 fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
     let mut reader = Reader::from_str(xmp);
     reader.trim_text(true);
-    let mut buf = Vec::new();
 
     loop {
-        match reader.read_event(&mut buf) {
+        match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                if e.name() == RDF_DESCRIPTION {
+                if e.name() == quick_xml::name::QName(RDF_DESCRIPTION.as_bytes()) {
                     // attribute case
                     let value = e.attributes().find(|a| {
                         if let Ok(attribute) = a {
-                            vec_compare(attribute.key, key.as_bytes())
+                            vec_compare(attribute.key.0, key.as_bytes())
                         } else {
                             false
                         }
@@ -76,19 +75,18 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
                             return Some(s);
                         }
                     }
-                } else if e.name() == key.as_bytes() {
+                } else if e.name() == quick_xml::name::QName(key.as_bytes()) {
                     // tag case
-                    let mut buf: Vec<u8> = Vec::new();
-                    if let Ok(s) = reader.read_text(e.name(), &mut buf) {
-                        return Some(s);
+                    if let Ok(s) = reader.read_text(e.name()) {
+                        return Some(s.to_string());
                     }
                 }
             }
             Ok(Event::Eof) => break,
             _ => {}
         }
-        buf.clear();
     }
+
     None
 }
 
@@ -97,16 +95,19 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let mut reader = Reader::from_str(xmp);
     reader.trim_text(true);
     let mut writer = Writer::new(Cursor::new(Vec::new()));
-    let mut buf = Vec::new();
     let mut added = false;
+
     loop {
-        match reader.read_event(&mut buf) {
-            Ok(Event::Start(ref e)) if e.name() == RDF_DESCRIPTION => {
+        match reader.read_event() {
+            Ok(Event::Start(ref e))
+                if e.name() == quick_xml::name::QName(RDF_DESCRIPTION.as_bytes()) =>
+            {
                 // creates a new element
-                let mut elem = BytesStart::owned(RDF_DESCRIPTION.to_vec(), RDF_DESCRIPTION.len());
+                let mut elem = BytesStart::new(RDF_DESCRIPTION);
+
                 for attr in e.attributes() {
                     if let Ok(attr) = attr {
-                        if attr.key == key.as_bytes() {
+                        if attr.key == quick_xml::name::QName(key.as_bytes()) {
                             // replace the key/value if it exists
                             elem.push_attribute((key, value));
                             added = true;
@@ -126,9 +127,9 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
                 // writes the event to the writer
                 assert!(writer.write_event(Event::Start(elem)).is_ok());
             }
-            Ok(Event::End(ref e)) if e.name() == b"this_tag" => {
+            Ok(Event::End(ref e)) if e.name() == quick_xml::name::QName(b"this_tag") => {
                 assert!(writer
-                    .write_event(Event::End(BytesEnd::borrowed(b"my_elem")))
+                    .write_event(Event::End(BytesEnd::new("my_elem")))
                     .is_ok());
             }
             Ok(Event::Eof) => break,
@@ -139,7 +140,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
             }
         }
     }
-    buf.clear();
+
     let result = writer.into_inner().into_inner();
     String::from_utf8(result).map_err(|_e| Error::XmpWriteError)
 }
