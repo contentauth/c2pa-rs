@@ -253,6 +253,23 @@ impl Manifest {
         Ok(self)
     }
 
+    fn set_thumbnail_no_write<S: Into<String>, B: Into<Vec<u8>>>(
+        &mut self,
+        format: S,
+        thumbnail: B,
+    ) -> Result<&mut Self> {
+        let base_id = self
+            .label()
+            .unwrap_or_else(|| self.instance_id())
+            .to_string();
+        self.thumbnail = Some(self.resources.add_with_no_write(
+            &base_id,
+            &format.into(),
+            thumbnail,
+        )?);
+        Ok(self)
+    }
+
     /// If set, the embed calls will create a sidecar .c2pa manifest file next to the output file
     /// No change will be made to the output file
     pub fn set_sidecar_manifest(&mut self) -> &mut Self {
@@ -629,7 +646,7 @@ impl Manifest {
         if self.thumbnail().is_none() {
             #[cfg(feature = "add_thumbnails")]
             if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
-                self.set_thumbnail(format, image)?;
+                self.set_thumbnail_no_write(format, image)?;
             }
         }
         Ok(())

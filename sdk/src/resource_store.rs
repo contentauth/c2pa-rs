@@ -103,6 +103,20 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
+    pub(crate) fn add_with_no_write<R>(
+        &mut self,
+        key: &str,
+        format: &str,
+        value: R,
+    ) -> crate::Result<ResourceRef>
+    where
+        R: Into<Vec<u8>>,
+    {
+        let id = self.id_from(key, format);
+        self.add_no_write(&id, value)?;
+        Ok(ResourceRef::new(format, id))
+    }
+
     /// Adds a resource, using a given id value.
     pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<()>
     where
@@ -117,6 +131,15 @@ impl ResourceStore {
             std::fs::write(path, value.into())?;
             return Ok(());
         }
+        self.add_no_write(id, value)
+    }
+
+    /// Adds a resource, using a given id value.
+    pub(crate) fn add_no_write<S, R>(&mut self, id: S, value: R) -> crate::Result<()>
+    where
+        S: Into<String>,
+        R: Into<Vec<u8>>,
+    {
         self.resources.insert(id.into(), value.into());
         Ok(())
     }
