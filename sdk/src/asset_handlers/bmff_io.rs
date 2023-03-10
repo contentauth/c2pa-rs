@@ -28,7 +28,7 @@ use tempfile::{Builder, NamedTempFile};
 
 use crate::{
     assertions::ExclusionsMap,
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions},
+    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashObjectPositions, RemoteRefEmbed},
     error::{Error, Result},
     utils::hash_utils::{vec_compare, Exclusion},
 };
@@ -36,13 +36,6 @@ use crate::{
 pub struct BmffIO {
     #[allow(dead_code)]
     bmff_format: String, // can be used for specialized BMFF cases
-}
-impl BmffIO {
-    pub fn new(bmff_format: &str) -> Self {
-        BmffIO {
-            bmff_format: bmff_format.to_string(),
-        }
-    }
 }
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
@@ -63,6 +56,22 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "ipro", "infe", "iinf", "iref", "ipma", "schm", "fiin", "fpar", "fecr", "gitn", "fire", "stri",
     "stsg", "stvi", "csch", "sidx", "ssix", "prft", "srpp", "vmhd", "smhd", "srat", "chnl", "dmix",
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
+];
+
+static SUPPORTED_TYPES: [&str; 6] = [
+    /*"avif",  // disable for now while we test a little more
+    "heif",
+    "heic",*/
+    "mp4",
+    "m4a",
+    "mov",
+    "application/mp4",
+    "audio/mp4",
+    /*
+    "image/avif",
+    "image/heic",
+    "image/heif",*/
+    "video/mp4",
 ];
 
 // define CAIRead for tempfile
@@ -839,7 +848,7 @@ fn get_manifest_token(
     None
 }
 
-impl CAILoader for BmffIO {
+impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let start = reader.stream_position()?;
         let size = reader.seek(SeekFrom::End(0))?;
@@ -942,7 +951,7 @@ impl CAILoader for BmffIO {
 
     // Get XMP block
     fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+        None // todo: figure out where XMP is stored for supported formats
     }
 }
 
@@ -1231,6 +1240,30 @@ impl AssetIO for BmffIO {
             .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
             .map_err(Error::IoError)
     }
+
+    fn new(asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        BmffIO {
+            bmff_format: asset_type.to_string(),
+        }
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(BmffIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
 }
 
 impl AssetPatch for BmffIO {
@@ -1307,7 +1340,36 @@ impl AssetPatch for BmffIO {
     }
 }
 
-#[cfg(feature = "bmff")]
+impl RemoteRefEmbed for BmffIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    match self.bmff_format.as_ref() {
+                        "heic" | "avif" => Err(Error::XmpNotSupported),
+                        _ => {
+                            crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+}
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -1317,14 +1379,16 @@ pub mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{
-        status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-        store::Store,
-        utils::test::{fixture_path, temp_dir_path},
-    };
+    use crate::utils::test::{fixture_path, temp_dir_path};
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_read_mp4() {
+        use crate::{
+            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
+            store::Store,
+        };
+
         let ap = fixture_path("video1.mp4");
 
         let mut log = DetailedStatusTracker::default();
