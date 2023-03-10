@@ -128,31 +128,19 @@ pub fn save_jumbf_to_memory(
 pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
-    if let Some(h) = ASSET_HANDLERS.get(&ext) {
-        Some(h.as_ref())
-    } else {
-        None
-    }
+    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
-    if let Some(h) = ASSET_HANDLERS.get(&asset_type) {
-        Some(h.get_reader())
-    } else {
-        None
-    }
+    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
 }
 
 pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
 
-    if let Some(h) = CAI_WRITERS.get(&asset_type) {
-        Some(h.as_ref())
-    } else {
-        None
-    }
+    CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
 }
 
 pub fn get_file_extension(path: &Path) -> Option<String> {
