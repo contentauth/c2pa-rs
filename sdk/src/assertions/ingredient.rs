@@ -24,7 +24,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 // Used to differentiate a parent from a component
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Relationship {
     #[serde(rename = "parentOf")]
     ParentOf,
