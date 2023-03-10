@@ -1259,10 +1259,7 @@ impl AssetIO for BmffIO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        match self.bmff_format.as_ref() {
-            "heic" | "avif" => None,
-            _ => Some(self),
-        }
+        Some(self)
     }
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
@@ -1354,7 +1351,12 @@ impl RemoteRefEmbed for BmffIO {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
                 #[cfg(feature = "xmp_write")]
                 {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                    match self.bmff_format.as_ref() {
+                        "heic" | "avif" => Err(Error::XmpNotSupported),
+                        _ => {
+                            crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                        }
+                    }
                 }
 
                 #[cfg(not(feature = "xmp_write"))]
