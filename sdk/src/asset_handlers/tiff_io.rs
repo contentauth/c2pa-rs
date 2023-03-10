@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2023 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
+    path::Path,
 };
 
 use atree::{Arena, Token};
@@ -24,7 +25,10 @@ use conv::ValueFrom;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed,
+    },
     error::{Error, Result},
 };
 
@@ -44,6 +48,8 @@ const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
+
+static SUPPORTED_TYPES: [&str; 4] = ["dng", "tif", "tiff", "image/tiff"];
 
 // The type of an IFD entry
 enum IFDEntryType {
@@ -1349,7 +1355,7 @@ where
 }
 pub struct TiffIO {}
 
-impl CAILoader for TiffIO {
+impl CAIReader for TiffIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
         Ok(cai_data)
@@ -1459,6 +1465,28 @@ impl AssetIO for TiffIO {
             None => Ok(()),
         }
     }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        TiffIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(TiffIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
 }
 
 impl AssetPatch for TiffIO {
@@ -1496,6 +1524,32 @@ impl AssetPatch for TiffIO {
             Err(Error::InvalidAsset(
                 "patch_cai_store store size mismatch.".to_string(),
             ))
+        }
+    }
+}
+
+impl RemoteRefEmbed for TiffIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                }
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }

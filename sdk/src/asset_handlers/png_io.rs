@@ -21,7 +21,9 @@ use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        AssetIO, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+    },
     error::{Error, Result},
 };
 
@@ -31,6 +33,8 @@ const IMG_HDR: [u8; 4] = *b"IHDR";
 const XMP_KEY: &str = "XML:com.adobe.xmp";
 const PNG_END: [u8; 4] = *b"IEND";
 const PNG_HDR_LEN: u64 = 12;
+
+static SUPPORTED_TYPES: [&str; 2] = ["png", "image/png"];
 
 #[derive(Clone, Debug)]
 struct PngChunkPos {
@@ -172,7 +176,7 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> 
 }
 pub struct PngIO {}
 
-impl CAILoader for PngIO {
+impl CAIReader for PngIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
         Ok(cai_data)
@@ -418,6 +422,54 @@ impl AssetIO for PngIO {
         std::fs::write(asset_path, png_buf)?;
 
         Ok(())
+    }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        PngIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(PngIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
+}
+
+impl RemoteRefEmbed for PngIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                }
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
