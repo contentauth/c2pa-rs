@@ -58,19 +58,18 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 6] = [
-    /*"avif",  // disable for now while we test a little more
+static SUPPORTED_TYPES: [&str; 12] = [
+    "avif",
     "heif",
-    "heic",*/
+    "heic",
     "mp4",
     "m4a",
     "mov",
     "application/mp4",
     "audio/mp4",
-    /*
     "image/avif",
     "image/heic",
-    "image/heif",*/
+    "image/heif",
     "video/mp4",
 ];
 
@@ -158,7 +157,8 @@ boxtype! {
     VpccBox => 0x76706343,
     Vp09Box => 0x76703039,
     MetaBox => 0x6D657461,
-    SchiBox => 0x73636869
+    SchiBox => 0x73636869,
+    IlocBox => 0x696C6F63
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -552,8 +552,8 @@ pub fn bmff_to_jumbf_exclusions(
     Ok(exclusions)
 }
 
-// `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-fn adjust_stco_and_co64<W: Write + CAIRead>(
+// `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
+fn adjust_known_offset<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -659,6 +659,174 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             output.seek(SeekFrom::Start(entry_start_pos))?;
             for e in entries {
                 output.write_u64::<BigEndian>(e)?;
+            }
+        }
+    }
+
+    // handle meta iloc
+    if let Some(iloc_list) = bmff_path_map.get("/meta/iloc") {
+        for iloc_token in iloc_list {
+            let iloc_box_info = &bmff_tree[*iloc_token].data;
+            if iloc_box_info.box_type != BoxType::IlocBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read iloc box and patch
+            output.seek(SeekFrom::Start(iloc_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::IlocBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, _flags) = read_box_header_ext(output)?; // box extensions
+
+            // read next 16 bits (in file byte order)
+            let mut iloc_header = [0u8, 2];
+            output.read_exact(&mut iloc_header)?;
+
+            // get offset size (high nibble)
+            let offset_size: u8 = (iloc_header[0] & 0xF0) >> 4;
+
+            // get length size (low nibble)
+            let length_size: u8 = iloc_header[0] & 0x0F;
+
+            // get box offset size (high nibble)
+            let base_offset_size: u8 = (iloc_header[1] & 0xF0) >> 4;
+
+            // get index size (low nibble)
+            let index_size: u8 = iloc_header[1] & 0x0F;
+
+            // get item count
+            let item_count = match version {
+                _v if version < 2 => output.read_u16::<BigEndian>()? as u32,
+                _v if version == 2 => output.read_u32::<BigEndian>()?,
+                _ => {
+                    return Err(Error::InvalidAsset(
+                        "Bad BMFF (unknown iloc format".to_string(),
+                    ))
+                }
+            };
+
+            // walk the iloc items and patch
+            for _i in 0..item_count {
+                // read item id
+                let _item_id = match version {
+                    _v if version < 2 => output.read_u16::<BigEndian>()? as u32,
+                    _v if version == 2 => output.read_u32::<BigEndian>()?,
+                    _ => {
+                        return Err(Error::InvalidAsset(
+                            "Bad BMFF: unknown iloc item".to_string(),
+                        ))
+                    }
+                };
+
+                // read constuction method
+                let constuction_method = if version == 1 || version == 2 {
+                    let mut cm_bytes = [0u8, 2];
+                    output.read_exact(&mut cm_bytes)?;
+
+                    // lower nibble of 2nd byte
+                    cm_bytes[1] & 0x0F
+                } else {
+                    0
+                };
+
+                // read data reference index
+                let _data_reference_index = output.read_u16::<BigEndian>()?;
+
+                let base_offset_file_pos = output.stream_position()?;
+                let base_offset = match base_offset_size {
+                    0 => 0_u64,
+                    4 => output.read_u32::<BigEndian>()? as u64,
+                    8 => output.read_u64::<BigEndian>()?,
+                    _ => {
+                        return Err(Error::InvalidAsset(
+                            "Bad BMFF: unknown iloc offset size".to_string(),
+                        ))
+                    }
+                };
+
+                // patch the offsets if needed
+                if constuction_method == 0 {
+                    // file offset construction method
+                    if base_offset_size == 4 {
+                        let new_offset = if adjust < 0 {
+                            u32::try_from(base_offset).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })? - u32::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                        } else {
+                            u32::try_from(base_offset).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })? + u32::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                        };
+
+                        output.seek(SeekFrom::Start(base_offset_file_pos))?;
+                        output.write_u32::<BigEndian>(new_offset)?;
+                    }
+
+                    if base_offset_size == 8 {
+                        let new_offset = if adjust < 0 {
+                            base_offset
+                                - u64::try_from(adjust.abs()).map_err(|_| {
+                                    Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                                })?
+                        } else {
+                            base_offset
+                                + u64::try_from(adjust).map_err(|_| {
+                                    Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                                })?
+                        };
+
+                        output.seek(SeekFrom::Start(base_offset_file_pos))?;
+                        output.write_u64::<BigEndian>(new_offset)?;
+                    }
+                }
+
+                // read extent count
+                let extent_count = output.read_u16::<BigEndian>()?;
+
+                // consume the extents
+                for _e in 0..extent_count {
+                    let _extent_index = if version == 1 || (version == 2 && index_size > 0) {
+                        match base_offset_size {
+                            4 => Some(output.read_u32::<BigEndian>()? as u64),
+                            8 => Some(output.read_u64::<BigEndian>()?),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    let _extent_offset = match offset_size {
+                        0 => 0_u64,
+                        4 => output.read_u32::<BigEndian>()? as u64,
+                        8 => output.read_u64::<BigEndian>()?,
+                        _ => {
+                            return Err(Error::InvalidAsset(
+                                "Bad BMFF: unknown iloc extent_offset size".to_string(),
+                            ))
+                        }
+                    };
+
+                    let _extent_length = match length_size {
+                        0 => 0_u64,
+                        4 => output.read_u32::<BigEndian>()? as u64,
+                        8 => output.read_u64::<BigEndian>()?,
+                        _ => {
+                            return Err(Error::InvalidAsset(
+                                "Bad BMFF: unknown iloc offset size".to_string(),
+                            ))
+                        }
+                    };
+                }
             }
         }
     }
@@ -1064,44 +1232,40 @@ impl AssetIO for BmffIO {
         temp_file.flush()?;
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-        match self.bmff_format.as_ref() {
-            "m4a" | "mp4" | "mov" => {
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
 
-                // rebuild box layout for output file
-                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
 
-                let size = temp_file.seek(SeekFrom::End(0))?;
-                temp_file.rewind()?;
-                build_bmff_tree(
-                    &mut temp_file,
-                    size,
-                    &mut output_bmff_tree,
-                    &root_token,
-                    &mut output_bmff_map,
-                )?;
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-                // adjust based on current layout
-                adjust_stco_and_co64(
-                    &mut temp_file,
-                    &output_bmff_tree,
-                    &output_bmff_map,
-                    offset_adjust,
-                )?;
-            }
-            _ => (), // todo: handle more patching cases as necessary
-        }
+        let size = temp_file.seek(SeekFrom::End(0))?;
+        temp_file.rewind()?;
+        build_bmff_tree(
+            &mut temp_file,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+        )?;
+
+        // adjust offsets based on current layout
+        adjust_known_offset(
+            &mut temp_file,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
 
         // copy temp file to asset
         std::fs::rename(temp_file.path(), asset_path)
@@ -1224,7 +1388,7 @@ impl AssetIO for BmffIO {
                 )?;
 
                 // adjust based on current layout
-                adjust_stco_and_co64(
+                adjust_known_offset(
                     &mut temp_file,
                     &output_bmff_tree,
                     &output_bmff_map,
