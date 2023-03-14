@@ -3118,32 +3118,137 @@ pub mod tests {
         }
     }
 
-    /*  enable when we renable HEIC
-        #[test]
-        #[cfg(feature = "file_io")]
-        fn test_no_xmp_err() {
-            let ap = fixture_path("sample1.heic");
-            let temp_dir = tempdir().expect("temp dir");
-            let op = temp_dir_path(&temp_dir, "sample1.heic");
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_heic() {
+        let ap = fixture_path("sample1.heic");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.heic");
 
-            // Create claims store.
-            let mut store = Store::new();
+        // Create claims store.
+        let mut store = Store::new();
 
-            // Create a new claim.
-            let mut claim1 = create_test_claim().unwrap();
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
 
-            // Do we generate JUMBF?
-            let signer = temp_signer();
+        // Do we generate JUMBF?
+        let signer = temp_signer();
 
-            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
-            claim1.set_remote_manifest("http://somecompany.com/someasset").unwrap();
-            store.commit_claim(claim1).unwrap();
-            let result = store.save_to_asset(&ap, &signer, &op);
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, &signer, &op).unwrap();
 
-            assert!(result.is_err());
-            assert_eq!(format!("{:?}", result.err().unwrap()), format!("{:?}", &Error::XmpNotSupported));
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
         }
-    */
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_avif() {
+        let ap = fixture_path("sample1.avif");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.avif");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, &signer, &op).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_heif() {
+        let ap = fixture_path("sample1.heif");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.heif");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, &signer, &op).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
 
     /*  todo: disable until we can generate a valid file with no xmp
     #[test]
