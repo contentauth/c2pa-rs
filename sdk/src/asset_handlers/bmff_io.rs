@@ -553,6 +553,7 @@ pub fn bmff_to_jumbf_exclusions(
 }
 
 // `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
+// todo: when fragment support is added adjust these (/moof/iloc, /moof/mfro, /moof/traf/saio, /sidx)
 fn adjust_known_offsets<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
