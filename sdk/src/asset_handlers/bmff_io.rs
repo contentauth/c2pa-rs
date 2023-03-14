@@ -553,7 +553,7 @@ pub fn bmff_to_jumbf_exclusions(
 }
 
 // `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-fn adjust_known_offset<W: Write + CAIRead>(
+fn adjust_known_offsets<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -706,7 +706,7 @@ fn adjust_known_offset<W: Write + CAIRead>(
                 _v if version == 2 => output.read_u32::<BigEndian>()?,
                 _ => {
                     return Err(Error::InvalidAsset(
-                        "Bad BMFF (unknown iloc format".to_string(),
+                        "Bad BMFF unknown iloc format".to_string(),
                     ))
                 }
             };
@@ -716,7 +716,7 @@ fn adjust_known_offset<W: Write + CAIRead>(
                 // read item id
                 let _item_id = match version {
                     _v if version < 2 => output.read_u16::<BigEndian>()? as u32,
-                    _v if version == 2 => output.read_u32::<BigEndian>()?,
+                    2 => output.read_u32::<BigEndian>()?,
                     _ => {
                         return Err(Error::InvalidAsset(
                             "Bad BMFF: unknown iloc item".to_string(),
@@ -1260,7 +1260,7 @@ impl AssetIO for BmffIO {
         )?;
 
         // adjust offsets based on current layout
-        adjust_known_offset(
+        adjust_known_offsets(
             &mut temp_file,
             &output_bmff_tree,
             &output_bmff_map,
@@ -1388,7 +1388,7 @@ impl AssetIO for BmffIO {
                 )?;
 
                 // adjust based on current layout
-                adjust_known_offset(
+                adjust_known_offsets(
                     &mut temp_file,
                     &output_bmff_tree,
                     &output_bmff_map,
