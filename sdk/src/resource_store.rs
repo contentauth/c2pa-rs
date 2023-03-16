@@ -29,14 +29,14 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
 /// A reference to a resource to be used in JSON serialization
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ResourceRef {
-    pub content_type: String,
+    pub format: String,
     pub identifier: String,
 }
 
 impl ResourceRef {
-    pub fn new<S: Into<String>, I: Into<String>>(content_type: S, identifier: I) -> Self {
+    pub fn new<S: Into<String>, I: Into<String>>(format: S, identifier: I) -> Self {
         Self {
-            content_type: content_type.into(),
+            format: format.into(),
             identifier: identifier.into(),
         }
     }
@@ -104,7 +104,7 @@ impl ResourceStore {
         R: Into<Vec<u8>>,
     {
         let id = self.id_from(key, format);
-        self.add(id.clone(), value)?;
+        self.add(&id, value)?;
         Ok(ResourceRef::new(format, id))
     }
 
@@ -119,7 +119,7 @@ impl ResourceStore {
             let path = base.join(id.into());
             std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             #[allow(clippy::expect_used)]
-            std::fs::write(path, value.into()).expect("write failed");
+            std::fs::write(path, value.into())?;
             return Ok(());
         }
         self.resources.insert(id.into(), value.into());
@@ -204,7 +204,7 @@ mod tests {
             "instance_id": "12345",
             "assertions": [],
             "thumbnail": {
-                "content_type": "image/jpeg",
+                "format": "image/jpeg",
                 "identifier": "abc123"
             },
             "ingredients": [{
@@ -212,9 +212,9 @@ mod tests {
                 "format": "image/jpeg",
                 "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
                 "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-                "is_parent": true,
+                "relationship": "parentOf",
                 "thumbnail": {
-                    "content_type": "image/jpeg",
+                    "format": "image/jpeg",
                     "identifier": "cba321"
                 }
             }]

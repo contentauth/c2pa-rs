@@ -151,12 +151,12 @@ impl Manifest {
         self.title.as_deref()
     }
 
-    /// Returns thumbnail tuple with Some((content_type, bytes)) or None
+    /// Returns thumbnail tuple with Some((format, bytes)) or None
     ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
-            .and_then(|t| Some(t.content_type.as_str()).zip(self.resources.get(&t.identifier).ok()))
+            .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
     /// Returns a thumbnail ResourceRef or `None`.
@@ -669,9 +669,9 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some((content_type, data)) = self.thumbnail() {
+        if let Some((format, data)) = self.thumbnail() {
             claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, content_type),
+                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
                 data.to_vec(),
             ))?;
         }
@@ -1501,8 +1501,8 @@ pub(crate) mod tests {
         manifest.embed(&output, &output, &signer).expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
-        let (content_type, image) = active_manifest.thumbnail().unwrap();
-        assert_eq!(content_type, "image/jpeg");
+        let (format, image) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
         assert_eq!(image.into_owned(), thumb_data);
     }
 
@@ -1511,16 +1511,16 @@ pub(crate) mod tests {
         "claim_generator": "test",
         "format" : "image/jpeg",
         "thumbnail": {
-            "content_type": "image/jpeg",
+            "format": "image/jpeg",
             "identifier": "IMG_0003.jpg"
         },
         "ingredients": [{
             "title": "A.jpg",
             "format": "image/jpeg",
             "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-            "is_parent": true,
+            "relationship": "parentOf",
             "thumbnail": {
-                "content_type": "image/png",
+                "format": "image/png",
                 "identifier": "exp-test1.png"
             }
         }]
@@ -1561,8 +1561,8 @@ pub(crate) mod tests {
         let m = manifest_store.get_active().unwrap();
 
         assert!(m.thumbnail().is_some());
-        let (content_type, image) = m.thumbnail().unwrap();
-        assert_eq!(content_type, "image/jpeg");
+        let (format, image) = m.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
         // println!("{manifest_store}");
     }
@@ -1607,8 +1607,8 @@ pub(crate) mod tests {
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let active_manifest = manifest_store.get_active().unwrap();
-        let (content_type, _) = active_manifest.thumbnail().unwrap();
-        assert_eq!(content_type, "image/jpeg");
+        let (format, _) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
     }
 
     #[test]
