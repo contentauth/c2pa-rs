@@ -17,6 +17,8 @@ use std::{
     path::Path,
 };
 
+use tempfile::NamedTempFile;
+
 use crate::error::Result;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,15 +46,17 @@ impl CAIRead for std::fs::File {}
 impl CAIRead for std::io::Cursor<&[u8]> {}
 impl CAIRead for std::io::Cursor<&mut [u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
+impl CAIRead for NamedTempFile {}
 
 pub trait CAIReadWrite: CAIRead + Write {}
 
 impl CAIReadWrite for std::fs::File {}
 impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
 impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
+impl CAIReadWrite for NamedTempFile {}
 
 // Interface for in memory CAI reading
-pub trait CAILoader {
+pub trait CAIReader: Sync + Send {
     // Return entire CAI block as Vec<u8>
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>>;
 
@@ -60,23 +64,40 @@ pub trait CAILoader {
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String>;
 }
 
-pub trait CAIWriter<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized> {
+pub trait CAIWriter: Sync + Send {
+    // Writes store_bytes into output_steam using input_stream as the source asset
     fn write_cai(
         &self,
-        input_stream: &mut R,
-        output_stream: &mut W,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()>;
-}
 
-pub trait CAIObjectLocations<R: Read + Seek + ?Sized> {
+    // Finds location where the C2PA manifests will be placed in the asset specified by input_stream
     fn get_object_locations_from_stream(
         &self,
-        input_stream: &mut R,
+        input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>>;
 }
 
-pub trait AssetIO {
+pub trait AssetIO: Sync + Send {
+    // create instance of AssetIO handler.  The extension type is passed in so
+    // that format specific customizations can be used during manifest embedding
+    fn new(asset_type: &str) -> Self
+    where
+        Self: Sized;
+
+    // return AssetIO handler for this asset type
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO>;
+
+    // return streaming reader for this asset type
+    fn get_reader(&self) -> &dyn CAIReader;
+
+    // return streaming writer if available
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        None
+    }
+
     // Return entire CAI block as Vec<u8>
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
 
@@ -89,13 +110,23 @@ pub trait AssetIO {
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
-    // Returns [`AssetPatch`] trait if this I/O handler supports patching.
+    // remove entire C2PA manifest store from asset
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
+
+    // list of supported extensions and mime types
+    fn supported_types(&self) -> &[&str];
+
+    /// OPTIONAL INTERFACES
+
+    // returns [`AssetPatch`] trait if this I/O handler supports patching.
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
 
-    // Remove entire CAI block from asset
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
+    // returns [`RemoteRefEmbed`] trait if this I/O handler supports remote reference embedding.
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        None
+    }
 }
 
 // `AssetPatch` optimizes output generation for asset_io handlers that
@@ -107,4 +138,21 @@ pub trait AssetPatch {
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+}
+
+// Type of remote reference to embed.  Some of the listed
+// emums are for future uses and experiments.
+#[allow(unused_variables)]
+pub enum RemoteRefEmbedType {
+    Xmp(String),
+    StegoS(String),
+    StegoB(Vec<u8>),
+    Watermark(String),
+}
+
+// `RemoteRefEmbed` is used to embed remote references to external manifests.  The
+// technique used to embed a reference varies bases on the type of embedding.  Not
+// all embedding choices need be supported.
+pub trait RemoteRefEmbed {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
 }

@@ -67,11 +67,13 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     hash: Option<String>,
 
-    /// Set to `true` if this is the parent ingredient.
+    /// Set to `ParentOf` if this is the parent ingredient.
     ///
     /// There can only be one parent ingredient in the ingredients.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_parent: Option<bool>,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // is_parent: Option<bool>,
+    #[serde(default = "default_relationship")]
+    relationship: Relationship,
 
     /// The active manifest label (if one exists).
     ///
@@ -110,6 +112,10 @@ fn default_instance_id() -> String {
 
 fn default_format() -> String {
     "application/octet-stream".to_owned()
+}
+
+fn default_relationship() -> Relationship {
+    Relationship::default()
 }
 
 impl Ingredient {
@@ -169,12 +175,12 @@ impl Ingredient {
         self.thumbnail.as_ref()
     }
 
-    /// Returns thumbnail tuple Some((content_type, bytes)) or None
+    /// Returns thumbnail tuple Some((format, bytes)) or None
     ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
-            .and_then(|t| Some(t.content_type.as_str()).zip(self.resources.get(&t.identifier).ok()))
+            .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
@@ -193,7 +199,7 @@ impl Ingredient {
 
     /// Returns `true` if this is labeled as the parent ingredient.
     pub fn is_parent(&self) -> bool {
-        self.is_parent.unwrap_or(false)
+        self.relationship == Relationship::ParentOf
     }
 
     /// Returns a reference to the [`ValidationStatus`]s if they exist.
@@ -263,7 +269,7 @@ impl Ingredient {
     /// Only one ingredient should be flagged as a parent.
     /// Use Manifest.set_parent to ensure this is the only parent ingredient
     pub fn set_is_parent(&mut self) -> &mut Self {
-        self.is_parent = Some(true);
+        self.relationship = Relationship::ParentOf;
         self
     }
 
@@ -277,17 +283,14 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Sets the thumbnail content_type and image data.
+    /// Sets the thumbnail format and image data.
     pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
-        content_type: S,
+        format: S,
         bytes: B,
     ) -> Result<&mut Self> {
         let base_id = self.instance_id().to_string();
-        self.thumbnail = Some(
-            self.resources
-                .add_with(&base_id, &content_type.into(), bytes)?,
-        );
+        self.thumbnail = Some(self.resources.add_with(&base_id, &format.into(), bytes)?);
         Ok(self)
     }
 
@@ -696,11 +699,6 @@ impl Ingredient {
             None => Vec::new(),
         };
 
-        let is_parent = match ingredient_assertion.relationship {
-            Relationship::ParentOf => Some(true),
-            Relationship::ComponentOf => None,
-        };
-
         let active_manifest = ingredient_assertion
             .c2pa_manifest
             .and_then(|hash_url| jumbf::labels::manifest_label_from_uri(&hash_url.url()));
@@ -746,7 +744,7 @@ impl Ingredient {
             ingredient.set_thumbnail(format, image)?;
         }
 
-        ingredient.is_parent = is_parent;
+        ingredient.relationship = ingredient_assertion.relationship;
         ingredient.active_manifest = active_manifest;
         if !validation_status.is_empty() {
             ingredient.validation_status = Some(validation_status)
@@ -839,12 +837,6 @@ impl Ingredient {
             None => None,
         };
 
-        let relationship = if self.is_parent() {
-            Relationship::ParentOf
-        } else {
-            Relationship::ComponentOf
-        };
-
         // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
         if thumbnail.is_none() {
             if let Some((format, data)) = self.thumbnail() {
@@ -865,7 +857,7 @@ impl Ingredient {
         );
 
         ingredient_assertion.c2pa_manifest = c2pa_manifest;
-        ingredient_assertion.relationship = relationship;
+        ingredient_assertion.relationship = self.relationship.clone();
         ingredient_assertion.thumbnail = thumbnail;
         ingredient_assertion.metadata = self.metadata.clone();
         ingredient_assertion.validation_status = self.validation_status.clone();
@@ -1232,8 +1224,24 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.validation_status(), None);
+        assert!(ingredient.validation_status().is_none());
+        assert!(ingredient.manifest_data().is_some());
     }
+
+    /*  this test cannot succeed because memory loading path does not support validation status at the moment
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn test_jpg_cloud_failure() {
+        let ap = fixture_path("cloudx.jpg");
+        let ingredient = Ingredient::from_file(ap).expect("from_file");
+        println!("ingredient = {ingredient}");
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::MANIFEST_INACCESSIBLE
+        );
+    }
+    */
 
     #[test]
     #[cfg(feature = "file_io")]
