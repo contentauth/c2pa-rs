@@ -36,8 +36,8 @@ pub fn info(path: &Path) -> Result<()> {
         }
     }
 
+    let file_size = std::fs::metadata(path).unwrap().len();
     if let Some(manifest_data) = ingredient.manifest_data() {
-        let file_size = std::fs::metadata(path).unwrap().len();
         if is_cloud_manifest {
             println!(
                 "Remote manifest store size = {} (file size = {})",
@@ -46,7 +46,7 @@ pub fn info(path: &Path) -> Result<()> {
             );
         } else {
             println!(
-                "Manifest store size = {} ({:.2}% of {})",
+                "Manifest store size = {} ({:.2}% of file size {})",
                 manifest_data.len(),
                 (manifest_data.len() as f64 / file_size as f64) * 100f64,
                 file_size
@@ -67,9 +67,9 @@ pub fn info(path: &Path) -> Result<()> {
             n => println!("{n} manifests"),
         }
     } else if is_cloud_manifest {
-        println!("Unable to fetch cloud manifest");
+        println!("Unable to fetch cloud manifest. (file size = {file_size})");
     } else {
-        println!("No C2PA Manifests");
+        println!("No C2PA Manifests. (file size = {file_size})");
     }
     Ok(())
 }

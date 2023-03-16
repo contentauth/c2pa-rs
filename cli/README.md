@@ -69,7 +69,8 @@ The following table describes the command-line options.
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
 | `--help` | `-h` | N/A | Display CLI help information. |
 | `--info` |  | N/A | Display brief information about the file. |
-| `--output` | `-o` | `<output_file>` | Specifies path to output file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file). |
+| `--ingredient` | `-i` | N/A | Creates an Ingredient definition in --output folder. |
+| `--output` | `-o` | `<output_file>` | Specifies path to output folder or file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file). |
 | `--manifest` | `-m` | `<manifest_file>` | Specifies a manifest file to add to an asset file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file).
 | `--parent` | `-p` | `<parent_file>` | Specifies path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | Specify URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)|
