@@ -629,7 +629,12 @@ impl Manifest {
         if self.thumbnail().is_none() {
             #[cfg(feature = "add_thumbnails")]
             if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
+                // Do not write this as a file when reading from files
+                let base_path = self.resources_mut().take_base_path();
                 self.set_thumbnail(format, image)?;
+                if let Some(path) = base_path {
+                    self.resources_mut().set_base_path(path)
+                }
             }
         }
         Ok(())

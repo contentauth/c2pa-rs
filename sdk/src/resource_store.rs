@@ -69,6 +69,11 @@ impl ResourceStore {
         self.base_path = Some(base_path.into());
     }
 
+    #[cfg(feature = "file_io")]
+    pub fn take_base_path(&mut self) -> Option<PathBuf> {
+        self.base_path.take()
+    }
+
     ///  generate a unique id for a given content type (adds a file extension)
     pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
