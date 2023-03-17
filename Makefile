@@ -33,7 +33,7 @@ test-wasm-web:
 	
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-localte test-wasm
+test: check-format check-docs clippy test-local test-wasm-web
 
 # Auto format code according to standards
 fmt: 
