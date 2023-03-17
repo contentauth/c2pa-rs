@@ -25,7 +25,7 @@ use crate::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
         tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
@@ -91,8 +91,13 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 
+    load_jumbf_from_stream(asset_type, &mut buf_reader)
+}
+
+/// Return jumbf block from stream asset
+pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let cai_block = match get_cailoader_handler(asset_type) {
-        Some(asset_handler) => asset_handler.read_cai(&mut buf_reader)?,
+        Some(asset_handler) => asset_handler.read_cai(input_stream)?,
         None => return Err(Error::UnsupportedType),
     };
     if cai_block.is_empty() {
@@ -100,29 +105,33 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
     }
     Ok(cai_block)
 }
-
 /// writes the jumbf data in store_bytes
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
 pub fn save_jumbf_to_stream(
     asset_type: &str,
-    stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
     store_bytes: &[u8],
 ) -> Result<()> {
     match get_caiwriter_handler(asset_type) {
-        Some(asset_handler) => asset_handler.write_cai(stream, store_bytes),
+        Some(asset_handler) => asset_handler.write_cai(input_stream, output_stream, store_bytes),
         None => Err(Error::UnsupportedType),
     }
 }
 
-/// writes the jumbf data in store_bytes into an asset in data and the updatedcar data
-pub fn save_jumbf_to_memory(
-    asset_type: &str,
-    data: Vec<u8>,
-    store_bytes: &[u8],
-) -> Result<Vec<u8>> {
-    let mut stream = Cursor::new(data);
-    save_jumbf_to_stream(asset_type, &mut stream, store_bytes)?;
-    Ok(stream.into_inner())
+/// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
+pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut input_stream = Cursor::new(data);
+    let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
+    let mut output_stream = Cursor::new(output_vec);
+
+    save_jumbf_to_stream(
+        asset_type,
+        &mut input_stream,
+        &mut output_stream,
+        store_bytes,
+    )?;
+    Ok(output_stream.into_inner())
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
@@ -253,7 +262,7 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
 
 pub fn object_locations_from_stream(
     format: &str,
-    stream: &mut dyn CAIReadWrite,
+    stream: &mut dyn CAIRead,
 ) -> Result<Vec<HashObjectPositions>> {
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(stream),
@@ -328,7 +337,8 @@ pub mod tests {
 
     #[test]
     fn test_get_writer() {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![Box::new(JpegIO::new(""))];
+        let handlers: Vec<Box<dyn AssetIO>> =
+            vec![Box::new(JpegIO::new("")), Box::new(PngIO::new(""))];
 
         // build handler map
         for h in handlers {
@@ -344,7 +354,6 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
-            Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
         ];

@@ -17,9 +17,11 @@ use std::{
     path::Path,
 };
 
+use tempfile::NamedTempFile;
+
 use crate::error::Result;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
     Cai,
     Xmp,
@@ -33,7 +35,7 @@ impl fmt::Display for HashBlockObjectType {
 }
 #[derive(Debug)]
 pub struct HashObjectPositions {
-    pub offset: usize, // offset from begining of file to the beginning of object
+    pub offset: usize, // offset from beginning of file to the beginning of object
     pub length: usize, // length of object
     pub htype: HashBlockObjectType, // type of hash block object
 }
@@ -44,12 +46,14 @@ impl CAIRead for std::fs::File {}
 impl CAIRead for std::io::Cursor<&[u8]> {}
 impl CAIRead for std::io::Cursor<&mut [u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
+impl CAIRead for NamedTempFile {}
 
 pub trait CAIReadWrite: CAIRead + Write {}
 
 impl CAIReadWrite for std::fs::File {}
 impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
 impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
+impl CAIReadWrite for NamedTempFile {}
 
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {
@@ -61,28 +65,42 @@ pub trait CAIReader: Sync + Send {
 }
 
 pub trait CAIWriter: Sync + Send {
-    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()>;
+    // Writes store_bytes into output_steam using input_stream as the source asset
+    fn write_cai(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()>;
 
+    // Finds location where the C2PA manifests will be placed in the asset specified by input_stream
     fn get_object_locations_from_stream(
         &self,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>>;
+
+    // Remove entire C2PA manifest store from asset
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()>;
 }
 
 pub trait AssetIO: Sync + Send {
-    // create instance of AssetIO handler.  The extension type is passed in so
+    // Create instance of AssetIO handler.  The extension type is passed in so
     // that format specific customizations can be used during manifest embedding
     fn new(asset_type: &str) -> Self
     where
         Self: Sized;
 
-    // return AssetIO handler for this asset type
+    // Return AssetIO handler for this asset type
     fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO>;
 
-    // return streaming reader for this asset type
+    // Return streaming reader for this asset type
     fn get_reader(&self) -> &dyn CAIReader;
 
-    // return streaming writer if available
+    // Return streaming writer if available
     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         None
     }
@@ -99,20 +117,20 @@ pub trait AssetIO: Sync + Send {
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
-    // remove entire C2PA manifest store from asset
+    // Remove entire C2PA manifest store from asset
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 
-    // list of supported extensions and mime types
+    // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
     /// OPTIONAL INTERFACES
 
-    // returns [`AssetPatch`] trait if this I/O handler supports patching.
+    // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
 
-    // returns [`RemoteRefEmbed`] trait if this I/O handler supports remote reference embedding.
+    // Returns [`RemoteRefEmbed`] trait if this I/O handler supports remote reference embedding.
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
@@ -143,5 +161,13 @@ pub enum RemoteRefEmbedType {
 // technique used to embed a reference varies bases on the type of embedding.  Not
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
+    // Embed RemoteRefEmbedType into the asset
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
+    // Embed RemoteRefEmbedType into the asset stream
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()>;
 }

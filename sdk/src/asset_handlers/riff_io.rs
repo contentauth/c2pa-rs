@@ -22,8 +22,8 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashBlockObjectType,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     jumbf_io::get_file_extension,
@@ -334,6 +334,15 @@ impl RemoteRefEmbed for RiffIO {
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 

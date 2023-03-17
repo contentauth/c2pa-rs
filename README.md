@@ -60,7 +60,6 @@ NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 The Rust SDK crate provides:
 
-* `async_signer` enables signing via asynchronous services which require `async` support.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)

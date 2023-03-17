@@ -179,7 +179,7 @@ impl Default for ResourceStore {
 }
 
 #[cfg(test)]
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -187,7 +187,7 @@ mod tests {
     use crate::{utils::test::temp_signer, Manifest};
 
     #[test]
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";
@@ -238,15 +238,12 @@ mod tests {
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        manifest
-            .embed_stream("jpeg", &mut stream, &signer)
+        let output_image = manifest
+            .embed_stream("jpeg", &mut stream, signer.as_ref())
             .expect("embed_stream");
 
-        // get the updated image
-        let image = stream.into_inner();
-
         let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
         // println!("{manifest_store}");
     }
 }

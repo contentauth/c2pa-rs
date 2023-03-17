@@ -11,21 +11,27 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "openssl_sign")]
 mod rsa_signer;
 pub(crate) use rsa_signer::RsaSigner;
 
+#[cfg(feature = "openssl_sign")]
 mod rsa_validator;
 pub(crate) use rsa_validator::RsaValidator;
 
+#[cfg(feature = "openssl_sign")]
 mod ec_signer;
 pub(crate) use ec_signer::EcSigner;
 
+#[cfg(feature = "openssl_sign")]
 mod ec_validator;
 pub(crate) use ec_validator::EcValidator;
 
+#[cfg(feature = "openssl_sign")]
 mod ed_signer;
 pub(crate) use ed_signer::EdSigner;
 
+#[cfg(feature = "openssl_sign")]
 mod ed_validator;
 pub(crate) use ed_validator::EdValidator;
 
@@ -35,33 +41,42 @@ pub(crate) mod temp_signer;
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
 
+#[cfg(feature = "openssl_sign")]
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "async_signer")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
-
+#[cfg(feature = "openssl_sign")]
 pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
-    if certs.len() > 1 {
-        for (i, c) in certs.iter().enumerate() {
-            if let Some(next_c) = certs.get(i + 1) {
-                if let Ok(pkey) = next_c.public_key() {
-                    if let Ok(verified) = c.verify(&pkey) {
-                        if !verified {
+    {
+        if certs.len() > 1 {
+            for (i, c) in certs.iter().enumerate() {
+                if let Some(next_c) = certs.get(i + 1) {
+                    if let Ok(pkey) = next_c.public_key() {
+                        if let Ok(verified) = c.verify(&pkey) {
+                            if !verified {
+                                return false;
+                            }
+                        } else {
                             return false;
                         }
                     } else {
                         return false;
                     }
-                } else {
-                    return false;
                 }
             }
         }
+        true
     }
+}
+
+#[cfg(not(feature = "openssl_sign"))]
+pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     true
 }
 
+#[cfg(feature = "openssl_sign")]
 pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     let mut certs: Vec<X509> = Vec::new();
     for cert_der in cert_ders {
@@ -73,4 +88,9 @@ pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     }
 
     check_chain_order(&certs)
+}
+
+#[cfg(not(feature = "openssl_sign"))]
+pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
+    true
 }

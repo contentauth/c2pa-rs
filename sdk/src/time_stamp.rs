@@ -127,7 +127,7 @@ pub fn get_ta_url() -> Option<String> {
 
 /// internal only function to work around bug in serialization of TimeStampResponse
 /// so we just return the data directly
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 fn time_stamp_request_http(
     url: &str,
     request: &crate::asn1::rfc3161::TimeStampReq,
@@ -195,7 +195,7 @@ fn time_stamp_request_http(
 /// This is a wrapper around [time_stamp_request_http] that constructs the low-level
 /// ASN.1 request object with reasonable defaults.
 
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 fn time_stamp_message_http(
     url: &str,
     message: &[u8],
@@ -239,7 +239,7 @@ impl std::ops::Deref for TimeStampResponse {
 
 impl TimeStampResponse {
     /// Whether the time stamp request was successful.
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
@@ -290,7 +290,7 @@ impl TimeStampResponse {
 /// Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
 #[allow(unused_variables)]
 pub fn timestamp_data(url: &str, data: &[u8]) -> Result<Vec<u8>> {
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     {
         let ts = time_stamp_message_http(url, data, x509_certificate::DigestAlgorithm::Sha256)?;
 
@@ -299,7 +299,7 @@ pub fn timestamp_data(url: &str, data: &[u8]) -> Result<Vec<u8>> {
 
         Ok(ts)
     }
-    #[cfg(not(feature = "sign"))]
+    #[cfg(not(feature = "openssl_sign"))]
     {
         Err(Error::WasmNoCrypto)
     }
@@ -392,7 +392,6 @@ impl TstContainer {
         }
     }
 
-    #[cfg(feature = "sign")]
     pub fn add_token(&mut self, token: TstToken) {
         self.tst_tokens.push(token);
     }
@@ -405,14 +404,17 @@ impl Default for TstContainer {
 }
 
 /// Wrap rfc3161 TimeStampRsp in COSE sigTst object
-#[cfg(feature = "sign")]
 pub fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
-    let token = TstToken {
-        val: ts_data.to_vec(),
-    };
+    if cfg!(feature = "openssl_sign") {
+        let token = TstToken {
+            val: ts_data.to_vec(),
+        };
 
-    let mut container = TstContainer::new();
-    container.add_token(token);
+        let mut container = TstContainer::new();
+        container.add_token(token);
 
-    container
+        container
+    } else {
+        TstContainer::new()
+    }
 }

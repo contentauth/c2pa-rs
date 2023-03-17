@@ -123,7 +123,6 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
 }
 
 /// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-#[cfg(feature = "async_signer")]
 pub async fn cose_sign_async(
     signer: &dyn crate::AsyncSigner,
     data: &[u8],
@@ -337,7 +336,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::sign_claim;
-    use crate::{claim::Claim, openssl::RsaSigner, utils::test::temp_signer};
+    use crate::{claim::Claim, utils::test::temp_signer};
 
     #[test]
     fn test_sign_claim() {
@@ -346,24 +345,19 @@ mod tests {
 
         let claim_bytes = claim.data().unwrap();
 
-        let box_size = 10000;
-
         let signer = temp_signer();
+        let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size).unwrap();
+        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    struct BogusSigner {
-        signer: RsaSigner,
-    }
+    struct BogusSigner {}
 
     impl BogusSigner {
         pub fn new() -> Self {
-            BogusSigner {
-                signer: temp_signer(),
-            }
+            BogusSigner {}
         }
     }
 
@@ -374,15 +368,17 @@ mod tests {
         }
 
         fn alg(&self) -> crate::SigningAlg {
-            self.signer.alg()
+            crate::SigningAlg::Ps256
         }
 
         fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
-            self.signer.certs()
+            let cert_vec: Vec<u8> = Vec::new();
+            let certs = vec![cert_vec];
+            Ok(certs)
         }
 
         fn reserve_size(&self) -> usize {
-            self.signer.reserve_size()
+            1024
         }
     }
 

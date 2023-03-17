@@ -483,7 +483,6 @@ impl Claim {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
-    #[cfg(feature = "file_io")]
     pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }
@@ -710,7 +709,6 @@ impl Claim {
     }
 
     // crate private function to allow for patching a data hash with final contents
-    #[cfg(feature = "sign")]
     pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
         let mut replacement_assertion = data_hash.to_assertion()?;
 
