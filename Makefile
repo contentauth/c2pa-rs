@@ -31,6 +31,9 @@ test-no-defaults:
 test-wasm:
 	cd sdk && wasm-pack test --node
 
+test-wasm-web:
+	cd sdk && wasm-pack test --chrome --headless -- --features="remote_wasm_sign"
+	
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
 test: check-format check-docs clippy test-local test-no-defaults test-wasm
