@@ -1554,11 +1554,19 @@ impl Store {
     pub fn save_to_stream(
         &mut self,
         format: &str,
-        stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save_stream(format, stream, signer.reserve_size())?;
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
+
+        let jumbf_bytes = self.start_save_stream(
+            format,
+            input_stream,
+            &mut intermediate_stream,
+            signer.reserve_size(),
+        )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
@@ -1567,7 +1575,7 @@ impl Store {
         match self.finish_save_stream(
             jumbf_bytes,
             format,
-            stream,
+            &mut intermediate_stream,
             output_stream,
             sig,
             &sig_placeholder,
@@ -1586,17 +1594,23 @@ impl Store {
     /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
     /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
-    /// On return a tuple with a Vec<ill contain the new manifest signed with signer
+    /// Returns a tuple (output asset, manifest store) with a Vec<u8> containing the output asset and a Vec<u8> containing the insert manifest store.  (output asset, )
     pub(crate) async fn save_to_memory_remote_signed(
         &mut self,
         format: &str,
         asset: &[u8],
         remote_signer: &dyn crate::signer::RemoteSigner,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        let mut stream = Cursor::new(asset); 
+        let mut input_stream = Cursor::new(asset);
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
 
-        let jumbf_bytes =
-            self.start_save_stream(format, &mut stream, remote_signer.reserve_size())?;
+        let jumbf_bytes = self.start_save_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            remote_signer.reserve_size(),
+        )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = remote_signer.sign_remote(&pc.data()?).await?;
@@ -1605,7 +1619,7 @@ impl Store {
         match self.finish_save_to_memory(
             jumbf_bytes,
             format,
-            stream.into_inner(),
+            &output_stream.into_inner(),
             sig,
             &sig_placeholder,
         ) {
@@ -1792,20 +1806,61 @@ impl Store {
         &mut self,
         format: &str,
         input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         let mut data;
-        // 1) Add DC provenance XMP
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
 
+        // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        // todo:: stream support for XMP write
+        match pc.remote_manifest() {
+            crate::claim::RemoteManifest::Remote(url) => {
+                if let Some(h) = get_assetio_handler(format) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        // remove any previous c2pa manifest from the asset
+                        let tmp_output: Vec<u8> = Vec::new();
+                        let mut tmp_stream = Cursor::new(tmp_output);
+
+                        if let Some(manifest_writer) = h.get_writer(format) {
+                            manifest_writer
+                                .remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                            // add external ref if possible
+                            external_ref_writer.embed_reference_to_stream(
+                                &mut tmp_stream,
+                                &mut intermediate_stream,
+                                RemoteRefEmbedType::Xmp(url),
+                            )?;
+                        } else {
+                            return Err(Error::XmpNotSupported);
+                        }
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
+                } else {
+                    return Err(Error::UnsupportedType);
+                }
+            }
+            _ => {
+                // just clone stream
+                input_stream.rewind()?;
+                std::io::copy(input_stream, &mut intermediate_stream)?;
+            }
+        }
 
         // 2) Get hash ranges if needed, do not generate for update manifests
-        let mut hash_ranges = object_locations_from_stream(format, input_stream)?;
+        let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
         let hashes: Vec<DataHash> = if pc.update_manifest() {
             Vec::new()
         } else {
-            Store::generate_data_hashes_for_stream(input_stream, pc.alg(), &mut hash_ranges, false)?
+            Store::generate_data_hashes_for_stream(
+                &mut intermediate_stream,
+                pc.alg(),
+                &mut hash_ranges,
+                false,
+            )?
         };
 
         // add the placeholder data hashes to provenance claim so that the required space is reserved
@@ -1823,21 +1878,23 @@ impl Store {
         data = self.to_jumbf_internal(reserve_size)?;
         let jumbf_size = data.len();
 
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-        save_jumbf_to_stream(format, input_stream, &mut output_stream, &data)?;
+        intermediate_stream.rewind()?;
+        save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
 
         // 4)  determine final object locations and patch the asset hashes with correct offset
         // replace the source with correct asset hashes so that the claim hash will be correct
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // get the final hash ranges, but not for update manifests
-        let mut new_hash_ranges = object_locations_from_stream(format, &mut output_stream)?;
+        intermediate_stream.rewind()?;
+        output_stream.rewind()?;
+        std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+        let mut new_hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
         let updated_hashes = if pc.update_manifest() {
             Vec::new()
         } else {
             Store::generate_data_hashes_for_stream(
-                &mut output_stream,
+                &mut intermediate_stream,
                 pc.alg(),
                 &mut new_hash_ranges,
                 true,

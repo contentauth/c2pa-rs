@@ -23,7 +23,7 @@ use conv::ValueFrom;
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -422,6 +422,46 @@ impl CAIWriter for PngIO {
 
         Ok(positions)
     }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        // get png byte
+        let ps = get_png_chunk_positions(input_stream)?;
+
+        // get image bytes
+        input_stream.rewind()?;
+        let mut png_buf: Vec<u8> = Vec::new();
+        input_stream.read_to_end(&mut png_buf)?;
+
+        /*  splice in new chunk.  Each PNG chunk has the following format:
+                chunk data length (4 bytes big endian)
+                chunk identifier (4 byte character sequence)
+                chunk data (0 - n bytes of chunk data)
+                chunk crc (4 bytes in crc in format defined in PNG spec)
+        */
+
+        // erase existing
+        let empty_buf = Vec::new();
+        let mut iter = ps.into_iter();
+        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
+            // replace existing CAI
+            let start = usize::value_from(existing_cai.start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::value_from(existing_cai.end())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            png_buf.splice(start..end, empty_buf.iter().cloned());
+        }
+
+        // save png data
+        output_stream.write_all(&png_buf)?;
+
+        Ok(())
+    }
 }
 
 impl AssetIO for PngIO {
@@ -548,6 +588,14 @@ impl RemoteRefEmbed for PngIO {
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
+    }
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 
@@ -718,6 +766,31 @@ pub mod tests {
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match png_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_remove_c2pa_from_stream() {
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let source_bytes = std::fs::read(source).unwrap();
+        let mut source_stream = Cursor::new(source_bytes);
+
+        let png_io = PngIO {};
+        let png_writer = png_io.get_writer("png").unwrap();
+
+        let output_bytes = Vec::new();
+        let mut output_stream = Cursor::new(output_bytes);
+
+        png_writer
+            .remove_cai_store_from_stream(&mut source_stream, &mut output_stream)
+            .unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        let png_reader = png_io.get_reader();
+        match png_reader.read_cai(&mut output_stream) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

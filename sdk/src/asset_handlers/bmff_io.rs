@@ -28,7 +28,10 @@ use tempfile::Builder;
 
 use crate::{
     assertions::ExclusionsMap,
-    asset_io::{AssetIO, AssetPatch, CAIRead, CAIReader, HashObjectPositions, RemoteRefEmbed},
+    asset_io::{
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
+    },
     error::{Error, Result},
     utils::hash_utils::{vec_compare, Exclusion},
 };
@@ -1530,6 +1533,15 @@ impl RemoteRefEmbed for BmffIO {
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 #[cfg(test)]

@@ -28,7 +28,7 @@ use tempfile::Builder;
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -310,9 +310,6 @@ impl CAIWriter for JpegIO {
                 seg_data.extend(store_bytes);
             }
 
-            //let count_before = jpeg.segments_by_marker(markers::APP11).count();
-            //let cloned_data = seg_data.clone();
-
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
             jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
@@ -427,6 +424,29 @@ impl CAIWriter for JpegIO {
         }
 
         Ok(positions)
+    }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
+        let mut buf = Vec::new();
+        // read the whole asset
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
+
+        output_stream.rewind()?;
+        jpeg.encoder()
+            .write_to(output_stream)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+
+        Ok(())
     }
 }
 
@@ -543,6 +563,15 @@ impl RemoteRefEmbed for JpegIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
 }
 
 #[cfg(test)]
@@ -586,6 +615,31 @@ pub mod tests {
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match jpeg_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_remove_c2pa_from_stream() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let source_bytes = std::fs::read(source).unwrap();
+        let mut source_stream = Cursor::new(source_bytes);
+
+        let jpeg_io = JpegIO {};
+        let jpg_writer = jpeg_io.get_writer("jpg").unwrap();
+
+        let output_bytes = Vec::new();
+        let mut output_stream = Cursor::new(output_bytes);
+
+        jpg_writer
+            .remove_cai_store_from_stream(&mut source_stream, &mut output_stream)
+            .unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        let jpg_reader = jpeg_io.get_reader();
+        match jpg_reader.read_cai(&mut output_stream) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

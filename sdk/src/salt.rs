@@ -55,7 +55,7 @@ impl Default for DefaultSalt {
 
 impl SaltGenerator for DefaultSalt {
     fn generate_salt(&self) -> Option<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")] // auto generation not supported on wasm
+        #[cfg(feature = "openssl_sign")]
         {
             let mut salt = vec![0u8; self.salt_len];
             openssl::rand::rand_bytes(&mut salt).ok()?;

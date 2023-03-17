@@ -78,6 +78,13 @@ pub trait CAIWriter: Sync + Send {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>>;
+
+    // remove entire C2PA manifest store from asset
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()>;
 }
 
 pub trait AssetIO: Sync + Send {
@@ -155,4 +162,10 @@ pub enum RemoteRefEmbedType {
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()>;
 }
