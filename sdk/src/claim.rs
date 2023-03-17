@@ -483,8 +483,7 @@ impl Claim {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
-    #[cfg(feature = "file_io")]
-    pub(crate) fn remote_manifest(&self) -> RemoteManifest {
+   pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }
 

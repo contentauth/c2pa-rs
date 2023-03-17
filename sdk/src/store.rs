@@ -28,7 +28,9 @@ use crate::{
         labels::{self, CLAIM},
         DataHash, Ingredient, Relationship,
     },
-    asset_io::{CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
+    },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
     cose_validator::verify_cose,
@@ -40,8 +42,8 @@ use crate::{
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
     jumbf_io::{
-        load_jumbf_from_memory, object_locations_from_stream, save_jumbf_to_memory,
-        save_jumbf_to_stream,
+        get_assetio_handler, load_jumbf_from_memory, object_locations_from_stream,
+        save_jumbf_to_memory, save_jumbf_to_stream,
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
@@ -53,11 +55,10 @@ use crate::{
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
-    asset_io::RemoteRefEmbedType,
     claim::RemoteManifest,
     jumbf_io::{
-        get_assetio_handler, get_file_extension, get_supported_file_extension, is_bmff_format,
-        load_jumbf_from_file, object_locations, remove_jumbf_from_file, save_jumbf_to_file,
+        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
+        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
 
