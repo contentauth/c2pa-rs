@@ -1595,7 +1595,7 @@ impl Store {
     /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
     /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
-    /// Returns a tuple (output asset, manifest store) with a Vec<u8> containing the output asset and a Vec<u8> containing the insert manifest store.  (output asset, )
+    /// Returns a tuple (output asset, manifest store) with a `Vec<u8>` containing the output asset and a `Vec<u8>` containing the insert manifest store.  (output asset, )
     pub(crate) async fn save_to_memory_remote_signed(
         &mut self,
         format: &str,
