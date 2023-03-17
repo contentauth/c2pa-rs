@@ -79,7 +79,7 @@ pub trait CAIWriter: Sync + Send {
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>>;
 
-    // remove entire C2PA manifest store from asset
+    // Remove entire C2PA manifest store from asset
     fn remove_cai_store_from_stream(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -88,19 +88,19 @@ pub trait CAIWriter: Sync + Send {
 }
 
 pub trait AssetIO: Sync + Send {
-    // create instance of AssetIO handler.  The extension type is passed in so
+    // Create instance of AssetIO handler.  The extension type is passed in so
     // that format specific customizations can be used during manifest embedding
     fn new(asset_type: &str) -> Self
     where
         Self: Sized;
 
-    // return AssetIO handler for this asset type
+    // Return AssetIO handler for this asset type
     fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO>;
 
-    // return streaming reader for this asset type
+    // Return streaming reader for this asset type
     fn get_reader(&self) -> &dyn CAIReader;
 
-    // return streaming writer if available
+    // Return streaming writer if available
     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         None
     }
@@ -117,20 +117,20 @@ pub trait AssetIO: Sync + Send {
     /// length if the format contains extra header information for example.
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
-    // remove entire C2PA manifest store from asset
+    // Remove entire C2PA manifest store from asset
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 
-    // list of supported extensions and mime types
+    // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
     /// OPTIONAL INTERFACES
 
-    // returns [`AssetPatch`] trait if this I/O handler supports patching.
+    // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
 
-    // returns [`RemoteRefEmbed`] trait if this I/O handler supports remote reference embedding.
+    // Returns [`RemoteRefEmbed`] trait if this I/O handler supports remote reference embedding.
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
@@ -161,7 +161,9 @@ pub enum RemoteRefEmbedType {
 // technique used to embed a reference varies bases on the type of embedding.  Not
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
+    // Embed RemoteRefEmbedType into the asset
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
+    // Embed RemoteRefEmbedType into the asset stream
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,

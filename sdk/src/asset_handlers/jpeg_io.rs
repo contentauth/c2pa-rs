@@ -259,7 +259,6 @@ impl CAIWriter for JpegIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
         input_stream.rewind()?;
@@ -431,7 +430,6 @@ impl CAIWriter for JpegIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
         input_stream.rewind()?;
