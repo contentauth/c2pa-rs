@@ -483,7 +483,7 @@ impl Claim {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
-   pub(crate) fn remote_manifest(&self) -> RemoteManifest {
+    pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }
 
