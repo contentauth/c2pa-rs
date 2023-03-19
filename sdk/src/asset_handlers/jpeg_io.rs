@@ -63,11 +63,44 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     if let Ok(jpeg) = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)) {
         let segs = jpeg.segments_by_marker(markers::APP1);
-        let xmp: String = segs.filter_map(extract_xmp).collect();
-        Some(xmp)
+        for seg in segs {
+            if let Some(xmp) = extract_xmp(seg) {
+                return Some(xmp);
+            }
+        }
+        None
     } else {
         None
     }
+}
+
+fn write_xmp(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+    xmp: Option<&str>,
+) -> Result<()> {
+    let mut buf = Vec::new();
+    // read the whole asset
+    input_stream.rewind()?;
+    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+    let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+    let segments = jpeg.segments_mut();
+    segments.retain(|seg| {
+        !(seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE))
+    });
+
+    if let Some(xmp) = xmp {
+        let xmp_bytes = Bytes::from(format!("http://ns.adobe.com/xap/1.0/ {xmp}"));
+        let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
+        segments.insert(3, segment);
+    }
+    output_stream.rewind()?;
+    jpeg.encoder().write_to(output_stream).map_err(|_err| {
+        dbg!(_err);
+        Error::InvalidAsset("JPEG write error".to_owned())
+    })?;
+    Ok(())
 }
 
 fn add_required_segs_to_stream(
@@ -538,37 +571,39 @@ impl AssetIO for JpegIO {
 }
 
 impl RemoteRefEmbed for JpegIO {
-    #[allow(unused_variables)]
+    //#[allow(unused_variables)]
     fn embed_reference(
         &self,
         asset_path: &Path,
         embed_ref: crate::asset_io::RemoteRefEmbedType,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
-                {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
-                }
+        let mut input_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
-                }
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)
     }
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            RemoteRefEmbedType::Xmp(data) => {
+                write_xmp(source_stream, output_stream, Some(&data))?;
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
     }
 }
 
