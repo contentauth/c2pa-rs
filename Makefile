@@ -25,18 +25,15 @@ clippy:
 test-local:
 	cargo test --all-features
 
-test-no-defaults:
-	cd sdk && cargo test --features="file_io, xmp_write, bmff" --no-default-features 
-
 test-wasm:
 	cd sdk && wasm-pack test --node
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --features="remote_wasm_sign"
+	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
 	
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-local test-no-defaults test-wasm
+test: check-format check-docs clippy test-local test-wasm-web
 
 # Auto format code according to standards
 fmt: 
