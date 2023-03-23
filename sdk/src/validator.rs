@@ -13,7 +13,7 @@
 
 use chrono::{DateTime, Utc};
 
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -69,7 +69,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(not(feature = "sign"))]
+#[cfg(not(feature = "openssl_sign"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)

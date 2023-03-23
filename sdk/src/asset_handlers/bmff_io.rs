@@ -24,11 +24,14 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
-use tempfile::{Builder, NamedTempFile};
+use tempfile::Builder;
 
 use crate::{
     assertions::ExclusionsMap,
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashObjectPositions},
+    asset_io::{
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
+    },
     error::{Error, Result},
     utils::hash_utils::{vec_compare, Exclusion},
 };
@@ -36,13 +39,6 @@ use crate::{
 pub struct BmffIO {
     #[allow(dead_code)]
     bmff_format: String, // can be used for specialized BMFF cases
-}
-impl BmffIO {
-    pub fn new(bmff_format: &str) -> Self {
-        BmffIO {
-            bmff_format: bmff_format.to_string(),
-        }
-    }
 }
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
@@ -65,8 +61,20 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-// define CAIRead for tempfile
-impl CAIRead for NamedTempFile {}
+static SUPPORTED_TYPES: [&str; 12] = [
+    "avif",
+    "heif",
+    "heic",
+    "mp4",
+    "m4a",
+    "mov",
+    "application/mp4",
+    "audio/mp4",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "video/mp4",
+];
 
 macro_rules! boxtype {
     ($( $name:ident => $value:expr ),*) => {
@@ -149,7 +157,8 @@ boxtype! {
     VpccBox => 0x76706343,
     Vp09Box => 0x76703039,
     MetaBox => 0x6D657461,
-    SchiBox => 0x73636869
+    SchiBox => 0x73636869,
+    IlocBox => 0x696C6F63
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -543,8 +552,9 @@ pub fn bmff_to_jumbf_exclusions(
     Ok(exclusions)
 }
 
-// `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-fn adjust_stco_and_co64<W: Write + CAIRead>(
+// `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
+// todo: when fragment support is added adjust these (/moof/iloc, /moof/mfro, /moof/traf/saio, /sidx)
+fn adjust_known_offsets<W: Write + CAIRead>(
     output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -650,6 +660,174 @@ fn adjust_stco_and_co64<W: Write + CAIRead>(
             output.seek(SeekFrom::Start(entry_start_pos))?;
             for e in entries {
                 output.write_u64::<BigEndian>(e)?;
+            }
+        }
+    }
+
+    // handle meta iloc
+    if let Some(iloc_list) = bmff_path_map.get("/meta/iloc") {
+        for iloc_token in iloc_list {
+            let iloc_box_info = &bmff_tree[*iloc_token].data;
+            if iloc_box_info.box_type != BoxType::IlocBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read iloc box and patch
+            output.seek(SeekFrom::Start(iloc_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::IlocBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, _flags) = read_box_header_ext(output)?; // box extensions
+
+            // read next 16 bits (in file byte order)
+            let mut iloc_header = [0u8, 2];
+            output.read_exact(&mut iloc_header)?;
+
+            // get offset size (high nibble)
+            let offset_size: u8 = (iloc_header[0] & 0xF0) >> 4;
+
+            // get length size (low nibble)
+            let length_size: u8 = iloc_header[0] & 0x0F;
+
+            // get box offset size (high nibble)
+            let base_offset_size: u8 = (iloc_header[1] & 0xF0) >> 4;
+
+            // get index size (low nibble)
+            let index_size: u8 = iloc_header[1] & 0x0F;
+
+            // get item count
+            let item_count = match version {
+                _v if version < 2 => output.read_u16::<BigEndian>()? as u32,
+                _v if version == 2 => output.read_u32::<BigEndian>()?,
+                _ => {
+                    return Err(Error::InvalidAsset(
+                        "Bad BMFF unknown iloc format".to_string(),
+                    ))
+                }
+            };
+
+            // walk the iloc items and patch
+            for _i in 0..item_count {
+                // read item id
+                let _item_id = match version {
+                    _v if version < 2 => output.read_u16::<BigEndian>()? as u32,
+                    2 => output.read_u32::<BigEndian>()?,
+                    _ => {
+                        return Err(Error::InvalidAsset(
+                            "Bad BMFF: unknown iloc item".to_string(),
+                        ))
+                    }
+                };
+
+                // read constuction method
+                let constuction_method = if version == 1 || version == 2 {
+                    let mut cm_bytes = [0u8, 2];
+                    output.read_exact(&mut cm_bytes)?;
+
+                    // lower nibble of 2nd byte
+                    cm_bytes[1] & 0x0F
+                } else {
+                    0
+                };
+
+                // read data reference index
+                let _data_reference_index = output.read_u16::<BigEndian>()?;
+
+                let base_offset_file_pos = output.stream_position()?;
+                let base_offset = match base_offset_size {
+                    0 => 0_u64,
+                    4 => output.read_u32::<BigEndian>()? as u64,
+                    8 => output.read_u64::<BigEndian>()?,
+                    _ => {
+                        return Err(Error::InvalidAsset(
+                            "Bad BMFF: unknown iloc offset size".to_string(),
+                        ))
+                    }
+                };
+
+                // patch the offsets if needed
+                if constuction_method == 0 {
+                    // file offset construction method
+                    if base_offset_size == 4 {
+                        let new_offset = if adjust < 0 {
+                            u32::try_from(base_offset).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })? - u32::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                        } else {
+                            u32::try_from(base_offset).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })? + u32::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                        };
+
+                        output.seek(SeekFrom::Start(base_offset_file_pos))?;
+                        output.write_u32::<BigEndian>(new_offset)?;
+                    }
+
+                    if base_offset_size == 8 {
+                        let new_offset = if adjust < 0 {
+                            base_offset
+                                - u64::try_from(adjust.abs()).map_err(|_| {
+                                    Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                                })?
+                        } else {
+                            base_offset
+                                + u64::try_from(adjust).map_err(|_| {
+                                    Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                                })?
+                        };
+
+                        output.seek(SeekFrom::Start(base_offset_file_pos))?;
+                        output.write_u64::<BigEndian>(new_offset)?;
+                    }
+                }
+
+                // read extent count
+                let extent_count = output.read_u16::<BigEndian>()?;
+
+                // consume the extents
+                for _e in 0..extent_count {
+                    let _extent_index = if version == 1 || (version == 2 && index_size > 0) {
+                        match base_offset_size {
+                            4 => Some(output.read_u32::<BigEndian>()? as u64),
+                            8 => Some(output.read_u64::<BigEndian>()?),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    let _extent_offset = match offset_size {
+                        0 => 0_u64,
+                        4 => output.read_u32::<BigEndian>()? as u64,
+                        8 => output.read_u64::<BigEndian>()?,
+                        _ => {
+                            return Err(Error::InvalidAsset(
+                                "Bad BMFF: unknown iloc extent_offset size".to_string(),
+                            ))
+                        }
+                    };
+
+                    let _extent_length = match length_size {
+                        0 => 0_u64,
+                        4 => output.read_u32::<BigEndian>()? as u64,
+                        8 => output.read_u64::<BigEndian>()?,
+                        _ => {
+                            return Err(Error::InvalidAsset(
+                                "Bad BMFF: unknown iloc offset size".to_string(),
+                            ))
+                        }
+                    };
+                }
             }
         }
     }
@@ -839,7 +1017,7 @@ fn get_manifest_token(
     None
 }
 
-impl CAILoader for BmffIO {
+impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let start = reader.stream_position()?;
         let size = reader.seek(SeekFrom::End(0))?;
@@ -942,7 +1120,7 @@ impl CAILoader for BmffIO {
 
     // Get XMP block
     fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None
+        None // todo: figure out where XMP is stored for supported formats
     }
 }
 
@@ -1055,44 +1233,40 @@ impl AssetIO for BmffIO {
         temp_file.flush()?;
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-        match self.bmff_format.as_ref() {
-            "m4a" | "mp4" | "mov" => {
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
 
-                // rebuild box layout for output file
-                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
 
-                let size = temp_file.seek(SeekFrom::End(0))?;
-                temp_file.rewind()?;
-                build_bmff_tree(
-                    &mut temp_file,
-                    size,
-                    &mut output_bmff_tree,
-                    &root_token,
-                    &mut output_bmff_map,
-                )?;
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-                // adjust based on current layout
-                adjust_stco_and_co64(
-                    &mut temp_file,
-                    &output_bmff_tree,
-                    &output_bmff_map,
-                    offset_adjust,
-                )?;
-            }
-            _ => (), // todo: handle more patching cases as necessary
-        }
+        let size = temp_file.seek(SeekFrom::End(0))?;
+        temp_file.rewind()?;
+        build_bmff_tree(
+            &mut temp_file,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+        )?;
+
+        // adjust offsets based on current layout
+        adjust_known_offsets(
+            &mut temp_file,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
 
         // copy temp file to asset
         std::fs::rename(temp_file.path(), asset_path)
@@ -1215,7 +1389,7 @@ impl AssetIO for BmffIO {
                 )?;
 
                 // adjust based on current layout
-                adjust_stco_and_co64(
+                adjust_known_offsets(
                     &mut temp_file,
                     &output_bmff_tree,
                     &output_bmff_map,
@@ -1230,6 +1404,30 @@ impl AssetIO for BmffIO {
             // if rename fails, try to copy in case we are on different volumes
             .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
             .map_err(Error::IoError)
+    }
+
+    fn new(asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        BmffIO {
+            bmff_format: asset_type.to_string(),
+        }
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(BmffIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
     }
 }
 
@@ -1307,7 +1505,45 @@ impl AssetPatch for BmffIO {
     }
 }
 
-#[cfg(feature = "bmff")]
+impl RemoteRefEmbed for BmffIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    match self.bmff_format.as_ref() {
+                        "heic" | "avif" => Err(Error::XmpNotSupported),
+                        _ => {
+                            crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
+}
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -1317,14 +1553,16 @@ pub mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{
-        status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-        store::Store,
-        utils::test::{fixture_path, temp_dir_path},
-    };
+    use crate::utils::test::{fixture_path, temp_dir_path};
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_read_mp4() {
+        use crate::{
+            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
+            store::Store,
+        };
+
         let ap = fixture_path("video1.mp4");
 
         let mut log = DetailedStatusTracker::default();

@@ -43,6 +43,9 @@ pub enum Error {
     #[error("bad parameter: {0}")]
     BadParam(String),
 
+    #[error("required feature missing")]
+    MissingFeature(String),
+
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
@@ -201,6 +204,9 @@ pub enum Error {
     #[error("XMP write error")]
     XmpWriteError,
 
+    #[error("XMP is not supported")]
+    XmpNotSupported,
+
     #[error("C2PA provenance not found in XMP")]
     ProvenanceMissing,
 
@@ -257,12 +263,7 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "file_io")]
-pub(crate) fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
-}
-
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }

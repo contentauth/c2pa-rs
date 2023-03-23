@@ -29,14 +29,14 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
 /// A reference to a resource to be used in JSON serialization
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ResourceRef {
-    pub content_type: String,
+    pub format: String,
     pub identifier: String,
 }
 
 impl ResourceRef {
-    pub fn new<S: Into<String>, I: Into<String>>(content_type: S, identifier: I) -> Self {
+    pub fn new<S: Into<String>, I: Into<String>>(format: S, identifier: I) -> Self {
         Self {
-            content_type: content_type.into(),
+            format: format.into(),
             identifier: identifier.into(),
         }
     }
@@ -69,6 +69,11 @@ impl ResourceStore {
         self.base_path = Some(base_path.into());
     }
 
+    #[cfg(feature = "file_io")]
+    pub fn take_base_path(&mut self) -> Option<PathBuf> {
+        self.base_path.take()
+    }
+
     ///  generate a unique id for a given content type (adds a file extension)
     pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
@@ -99,7 +104,7 @@ impl ResourceStore {
         R: Into<Vec<u8>>,
     {
         let id = self.id_from(key, format);
-        self.add(id.clone(), value)?;
+        self.add(&id, value)?;
         Ok(ResourceRef::new(format, id))
     }
 
@@ -114,7 +119,7 @@ impl ResourceStore {
             let path = base.join(id.into());
             std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             #[allow(clippy::expect_used)]
-            std::fs::write(path, value.into()).expect("write failed");
+            std::fs::write(path, value.into())?;
             return Ok(());
         }
         self.resources.insert(id.into(), value.into());
@@ -174,7 +179,7 @@ impl Default for ResourceStore {
 }
 
 #[cfg(test)]
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -182,7 +187,7 @@ mod tests {
     use crate::{utils::test::temp_signer, Manifest};
 
     #[test]
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";
@@ -199,7 +204,7 @@ mod tests {
             "instance_id": "12345",
             "assertions": [],
             "thumbnail": {
-                "content_type": "image/jpeg",
+                "format": "image/jpeg",
                 "identifier": "abc123"
             },
             "ingredients": [{
@@ -207,9 +212,9 @@ mod tests {
                 "format": "image/jpeg",
                 "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
                 "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-                "is_parent": true,
+                "relationship": "parentOf",
                 "thumbnail": {
-                    "content_type": "image/jpeg",
+                    "format": "image/jpeg",
                     "identifier": "cba321"
                 }
             }]
@@ -233,15 +238,12 @@ mod tests {
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        manifest
-            .embed_stream("jpeg", &mut stream, &signer)
+        let output_image = manifest
+            .embed_stream("jpeg", &mut stream, signer.as_ref())
             .expect("embed_stream");
 
-        // get the updated image
-        let image = stream.into_inner();
-
         let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
         // println!("{manifest_store}");
     }
 }
