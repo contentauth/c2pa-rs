@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.19.0
+_23 March 2023_
+
+* Makefile update ([#213](https://github.com/contentauth/c2pa-rs/pull/213))
+* Streaming enhancement  ([#212](https://github.com/contentauth/c2pa-rs/pull/212))
+* Adds base_path_take to ResourceStore ([#205](https://github.com/contentauth/c2pa-rs/pull/205))
+* Add write support for HEIC, HEIF, AVIF ([#210](https://github.com/contentauth/c2pa-rs/pull/210))
+* (MINOR) Riff support with refactored AssetIO ([#203](https://github.com/contentauth/c2pa-rs/pull/203))
+* (MINOR) Resource format and is_parent / relationship changes ([#202](https://github.com/contentauth/c2pa-rs/pull/202))
+* Fix hash algo warning in Wasm and hashing for RSA-PSS SHA-384/512 ([#206](https://github.com/contentauth/c2pa-rs/pull/206))
+* Derive impl of Default for Relationship enum ([#204](https://github.com/contentauth/c2pa-rs/pull/204))
+
 ## 0.18.1
 _07 March 2023_
 
