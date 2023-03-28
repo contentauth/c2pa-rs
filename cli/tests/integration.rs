@@ -167,6 +167,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+// c2patool tests/fixtures/C.jpg -fo target/tmp/manifest_test
 fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("manifest_test");
     // first export a c2pa file
@@ -186,6 +187,7 @@ fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+// c2patool tests/fixtures/C.jpg -ifo target/tmp/ingredient_test
 fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("ingredient_test");
     // first export a c2pa file
@@ -201,5 +203,23 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
     // then read it back in
     let json = std::fs::read_to_string(out_path.join("ingredient.json")).expect("read manifest");
     assert!(json.contains("manifest_data"));
+    Ok(())
+}
+
+#[test]
+// c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -fo target/tmp/ingredients.jpg
+fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(temp_path("ingredients.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ingredients.jpg"))
+        .stdout(predicate::str::contains("libpng-test.png"))
+        .stdout(predicate::str::contains("earth_apollo17.jpg"));
     Ok(())
 }

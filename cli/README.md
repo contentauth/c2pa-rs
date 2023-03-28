@@ -1,16 +1,16 @@
 # c2patool - C2PA command line tool
 
-`c2patool` is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests) and media assets (image or video files). 
+`c2patool` is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests) and media assets (audio, image or video files). 
 
 Use the tool to:
 
 - Read a JSON report of C2PA manifests in [supported file formats](#supported-file-formats).
 - Read a low-level report of C2PA manifest data in [supported file formats](#supported-file-formats).
-- Preview manifest data from a [manifest definition](#manifest-definition-file).
 - Add a C2PA manifest to [supported file formats](#supported-file-formats).
 
 ## Installation
 
+Prebuilt versions of the tool are available for [download]()
 PREREQUISITE: Install [Rust](https://www.rust-lang.org/tools/install). 
 
 Enter this command to install or update the tool:
@@ -32,23 +32,24 @@ The tool will display the version installed. Compare the version number displaye
 
 ## Supported file formats
 
-The tool works with the following types of asset files (also referred to as _assets_).
-
-| MIME type                           | extensions  | read only |
-| ----------------------------------- | ----------- | --------- |
-| `image/jpeg`                        | `jpg, jpeg` |           |
-| `image/png`                         | `png`       |           |
-| `image/avif`                        | `avif`      |    X      |
-| `image/heic`                        | `heic`      |    X      |
-| `image/heif`                        | `heif`      |    X      |
-| `video/mp4`                         | `mp4`       |           |
-| `application/mp4`                   | `mp4`       |           |
-| `audio/mp4`                         | `m4a`       |           |
-| `video/quicktime`                   |  `mov`      |           |
-| `application/x-c2pa-manifest-store` | `c2pa`      |           |
-
-NOTE: Quicktime (`.mov`) format is not yet fully supported.
-
+ | Extensions    | MIME type                                           | 
+ |---------------| --------------------------------------------------- | 
+ | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
+ | `avif`        | `image/avif`                                        | 
+ | `c2pa`        | `application/x-c2pa-manifest-store`,                |
+ | `dng`         | `image/x-adobe-dng`                                 | 
+ | `heic`        | `image/heic`                                        | 
+ | `heif`        | `image/heif`                                        | 
+ | `jpg`, `jpeg` | `image/jpeg`                                        | 
+ | `m4a`         | `audio/mp4`                                         | 
+ | `mp4`         | `video/mp4`, `application/mp4`                       | 
+ | `mov`         | `video/quicktime`                                   |
+ | `png`         | `image/png`                                         | 
+ | `tif`,`tiff`  | `image/tiff`                                        | 
+ | `wav`         | `audio/x-wav`                                       | 
+ | `webp`        | `image/webp`                                        | 
+ 
+ * Fragmented mp4 is not yet supported
 ## Usage
 
 The tool's command-line syntax is:
@@ -102,13 +103,14 @@ To display a detailed report describing the internal C2PA format of manifests co
 c2patool -d sample/C.jpg
 ```
 
-The tool displays the detailed report to standard output (stdout).
+The tool displays the detailed report to standard output (stdout) or will add a detailed.json if an output folder is supplied.
 
 ### Displaying an information report
 
 Use the `--info` option to print a high-level report about the asset file and related C2PA data. 
 For a cloud manifest the tool displays the URL to the manifest.
-For embedded manifests, the tool displays the size of the manifest store and number of manifests. It will also report if the manifest validated or any errors were encountered in validation.
+Displays the size of the manifest store and number of manifests.
+It will report if the manifest validated or show any errors encountered in validation.
 
 
 ```shell
@@ -116,6 +118,16 @@ c2patool sample/C.jpg --info
 ```
 
 The tool displays the report to standard output (stdout).
+
+
+### Creating an ingredient from a file
+
+The `--ingredient` option will create an ingredient report.  When used with the `--output` folder, it will extract or create a thumbnail image and a binary .c2pa manifest store containing the c2pa data from the file. The JSON ingredient this produces can be added to a manifest definition to carry the full history and validation record of that asset into a newly created manifest.
+Provide the path to the file as the argument; for example:
+
+```shell
+c2patool sample/C.jpg --ingredient --output ./ingredient
+```
 
 ### Adding a manifest to an asset file
 
@@ -193,100 +205,6 @@ c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", 
 The manifest definition file is a JSON formatted file with a `.json` extension. 
 Relative file paths are interpreted as relative to the location of the definition file unless you specify a `base_path` field.
 
-### Schema 
-
-The schema for the manifest definition file is shown below.
-
-```json
-{
-	"$schema": "http://json-schema.org/draft-07/schema",
-	"$id": "http://ns.adobe.com/c2patool/claim-definition/v1",
-	"type": "object",
-	"description": "Definition format for claim created with c2patool",
-	"examples": [
-		{
-            "alg": "es256",
-            "private_key": "es256_private.key",
-            "sign_cert": "es256_certs.pem",
-            "ta_url": "http://timestamp.digicert.com",
-            "vendor": "myvendor",
-            "claim_generator": "MyApp/0.1",
-            "parent": "image.jpg",  
-            "ingredients": [],
-            "assertions": [
-				{
-					"label": "my.assertion",
-					"data": {
-						"any_tag": "whatever I want"
-					}
-				}
-			],
-		}
-    ],
-	"required": [
-		"assertions",
-	],
-	"properties": {
-		"vendor": {
-			"type": "string",
-			"description": "Typically an Internet domain name (without the TLD) for the vendor (i.e. `adobe`, `nytimes`). If provided this will be used as a prefix on generated manifest labels."
-		},
-		"claim_generator": {
-			"type": "string",
-			"description": "A UserAgent string that will let a user know what software/hardware/system produced this Manifest - names should not contain spaces (defaults to c2patool)."
-		},
-		"title": {
-			"type": "string",
-			"description": "A human-readable string to be displayed as the title for this Manifest (defaults to the name of the file this manifest was embedded in)."
-		},
-		"credentials": {
-			"type": "object",
-			"description": "An array of W3C verifiable credentials objects defined in the c2pa assertion specification. Section 7."
-		},
-		"parent": {
-			"type": "string",
-			"format": "Local file system path",
-			"description": "A file path to the state of the asset prior to any changes declared in the manifest definition."
-		},
-        "Ingredients": {
-			"type": "array of string",
-			"format": "Array of local file system paths",
-			"description": "File paths to assets that were used to modify the asset referenced by this Manifest (if any)."
-		},
-		"assertions": {
-			"type": "object",
-			"description": "Objects with label, and data - standard c2pa labels must match values as defined in the c2pa assertion specification."
-		},
-		"alg": {
-			"type": "string",
-			"format": "Local file system path",
-			"description": "Signing algorithm: one of [ ps256 | ps384 | ps512 | es256 | es384 | es512 | ed25519]. Defaults to es256."
-		},
-		"ta_url": {
-			"type": "string",
-			"format": "http URL",
-			"description": "A URL to an RFC3161 compliant Time Stamp Authority. If missing there will no secure timestamp."
-		},
-		"private_key": {
-			"type": "string",
-			"format": "Local file system path",
-			"description": "File path to a private key file."
-		},
-		"sign_cert": {
-			"type": "string",
-			"format": "Local file system path",
-			"description": "File path to signing cert file."
-		},
-		"base_path": {
-			"type": "string",
-			"format": "Local file system path",
-			"description": "File path to a folder to use as the base for relative paths in this file."
-		},
-	},
-	"additionalProperties": false
-}
-```
-
 ### Example manifest definition file
 
 Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest. 
@@ -321,6 +239,12 @@ For actual use, provide a permanent key and cert in the manifest definition or e
 }
 ```
 
+## JSON schemas
+
+* [Schema for the Manifest Definition](schemas/manifest-definition.json)
+
+* [Schema for Ingredient](schemas/ingredient.json)
+
 ## Appendix: Creating and using an X.509 certificate
 
 You can test creating your own manifests using the pre-built certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample). To use your own generated certificates, specify the path to the cert files in the following manifest fields:
@@ -348,3 +272,21 @@ set C2PA_SIGN_CERT=$(cat my_es256_certs)
 ```
 
 Both the `private_key` and `sign_cert` must be in PEM format. The `sign_cert` must contain a PEM certificate chain starting with the end-entity certificate used to sign the claim ending with the intermediate certificate before the root CA certificate. See the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) for example certificates.
+
+
+## Release notes
+
+This section gives a highlight of noteworthy changes 
+
+Refer to the [CHANGELOG](CHANGELOG.md) for detailed Git changes
+
+## 0.5.0
+_27 March 2023_
+
+* Added support for many new file formats, see [supported file formats](#supported-file-formats).
+* Manifests and Ingredients can read and write thumbnail and c2pa resource files.
+* Added `-i/--ingredient` option to generate an ingredient report or folder.
+* Changes to Manifest Definition:
+    * `ingredients` now requires JSON Ingredient definitions.
+	* `ingredient_paths` accepts file paths, including JSON Ingredient definitions.
+    * `base_path` no longer supported. File paths are relative to the containing JSON file.

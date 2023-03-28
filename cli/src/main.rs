@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
 use clap::{AppSettings, Parser};
+use serde::Deserialize;
 
 mod info;
 use info::info;
@@ -38,7 +39,7 @@ struct CliArgs {
     #[clap(short, long)]
     manifest: Option<PathBuf>,
 
-    /// Path to output file or folder.")]
+    /// Path to output file or folder.
     #[clap(short, long)]
     output: Option<PathBuf>,
 
@@ -47,7 +48,7 @@ struct CliArgs {
     parent: Option<PathBuf>,
 
     /// Manifest definition passed as a JSON string.
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "manifest")]
     config: Option<String>,
 
     /// Display detailed C2PA-formatted manifest data.
@@ -96,6 +97,15 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
         _ => e.into(),
     }
 }
+#[derive(Debug, Default, Deserialize)]
+// Add fields that are not part of the standard Manifest
+struct ManifestDef {
+    #[serde(flatten)]
+    manifest: Manifest,
+    #[serde()]
+    // allows adding ingredients with file paths
+    ingredient_paths: Option<Vec<PathBuf>>,
+}
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
@@ -141,35 +151,61 @@ fn main() -> Result<()> {
     //     return Ok(());
     // }
 
-    // get manifest config from either the -manifest option or the -config option
-    let (manifest_opt, sign_config) = if let Some(json) = args.config {
-        if args.manifest.is_some() {
-            bail!("Do not use config and manifest options together");
-        }
-        (
-            Some(Manifest::from_json(&json)?),
-            SignConfig::from_json(&json)?,
-        )
-    } else if let Some(manifest_path) = args.manifest {
-        let json = std::fs::read_to_string(&manifest_path)?;
-        let mut manifest = Manifest::from_json(&json)?;
+    // if we have a manifest config, process it
+    if args.manifest.is_some() || args.config.is_some() {
+        // read the json from file or config, and get base path if from file
+        let (json, base_path) = match args.manifest.as_deref() {
+            Some(manifest_path) => {
+                let base_path = manifest_path.parent();
+                (std::fs::read_to_string(manifest_path)?, base_path)
+            }
+            None => (args.config.unwrap_or_default(), None),
+        };
+
+        // read the signing information from the manifest definition
         let mut sign_config = SignConfig::from_json(&json)?;
-        if let Some(base) = manifest_path.parent() {
+
+        // read the manifest information
+        let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+        let mut manifest = manifest_def.manifest;
+
+        // add claim_tool generator so we know this was created using this tool
+        let tool_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        if manifest.claim_generator.starts_with("c2pa/") {
+            manifest.claim_generator = tool_generator // just replace the default generator
+        } else {
+            manifest.claim_generator = format!("{} {}", manifest.claim_generator, tool_generator);
+        }
+
+        // Add any ingredients specified as file paths
+        if let Some(paths) = manifest_def.ingredient_paths {
+            for mut path in paths {
+                // ingredient paths are relative to the manifest path
+                if let Some(base) = base_path {
+                    if !(path.is_absolute()) {
+                        path = base.join(&path)
+                    }
+                }
+                // if the file is JSON then load it as an ingredient
+                if path.extension() == Some(std::ffi::OsStr::new("json")) {
+                    let json = std::fs::read_to_string(&path)?;
+                    let mut ingredient: Ingredient = serde_json::from_slice(json.as_bytes())?;
+                    if let Some(base) = path.parent() {
+                        ingredient.resources_mut().set_base_path(base);
+                    }
+                    manifest.add_ingredient(ingredient);
+                } else {
+                    let ingredient = Ingredient::from_file(&path)?;
+                    manifest.add_ingredient(ingredient);
+                }
+            }
+        }
+
+        if let Some(base) = base_path {
             manifest.resources_mut().set_base_path(base);
             sign_config.set_base_path(base);
         }
-        (Some(manifest), sign_config)
-    } else {
-        (
-            None,
-            SignConfig {
-                ..Default::default()
-            },
-        )
-    };
 
-    // if we have a manifest config, process it
-    if let Some(mut manifest) = manifest_opt {
         if let Some(parent_path) = args.parent {
             manifest.set_parent(c2pa::Ingredient::from_file(parent_path)?)?;
         }
@@ -290,6 +326,11 @@ fn main() -> Result<()> {
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
             println!("Manifest report written to the directory {:?}", &output);
         }
+    } else if args.ingredient {
+        println!(
+            "{}",
+            Ingredient::from_file(&args.path).map_err(special_errs)?
+        )
     } else if args.detailed {
         println!(
             "{}",
