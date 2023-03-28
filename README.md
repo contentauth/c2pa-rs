@@ -97,8 +97,8 @@ Refer to the [CHANGELOG](CHANGELOG.md) for detailed Git changes
 _23 March 2023_
 
 * Added support for many new file formats, see Supported File Formats above.
-* new api to return supported formats
-* Streaming APIs added to support manifest creation without file_io
-* Manifest and Ingredient JSON formats replace the `is_parent` field with `relationship`
-* ResourceRef replaces `content-type` with `format`
-* `bmff` feature no longer required
+* New api to return supported formats.
+* Streaming APIs for manifest creation without file_io for some formats.
+* Manifest and Ingredient JSON formats replace the `is_parent` field with `relationship`.
+* ResourceRef replaces `content-type` with `format`.
+* The `bmff` feature no longer required.
