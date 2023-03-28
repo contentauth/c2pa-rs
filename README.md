@@ -29,7 +29,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.61.0** or newer.
+The SDK requires **Rust version 1.63.0** or newer.
 
 ### Supported platforms
 
@@ -46,7 +46,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.16.1"
+c2pa = "0.19.0"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
@@ -68,8 +68,6 @@ NOTE: Font support is early in stages and currently only considered a proof of c
 
 The Rust SDK crate provides:
 
-* `async_signer` enables signing via asynchronous services which require `async` support.
-* `bmff` enables handling of ISO base media file formats (BMFF) used for video. Currently only MP4, M4A, and MOV are enabled for writing.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)

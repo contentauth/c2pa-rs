@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::Cursor,
     path::{Path, PathBuf},
@@ -19,63 +20,70 @@ use std::{
 
 #[cfg(feature = "otf")]
 use crate::asset_handlers::otf_io::OtfIO;
+use lazy_static::lazy_static;
 
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
+        tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAILoader, CAIReadWrite, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 30] = [
-    "avif",
-    "c2pa", // stand-alone manifest file
-    "heif",
-    "heic",
-    "jpg",
-    "jpeg",
-    "mp4",
-    "m4a",
-    "mov",
-    "png",
-    "tif",
-    "tiff",
-    "dng",
-    "application/mp4",
-    "audio/mp4",
-    "image/avif",
-    "image/heic",
-    "image/heif",
-    "image/jpeg",
-    "image/png",
-    "video/mp4",
-    "otf",
-    "ttf",
-    "sfnt",
-    "application/font-sfnt",
-    "font/otf",
-    "font/sfnt",
-    "font/ttf",
-    "image/tiff",
-    "image/dng",
-];
+// initialize asset handlers
+lazy_static! {
+    static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+            #[cfg(feature = "otf")]
+            Box::new(OtfIO::new("")),
+        ];
+        let mut handler_map = HashMap::new();
 
-#[cfg(feature = "file_io")]
-static BMFF_TYPES: [&str; 12] = [
-    "avif",
-    "heif",
-    "heic",
-    "mp4",
-    "m4a",
-    "mov",
-    "application/mp4",
-    "audio/mp4",
-    "image/avif",
-    "image/heic",
-    "image/heif",
-    "video/mp4",
-];
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                handler_map.insert(supported_type.to_string(), h.get_handler(supported_type));
+            }
+        }
+
+        handler_map
+    };
+}
+
+// initialize streaming write handlers
+lazy_static! {
+    static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+        let mut handler_map = HashMap::new();
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                if let Some(writer) = h.get_writer(supported_type) { // get streaming writer if supported
+                    handler_map.insert(supported_type.to_string(), writer);
+                }
+            }
+        }
+
+        handler_map
+    };
+}
 
 #[cfg(feature = "otf")]
 static FONT_TYPES: [&str; 7] = [
@@ -95,15 +103,21 @@ pub(crate) fn is_font_type(asset_type: &str) -> bool {
 
 #[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    BMFF_TYPES.contains(&asset_type)
+    let bmff_io = BmffIO::new("");
+    bmff_io.supported_types().contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 
+    load_jumbf_from_stream(asset_type, &mut buf_reader)
+}
+
+/// Return jumbf block from stream asset
+pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let cai_block = match get_cailoader_handler(asset_type) {
-        Some(asset_handler) => asset_handler.read_cai(&mut buf_reader)?,
+        Some(asset_handler) => asset_handler.read_cai(input_stream)?,
         None => return Err(Error::UnsupportedType),
     };
     if cai_block.is_empty() {
@@ -111,82 +125,51 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
     }
     Ok(cai_block)
 }
-
 /// writes the jumbf data in store_bytes
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
 pub fn save_jumbf_to_stream(
     asset_type: &str,
-    stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
     store_bytes: &[u8],
 ) -> Result<()> {
     match get_caiwriter_handler(asset_type) {
-        Some(asset_handler) => asset_handler.write_cai(stream, store_bytes),
+        Some(asset_handler) => asset_handler.write_cai(input_stream, output_stream, store_bytes),
         None => Err(Error::UnsupportedType),
     }
 }
 
-/// writes the jumbf data in store_bytes into an asset in data and the updatedcar data
-pub fn save_jumbf_to_memory(
-    asset_type: &str,
-    data: Vec<u8>,
-    store_bytes: &[u8],
-) -> Result<Vec<u8>> {
-    let mut stream = Cursor::new(data);
-    save_jumbf_to_stream(asset_type, &mut stream, store_bytes)?;
-    Ok(stream.into_inner())
+/// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
+pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut input_stream = Cursor::new(data);
+    let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
+    let mut output_stream = Cursor::new(output_vec);
+
+    save_jumbf_to_stream(
+        asset_type,
+        &mut input_stream,
+        &mut output_stream,
+        store_bytes,
+    )?;
+    Ok(output_stream.into_inner())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<Box<dyn AssetIO>> {
+pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
-    match ext.as_ref() {
-        "c2pa" => Some(Box::new(C2paIO {})),
-        "jpg" | "jpeg" => Some(Box::new(JpegIO {})),
-        "png" => Some(Box::new(PngIO {})),
-        "mp4" | "m4a" | "mov" if cfg!(feature = "bmff") => Some(Box::new(BmffIO::new(&ext))),
-        #[cfg(feature = "otf")]
-        "otf" | "ttf" | "sfnt" => Some(Box::new(OtfIO {})),
-        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        _ => None,
-    }
+
+    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<Box<dyn CAILoader>> {
+pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
-    match asset_type.as_ref() {
-        "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
-            Some(Box::new(C2paIO {}))
-        }
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        "png" | "image/png" => Some(Box::new(PngIO {})),
-        #[cfg(feature = "otf")]
-        _ if FONT_TYPES.contains(&asset_type.as_ref()) => Some(Box::new(OtfIO {})),
-        "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
-        | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-            if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
-        {
-            Some(Box::new(BmffIO::new(&asset_type)))
-        }
-        "tif" | "tiff" | "dng" => Some(Box::new(TiffIO {})),
-        _ => None,
-    }
+
+    ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
-    match asset_type.as_ref() {
-        // "c2pa" | "application/c2pa" | "application/x-c2pa-manifest-store" => {
-        //     Some(Box::new(C2paIO {}))
-        // }
-        "jpg" | "jpeg" | "image/jpeg" => Some(Box::new(JpegIO {})),
-        // "png" | "image/png" => Some(Box::new(PngIO {})),
-        // "avif" | "heif" | "heic" | "mp4" | "m4a" | "application/mp4" | "audio/mp4"
-        // | "image/avif" | "image/heic" | "image/heif" | "video/mp4"
-        //     if cfg!(feature = "bmff") && !cfg!(target_arch = "wasm32") =>
-        // {
-        //     Some(Box::new(BmffIO::new(&asset_type)))
-        // }
-        _ => None,
-    }
+
+    CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
 }
 
 pub fn get_file_extension(path: &Path) -> Option<String> {
@@ -200,7 +183,7 @@ pub fn get_file_extension(path: &Path) -> Option<String> {
 pub fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
-    if SUPPORTED_TYPES.contains(&ext.as_ref()) {
+    if ASSET_HANDLERS.get(&ext).is_some() {
         Some(ext)
     } else {
         None
@@ -222,7 +205,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
             let filename_osstr = in_path.file_stem().ok_or(Error::UnsupportedType)?;
             let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
 
-            let out_name = format!("{}-c2pa.{}", filename, ext);
+            let out_name = format!("{filename}-c2pa.{ext}");
             in_path.to_owned().with_file_name(out_name)
         }
     };
@@ -299,7 +282,7 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
 
 pub fn object_locations_from_stream(
     format: &str,
-    stream: &mut dyn CAIReadWrite,
+    stream: &mut dyn CAIRead,
 ) -> Result<Vec<HashObjectPositions>> {
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(stream),
@@ -318,5 +301,108 @@ pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.remove_cai_store(path),
         _ => Err(Error::UnsupportedType),
+    }
+}
+
+/// returns a list of supported file extensions and mime types
+pub fn get_supported_types() -> Vec<String> {
+    ASSET_HANDLERS.keys().map(|k| k.to_owned()).collect()
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    #[test]
+    fn test_get_assetio() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_assetio_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_reader() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_cailoader_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_writer() {
+        let handlers: Vec<Box<dyn AssetIO>> =
+            vec![Box::new(JpegIO::new("")), Box::new(PngIO::new(""))];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_caiwriter_handler(supported_type).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_writer() {
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(C2paIO::new("")),
+            Box::new(BmffIO::new("")),
+            Box::new(RiffIO::new("")),
+            Box::new(TiffIO::new("")),
+        ];
+
+        // build handler map
+        for h in handlers {
+            // get the supported types add entry for each
+            for supported_type in h.supported_types() {
+                assert!(get_caiwriter_handler(supported_type).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_supported_list() {
+        let supported = get_supported_types();
+
+        assert!(supported.iter().any(|s| s == "jpg"));
+        assert!(supported.iter().any(|s| s == "jpeg"));
+        assert!(supported.iter().any(|s| s == "png"));
+        assert!(supported.iter().any(|s| s == "mov"));
+        assert!(supported.iter().any(|s| s == "mp4"));
+        assert!(supported.iter().any(|s| s == "m4a"));
+        assert!(supported.iter().any(|s| s == "jpg"));
+        assert!(supported.iter().any(|s| s == "avi"));
+        assert!(supported.iter().any(|s| s == "webp"));
+        assert!(supported.iter().any(|s| s == "wav"));
+        assert!(supported.iter().any(|s| s == "tif"));
+        assert!(supported.iter().any(|s| s == "tiff"));
+        assert!(supported.iter().any(|s| s == "dng"));
     }
 }
