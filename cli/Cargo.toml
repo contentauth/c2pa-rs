@@ -4,7 +4,7 @@ name = "c2patool"
 # Please do not manually edit `version`. Version updates will be generated
 # automatically when c2patool is published. Remember to use (MINOR) or (MAJOR)
 # tags in the PR title to trigger non-patch updates as needed.
-version = "0.4.0"
+version = "0.5.0"
 
 description = "Tool for displaying and creating C2PA manifests."
 authors = ["Gavin Peacock <gpeacock@adobe.com>", "Maurice Fisher <mfisher@adobe.com>"]

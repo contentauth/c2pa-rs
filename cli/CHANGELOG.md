@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.5.0
+_28 March 2023_
+
+* (MINOR) New ingredient support and c2pa file formats ([contentauth/c2patool#111](https://github.com/contentauth/c2patool/pull/111))
+* Leverage new Manifest & Ingredient, add Ingredient creation. ([contentauth/c2patool#107](https://github.com/contentauth/c2patool/pull/107))
+
 ## 0.4.0
 _01 March 2023_
 
