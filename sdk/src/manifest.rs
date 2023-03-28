@@ -49,6 +49,7 @@ pub struct Manifest {
     pub claim_generator: String,
 
     /// A human-readable title, generally source filename.
+    #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
 
     /// The format of the source file as a MIME type.

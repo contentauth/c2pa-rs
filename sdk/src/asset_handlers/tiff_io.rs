@@ -49,7 +49,7 @@ const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
 
-static SUPPORTED_TYPES: [&str; 4] = ["dng", "tif", "tiff", "image/tiff"];
+static SUPPORTED_TYPES: [&str; 5] = ["tif", "tiff", "image/tiff", "dng", "image/x-adobe-dng"];
 
 // The type of an IFD entry
 enum IFDEntryType {
