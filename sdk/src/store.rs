@@ -61,12 +61,6 @@ use crate::{
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
-#[cfg(all(feature = "otf", feature = "file_io"))]
-use crate:: {
-    jumbf_io::{
-        is_font_type,
-    },
-};
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 

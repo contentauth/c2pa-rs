@@ -68,6 +68,8 @@ lazy_static! {
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
+            #[cfg(feature = "otf")]
+            Box::new(OtfIO::new("")),
         ];
         let mut handler_map = HashMap::new();
 
@@ -83,22 +85,6 @@ lazy_static! {
 
         handler_map
     };
-}
-
-#[cfg(feature = "otf")]
-static FONT_TYPES: [&str; 7] = [
-    "otf",
-    "ttf",
-    "sfnt",
-    "application/font-sfnt",
-    "font/otf",
-    "font/sfnt",
-    "font/ttf",
-];
-
-#[cfg(all(feature = "otf", feature = "file_io"))]
-pub(crate) fn is_font_type(asset_type: &str) -> bool {
-    FONT_TYPES.contains(&asset_type)
 }
 
 #[cfg(feature = "file_io")]
