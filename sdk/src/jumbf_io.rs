@@ -18,10 +18,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(feature = "otf")]
-use crate::asset_handlers::otf_io::OtfIO;
 use lazy_static::lazy_static;
 
+#[cfg(feature = "otf")]
+use crate::asset_handlers::otf_io::OtfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,

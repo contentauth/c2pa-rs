@@ -14,20 +14,16 @@ use std::{fs::File, path::*};
 
 use base64::decode as base64_decode;
 use base64::encode as base64_encode;
-use fonttools::{tables, types::*};
+use fonttools::{font::Font, tables, tables::name::NameRecord, types::*};
 use std::convert::TryFrom;
 
-use crate::asset_io::RemoteRefEmbed;
-use crate::asset_io::RemoteRefEmbedType;
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
-use fonttools::font::Font;
-use fonttools::tables::name::NameRecord;
 
 /// Supported extension and mime-types
 static SUPPORTED_TYPES: [&str; 7] = [
