@@ -1,4 +1,4 @@
-// Copyright 2022 Monotype. All rights reserved.
+// Copyright 2022,2023 Monotype. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -10,12 +10,10 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-use std::{fs::File, path::*};
+use std::{convert::TryFrom, fs::File, path::*};
 
-use base64::decode as base64_decode;
-use base64::encode as base64_encode;
+use base64::{decode as base64_decode, encode as base64_encode};
 use fonttools::{font::Font, tables, tables::name::NameRecord, types::*};
-use std::convert::TryFrom;
 
 use crate::{
     asset_io::{
