@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.19.1
+_28 March 2023_
+
+* Update README ([#215](https://github.com/contentauth/c2pa-rs/pull/215))
+
 ## 0.19.0
 _23 March 2023_
 
