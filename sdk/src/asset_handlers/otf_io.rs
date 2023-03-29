@@ -21,8 +21,9 @@ use crate::asset_io::RemoteRefEmbed;
 use crate::asset_io::RemoteRefEmbedType;
 use crate::{
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        HashBlockObjectType, HashObjectPositions},
+        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
+        HashObjectPositions,
+    },
     error::{Error, Result},
 };
 use fonttools::font::Font;
@@ -37,7 +38,7 @@ static SUPPORTED_TYPES: [&str; 7] = [
     "otf",
     "sfnt",
     "ttf",
-    ];
+];
 
 // Special record fields signally a C2PA manifest name table record.
 const C2PA_PLATFORM_ID: u16 = 0;
@@ -158,7 +159,6 @@ impl CAIWriter for OtfIO {
     ) -> Result<()> {
         todo!("Implement for streaming")
     }
-
 }
 
 /// OTF/TTF implementations for the AssetIO trait.
@@ -312,9 +312,7 @@ impl RemoteRefEmbed for OtfIO {
         embed_ref: crate::asset_io::RemoteRefEmbedType,
     ) -> Result<()> {
         match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                Err(Error::UnsupportedType)
-            }
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
@@ -328,7 +326,6 @@ impl RemoteRefEmbed for OtfIO {
     ) -> Result<()> {
         Err(Error::UnsupportedType)
     }
-
 }
 
 #[cfg(test)]
