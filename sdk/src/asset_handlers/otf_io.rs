@@ -17,6 +17,8 @@ use base64::encode as base64_encode;
 use fonttools::{tables, types::*};
 use std::convert::TryFrom;
 
+use crate::asset_io::RemoteRefEmbed;
+use crate::asset_io::RemoteRefEmbedType;
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
@@ -300,6 +302,33 @@ impl AssetIO for OtfIO {
 
         Ok(())
     }
+}
+
+impl RemoteRefEmbed for OtfIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                Err(Error::UnsupportedType)
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
+
 }
 
 #[cfg(test)]
