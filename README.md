@@ -6,22 +6,18 @@ The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C
 
 ## Key features
 
-The C2PA Rust SDK implements a subset of the [C2PA 1.0 technical specification](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html). 
+The C2PA Rust SDK implements a subset of the [C2PA 1.2 technical specification](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html). 
 
 The SDK enables a desktop, mobile, or embedded application to: 
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests).
+* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_manifests).
 * Embed manifests in certain file formats.
 * Parse and validate manifests found in certain file formats.
 
-The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_hard_bindings).
+The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_hard_bindings).
 
 ## State of the project
 
-This is an early release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
-
-The SDK:
-* Supports a variety of image and video formats. For details, see [c2patool supported file formats](https://opensource.contentauthenticity.org/docs/c2patool/#supported-file-formats).
-* Does not parse identity structures (verifiable credentials).
+This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
 ### Contributions and feedback
 
@@ -29,7 +25,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.61.0** or newer.
+The SDK requires **Rust version 1.63.0** or newer.
 
 ### Supported platforms
 
@@ -38,20 +34,39 @@ The SDK has been tested on the following operating systems:
 * Windows
 * MacOS (Intel and Apple silicon)
 * Ubuntu Linux
-* WebAssembly (Wasm); NOTE: claim _generation_ is not available on Wasm.
+* WebAssembly (Wasm)
 
+## Supported file formats
+
+ | Extensions    | MIME type                                           | 
+ |---------------| --------------------------------------------------- | 
+ | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
+ | `avif`        | `image/avif`                                        | 
+ | `c2pa`        | `application/x-c2pa-manifest-store`,                |
+ | `dng`         | `image/x-adobe-dng`                                 | 
+ | `heic`        | `image/heic`                                        | 
+ | `heif`        | `image/heif`                                        | 
+ | `jpg`, `jpeg` | `image/jpeg`                                        | 
+ | `m4a`         | `audio/mp4`                                         | 
+ | `mp4`         | `video/mp4`, `application/mp4`                      | 
+ | `mov`         | `video/quicktime`                                   |
+ | `png`         | `image/png`                                         | 
+ | `tif`,`tiff`  | `image/tiff`                                        | 
+ | `wav`         | `audio/x-wav`                                       | 
+ | `webp`        | `image/webp`                                        | 
+ 
 ## Usage
 
 Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.16.1"
+c2pa = "0.19.1"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
 ```
-c2pa = { version = "0.11.0", features = ["file_io"] }
+c2pa = { version = "0.19.0", features = ["file_io"] }
 ```
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
@@ -68,8 +83,6 @@ NOTE: Font support is early in stages and currently only considered a proof of c
 
 The Rust SDK crate provides:
 
-* `async_signer` enables signing via asynchronous services which require `async` support.
-* `bmff` enables handling of ISO base media file formats (BMFF) used for video. Currently only MP4, M4A, and MOV are enabled for writing.
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
@@ -82,3 +95,19 @@ The Rust SDK crate provides:
 The `c2pa` crate is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-APACHE).
 
 Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
+
+## Release Notes
+
+This section gives a highlight of noteworthy changes 
+
+Refer to the [CHANGELOG](CHANGELOG.md) for detailed Git changes
+
+## 0.19.0
+_23 March 2023_
+
+* Added support for many new file formats, see Supported File Formats above.
+* New api to return supported formats.
+* Streaming APIs for manifest creation without file_io for some formats.
+* Manifest and Ingredient JSON formats replace the `is_parent` field with `relationship`.
+* ResourceRef replaces `content-type` with `format`.
+* The `bmff` feature no longer required.

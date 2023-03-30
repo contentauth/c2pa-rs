@@ -1,4 +1,4 @@
-// Copyright 2022 Monotype. All rights reserved.
+// Copyright 2022,2023 Monotype. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -10,19 +10,29 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-use std::{fs::File, path::*};
+use std::{convert::TryFrom, fs::File, path::*};
 
-use base64::decode as base64_decode;
-use base64::encode as base64_encode;
-use fonttools::{tables, types::*};
-use std::convert::TryFrom;
+use base64::{decode as base64_decode, encode as base64_encode};
+use fonttools::{font::Font, tables, tables::name::NameRecord, types::*};
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+    },
     error::{Error, Result},
 };
-use fonttools::font::Font;
-use fonttools::tables::name::NameRecord;
+
+/// Supported extension and mime-types
+static SUPPORTED_TYPES: [&str; 7] = [
+    "application/font-snft",
+    "font/otf",
+    "font/sfnt",
+    "font/otf",
+    "otf",
+    "sfnt",
+    "ttf",
+];
 
 // Special record fields signally a C2PA manifest name table record.
 const C2PA_PLATFORM_ID: u16 = 0;
@@ -85,8 +95,7 @@ fn read_u8_4(x: &[u8]) -> Result<&[u8; 4]> {
 pub struct OtfIO {}
 
 /// OTF implementation of the CAILoader trait.
-impl CAILoader for OtfIO {
-    #[allow(unused_variables)]
+impl CAIReader for OtfIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let font_file: Font =
             Font::from_reader(asset_reader).map_err(|_err| Error::FontLoadError)?;
@@ -119,8 +128,55 @@ impl CAILoader for OtfIO {
     }
 }
 
+/// OTF/TTF implementations for the CAIWriter trait.
+impl CAIWriter for OtfIO {
+    fn write_cai(
+        &self,
+        _input_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _store_bytes: &[u8],
+    ) -> Result<()> {
+        todo!("Implement write_cai for streaming");
+    }
+
+    fn get_object_locations_from_stream(
+        &self,
+        _input_stream: &mut dyn CAIRead,
+    ) -> Result<Vec<HashObjectPositions>> {
+        todo!("Implement for streaming")
+    }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        _input_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        todo!("Implement for streaming")
+    }
+}
+
 /// OTF/TTF implementations for the AssetIO trait.
 impl AssetIO for OtfIO {
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        OtfIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(OtfIO::new(asset_type))
+    }
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(OtfIO::new(asset_type)))
+    }
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
+
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut f: File = File::open(asset_path)?;
         self.read_cai(&mut f)
@@ -239,6 +295,30 @@ impl AssetIO for OtfIO {
             .map_err(|_err| Error::FontSaveError)?;
 
         Ok(())
+    }
+}
+
+impl RemoteRefEmbed for OtfIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 

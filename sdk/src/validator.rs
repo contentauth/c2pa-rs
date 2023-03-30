@@ -13,7 +13,7 @@
 
 use chrono::{DateTime, Utc};
 
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -22,7 +22,8 @@ pub struct ValidationInfo {
     pub alg: Option<SigningAlg>, // validation algorithm
     pub date: Option<DateTime<Utc>>,
     pub issuer_org: Option<String>,
-    pub validated: bool, // claim signature is valid
+    pub validated: bool,     // claim signature is valid
+    pub cert_chain: Vec<u8>, // certificate chain used to validate signature
 }
 
 /// Trait to support validating a signature against the provided data
@@ -68,7 +69,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(not(feature = "sign"))]
+#[cfg(not(feature = "openssl_sign"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)

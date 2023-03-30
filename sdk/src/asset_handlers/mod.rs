@@ -17,4 +17,5 @@ pub mod jpeg_io;
 #[cfg(feature = "otf")]
 pub mod otf_io;
 pub mod png_io;
+pub mod riff_io;
 pub mod tiff_io;

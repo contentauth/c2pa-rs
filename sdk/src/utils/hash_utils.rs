@@ -13,12 +13,13 @@
 
 use std::{
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{Cursor, Read, Seek, SeekFrom},
     ops::RangeInclusive,
     path::Path,
 };
 
-use log::{debug, warn};
+//use conv::ValueFrom;
+use log::warn;
 // multihash versions
 use multibase::{decode, encode};
 use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{asset_io::CAIReadWrite, Error, Result};
+use crate::{Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
@@ -35,11 +36,18 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 pub struct Exclusion {
     start: usize,
     length: usize,
+
+    #[serde(skip)]
+    bmff_offset: Option<u64>, // optional tracking of offset positions to include in BMFF_V2 hashes in BE format
 }
 
 impl Exclusion {
     pub fn new(start: usize, length: usize) -> Self {
-        Exclusion { start, length }
+        Exclusion {
+            start,
+            length,
+            bmff_offset: None,
+        }
     }
 
     /// update the start value
@@ -56,6 +64,16 @@ impl Exclusion {
     /// return length as usize
     pub fn length(&self) -> usize {
         self.length
+    }
+
+    // set offset for BMFF_V2 to be hashed in addition to data
+    pub fn set_bmff_offset(&mut self, offset: u64) {
+        self.bmff_offset = Some(offset);
+    }
+
+    // get option offset for BMFF_V2 hash
+    pub fn bmff_offset(&self) -> Option<u64> {
+        self.bmff_offset
     }
 }
 
@@ -115,61 +133,9 @@ impl Hasher {
 
 // Return hash bytes for desired hashing algorithm.
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -> Vec<u8> {
-    use Hasher::*;
-    let mut hasher_enum = match alg {
-        "sha256" => SHA256(Sha256::new()),
-        "sha384" => SHA384(Sha384::new()),
-        "sha512" => SHA512(Sha512::new()),
-        _ => {
-            warn!(
-                "Unsupported hashing algorithm: {}, substituting sha256",
-                alg
-            );
-            SHA256(Sha256::new())
-        }
-    };
+    let mut reader = Cursor::new(data);
 
-    match exclusions {
-        Some(mut e) if !e.is_empty() => {
-            // hash data skipping excluded regions
-            // sort the exclusions
-            e.sort_by_key(|a| a.start());
-
-            // verify structure of blocks
-            let num_blocks = e.len();
-            let exclusion_end = e[num_blocks - 1].start() + e[num_blocks - 1].length();
-            let data_len = data.len();
-            let data_end = data_len - 1;
-
-            // if not enough range we will just calc to the end
-            if data_len < exclusion_end {
-                debug!("the exclusion range exceed the data length");
-                return Vec::new();
-            }
-
-            //build final ranges
-            let mut ranges = RangeSet::<[RangeInclusive<usize>; 1]>::from(0..=data_end);
-            for exclusion in e {
-                let end = exclusion.start() + exclusion.length() - 1;
-                ranges.remove_range(exclusion.start()..=end);
-            }
-
-            // hash the data for ranges
-            for r in ranges.into_smallvec() {
-                hasher_enum.update(&data[r]);
-            }
-
-            // return the hash
-            Hasher::finalize(hasher_enum)
-        }
-        _ => {
-            // add the data
-            hasher_enum.update(data);
-
-            // return the hash
-            Hasher::finalize(hasher_enum)
-        }
-    }
+    hash_stream_by_alg(alg, &mut reader, exclusions).unwrap_or(Vec::new())
 }
 
 // Return hash bytes for asset using desired hashing algorithm.
@@ -183,11 +149,16 @@ pub fn hash_asset_by_alg(
 }
 
 // Return hash bytes for stream using desired hashing algorithm.
-pub fn hash_stream_by_alg(
+pub fn hash_stream_by_alg<R>(
     alg: &str,
-    data: &mut dyn CAIReadWrite,
+    data: &mut R,
     exclusions: Option<Vec<Exclusion>>,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut bmff_v2_starts: Vec<u64> = Vec::new();
+
     use Hasher::*;
     let mut hasher_enum = match alg {
         "sha256" => SHA256(Sha256::new()),
@@ -203,7 +174,7 @@ pub fn hash_stream_by_alg(
     };
 
     let data_len = data.seek(SeekFrom::End(0))?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
 
     let ranges = match exclusions {
         Some(mut e) if !e.is_empty() => {
@@ -224,30 +195,66 @@ pub fn hash_stream_by_alg(
             }
 
             //build final ranges
+            let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
             let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
             for exclusion in e {
                 let end = (exclusion.start() + exclusion.length() - 1) as u64;
                 let exclusion_start = exclusion.start() as u64;
                 ranges.remove_range(exclusion_start..=end);
+
+                // add new BMFF V2 offset as a new range to be included so that we can
+                // pause to add the offset hash
+                if let Some(offset) = exclusion.bmff_offset() {
+                    ranges_vec.push(RangeInclusive::new(offset, offset));
+                    bmff_v2_starts.push(offset);
+                }
             }
 
-            ranges
+            // merge standard ranges and BMFF V2 ranges into single list
+            if !bmff_v2_starts.is_empty() {
+                // add regularly included ranges
+                for r in ranges.into_smallvec() {
+                    ranges_vec.push(r);
+                }
+
+                // sort by start position
+                ranges_vec.sort_by(|a, b| {
+                    let a_start = a.start();
+                    let b_start = b.start();
+                    a_start.cmp(b_start)
+                });
+
+                ranges_vec
+            } else {
+                for r in ranges.into_smallvec() {
+                    ranges_vec.push(r);
+                }
+                ranges_vec
+            }
         }
         _ => {
+            let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
             let data_end = data_len - 1;
-            RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end)
+            ranges_vec.push(RangeInclusive::new(0_u64, data_end));
+
+            ranges_vec
         }
     };
 
-    if cfg!(feature = "no_interleaved_io") {
+    if cfg!(feature = "no_interleaved_io") || cfg!(target_arch = "wasm32") {
         // hash the data for ranges
-        for r in ranges.into_smallvec() {
+        for r in ranges {
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
+
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && (end - start) == 0 {
+                hasher_enum.update(&start.to_be_bytes());
+            }
 
             loop {
                 let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
@@ -264,13 +271,18 @@ pub fn hash_stream_by_alg(
         }
     } else {
         // hash the data for ranges
-        for r in ranges.into_smallvec() {
+        for r in ranges {
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
 
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
+
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && (end - start) == 0 {
+                hasher_enum.update(&start.to_be_bytes());
+            }
 
             let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
             data.read_exact(&mut chunk)?;
@@ -377,9 +389,9 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
 // Fast implementation for Blake3 hashing that can handle large assets
 pub fn blake3_from_asset(path: &Path) -> Result<String> {
     let mut data = File::open(path)?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
     let data_len = data.seek(SeekFrom::End(0))?;
-    data.seek(SeekFrom::Start(0))?;
+    data.rewind()?;
 
     let mut hasher = blake3::Hasher::new();
 

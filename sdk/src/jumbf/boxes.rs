@@ -1384,6 +1384,10 @@ impl CAIStore {
         // we REALLY want to return a CAIAssertionStore but can't do to referencing...
         self.store.data_box_as_superbox(0)
     }
+
+    pub fn set_salt(&mut self, salt: Vec<u8>) -> JumbfParseResult<()> {
+        self.store.desc_box.set_salt(salt)
+    }
 }
 
 // ANCHOR CAI Block
@@ -1710,7 +1714,7 @@ const TOGGLE_SIZE: u64 = 1;
 
 /// method for getting the current position
 pub fn current_pos<R: Seek>(seeker: &mut R) -> JumbfParseResult<u64> {
-    Ok(seeker.seek(SeekFrom::Current(0))?)
+    Ok(seeker.stream_position()?)
 }
 
 /// method for seeking back to the start of the box (header)
@@ -2070,7 +2074,14 @@ impl BoxReader {
                     None => (buf, None),
                 }
             }
-            _ => (buf, None),
+            _ => {
+                // we do not store the trailing 0 on load
+                if buf[buf.len() - 1] == 0 {
+                    buf.pop();
+                }
+
+                (buf, None)
+            }
         };
 
         Ok(JUMBFEmbeddedFileDescriptionBox::from(
@@ -2134,7 +2145,7 @@ impl BoxReader {
         let box_label = jdesc.label();
         debug!(
             "{}",
-            format!("START#Label: {:?}", box_label /*jdesc.label()*/)
+            format!("START#Label: {box_label:?}" /*jdesc.label()*/)
         );
         let mut sbox = JUMBFSuperBox::from(jdesc);
 
@@ -2212,10 +2223,7 @@ impl BoxReader {
             }
         }
 
-        debug!(
-            "{}",
-            format!("END#Label: {:?}", box_label /*jdesc.label()*/)
-        );
+        debug!("{}", format!("END#Label: {box_label:?}" /*jdesc.label()*/));
 
         // return the filled out sbox
         Ok(sbox)

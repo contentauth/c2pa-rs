@@ -14,13 +14,20 @@
 use std::{fs::File, path::Path};
 
 use crate::{
-    asset_io::{AssetIO, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions},
     error::{Error, Result},
 };
+
+static SUPPORTED_TYPES: [&str; 3] = [
+    "c2pa",
+    "application/c2pa",
+    "application/x-c2pa-manifest-store",
+];
+
 /// Supports working with ".c2pa" files containing only manifest store data
 pub struct C2paIO {}
 
-impl CAILoader for C2paIO {
+impl CAIReader for C2paIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut cai_data = Vec::new();
         // read the whole file
@@ -64,6 +71,25 @@ impl AssetIO for C2paIO {
     fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
         Ok(())
     }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        C2paIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(C2paIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
 }
 
 #[cfg(test)]
@@ -99,7 +125,7 @@ pub mod tests {
 
         let signer = temp_signer();
 
-        let manifest2 = store.to_jumbf(&signer).expect("to_jumbf");
+        let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
     }
 }
