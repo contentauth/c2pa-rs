@@ -98,6 +98,10 @@ impl AssetIO for SvgIO {
         Some(self)
     }
 
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(SvgIO::new(asset_type)))
+    }
+
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
