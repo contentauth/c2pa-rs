@@ -207,7 +207,7 @@ impl fmt::Debug for AssertionData {
 }
 
 /// Internal Assertion structure
-/// 
+///
 /// Each assertion type will
 /// contain its AssertionData.  For the User Assertion type we
 /// allow a String to set the label. The AssertionData contains
