@@ -90,9 +90,9 @@ pub enum Error {
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {
-        coset_error: coset::CoseError, // NOTE: We can not use #[transparent] here because
-                                       // coset::CoseError does not implement std::Error::error
-                                       // and can't because coset is nostd.
+        coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
+                                        * coset::CoseError does not implement std::Error::error
+                                        * and can't because coset is nostd. */
     },
 
     /// The COSE signature uses an algorithm that is not supported by this crate.

@@ -131,7 +131,7 @@ impl Ingredient {
     ///
     /// ```
     /// use c2pa::Ingredient;
-    /// let ingredient = Ingredient::new("title","image/jpeg","ed610ae51f604002be3dbf0c589a2f1f");
+    /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
@@ -176,7 +176,6 @@ impl Ingredient {
     }
 
     /// Returns thumbnail tuple Some((format, bytes)) or None
-    ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -184,7 +183,6 @@ impl Ingredient {
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
-    ///
     pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
         match self.thumbnail.as_ref() {
             Some(thumbnail) => self.resources.get(&thumbnail.identifier),

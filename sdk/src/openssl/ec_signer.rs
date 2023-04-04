@@ -64,7 +64,7 @@ impl ConfigurableSigner for EcSigner {
             signcerts,
             pkey,
             certs_size,
-            timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
+            timestamp_size: 10000, /* todo: call out to TSA to get actual timestamp and use that size */
             alg,
             tsa_url,
         })

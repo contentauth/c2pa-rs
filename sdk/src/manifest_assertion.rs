@@ -143,8 +143,8 @@ impl ManifestAssertion {
     ///```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     ManifestAssertion
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
@@ -165,8 +165,8 @@ impl ManifestAssertion {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     ManifestAssertion
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
@@ -174,7 +174,7 @@ impl ManifestAssertion {
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
     /// for action in actions.actions {
-    ///    println!("{}", action.action());
+    ///     println!("{}", action.action());
     /// }
     /// # Ok(())
     /// # }
