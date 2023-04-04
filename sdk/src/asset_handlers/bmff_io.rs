@@ -187,6 +187,7 @@ impl BoxHeaderLite {
             large_size: false,
         }
     }
+
     pub fn read<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
@@ -1133,6 +1134,7 @@ impl AssetIO for BmffIO {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
+
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input = File::open(asset_path)?;
         let size = input.seek(SeekFrom::End(0))?;
@@ -1426,6 +1428,7 @@ impl AssetIO for BmffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }

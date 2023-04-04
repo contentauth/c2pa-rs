@@ -11,4 +11,5 @@ edition = "2018"
 group_imports = "StdExternalCrate"
 hex_literal_case = "Lower"
 imports_granularity = "Crate"
+reorder_impl_items = true
 unstable_features = true
