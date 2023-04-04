@@ -674,7 +674,7 @@ impl Store {
                     let mut sigb = CAISignatureBox::new();
                     let signed_data = match claim.signature_val().is_empty() {
                         false => claim.signature_val().clone(), // existing claims have sig values
-                        true => Store::sign_claim_placeholder(claim, min_reserve_size), // empty is the new sig to be replaced
+                        true => Store::sign_claim_placeholder(claim, min_reserve_size), /* empty is the new sig to be replaced */
                     };
 
                     let sigc = JUMBFCBORContentBox::new(signed_data);
