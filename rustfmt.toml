@@ -6,6 +6,7 @@
 # rustup toolchain add nightly
 # cargo +nightly fmt
 
+blank_lines_upper_bound = 1
 edition = "2018"
 group_imports = "StdExternalCrate"
 hex_literal_case = "Lower"
