@@ -196,6 +196,7 @@ impl AssetIO for RiffIO {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
+
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let asset = std::fs::read(asset_path)?;
         let mut chunk_reader = Cursor::new(asset);
@@ -278,6 +279,7 @@ impl AssetIO for RiffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }

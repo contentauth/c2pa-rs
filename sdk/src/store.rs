@@ -88,6 +88,7 @@ trait PushGetIndex {
 
 impl<T> PushGetIndex for Vec<T> {
     type Item = T;
+
     fn push_get_index(&mut self, item: T) -> usize {
         let index = self.len();
         self.push(item);
@@ -2771,6 +2772,7 @@ pub mod tests {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
+
         fn reserve_size(&self) -> usize {
             10000
         }

@@ -134,10 +134,10 @@ impl AssertionBase for SchemaDotOrg {
 pub struct SchemaDotOrgPerson(SchemaDotOrg);
 
 impl SchemaDotOrgPerson {
-    pub const PERSON: &'static str = "Person";
-    pub const NAME: &'static str = "name";
-    pub const IDENTIFIER: &'static str = "identifier";
     pub const CREDENTIAL: &'static str = "credential";
+    pub const IDENTIFIER: &'static str = "identifier";
+    pub const NAME: &'static str = "name";
+    pub const PERSON: &'static str = "Person";
 
     pub fn new() -> Self {
         Self(SchemaDotOrg::new(Self::PERSON.to_owned()))

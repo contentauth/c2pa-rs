@@ -589,6 +589,7 @@ impl RemoteRefEmbed for PngIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+
     fn embed_reference_to_stream(
         &self,
         _source_stream: &mut dyn CAIRead,

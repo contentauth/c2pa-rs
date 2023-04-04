@@ -1371,6 +1371,7 @@ impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
+
     fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
         let mut reader = std::fs::File::open(asset_path)?;
 
@@ -1484,6 +1485,7 @@ impl AssetIO for TiffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }

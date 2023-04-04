@@ -43,6 +43,7 @@ impl HashedUri {
     pub fn url(&self) -> String {
         self.url.clone()
     }
+
     pub fn is_relative_url(&self) -> bool {
         crate::jumbf::labels::manifest_label_from_uri(&self.url).is_none()
     }

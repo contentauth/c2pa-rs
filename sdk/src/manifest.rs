@@ -126,6 +126,7 @@ impl Manifest {
             ..Default::default()
         }
     }
+
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
@@ -989,6 +990,7 @@ impl Manifest {
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await
     }
+
     #[cfg(feature = "file_io")]
     pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
         use crate::jumbf_io::remove_jumbf_from_file;
@@ -1371,6 +1373,7 @@ pub(crate) mod tests {
                 // this would happen on some remote server
                 crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
             }
+
             fn reserve_size(&self) -> usize {
                 10000
             }
@@ -1459,6 +1462,7 @@ pub(crate) mod tests {
             // fake sig
             Ok(sign_bytes.into_inner())
         }
+
         fn reserve_size(&self) -> usize {
             10000
         }
