@@ -525,6 +525,7 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
+
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
@@ -1141,9 +1142,11 @@ mod tests_file_io {
             fn title(&self, _path: &Path) -> Option<String> {
                 Some("MyTitle".to_string())
             }
+
             fn hash(&self, _path: &Path) -> Option<String> {
                 Some("1234568abcdef".to_string())
             }
+
             fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
                 Some(("image/foo".to_string(), "bits".as_bytes().to_owned()))
             }
