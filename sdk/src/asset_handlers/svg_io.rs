@@ -270,18 +270,24 @@ fn add_required_segs_to_stream(
     let (encoded_manifest_opt, _detected_tag_location, _insertion_point) =
         detect_manifest_location(input_stream)?;
 
-    if let Some(encoded_manifest) = encoded_manifest_opt {
+   let need_manifest = if let Some(encoded_manifest) = encoded_manifest_opt {
         if encoded_manifest.is_empty() {
-            // add some data
-            let data: &str = "placeholder manifest";
-
-            let svg = SvgIO::new("svg");
-            let svg_writer = svg.get_writer("svg").ok_or(Error::UnsupportedType)?;
-
-            svg_writer.write_cai(input_stream, output_stream, data.as_bytes())?;
+            true
+        } else {
+            false
         }
     } else {
-        return Err(Error::JumbfNotFound);
+        true
+    };
+
+    if need_manifest {
+        // add some data
+        let data: &str = "placeholder manifest";
+
+        let svg = SvgIO::new("svg");
+        let svg_writer = svg.get_writer("svg").ok_or(Error::UnsupportedType)?;
+
+        svg_writer.write_cai(input_stream, output_stream, data.as_bytes())?;
     }
 
     Ok(())
