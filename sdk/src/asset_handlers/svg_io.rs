@@ -441,7 +441,7 @@ impl CAIWriter for SvgIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
         let (decoded_manifest_opt, _detected_tag_location, manifest_pos) =
-            detect_manifest_location(input_stream)?;
+            detect_manifest_location(&mut output_stream)?;
 
         let decoded_manifest = decoded_manifest_opt.ok_or(Error::JumbfNotFound)?;
         let encoded_manifest_len = base64::encode(&decoded_manifest).len();
