@@ -285,7 +285,7 @@ impl CAIWriter for JpegIO {
             // En: Box Instance Number  - 0x0001
             //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
             // Z: Packet sequence number - 0x00000001...
-            let ci = vec![0x4A, 0x50];
+            let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
             let z: u32 = u32::try_from(seg)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();

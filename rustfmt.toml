@@ -1,4 +1,13 @@
+# IMPORTANT: PR validation uses nightly version of
+# rustfmt.
+
+# Invoke by using:
+#
+# rustup toolchain add nightly
+# cargo +nightly fmt
+
 edition = "2018"
 group_imports = "StdExternalCrate"
+hex_literal_case = "Lower"
 imports_granularity = "Crate"
 unstable_features = true
