@@ -153,7 +153,6 @@ impl Manifest {
     }
 
     /// Returns thumbnail tuple with Some((format, bytes)) or None
-    ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -361,8 +360,8 @@ impl Manifest {
     ///```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -383,8 +382,8 @@ impl Manifest {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -393,7 +392,7 @@ impl Manifest {
     ///
     /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
     /// for action in actions.actions {
-    ///    println!("{}", action.action());
+    ///     println!("{}", action.action());
     /// }
     /// # Ok(())
     /// # }
@@ -824,15 +823,13 @@ impl Manifest {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::{
-    ///     assertions::User,
-    ///     create_signer,
-    ///     Manifest,
-    ///     SigningAlg,
-    /// };
+    /// use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
-    /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+    /// manifest.add_assertion(&User::new(
+    ///     "org.contentauth.mylabel",
+    ///     r#"{"my_tag":"Anything I want"}"#,
+    /// ))?;
     ///
     /// let source = "tests/fixtures/C.jpg";
     /// let dest = "../target/test_file.jpg";

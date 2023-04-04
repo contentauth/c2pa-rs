@@ -26,7 +26,6 @@ use crate::{
 
 #[derive(Serialize)]
 /// A Container for a set of Manifests and a ValidationStatus list
-///
 pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// A label for the active (most recent) manifest in the store
@@ -184,7 +183,10 @@ impl ManifestStore {
     /// # use c2pa::Result;
     /// use c2pa::ManifestStore;
     /// # fn main() -> Result<()> {
-    /// let manifest_store = ManifestStore::from_file_with_resources("tests/fixtures/C.jpg","../target/tmp/manifest_store")?;
+    /// let manifest_store = ManifestStore::from_file_with_resources(
+    ///     "tests/fixtures/C.jpg",
+    ///     "../target/tmp/manifest_store",
+    /// )?;
     /// println!("{}", manifest_store);
     /// # Ok(())
     /// # }
