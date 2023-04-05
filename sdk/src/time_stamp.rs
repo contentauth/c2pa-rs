@@ -15,20 +15,17 @@ use std::convert::TryFrom;
 
 use bcder::decode::Constructed;
 use coset::{iana, sig_structure_data, HeaderBuilder, ProtectedHeader};
+use cryptographic_message_syntax::asn1::{
+    rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+    rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
+};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
 /// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
 /// using the specified Time Authority
 use crate::error::{Error, Result};
-use crate::{
-    asn1::{
-        rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
-        rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
-    },
-    hash_utils::vec_compare,
-    SigningAlg,
-};
+use crate::{hash_utils::vec_compare, SigningAlg};
 
 #[allow(dead_code)]
 pub(crate) fn cose_countersign_data(data: &[u8], alg: SigningAlg) -> Vec<u8> {
@@ -130,7 +127,7 @@ pub fn get_ta_url() -> Option<String> {
 #[cfg(feature = "openssl_sign")]
 fn time_stamp_request_http(
     url: &str,
-    request: &crate::asn1::rfc3161::TimeStampReq,
+    request: &cryptographic_message_syntax::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
 
@@ -212,9 +209,9 @@ fn time_stamp_message_http(
         .fill(&mut random)
         .map_err(|_| Error::CoseTimeStampGeneration)?;
 
-    let request = crate::asn1::rfc3161::TimeStampReq {
+    let request = cryptographic_message_syntax::asn1::rfc3161::TimeStampReq {
         version: bcder::Integer::from(1_u8),
-        message_imprint: crate::asn1::rfc3161::MessageImprint {
+        message_imprint: cryptographic_message_syntax::asn1::rfc3161::MessageImprint {
             hash_algorithm: digest_algorithm.into(),
             hashed_message: bcder::OctetString::new(bytes::Bytes::copy_from_slice(digest.as_ref())),
         },
@@ -243,8 +240,8 @@ impl TimeStampResponse {
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
-            crate::asn1::rfc3161::PkiStatus::Granted
-                | crate::asn1::rfc3161::PkiStatus::GrantedWithMods
+            cryptographic_message_syntax::asn1::rfc3161::PkiStatus::Granted
+                | cryptographic_message_syntax::asn1::rfc3161::PkiStatus::GrantedWithMods
         )
     }
 

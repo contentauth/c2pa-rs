@@ -14,6 +14,7 @@
 use ciborium::value::Value;
 use conv::*;
 use coset::{sig_structure_data, Label, TaggedCborSerializable};
+use cryptographic_message_syntax::asn1::rfc3161::TstInfo;
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
     oid_registry::Oid,
@@ -25,7 +26,6 @@ use crate::validator::{get_validator, CoseValidator};
 #[cfg(target_arch = "wasm32")]
 use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
-    asn1::rfc3161::TstInfo,
     error::{Error, Result},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,

@@ -118,8 +118,6 @@ mod openssl;
 
 mod signer;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
-#[allow(dead_code, clippy::enum_variant_names)]
-pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
