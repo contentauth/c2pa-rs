@@ -126,6 +126,7 @@ impl Manifest {
             ..Default::default()
         }
     }
+
     /// Returns a User Agent formatted string identifying the software/hardware/system produced this claim
     pub fn claim_generator(&self) -> &str {
         self.claim_generator.as_str()
@@ -152,7 +153,6 @@ impl Manifest {
     }
 
     /// Returns thumbnail tuple with Some((format, bytes)) or None
-    ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -360,8 +360,8 @@ impl Manifest {
     ///```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -382,8 +382,8 @@ impl Manifest {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -392,7 +392,7 @@ impl Manifest {
     ///
     /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
     /// for action in actions.actions {
-    ///    println!("{}", action.action());
+    ///     println!("{}", action.action());
     /// }
     /// # Ok(())
     /// # }
@@ -823,15 +823,13 @@ impl Manifest {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::{
-    ///     assertions::User,
-    ///     create_signer,
-    ///     Manifest,
-    ///     SigningAlg,
-    /// };
+    /// use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
-    /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+    /// manifest.add_assertion(&User::new(
+    ///     "org.contentauth.mylabel",
+    ///     r#"{"my_tag":"Anything I want"}"#,
+    /// ))?;
     ///
     /// let source = "tests/fixtures/C.jpg";
     /// let dest = "../target/test_file.jpg";
@@ -989,6 +987,7 @@ impl Manifest {
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await
     }
+
     #[cfg(feature = "file_io")]
     pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
         use crate::jumbf_io::remove_jumbf_from_file;
@@ -1371,6 +1370,7 @@ pub(crate) mod tests {
                 // this would happen on some remote server
                 crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
             }
+
             fn reserve_size(&self) -> usize {
                 10000
             }
@@ -1459,6 +1459,7 @@ pub(crate) mod tests {
             // fake sig
             Ok(sign_bytes.into_inner())
         }
+
         fn reserve_size(&self) -> usize {
             10000
         }

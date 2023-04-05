@@ -117,6 +117,11 @@ pub struct BmffHash {
 }
 
 impl BmffHash {
+    /// Label prefix for a BMFF hash assertion.
+    ///
+    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
+    pub const LABEL: &'static str = labels::BMFF_HASH;
+
     pub fn new(name: &str, alg: &str, url: Option<UriT>) -> Self {
         BmffHash {
             exclusions: Vec::new(),
@@ -129,11 +134,6 @@ impl BmffHash {
             bmff_version: ASSERTION_CREATION_VERSION,
         }
     }
-
-    /// Label prefix for a BMFF hash assertion.
-    ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
-    pub const LABEL: &'static str = labels::BMFF_HASH;
 
     pub fn exclusions(&self) -> &[ExclusionsMap] {
         self.exclusions.as_ref()
@@ -270,7 +270,9 @@ impl AssertionCbor for BmffHash {}
 
 impl AssertionBase for BmffHash {
     const LABEL: &'static str = Self::LABEL;
-    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION); // todo: this mechanism needs to change since a struct could support different versions
+    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+
+    // todo: this mechanism needs to change since a struct could support different versions
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)

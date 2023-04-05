@@ -131,7 +131,7 @@ impl Ingredient {
     ///
     /// ```
     /// use c2pa::Ingredient;
-    /// let ingredient = Ingredient::new("title","image/jpeg","ed610ae51f604002be3dbf0c589a2f1f");
+    /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
@@ -176,7 +176,6 @@ impl Ingredient {
     }
 
     /// Returns thumbnail tuple Some((format, bytes)) or None
-    ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -184,7 +183,6 @@ impl Ingredient {
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
-    ///
     pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
         match self.thumbnail.as_ref() {
             Some(thumbnail) => self.resources.get(&thumbnail.identifier),
@@ -525,6 +523,7 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
+
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
@@ -1141,9 +1140,11 @@ mod tests_file_io {
             fn title(&self, _path: &Path) -> Option<String> {
                 Some("MyTitle".to_string())
             }
+
             fn hash(&self, _path: &Path) -> Option<String> {
                 Some("1234568abcdef".to_string())
             }
+
             fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
                 Some(("image/foo".to_string(), "bits".as_bytes().to_owned()))
             }

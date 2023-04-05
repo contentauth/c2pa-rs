@@ -12,7 +12,6 @@
 // each license.
 
 //! Example: Creating a custom assertion
-//!
 use c2pa::{Assertion, AssertionBase, AssertionCbor, Manifest, Result};
 use serde::{Deserialize, Serialize};
 
