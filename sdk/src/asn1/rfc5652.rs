@@ -12,21 +12,21 @@ Some RFC 5652 types are defined in the `x509-certificate` crate, which
 this crate relies on for certificate parsing functionality.
 */
 
-use {
-    crate::asn1::rfc3281::AttributeCertificate,
-    bcder::{
-        decode::{Constructed, DecodeError, Source},
-        encode,
-        encode::{PrimitiveContent, Values},
-        BitString, Captured, ConstOid, Integer, Mode, OctetString, Oid, Tag,
-    },
-    std::{
-        fmt::{Debug, Formatter},
-        io::Write,
-        ops::{Deref, DerefMut},
-    },
-    x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*, rfc5652::*},
+use std::{
+    fmt::{Debug, Formatter},
+    io::Write,
+    ops::{Deref, DerefMut},
 };
+
+use bcder::{
+    decode::{Constructed, DecodeError, Source},
+    encode,
+    encode::{PrimitiveContent, Values},
+    BitString, Captured, ConstOid, Integer, Mode, OctetString, Oid, Tag,
+};
+use x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*, rfc5652::*};
+
+use crate::asn1::rfc3281::AttributeCertificate;
 
 /// The data content type.
 ///
