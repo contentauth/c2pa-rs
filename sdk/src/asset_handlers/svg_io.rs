@@ -106,7 +106,7 @@ impl AssetIO for SvgIO {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
-    
+
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = std::fs::OpenOptions::new()
             .read(true)
@@ -157,7 +157,7 @@ impl AssetIO for SvgIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
-    
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
