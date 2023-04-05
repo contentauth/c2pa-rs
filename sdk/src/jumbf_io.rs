@@ -23,7 +23,7 @@ use lazy_static::lazy_static;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        tiff_io::TiffIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -33,11 +33,12 @@ use crate::{
 lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
         ];
         let mut handler_map = HashMap::new();
@@ -58,11 +59,12 @@ lazy_static! {
 lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
         ];
         let mut handler_map = HashMap::new();
@@ -304,6 +306,7 @@ pub mod tests {
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(SvgIO::new("")),
         ];
 
         // build handler map
@@ -324,6 +327,7 @@ pub mod tests {
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(SvgIO::new("")),
         ];
 
         // build handler map
@@ -384,5 +388,6 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tif"));
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
+        assert!(supported.iter().any(|s| s == "svg"));
     }
 }
