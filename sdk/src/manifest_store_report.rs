@@ -300,6 +300,7 @@ impl ManifestReport {
             signature,
         })
     }
+
     /// create a json string representation of this structure, omitting binaries
     fn to_json(&self) -> String {
         let mut json = serde_json::to_string_pretty(self).unwrap_or_else(|e| e.to_string());

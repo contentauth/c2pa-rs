@@ -35,8 +35,8 @@ use crate::{
 const II: [u8; 2] = *b"II";
 const MM: [u8; 2] = *b"MM";
 
-const C2PA_TAG: u16 = 0xCD41;
-const XMP_TAG: u16 = 0x02BC;
+const C2PA_TAG: u16 = 0xcd41;
+const XMP_TAG: u16 = 0x02bc;
 const SUBFILE_TAG: u16 = 0x014a;
 const EXIFIFD_TAG: u16 = 0x8769;
 const GPSIFD_TAG: u16 = 0x8825;
@@ -1371,6 +1371,7 @@ impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
+
     fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
         let mut reader = std::fs::File::open(asset_path)?;
 
@@ -1484,6 +1485,7 @@ impl AssetIO for TiffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
