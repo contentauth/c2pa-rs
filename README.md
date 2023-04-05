@@ -25,7 +25,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.63.0** or newer.
+The SDK requires **Rust version 1.65.0** or newer.
 
 ### Supported platforms
 
