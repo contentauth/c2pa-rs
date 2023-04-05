@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.20.0
+_05 April 2023_
+
+* (MINOR) SVG support ([#226](https://github.com/contentauth/c2pa-rs/pull/226))
+* (MINOR) Update several X509-related crate dependencies ([#225](https://github.com/contentauth/c2pa-rs/pull/225))
+* Update thiserror to 1.0.40 in /sdk ([#223](https://github.com/contentauth/c2pa-rs/pull/223))
+* Avoid chrono's transitive dependency on time crate ([#222](https://github.com/contentauth/c2pa-rs/pull/222))
+* Require openssl >0.10.48 to address multiple RUSTSEC warnings ([#221](https://github.com/contentauth/c2pa-rs/pull/221))
+* Apply code format to doc comments ([#220](https://github.com/contentauth/c2pa-rs/pull/220))
+
 ## 0.19.1
 _28 March 2023_
 
