@@ -198,6 +198,7 @@ enum DetectedTagsDepth {
     Empty,
 }
 
+// returns tuple of found manifest, where in the XML hierarchy the manifest needs to go, and the manifest insertion point
 fn detect_manifest_location(
     input_stream: &mut dyn CAIRead,
 ) -> Result<(Option<Vec<u8>>, DetectedTagsDepth, usize)> {
@@ -506,6 +507,7 @@ impl CAIWriter for SvgIO {
                         && xml_path[1] == METADATA
                         && xml_path[2] == MANIFEST
                     {
+                        // skip the manifest
                         continue;
                     } else {
                         writer
@@ -519,6 +521,7 @@ impl CAIWriter for SvgIO {
                         && xml_path[1] == METADATA
                         && xml_path[2] == MANIFEST
                     {
+                        // skip the manifest
                         continue;
                     } else {
                         writer
@@ -533,6 +536,7 @@ impl CAIWriter for SvgIO {
                         && xml_path[1] == METADATA
                         && xml_path[2] == MANIFEST
                     {
+                        // skip the manifest
                         let _p = xml_path.pop();
                         continue;
                     } else {
