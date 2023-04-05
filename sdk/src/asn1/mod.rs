@@ -4,7 +4,13 @@
 
 /*! Holds Rust struct definitions for various ASN.1 primitives. */
 
-// https://github.com/indygreg/PyOxidizer/tree/main/cryptographic-message-syntax/src/asn1
+// This code is copied from a subset of version 0.22.0 of the
+// cryptographic-message-syntax crate located at:
+// https://github.com/indygreg/cryptography-rs/tree/main/cryptographic-message-syntax/src/asn1
+
+// We can not incorporate the entire crate directly because other parts of the
+// crate contain dependencies on blocking calls in reqwest. Those calls are not
+// available in WASM environment.
 
 pub mod rfc3161;
 pub mod rfc3281;
