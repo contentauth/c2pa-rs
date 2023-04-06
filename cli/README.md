@@ -241,9 +241,9 @@ For actual use, provide a permanent key and cert in the manifest definition or e
 
 ## JSON schemas
 
-* [Schema for the Manifest Definition](schemas/manifest-definition.json)
+* [Schema for the Manifest Definition](https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json)
 
-* [Schema for Ingredient](schemas/ingredient.json)
+* [Schema for Ingredient](https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json)
 
 ## Appendix: Creating and using an X.509 certificate
 
@@ -278,7 +278,7 @@ Both the `private_key` and `sign_cert` must be in PEM format. The `sign_cert` mu
 
 This section gives a highlight of noteworthy changes 
 
-Refer to the [CHANGELOG](CHANGELOG.md) for detailed Git changes
+Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes
 
 ## 0.5.0
 _27 March 2023_
