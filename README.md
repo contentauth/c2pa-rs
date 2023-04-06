@@ -2,13 +2,13 @@
 
 [![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust SDK as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022. 
+The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust SDK as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022.
 
 ## Key features
 
-The C2PA Rust SDK implements a subset of the [C2PA 1.2 technical specification](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html). 
+The C2PA Rust SDK implements a subset of the [C2PA 1.2 technical specification](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html).
 
-The SDK enables a desktop, mobile, or embedded application to: 
+The SDK enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_manifests).
 * Embed manifests in certain file formats.
 * Parse and validate manifests found in certain file formats.
@@ -38,23 +38,23 @@ The SDK has been tested on the following operating systems:
 
 ## Supported file formats
 
- | Extensions    | MIME type                                           | 
- |---------------| --------------------------------------------------- | 
+ | Extensions    | MIME type                                           |
+ |---------------| --------------------------------------------------- |
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        | 
+ | `avif`        | `image/avif`                                        |
  | `c2pa`        | `application/x-c2pa-manifest-store`,                |
- | `dng`         | `image/x-adobe-dng`                                 | 
- | `heic`        | `image/heic`                                        | 
- | `heif`        | `image/heif`                                        | 
- | `jpg`, `jpeg` | `image/jpeg`                                        | 
- | `m4a`         | `audio/mp4`                                         | 
- | `mp4`         | `video/mp4`, `application/mp4`                      | 
+ | `dng`         | `image/x-adobe-dng`                                 |
+ | `heic`        | `image/heic`                                        |
+ | `heif`        | `image/heif`                                        |
+ | `jpg`, `jpeg` | `image/jpeg`                                        |
+ | `m4a`         | `audio/mp4`                                         |
+ | `mp4`         | `video/mp4`, `application/mp4`                      |
  | `mov`         | `video/quicktime`                                   |
- | `png`         | `image/png`                                         | 
- | `tif`,`tiff`  | `image/tiff`                                        | 
- | `wav`         | `audio/x-wav`                                       | 
- | `webp`        | `image/webp`                                        | 
- 
+ | `png`         | `image/png`                                         |
+ | `tif`,`tiff`  | `image/tiff`                                        |
+ | `wav`         | `audio/x-wav`                                       |
+ | `webp`        | `image/webp`                                        |
+
 ## Usage
 
 Add this to your `Cargo.toml`:
@@ -89,9 +89,9 @@ Note that some components and dependent crates are licensed under different term
 
 ## Release Notes
 
-This section gives a highlight of noteworthy changes 
+This section gives a highlight of noteworthy changes
 
-Refer to the [CHANGELOG](CHANGELOG.md) for detailed Git changes
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed Git changes
 
 ## 0.19.0
 _23 March 2023_
