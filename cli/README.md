@@ -50,8 +50,8 @@ The tool will display the version installed. Compare the version number displaye
  | `wav`         | `audio/x-wav`                                       | 
  | `webp`        | `image/webp`                                        | 
  
- <sup>*</sup> Fragmented mp4 is not yet supported.
- 
+<sup>*</sup> Fragmented mp4 is not yet supported.
+
 ## Usage
 
 The tool's command-line syntax is:
