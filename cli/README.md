@@ -10,7 +10,8 @@ Use the tool to:
 
 ## Installation
 
-Prebuilt versions of the tool are available for [download]()
+Prebuilt versions of the tool are available for [download](https://github.com/contentauth/c2patool/tags).
+
 PREREQUISITE: Install [Rust](https://www.rust-lang.org/tools/install). 
 
 Enter this command to install or update the tool:
@@ -36,20 +37,21 @@ The tool will display the version installed. Compare the version number displaye
  |---------------| --------------------------------------------------- | 
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
  | `avif`        | `image/avif`                                        | 
- | `c2pa`        | `application/x-c2pa-manifest-store`,                |
+ | `c2pa`        | `application/x-c2pa-manifest-store`                 |
  | `dng`         | `image/x-adobe-dng`                                 | 
  | `heic`        | `image/heic`                                        | 
  | `heif`        | `image/heif`                                        | 
  | `jpg`, `jpeg` | `image/jpeg`                                        | 
  | `m4a`         | `audio/mp4`                                         | 
- | `mp4`         | `video/mp4`, `application/mp4`                       | 
+ | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         | 
  | `mov`         | `video/quicktime`                                   |
  | `png`         | `image/png`                                         | 
  | `tif`,`tiff`  | `image/tiff`                                        | 
  | `wav`         | `audio/x-wav`                                       | 
  | `webp`        | `image/webp`                                        | 
  
- * Fragmented mp4 is not yet supported
+ <sup>*</sup> Fragmented mp4 is not yet supported.
+ 
 ## Usage
 
 The tool's command-line syntax is:
