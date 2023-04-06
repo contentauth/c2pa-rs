@@ -43,6 +43,7 @@ impl HashedUri {
     pub fn url(&self) -> String {
         self.url.clone()
     }
+
     pub fn is_relative_url(&self) -> bool {
         crate::jumbf::labels::manifest_label_from_uri(&self.url).is_none()
     }
@@ -55,7 +56,6 @@ impl HashedUri {
         self.hash.clone()
     }
 
-    #[cfg(feature = "sign")]
     pub(crate) fn update_hash(&mut self, hash: Vec<u8>) {
         self.hash = hash;
     }

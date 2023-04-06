@@ -569,7 +569,7 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
 // internal util function to dump the cert chain in PEM format
 #[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     {
         let mut out_buf: Vec<u8> = Vec::new();
 
@@ -587,7 +587,7 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
         Ok(out_buf)
     }
 
-    #[cfg(not(feature = "sign"))]
+    #[cfg(not(feature = "openssl_sign"))]
     {
         let out_buf: Vec<u8> = Vec::new();
         Ok(out_buf)
@@ -981,7 +981,7 @@ async fn validate_with_cert_async(
     }
 }
 #[allow(unused_imports)]
-#[cfg(feature = "file_io")]
+#[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1071,7 +1071,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
 
@@ -1125,7 +1125,8 @@ pub mod tests {
 
         let signer = crate::utils::test::temp_signer();
 
-        let cose_bytes = crate::cose_sign::sign_claim(&claim_bytes, &signer, box_size).unwrap();
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
         let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 

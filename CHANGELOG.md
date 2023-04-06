@@ -6,6 +6,57 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.20.0
+_05 April 2023_
+
+* (MINOR) SVG support ([#226](https://github.com/contentauth/c2pa-rs/pull/226))
+* (MINOR) Update several X509-related crate dependencies ([#225](https://github.com/contentauth/c2pa-rs/pull/225))
+* Update thiserror to 1.0.40 in /sdk ([#223](https://github.com/contentauth/c2pa-rs/pull/223))
+* Avoid chrono's transitive dependency on time crate ([#222](https://github.com/contentauth/c2pa-rs/pull/222))
+* Require openssl >0.10.48 to address multiple RUSTSEC warnings ([#221](https://github.com/contentauth/c2pa-rs/pull/221))
+* Apply code format to doc comments ([#220](https://github.com/contentauth/c2pa-rs/pull/220))
+
+## 0.19.1
+_28 March 2023_
+
+* Update README ([#215](https://github.com/contentauth/c2pa-rs/pull/215))
+
+## 0.19.0
+_23 March 2023_
+
+* Makefile update ([#213](https://github.com/contentauth/c2pa-rs/pull/213))
+* Streaming enhancement  ([#212](https://github.com/contentauth/c2pa-rs/pull/212))
+* Adds base_path_take to ResourceStore ([#205](https://github.com/contentauth/c2pa-rs/pull/205))
+* Add write support for HEIC, HEIF, AVIF ([#210](https://github.com/contentauth/c2pa-rs/pull/210))
+* (MINOR) Riff support with refactored AssetIO ([#203](https://github.com/contentauth/c2pa-rs/pull/203))
+* (MINOR) Resource format and is_parent / relationship changes ([#202](https://github.com/contentauth/c2pa-rs/pull/202))
+* Fix hash algo warning in Wasm and hashing for RSA-PSS SHA-384/512 ([#206](https://github.com/contentauth/c2pa-rs/pull/206))
+* Derive impl of Default for Relationship enum ([#204](https://github.com/contentauth/c2pa-rs/pull/204))
+
+## 0.18.1
+_07 March 2023_
+
+* Update Validation Status codes ([#200](https://github.com/contentauth/c2pa-rs/pull/200))
+* Fix async path to support ingredient box hashing ([#201](https://github.com/contentauth/c2pa-rs/pull/201))
+
+## 0.18.0
+_02 March 2023_
+
+* Fix issue where value was inadvertently included in Exclusion structure ([#197](https://github.com/contentauth/c2pa-rs/pull/197))
+* (MINOR) Bump MSRV to 1.63.0 ([#198](https://github.com/contentauth/c2pa-rs/pull/198))
+* Fixed unit test failure (invalid unique name generation). ([#190](https://github.com/contentauth/c2pa-rs/pull/190))
+
+## 0.17.0
+_22 February 2023_
+
+* Disable mdat exclusion ([#187](https://github.com/contentauth/c2pa-rs/pull/187))
+* Bmff v2 ([#186](https://github.com/contentauth/c2pa-rs/pull/186))
+* Fix for using non-c2pa segment when add required segments ([#185](https://github.com/contentauth/c2pa-rs/pull/185))
+* Update Ingredient and VC hashes to 1.2 spec ([#184](https://github.com/contentauth/c2pa-rs/pull/184))
+* (MINOR) Create a ResourceStore for binary assets  ([#180](https://github.com/contentauth/c2pa-rs/pull/180))
+* Fix Clippy warnings from new Rust 1.67 ([#182](https://github.com/contentauth/c2pa-rs/pull/182))
+* Visualizations ([#163](https://github.com/contentauth/c2pa-rs/pull/163))
+
 ## 0.16.1
 _19 December 2022_
 

@@ -15,4 +15,6 @@ pub mod bmff_io;
 pub mod c2pa_io;
 pub mod jpeg_io;
 pub mod png_io;
+pub mod riff_io;
+pub mod svg_io;
 pub mod tiff_io;

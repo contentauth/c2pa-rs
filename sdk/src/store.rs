@@ -11,27 +11,29 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "sign")]
-use std::io::{Read, Seek, SeekFrom};
-use std::{collections::HashMap, io::Cursor};
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read, Seek, SeekFrom},
+};
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
 use log::error;
 
-#[cfg(all(feature = "xmp_write", feature = "file_io"))]
-use crate::embedded_xmp;
-#[cfg(feature = "async_signer")]
-use crate::AsyncSigner;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
     },
     assertions::{
         labels::{self, CLAIM},
-        Ingredient, Relationship,
+        DataHash, Ingredient, Relationship,
+    },
+    asset_io::{
+        CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
+    cose_sign::cose_sign,
+    cose_validator::verify_cose,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -39,20 +41,16 @@ use crate::{
         boxes::*,
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
-    jumbf_io::load_jumbf_from_memory,
+    jumbf_io::{
+        get_assetio_handler, load_jumbf_from_memory, object_locations_from_stream,
+        save_jumbf_to_memory, save_jumbf_to_stream,
+    },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::hash_utils::hash256,
-    validation_status, ManifestStoreReport,
-};
-#[cfg(feature = "sign")]
-use crate::{
-    assertions::DataHash,
-    asset_io::{CAIReadWrite, HashBlockObjectType, HashObjectPositions},
-    cose_sign::cose_sign,
-    cose_validator::verify_cose,
-    jumbf_io::{object_locations_from_stream, save_jumbf_to_stream},
-    utils::{hash_utils::Exclusion, patch::patch_bytes},
-    Signer,
+    utils::{
+        hash_utils::{hash256, Exclusion},
+        patch::patch_bytes,
+    },
+    validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -90,6 +88,7 @@ trait PushGetIndex {
 
 impl<T> PushGetIndex for Vec<T> {
     type Item = T;
+
     fn push_get_index(&mut self, item: T) -> usize {
         let index = self.len();
         self.push(item);
@@ -362,7 +361,6 @@ impl Store {
     }
 
     /// Sign the claim and return signature.
-    #[cfg(feature = "sign")]
     pub fn sign_claim(
         &self,
         claim: &Claim,
@@ -389,7 +387,6 @@ impl Store {
     }
 
     /// Sign the claim asynchronously and return signature.
-    #[cfg(feature = "async_signer")]
     pub async fn sign_claim_async(
         &self,
         claim: &Claim,
@@ -611,18 +608,15 @@ impl Store {
     }
 
     /// Convert this claims store to a JUMBF box.
-    #[cfg(feature = "file_io")]
     pub fn to_jumbf(&self, signer: &dyn Signer) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Convert this claims store to a JUMBF box.
-    #[cfg(feature = "async_signer")]
     pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
         self.to_jumbf_internal(signer.reserve_size())
     }
 
-    #[cfg(feature = "sign")]
     fn to_jumbf_internal(&self, min_reserve_size: usize) -> Result<Vec<u8>> {
         // Create the CAI block.
         let mut cai_block = Cai::new();
@@ -680,7 +674,7 @@ impl Store {
                     let mut sigb = CAISignatureBox::new();
                     let signed_data = match claim.signature_val().is_empty() {
                         false => claim.signature_val().clone(), // existing claims have sig values
-                        true => Store::sign_claim_placeholder(claim, min_reserve_size), // empty is the new sig to be replaced
+                        true => Store::sign_claim_placeholder(claim, min_reserve_size), /* empty is the new sig to be replaced */
                     };
 
                     let sigc = JUMBFCBORContentBox::new(signed_data);
@@ -1213,12 +1207,22 @@ impl Store {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
-                    if !verify_by_alg(
-                        ingredient.alg(),
-                        &c2pa_manifest.hash(),
-                        &ingredient.data()?,
-                        None,
-                    ) {
+                    let alg = match c2pa_manifest.alg() {
+                        Some(a) => a,
+                        None => ingredient.alg().to_owned(),
+                    };
+
+                    // get the 1.1-1.2 box hash
+                    let no_hash: Vec<u8> = Vec::new();
+                    let box_hash = store
+                        .manifest_box_hash_cache
+                        .get(&label)
+                        .unwrap_or(&no_hash);
+
+                    // test for 1.1 hash then 1.0 version
+                    if !vec_compare(&c2pa_manifest.hash(), box_hash)
+                        && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                    {
                         let log_item = log_item!(
                             &c2pa_manifest.url(),
                             "ingredient hash incorrect",
@@ -1336,7 +1340,6 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
-    #[cfg(feature = "sign")]
     fn generate_data_hashes_for_stream<R>(
         stream: &mut R,
         alg: &str,
@@ -1550,26 +1553,84 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
-    #[cfg(feature = "sign")]
     pub fn save_to_stream(
         &mut self,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save_stream(format, stream, signer.reserve_size())?;
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
+
+        let jumbf_bytes = self.start_save_stream(
+            format,
+            input_stream,
+            &mut intermediate_stream,
+            signer.reserve_size(),
+        )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        match self.finish_save_stream(jumbf_bytes, format, stream, sig, &sig_placeholder) {
+        match self.finish_save_stream(
+            jumbf_bytes,
+            format,
+            &mut intermediate_stream,
+            output_stream,
+            sig,
+            &sig_placeholder,
+        ) {
             Ok((s, m)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
                 Ok(m)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
+    /// asset and manifest. Updates XMP with provenance record.
+    /// When called, the stream should contain an asset matching format.
+    /// Returns a tuple (output asset, manifest store) with a `Vec<u8>` containing the output asset and a `Vec<u8>` containing the insert manifest store.  (output asset, )
+    pub(crate) async fn save_to_memory_remote_signed(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        remote_signer: &dyn crate::signer::RemoteSigner,
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        let mut input_stream = Cursor::new(asset);
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+
+        let jumbf_bytes = self.start_save_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            remote_signer.reserve_size(),
+        )?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = remote_signer.sign_remote(&pc.data()?).await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
+
+        match self.finish_save_to_memory(
+            jumbf_bytes,
+            format,
+            &output_stream.into_inner(),
+            sig,
+            &sig_placeholder,
+        ) {
+            Ok((s, output_asset, output_jumbf)) => {
+                // save sig so store is up to date
+                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc_mut.set_signature_val(s);
+
+                Ok((output_asset, output_jumbf))
             }
             Err(e) => Err(e),
         }
@@ -1631,7 +1692,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an async signer. Updates XMP with provenance record.
-    #[cfg(feature = "async_signer")]
+    #[cfg(feature = "file_io")]
     pub async fn save_to_asset_async(
         &mut self,
         asset_path: &Path,
@@ -1688,7 +1749,7 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into an asset using an CoseSign box generated remotely. Updates XMP with provenance record.
-    #[cfg(feature = "async_signer")]
+    #[cfg(feature = "file_io")]
     pub async fn save_to_asset_remote_signed(
         &mut self,
         asset_path: &Path,
@@ -1743,25 +1804,65 @@ impl Store {
         }
     }
 
-    #[cfg(feature = "sign")]
     fn start_save_stream(
         &mut self,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         let mut data;
-        // 1) Add DC provenance XMP
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
 
+        // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        // todo:: stream support for XMP write
+        match pc.remote_manifest() {
+            crate::claim::RemoteManifest::Remote(url) => {
+                if let Some(h) = get_assetio_handler(format) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        // remove any previous c2pa manifest from the asset
+                        let tmp_output: Vec<u8> = Vec::new();
+                        let mut tmp_stream = Cursor::new(tmp_output);
+
+                        if let Some(manifest_writer) = h.get_writer(format) {
+                            manifest_writer
+                                .remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                            // add external ref if possible
+                            external_ref_writer.embed_reference_to_stream(
+                                &mut tmp_stream,
+                                &mut intermediate_stream,
+                                RemoteRefEmbedType::Xmp(url),
+                            )?;
+                        } else {
+                            return Err(Error::XmpNotSupported);
+                        }
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
+                } else {
+                    return Err(Error::UnsupportedType);
+                }
+            }
+            _ => {
+                // just clone stream
+                input_stream.rewind()?;
+                std::io::copy(input_stream, &mut intermediate_stream)?;
+            }
+        }
 
         // 2) Get hash ranges if needed, do not generate for update manifests
-        let mut hash_ranges = object_locations_from_stream(format, stream)?;
+        let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
         let hashes: Vec<DataHash> = if pc.update_manifest() {
             Vec::new()
         } else {
-            Store::generate_data_hashes_for_stream(stream, pc.alg(), &mut hash_ranges, false)?
+            Store::generate_data_hashes_for_stream(
+                &mut intermediate_stream,
+                pc.alg(),
+                &mut hash_ranges,
+                false,
+            )?
         };
 
         // add the placeholder data hashes to provenance claim so that the required space is reserved
@@ -1778,18 +1879,28 @@ impl Store {
         // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
         data = self.to_jumbf_internal(reserve_size)?;
         let jumbf_size = data.len();
-        save_jumbf_to_stream(format, stream, &data)?;
+
+        intermediate_stream.rewind()?;
+        save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
 
         // 4)  determine final object locations and patch the asset hashes with correct offset
         // replace the source with correct asset hashes so that the claim hash will be correct
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // get the final hash ranges, but not for update manifests
-        let mut new_hash_ranges = object_locations_from_stream(format, stream)?;
+        intermediate_stream.rewind()?;
+        output_stream.rewind()?;
+        std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+        let mut new_hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
         let updated_hashes = if pc.update_manifest() {
             Vec::new()
         } else {
-            Store::generate_data_hashes_for_stream(stream, pc.alg(), &mut new_hash_ranges, true)?
+            Store::generate_data_hashes_for_stream(
+                &mut intermediate_stream,
+                pc.alg(),
+                &mut new_hash_ranges,
+                true,
+            )?
         };
 
         // patch existing claim hash with updated data
@@ -1806,12 +1917,12 @@ impl Store {
         Ok(data) // return JUMBF data
     }
 
-    #[cfg(feature = "sign")]
     fn finish_save_stream(
         &self,
         mut jumbf_bytes: Vec<u8>,
         format: &str,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
         sig: Vec<u8>,
         sig_placeholder: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -1823,9 +1934,32 @@ impl Store {
             .map_err(|_| Error::JumbfCreationError)?;
 
         // re-save to file
-        save_jumbf_to_stream(format, stream, &jumbf_bytes)?;
+        save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
 
         Ok((sig, jumbf_bytes))
+    }
+
+    fn finish_save_to_memory(
+        &self,
+        mut jumbf_bytes: Vec<u8>,
+        format: &str,
+        source_asset: &[u8],
+        sig: Vec<u8>,
+        sig_placeholder: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        // return sig and output
+        Ok((
+            sig,
+            save_jumbf_to_memory(format, source_asset, &jumbf_bytes)?,
+            jumbf_bytes,
+        ))
     }
 
     #[cfg(feature = "file_io")]
@@ -1836,6 +1970,7 @@ impl Store {
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
         // force generate external manifests for unknown types
+
         let ext = match get_supported_file_extension(dest_path) {
             Some(ext) => ext,
             None => {
@@ -1855,18 +1990,7 @@ impl Store {
         // 1) Add DC provenance XMP
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote => {
-                // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                #[cfg(feature = "xmp_write")]
-                if let Some(provenance) = self.provenance_path() {
-                    // update XMP info & add xmp hash to provenance claim
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &provenance)?;
-                } else {
-                    return Err(Error::XmpWriteError);
-                }
-                dest_path.to_path_buf()
-            }
+            crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
             crate::claim::RemoteManifest::SideCar => {
                 // remove any previous c2pa manifest from the asset
                 match remove_jumbf_from_file(dest_path) {
@@ -1876,31 +2000,36 @@ impl Store {
                     Err(e) => return Err(e),
                 }
             }
-            crate::claim::RemoteManifest::Remote(_url) => {
-                if cfg!(feature = "xmp_write") {
-                    let d = dest_path.with_extension(MANIFEST_STORE_EXT);
-                    // remove any previous c2pa manifest from the asset
-                    remove_jumbf_from_file(dest_path)?;
-                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                    #[cfg(feature = "xmp_write")]
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
-                    d
-                } else {
-                    return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
-                }
-            }
-            crate::claim::RemoteManifest::EmbedWithRemote(_url) => {
-                if cfg!(feature = "xmp_write") {
-                    // even though this block is protected by the outer cfg!(feature = "xmp_write")
-                    // the class embedded_xmp is not defined so we have to explicitly exclude it from the build
-                    #[cfg(feature = "xmp_write")]
-                    embedded_xmp::add_manifest_uri_to_file(dest_path, &_url)?;
+            crate::claim::RemoteManifest::Remote(url) => {
+                let d = dest_path.with_extension(MANIFEST_STORE_EXT);
+                // remove any previous c2pa manifest from the asset
+                remove_jumbf_from_file(dest_path)?;
 
-                    dest_path.to_path_buf()
+                if let Some(h) = get_assetio_handler(&ext) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        external_ref_writer
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
                 } else {
-                    return Err(Error::BadParam("requires 'xmp_write' feature".to_string()));
+                    return Err(Error::UnsupportedType);
                 }
+
+                d
+            }
+            crate::claim::RemoteManifest::EmbedWithRemote(url) => {
+                if let Some(h) = get_assetio_handler(&ext) {
+                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
+                        external_ref_writer
+                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
+                    } else {
+                        return Err(Error::XmpNotSupported);
+                    }
+                } else {
+                    return Err(Error::UnsupportedType);
+                }
+                dest_path.to_path_buf()
             }
         };
 
@@ -1915,7 +2044,7 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let bmff_hashes = Store::generate_bmff_data_hashes(&output_path, pc.alg(), false)?;
+                let bmff_hashes = Store::generate_bmff_data_hashes(dest_path, pc.alg(), false)?;
                 for hash in bmff_hashes {
                     pc.add_assertion(&hash)?;
                 }
@@ -1936,7 +2065,7 @@ impl Store {
 
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
-                    bmff_hash.gen_hash(&output_path)?;
+                    bmff_hash.gen_hash(dest_path)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -2036,7 +2165,6 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
@@ -2152,7 +2280,12 @@ impl Store {
                         let is_remote_url = Store::is_valid_remote_url(&ext_ref);
 
                         if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-                            Store::fetch_remote_manifest(&ext_ref)
+                            // not supported in wasm
+                            if cfg!(target_arch = "wasm32") {
+                                Err(Error::JumbfNotFound)
+                            } else {
+                                Store::fetch_remote_manifest(&ext_ref)
+                            }
                         } else {
                             // return an error with the url that should be read
                             if is_remote_url {
@@ -2467,11 +2600,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         // test finding claims by label
         let c1 = store.get_claim(&claim1_label);
@@ -2574,7 +2707,7 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // read from new file
         let new_store =
@@ -2628,10 +2761,8 @@ pub mod tests {
         }
     }
 
-    #[cfg(feature = "async_signer")]
     struct MyRemoteSigner {}
 
-    #[cfg(feature = "async_signer")]
     #[async_trait::async_trait]
     impl crate::signer::RemoteSigner for MyRemoteSigner {
         async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
@@ -2641,6 +2772,7 @@ pub mod tests {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
+
         fn reserve_size(&self) -> usize {
             10000
         }
@@ -2732,7 +2864,6 @@ pub mod tests {
         assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
     }
 
-    #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_async() {
         let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
@@ -2789,7 +2920,6 @@ pub mod tests {
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
 
-    #[cfg(feature = "async_signer")]
     #[actix::test]
     async fn test_jumbf_generation_remote() {
         // test adding to actual image
@@ -2844,11 +2974,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
@@ -2875,6 +3005,360 @@ pub mod tests {
                 .to_json(AssertionStoreJsonFormat::OrderedList, false)
                 .unwrap();
 
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_wav_jumbf_generation() {
+        let ap = fixture_path("sample1.wav");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "ssample1.wav");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        create_editing_claim(&mut claim2).unwrap();
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        create_capture_claim(&mut claim_capture).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim2).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // can  we get by the ingredient data back
+        let _some_binary_data: Vec<u8> = vec![
+            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+            0x0b, 0x0e,
+        ];
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            let _restored_json = claim
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+            let _orig_json = store
+                .get_claim(claim.label())
+                .unwrap()
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_avi_jumbf_generation() {
+        let ap = fixture_path("test.avi");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test.avi");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        create_editing_claim(&mut claim2).unwrap();
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        create_capture_claim(&mut claim_capture).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim2).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // can  we get by the ingredient data back
+        let _some_binary_data: Vec<u8> = vec![
+            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+            0x0b, 0x0e,
+        ];
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            let _restored_json = claim
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+            let _orig_json = store
+                .get_claim(claim.label())
+                .unwrap()
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_webp_jumbf_generation() {
+        let ap = fixture_path("sample1.webp");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.webp");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        create_editing_claim(&mut claim2).unwrap();
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        create_capture_claim(&mut claim_capture).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim2).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // can  we get by the ingredient data back
+        let _some_binary_data: Vec<u8> = vec![
+            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+            0x0b, 0x0e,
+        ];
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            let _restored_json = claim
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+            let _orig_json = store
+                .get_claim(claim.label())
+                .unwrap()
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_heic() {
+        let ap = fixture_path("sample1.heic");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.heic");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_avif() {
+        let ap = fixture_path("sample1.avif");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.avif");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_heif() {
+        let ap = fixture_path("sample1.heif");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "sample1.heif");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        store.commit_claim(claim1).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        // read from new file
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
             println!(
                 "Claim: {} \n{}",
                 claim.label(),
@@ -2992,7 +3476,7 @@ pub mod tests {
 
         // save to output
         store
-            .save_to_asset(ap.as_path(), &signer, op.as_path())
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         // read back in
@@ -3044,7 +3528,7 @@ pub mod tests {
 
         // save to output
         store
-            .save_to_asset(ap.as_path(), &signer, op.as_path())
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         let mut report = OneShotStatusTracker::default();
@@ -3079,7 +3563,7 @@ pub mod tests {
 
         restored_store.commit_update_manifest(claim).unwrap();
         restored_store
-            .save_to_asset(op.as_path(), &signer, op.as_path())
+            .save_to_asset(op.as_path(), signer.as_ref(), op.as_path())
             .unwrap();
 
         // read back in store with update manifest
@@ -3209,7 +3693,6 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
@@ -3218,7 +3701,6 @@ pub mod tests {
         println!("store = {store}");
     }
     #[test]
-    #[cfg(all(feature = "file_io", feature = "bmff"))]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
@@ -3235,7 +3717,7 @@ pub mod tests {
 
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         let mut report = DetailedStatusTracker::new();
 
@@ -3280,7 +3762,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3324,7 +3806,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3377,7 +3859,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         assert!(sidecar.exists());
 
@@ -3429,7 +3911,7 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        let saved_manifest = store.save_to_asset(&ap, &signer, &op).unwrap();
+        let saved_manifest = store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
         // delete the sidecar so we can test for url only rea
         // std::fs::remove_file(sidecar);
@@ -3461,7 +3943,6 @@ pub mod tests {
     }
 
     #[actix::test]
-    #[cfg(feature = "sign")]
     async fn test_jumbf_generation_stream() {
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
@@ -3477,14 +3958,22 @@ pub mod tests {
 
         store.commit_claim(claim1).unwrap();
 
-        store.save_to_stream("jpeg", &mut buf_io, &signer).unwrap();
+        let mut result: Vec<u8> = Vec::new();
+        let mut result_stream = Cursor::new(result);
+
+        store
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, signer.as_ref())
+            .unwrap();
 
         // convert our cursor back into a buffer
-        let result = buf_io.into_inner();
+        result = result_stream.into_inner();
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_memory("jpeg", &result, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
 
         // std::fs::write("target/test.jpg", result).unwrap();
     }
@@ -3516,11 +4005,11 @@ pub mod tests {
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
         store.commit_claim(claim1).unwrap();
-        store.save_to_asset(&ap, &signer, &op).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim2).unwrap();
-        store.save_to_asset(&op, &signer, &op).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 

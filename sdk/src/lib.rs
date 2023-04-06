@@ -52,19 +52,17 @@
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::{
-//!     assertions::User,
-//!     create_signer,
-//!     Manifest,
-//!     SigningAlg,
-//! };
-//!
 //! use std::path::PathBuf;
+//!
+//! use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
 //! use tempfile::tempdir;
 //!
 //! # fn main() -> Result<()> {
 //! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+//! manifest.add_assertion(&User::new(
+//!     "org.contentauth.mylabel",
+//!     r#"{"my_tag":"Anything I want"}"#,
+//! ))?;
 //!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;
@@ -86,7 +84,7 @@ pub mod assertions;
 
 mod cose_validator;
 
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 pub mod create_signer;
 
 mod error;
@@ -113,17 +111,13 @@ mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) mod ocsp_utils;
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 mod openssl;
 
-#[cfg(feature = "sign")]
 mod signer;
-#[cfg(feature = "sign")]
-pub use signer::Signer;
-#[cfg(feature = "async_signer")]
-pub use signer::{AsyncSigner, RemoteSigner};
+pub use signer::{AsyncSigner, RemoteSigner, Signer};
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;
@@ -132,7 +126,6 @@ pub(crate) mod asset_io;
 /// crate private declarations
 pub(crate) mod claim;
 
-#[cfg(feature = "sign")]
 pub mod cose_sign;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
@@ -146,8 +139,6 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-#[cfg(feature = "file_io")]
-pub(crate) use utils::xmp_inmemory_utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
