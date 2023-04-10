@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.5.1
+_10 April 2023_
+
+* Update README.md ([contentauth/c2patool#118](https://github.com/contentauth/c2patool/pull/118))
+* Update expired sample certs ([contentauth/c2patool#113](https://github.com/contentauth/c2patool/pull/113))
+
 ## 0.5.0
 _28 March 2023_
 
