@@ -64,6 +64,9 @@ jobs:
           toolchain: ${{ matrix.rust_version }}
           targets: ${{ matrix.target }}
 
+      - name: Install cross-compilation toolset
+        run: cargo install cross
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
 
@@ -72,7 +75,7 @@ jobs:
       # environment. (A PR to fix this would be welcomed!)
 
       - name: Run unit tests (cross build)
-        run: cargo test --all-targets --all-features --target ${{ matrix.target }}
+        run: cross test --all-targets --all-features --target ${{ matrix.target }}
 
   tests-wasm:
     name: Unit tests (WASM)
