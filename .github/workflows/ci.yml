@@ -73,8 +73,8 @@ jobs:
       - name: Run unit tests (cross build)
         run: cargo test --all-targets --all-features --target ${{ matrix.target }}
 
-  wasm_tests:
-    name: Wasm tests
+  tests-wasm:
+    name: Unit tests (WASM)
     runs-on: ubuntu-latest
 
     steps:
