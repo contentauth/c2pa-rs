@@ -64,6 +64,57 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
+  test-default-disabled:
+    name: Unit tests with default features disabled
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Run tests
+        run: cargo test --all-targets --no-default-features
+
+  test-direct-minimal-versions:
+    name: Unit tests with minimum versions of direct dependencies
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Run tests
+        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
+
   publish-preflight:
     name: Preflight crate publish
     runs-on: ${{ matrix.os }}
@@ -200,6 +251,23 @@ jobs:
         with:
           version: latest
           args: --all-targets --all-features
+
+  unknown-features-cfg:
+    name: Check for unknown features in cfg attributes and macros
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Check for unknown features
+        env:
+          RUSTFLAGS: "-D unexpected-cfgs"
+        run: cargo +nightly check -Z unstable-options -Z check-cfg=features --tests
 
   version_bump:
     name: Ensure (MINOR) tag is used when making an API breaking change
