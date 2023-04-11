@@ -44,8 +44,41 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-  wasm_tests:
-    name: Wasm tests
+  tests-cross:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust_version: [stable, 1.65.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolset
+        run: cargo install cross
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      # Note that we do not run code coverage because
+      # it isn't readily accessible from cross-compilation
+      # environment. (A PR to fix this would be welcomed!)
+
+      - name: Run unit tests (cross build)
+        run: cross test --all-targets --all-features --target ${{ matrix.target }}
+
+  tests-wasm:
+    name: Unit tests (WASM)
     runs-on: ubuntu-latest
 
     steps:
