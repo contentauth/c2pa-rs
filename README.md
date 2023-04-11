@@ -31,9 +31,9 @@ The SDK requires **Rust version 1.65.0** or newer.
 
 The SDK has been tested on the following operating systems:
 
-* Windows
+* Windows (Intel only)
 * MacOS (Intel and Apple silicon)
-* Ubuntu Linux
+* Ubuntu Linux (64-bit Intel and ARM v8)
 * WebAssembly (Wasm)
 
 ## Supported file formats
