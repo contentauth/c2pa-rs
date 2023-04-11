@@ -68,7 +68,7 @@ jobs:
         CHANGELOG: ${{ steps.changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
 
