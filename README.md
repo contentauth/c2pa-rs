@@ -33,7 +33,7 @@ The SDK has been tested on the following operating systems:
 
 * Windows
 * MacOS (Intel and Apple silicon)
-* Ubuntu Linux
+* Ubuntu Linux (64-bit Intel and ARM)
 * WebAssembly (Wasm)
 
 ## Supported file formats
