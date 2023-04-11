@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::{Any, Class, Header, Tag};
 use ciborium::value::Value;
 use conv::*;
 use coset::{sig_structure_data, Label, TaggedCborSerializable};
@@ -127,12 +128,10 @@ fn check_cert(
     if let Some(tst_info) = _tst_info_opt {
         // was there a time stamp associtation with this signature, is verify against that time
         let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-        if !signcert
-            .validity()
-            .is_valid_at(x509_parser::time::ASN1Time::from_timestamp(
-                signing_time.timestamp(),
-            ))
-        {
+        if !signcert.validity().is_valid_at(
+            x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
+                .map_err(|_| Error::CoseInvalidCert)?,
+        ) {
             let log_item = log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .error(Error::CoseCertExpiration)
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED);
@@ -148,10 +147,9 @@ fn check_cert(
             .approx_as::<i64>()
             .map_err(|_e| Error::BadParam("system time invalid".to_string()))?;
 
-        if !signcert
-            .validity()
-            .is_valid_at(x509_parser::time::ASN1Time::from_timestamp(now))
-        {
+        if !signcert.validity().is_valid_at(
+            x509_parser::time::ASN1Time::from_timestamp(now).map_err(|_| Error::CoseInvalidCert)?,
+        ) {
             let log_item = log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .error(Error::CoseCertExpiration)
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED);
@@ -193,46 +191,45 @@ fn check_cert(
             let seq = parameters
                 .as_sequence()
                 .map_err(|_err| Error::CoseInvalidCert)?;
-            if seq.len() < 3 {
-                let log_item = log_item!(
-                    "Cose_Sign1",
-                    "certificate incorrect rsapss algorithm",
-                    "check_cert_alg"
-                )
-                .error(Error::CoseInvalidCert)
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
-                validation_log.log_silent(log_item);
 
-                return Err(Error::CoseInvalidCert);
-            }
+            let (_i, (ha_alg, mgf_ai)) = seq
+                .parse(|i| {
+                    let (i, h) = Header::from_der(i)?;
+                    if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
+                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+                    }
 
-            // get hash algorithm
-            let (_b, ha_alg) = AlgorithmIdentifier::from_der(
-                seq[0]
-                    .content
-                    .as_slice()
-                    .map_err(|_err| Error::CoseInvalidCert)?,
-            )
-            .map_err(|_err| Error::CoseInvalidCert)?;
+                    let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
+                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
-            let (_b, mgf_ai) = AlgorithmIdentifier::from_der(
-                seq[1]
-                    .content
-                    .as_slice()
-                    .map_err(|_err| Error::CoseInvalidCert)?,
-            )
-            .map_err(|_err| Error::CoseInvalidCert)?;
+                    let (i, h) = Header::from_der(i)?;
+                    if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
+                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+                    }
+
+                    let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
+                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
+
+                    // Ignore anything that follows these two parameters.
+
+                    Ok((i, (ha_alg, mgf_ai)))
+                })
+                .map_err(|_| Error::CoseInvalidCert)?;
 
             let mgf_ai_parameters = mgf_ai.parameters.ok_or(Error::CoseInvalidCert)?;
-            let s = mgf_ai_parameters
+            let mgf_ai_parameters = mgf_ai_parameters
                 .as_sequence()
-                .map_err(|_err| Error::CoseInvalidCert)?;
-            let t0 = &s[0];
-            //let _t1 = &s[1];
-            let mfg_ai_params_algorithm = t0.as_oid_val().map_err(|_err| Error::CoseInvalidCert)?;
+                .map_err(|_| Error::CoseInvalidCert)?;
+
+            let (_i, mgf_ai_params_algorithm) =
+                Any::from_der(&mgf_ai_parameters.content).map_err(|_| Error::CoseInvalidCert)?;
+
+            let mgf_ai_params_algorithm = mgf_ai_params_algorithm
+                .as_oid()
+                .map_err(|_| Error::CoseInvalidCert)?;
 
             // must be the same
-            if ha_alg.algorithm != mfg_ai_params_algorithm {
+            if ha_alg.algorithm != mgf_ai_params_algorithm {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",
@@ -281,9 +278,7 @@ fn check_cert(
 
     if skpi_alg.algorithm == EC_PUBLICKEY_OID {
         if let Some(parameters) = &skpi_alg.parameters {
-            let named_curve_oid = parameters
-                .as_oid_val()
-                .map_err(|_err| Error::CoseInvalidCert)?;
+            let named_curve_oid = parameters.as_oid().map_err(|_err| Error::CoseInvalidCert)?;
 
             // must be one of these named curves
             if !(named_curve_oid == PRIME256V1_OID
@@ -308,7 +303,7 @@ fn check_cert(
 
     // check modulus minimum length (for RSA & PSS algorithms)
     if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
-        let (_, skpi_ber) = parse_ber_sequence(pk.subject_public_key.data)
+        let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
 
         let seq = skpi_ber
@@ -318,7 +313,7 @@ fn check_cert(
             return Err(Error::CoseInvalidCert);
         }
 
-        let modulus = seq[0].as_bigint().ok_or(Error::CoseInvalidCert)?;
+        let modulus = seq[0].as_bigint().map_err(|_| Error::CoseInvalidCert)?;
 
         if modulus.bits() < 2048 {
             let log_item = log_item!(
@@ -357,8 +352,11 @@ fn check_cert(
     let mut ski_good = false;
     let mut key_usage_good = false;
     let mut handled_all_critical = true;
-    let extended_key_usage_good = match tbscert.extended_key_usage() {
-        Some((_critical, eku)) => {
+    let extended_key_usage_good = match tbscert
+        .extended_key_usage()
+        .map_err(|_| Error::CoseInvalidCert)?
+    {
+        Some(BasicExtension { value: eku, .. }) => {
             if eku.any {
                 let log_item = log_item!(
                     "Cose_Sign1",
