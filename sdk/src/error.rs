@@ -241,6 +241,9 @@ pub enum Error {
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
 
+    #[error("could not generate XML")]
+    XmlWriteError,
+
     // --- third-party errors ---
     #[error(transparent)]
     IoError(#[from] std::io::Error),
