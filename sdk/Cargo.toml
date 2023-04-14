@@ -88,7 +88,7 @@ url = "2.2.2"
 uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.11.0"
 x509-certificate = "0.19.0"
-fonttools = { git = "https://github.com/simoncozens/rust-font-tools", rev = "105436d", optional = true }
+fonttools = { git = "https://github.com/Monotype/rust-font-tools", branch="monotype/fontSupport", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
