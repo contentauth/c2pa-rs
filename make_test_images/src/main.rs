@@ -14,7 +14,6 @@
 //! This generates a set of test images with a wide variety of configurations
 //! To run this, use the following command in a terminal
 //! cargo run --release --bin make_test_images
-//!
 mod make_test_images;
 use anyhow::{Context, Result};
 

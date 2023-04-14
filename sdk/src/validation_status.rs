@@ -109,7 +109,7 @@ impl ValidationStatus {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
-            Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, //todo detect json/cbor errors
+            Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, /* todo detect json/cbor errors */
             Error::HashMismatch(_) => ASSERTION_DATAHASH_MATCH,
             Error::RemoteManifestFetch(_) => MANIFEST_INACCESSIBLE,
             Error::PrereleaseError => STATUS_PRERELEASE,

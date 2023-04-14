@@ -18,4 +18,5 @@ pub mod jpeg_io;
 pub mod otf_io;
 pub mod png_io;
 pub mod riff_io;
+pub mod svg_io;
 pub mod tiff_io;

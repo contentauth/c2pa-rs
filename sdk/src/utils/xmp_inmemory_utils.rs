@@ -13,11 +13,11 @@
 
 use std::io::Cursor;
 
-use log::error;
-use quick_xml::{
+use fast_xml::{
     events::{BytesEnd, BytesStart, Event},
     Reader, Writer,
 };
+use log::error;
 
 use crate::{
     asset_io::CAIRead, jumbf_io::get_cailoader_handler, utils::hash_utils::vec_compare, Error,
