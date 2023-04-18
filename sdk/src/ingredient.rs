@@ -292,6 +292,28 @@ impl Ingredient {
         Ok(self)
     }
 
+    /// Sets the thumbnail format and image data only in memory
+    ///
+    /// This is only used for internally generated thumbnails - when
+    /// reading thumbnails from files, we don't want to write these to file
+    /// So this ensures they stay in memory unless written out.
+    pub fn set_memory_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
+        &mut self,
+        format: S,
+        bytes: B,
+    ) -> Result<&mut Self> {
+        // Do not write this as a file when reading from files
+        #[cfg(feature = "file_io")]
+        let base_path = self.resources_mut().take_base_path();
+        let base_id = self.instance_id().to_string();
+        self.thumbnail = Some(self.resources.add_with(&base_id, &format.into(), bytes)?);
+        #[cfg(feature = "file_io")]
+        if let Some(path) = base_path {
+            self.resources_mut().set_base_path(path)
+        }
+        Ok(self)
+    }
+
     /// Sets the hash value generated from the entire asset.
     pub fn set_hash<S: Into<String>>(&mut self, hash: S) -> &mut Self {
         self.hash = Some(hash.into());
@@ -425,6 +447,7 @@ impl Ingredient {
     }
 
     // utility method to set the validation status from store result and log
+    // also sets the thumbnail from the claim if valid and it exists
     fn update_validation_status(
         &mut self,
         result: Result<Store>,
@@ -447,7 +470,7 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            self.set_thumbnail(format, image)?;
+                            self.set_memory_thumbnail(format, image)?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -587,7 +610,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_thumbnail(format, image)?;
+                ingredient.set_memory_thumbnail(format, image)?;
             }
         }
 
@@ -836,16 +859,14 @@ impl Ingredient {
             None => None,
         };
 
-        // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
-        if thumbnail.is_none() {
-            if let Some((format, data)) = self.thumbnail() {
-                let hash_url = claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
-                    data.to_vec(),
-                ))?;
-
-                thumbnail = Some(hash_url);
-            }
+        // if the ingredient defines a thumbnail, add it to the claim
+        // otherwise use the parent claim thumbnail if available
+        if let Some((format, data)) = self.thumbnail() {
+            let hash_url = claim.add_assertion(&Thumbnail::new(
+                &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
+                data.to_vec(),
+            ))?;
+            thumbnail = Some(hash_url);
         }
 
         let mut ingredient_assertion = assertions::Ingredient::new(

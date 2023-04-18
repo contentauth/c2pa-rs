@@ -1761,7 +1761,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_crate_file_based_ingredient() {
+    fn test_create_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
         let mut manifest = Manifest::new("claim_generator");
