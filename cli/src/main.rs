@@ -19,7 +19,7 @@
 ///
 use std::fs::{create_dir_all, remove_dir_all, File};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
@@ -36,7 +36,7 @@ use signer::SignConfig;
 #[clap(author, version, about, long_about = None, setting = AppSettings::ArgRequiredElseHelp)]
 struct CliArgs {
     /// Path to manifest definition JSON file.
-    #[clap(short, long)]
+    #[clap(short, long, requires = "output")]
     manifest: Option<PathBuf>,
 
     /// Path to output file or folder.
@@ -87,6 +87,15 @@ struct CliArgs {
     info: bool,
 }
 
+#[derive(Debug, Default, Deserialize)]
+// Add fields that are not part of the standard Manifest
+struct ManifestDef {
+    #[serde(flatten)]
+    manifest: Manifest,
+    // allows adding ingredients with file paths
+    ingredient_paths: Option<Vec<PathBuf>>,
+}
+
 // convert certain errors to output messages
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
@@ -97,14 +106,20 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
         _ => e.into(),
     }
 }
-#[derive(Debug, Default, Deserialize)]
-// Add fields that are not part of the standard Manifest
-struct ManifestDef {
-    #[serde(flatten)]
-    manifest: Manifest,
-    #[serde()]
-    // allows adding ingredients with file paths
-    ingredient_paths: Option<Vec<PathBuf>>,
+
+// normalize extensions so we can compare them
+fn ext_normal(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    match ext.as_str() {
+        "jpeg" => "jpg".to_string(),
+        "tiff" => "tif".to_string(),
+        _ => ext,
+    }
 }
 
 fn main() -> Result<()> {
@@ -156,10 +171,15 @@ fn main() -> Result<()> {
         // read the json from file or config, and get base path if from file
         let (json, base_path) = match args.manifest.as_deref() {
             Some(manifest_path) => {
-                let base_path = manifest_path.parent();
+                let base_path = std::fs::canonicalize(manifest_path)?
+                    .parent()
+                    .map(|p| p.to_path_buf());
                 (std::fs::read_to_string(manifest_path)?, base_path)
             }
-            None => (args.config.unwrap_or_default(), None),
+            None => (
+                args.config.unwrap_or_default(),
+                std::env::current_dir().ok(),
+            ),
         };
 
         // read the signing information from the manifest definition
@@ -181,7 +201,7 @@ fn main() -> Result<()> {
         if let Some(paths) = manifest_def.ingredient_paths {
             for mut path in paths {
                 // ingredient paths are relative to the manifest path
-                if let Some(base) = base_path {
+                if let Some(base) = &base_path {
                     if !(path.is_absolute()) {
                         path = base.join(&path)
                     }
@@ -202,7 +222,7 @@ fn main() -> Result<()> {
         }
 
         if let Some(base) = base_path {
-            manifest.resources_mut().set_base_path(base);
+            manifest.with_base_path(&base)?;
             sign_config.set_base_path(base);
         }
 
@@ -230,8 +250,8 @@ fn main() -> Result<()> {
         }
 
         if let Some(output) = args.output {
-            if output.extension() != args.path.extension() {
-                bail!("output type must match source type");
+            if ext_normal(&output) != ext_normal(&args.path) {
+                bail!("Output type must match source type");
             }
             if output.exists() && !args.force {
                 bail!("Output already exists, use -f/force to force write");
@@ -268,28 +288,6 @@ fn main() -> Result<()> {
                     ManifestStore::from_file(&output).map_err(special_errs)?
                 )
             }
-        } else if args.detailed {
-            bail!("Detailed report not supported for preview");
-        } else {
-            // normally the output file provides the title, format and other manifest fields
-            // since there is no output file, gather some information from the source
-            if let Some(extension) = args
-                .path
-                .extension()
-                .map(|e| e.to_string_lossy().to_string())
-            {
-                // set the format field
-                match extension.as_str() {
-                    "jpg" | "jpeg" => {
-                        manifest.set_format("image/jpeg");
-                    }
-                    "png" => {
-                        manifest.set_format("image/png");
-                    }
-                    _ => (),
-                }
-            }
-            println!("{}", ManifestStore::from_manifest(&manifest)?)
         }
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
         bail!("manifest definition required with these options or flags")

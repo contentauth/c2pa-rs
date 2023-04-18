@@ -223,3 +223,36 @@ fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
         .stdout(predicate::str::contains("earth_apollo17.jpg"));
     Ok(())
 }
+
+#[test]
+fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
+    let path = temp_path("./foo.png");
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("C.jpg"))
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Output type must match source type",
+        ));
+    Ok(())
+}
+
+#[test]
+fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
+    let path = temp_path("./similar.JpEg");
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("C.jpg"))
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&path)
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("similar."));
+    Ok(())
+}

@@ -46,6 +46,7 @@ The tool will display the version installed. Compare the version number displaye
  | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         | 
  | `mov`         | `video/quicktime`                                   |
  | `png`         | `image/png`                                         | 
+ | `svg`         | `image/svg+xml`                                     | 
  | `tif`,`tiff`  | `image/tiff`                                        | 
  | `wav`         | `audio/x-wav`                                       | 
  | `webp`        | `image/webp`                                        | 
@@ -133,7 +134,7 @@ c2patool sample/C.jpg --ingredient --output ./ingredient
 
 ### Adding a manifest to an asset file
 
-To add C2PA manifest data to a file, use the `--manifest` / `-m` option with a manifest JSON file as the option argument and the path to the asset file to be signed. Specify the output file as the argument to the `--output` / `-o` option. For example:
+To add C2PA manifest data to a file, use the `--manifest` / `-m` option with a manifest JSON file as the option argument and the path to the asset file to be signed. Specify the output file as the argument to the `--output` / `-o` option. The output extension type must match the source. The tool will not convert between file types. For example:
 
 ```shell
 c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
@@ -142,8 +143,6 @@ c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
 The tool generates a new manifest using the values given in the file and displays the manifest store to standard output (stdout).
 
 CAUTION: If the output file is the same as the source file, the tool will overwrite the source file. 
-
-If you do not use the `--output` / `-o` option, then the tool will display the generated manifest but will not save it to a file.
 
 #### Specifying a parent file
 
@@ -155,22 +154,12 @@ Specify a parent file as the argument to the `--parent` / `-p` option; for examp
 c2patool sample/image.jpg -m sample/test.json -p sample/c.jpg -o signed_image.jpg
 ```
 
-You can also specify a parent file in the manifest definition.
-
 #### Forced overwrite
 
 The tool will return an error if the output file already exists. Use the `--force` / `-f` option to force overwriting the output file. For example:
 
 ```shell
 c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
-```
-
-### Previewing a manifest
-
-To display a preview of the generated manifest and ensure you've formatted the manifest definition correctly, provide the path to a manifest file as the argument with no other options or flags; for example:
-
-```shell
-c2patool sample/image.jpg -m sample/test.json
 ```
 
 ### Generating an external manifest
