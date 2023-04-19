@@ -421,25 +421,40 @@ impl Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
-        fn make_id(id_type: &str) -> String {
-            let uuid = Uuid::new_v4();
-            //warn!("Generating fake id {}", uuid);
-            format!("xmp:{id_type}id:{uuid}")
-        }
-
         // get required information from the file path
         let (title, _, format) = Self::get_path_info(path.as_ref());
 
         // if we can open the file try tto get xmp info
-        let xmp_info = match std::fs::File::open(path).map_err(Error::IoError) {
-            Ok(mut file) => XmpInfo::from_source(&mut file, &format),
-            Err(_) => XmpInfo::default(),
+        match std::fs::File::open(path).map_err(Error::IoError) {
+            Ok(mut file) => Self::from_stream_info(&mut file, &format, &title),
+            Err(_) => Self {
+                title,
+                format,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Generates an `Ingredient` from a stream, including XMP info
+    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    where
+        F: Into<String>,
+        S: Into<String>,
+    {
+        let format = format.into();
+        // if we can open the file try tto get xmp info
+        let xmp_info = XmpInfo::from_source(stream, &format);
+
+        let mut ingredient = Self {
+            title: title.into(),
+            format,
+            ..Default::default()
         };
 
-        // instance id is required so generate one if we don't have one
-        let instance_id = xmp_info.instance_id.unwrap_or_else(|| make_id("i"));
+        if let Some(instance_id) = xmp_info.instance_id {
+            ingredient.instance_id = instance_id;
+        }
 
-        let mut ingredient = Self::new(&title, &format, &instance_id);
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
 
@@ -631,23 +646,8 @@ impl Ingredient {
     /// This does not set title or hash
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        fn make_id(id_type: &str) -> String {
-            let uuid = Uuid::new_v4();
-            format!("xmp:{id_type}id:{uuid}")
-        }
-
-        let xmp_info = XmpInfo::from_source(stream, format);
-
-        let title = "untitled";
-        // instance id is required so generate one if we don't have one
-        let instance_id = xmp_info.instance_id.unwrap_or_else(|| make_id("i"));
-
-        let mut ingredient = Self::new(title, format, instance_id.as_str());
-        ingredient.document_id = xmp_info.document_id; // use document id if one exists
-        ingredient.provenance = xmp_info.provenance;
-
-        // optionally generate a hash so we know if the file has changed
-        //ingredient.hash = options.hash(path);
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
 
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -693,7 +693,79 @@ impl Ingredient {
                     ingredient.set_thumbnail(format, image)?;
                 }
                 Err(err) => {
-                    dbg!(&err);
+                    log::warn!("Could not create thumbnail. {err}");
+                }
+            }
+        }
+
+        Ok(ingredient)
+    }
+
+    /// Creates an `Ingredient` from a memory buffer (async version).
+    ///
+    /// This does not set title or hash
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
+        let mut stream = Cursor::new(buffer);
+        Self::from_stream_async(format, &mut stream).await
+    }
+
+    /// Creates an `Ingredient` from a stream (async version).
+    ///
+    /// This does not set title or hash
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
+
+        let mut validation_log = DetailedStatusTracker::new();
+
+        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
+            Ok(manifest_bytes) => {
+                (
+                    // generate a store from the buffer and then validate from the asset path
+                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                        Ok(store) => {
+                            // verify the store
+                            //todo, change this when we have a stream version of verify
+                            let mut buf: Vec<u8> = Vec::new();
+                            stream.rewind()?;
+                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+                            Store::verify_store_async(&store, &buf, &mut validation_log)
+                                .await
+                                .map(|_| store)
+                        }
+                        Err(e) => {
+                            validation_log.log_silent(
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .set_error(&e),
+                            );
+                            Err(e)
+                        }
+                    },
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
+
+        // set validation status from result and log
+        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
+        #[cfg(feature = "add_thumbnails")]
+        if ingredient.thumbnail.is_none() {
+            stream.rewind()?;
+            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
+                Ok((format, image)) => {
+                    ingredient.set_thumbnail(format, image)?;
+                }
+                Err(err) => {
                     log::warn!("Could not create thumbnail. {err}");
                 }
             }
@@ -1016,29 +1088,46 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn test_stream_jpg() {
+    async fn test_stream_async_jpg() {
+        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let title = "Test Image";
+        let format = "image/jpeg";
+        let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory");
+        ingredient.set_title(title);
+
+        println!("ingredient = {ingredient}");
+        assert_eq!(&ingredient.title, title);
+        assert_eq!(ingredient.format(), format);
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::debug_2(
+            &"ingredient_from_memory_async:".into(),
+            &ingredient.to_string().into(),
+        );
+        assert!(ingredient.validation_status().is_none());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // Note this does not work from wasm32, due to validation issues
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_stream_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
         let format = "image/jpeg";
         let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
         ingredient.set_title(title);
 
-        // #[cfg(target_arch = "wasm32")]
-        // console_log::init_with_level(log::Level::Debug).expect("init log");
-
-        // log::debug!(
-        //     "ingredient = {}",
-        //     ingredient
-        // );
-
         println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
-        //assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
-        //assert!(ingredient.validation_status().is_some());
+        assert!(ingredient.validation_status().is_none());
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1047,7 +1136,9 @@ mod tests {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
         let format = "image/jpeg";
-        let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
+        let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory");
         ingredient.set_title(title);
 
         println!("ingredient = {ingredient}");
@@ -1206,7 +1297,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        //println!("ingredient = {}", ingredient);
+        println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");

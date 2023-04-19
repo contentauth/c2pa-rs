@@ -1032,12 +1032,12 @@ pub(crate) mod tests {
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
-        validation_status, Ingredient,
+        validation_status,
     };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         utils::test::{temp_signer, TEST_VC},
-        Manifest, Result,
+        Ingredient, Manifest, Result,
     };
 
     // example of random data structure as an assertion
@@ -1480,6 +1480,13 @@ pub(crate) mod tests {
                 r#"{"my_tag":"Anything I want"}"#,
             ))
             .unwrap();
+
+        // add a parent ingredient
+        let mut ingredient = Ingredient::from_memory_async("jpeg", image)
+            .await
+            .expect("from_stream_async");
+        ingredient.set_title("parent.jpg");
+        manifest.set_parent(ingredient).expect("set_parent");
 
         let signer = MyRemoteSigner {};
 
