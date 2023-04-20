@@ -182,7 +182,6 @@ pub mod tests {
         assert_eq!(assertion.mime_type(), "application/json");
         assert_eq!(assertion.label(), CreativeWork::LABEL);
         let result = CreativeWork::from_assertion(&assertion).expect("extract_assertion");
-        //dbg!(serde_json::to_string(&result).unwrap());
         assert_eq!(
             original.author().unwrap()[0].name(),
             result.author().unwrap()[0].name()
