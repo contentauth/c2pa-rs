@@ -391,7 +391,6 @@ pub mod tests {
                     .set_data_source(DataSource::new(GENERATOR_REE)),
             );
 
-        dbg!(&original);
         assert_eq!(original.actions.len(), 2);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");

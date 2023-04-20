@@ -92,7 +92,6 @@ impl ResourceStore {
             id = format!("{id_base}-{count}{ext}");
             count += 1;
         }
-        dbg!(&id);
         id
     }
 
