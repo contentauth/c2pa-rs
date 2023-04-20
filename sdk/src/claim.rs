@@ -281,10 +281,10 @@ impl Claim {
             Some(v) => format!(
                 "{}:{}",
                 v.to_lowercase(),
-                urn.to_urn().encode_lower(&mut Uuid::encode_buffer())
+                urn.urn().encode_lower(&mut Uuid::encode_buffer())
             ),
             None => urn
-                .to_urn()
+                .urn()
                 .encode_lower(&mut Uuid::encode_buffer())
                 .to_string(),
         };
