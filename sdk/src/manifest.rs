@@ -1032,12 +1032,12 @@ pub(crate) mod tests {
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{fixture_path, temp_dir_path, temp_fixture_path, TEST_SMALL_JPEG},
-        validation_status, Ingredient,
+        validation_status,
     };
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         utils::test::{temp_signer, TEST_VC},
-        Manifest, Result,
+        Ingredient, Manifest, Result,
     };
 
     // example of random data structure as an assertion
@@ -1481,6 +1481,13 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
+        // add a parent ingredient
+        let mut ingredient = Ingredient::from_memory_async("jpeg", image)
+            .await
+            .expect("from_stream_async");
+        ingredient.set_title("parent.jpg");
+        manifest.set_parent(ingredient).expect("set_parent");
+
         let signer = MyRemoteSigner {};
 
         // Embed a manifest using the signer.
@@ -1761,7 +1768,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_crate_file_based_ingredient() {
+    fn test_create_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
         let mut manifest = Manifest::new("claim_generator");
