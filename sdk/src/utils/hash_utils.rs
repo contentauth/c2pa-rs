@@ -33,7 +33,7 @@ use crate::{Error, Result};
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct Exclusion {
+pub struct HashRange {
     start: usize,
     length: usize,
 
@@ -41,9 +41,9 @@ pub struct Exclusion {
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
-impl Exclusion {
+impl HashRange {
     pub fn new(start: usize, length: usize) -> Self {
-        Exclusion {
+        HashRange {
             start,
             length,
             bmff_offset: None,
@@ -132,27 +132,45 @@ impl Hasher {
 }
 
 // Return hash bytes for desired hashing algorithm.
-pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -> Vec<u8> {
+pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, exclusions).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or(Vec::new())
+}
+
+// Return hash inclusive bytes for desired hashing algorithm.
+pub fn hash_by_alg_with_inclusions(alg: &str, data: &[u8], inclusions: Vec<HashRange>) -> Vec<u8> {
+    let mut reader = Cursor::new(data);
+
+    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or(Vec::new())
 }
 
 // Return hash bytes for asset using desired hashing algorithm.
 pub fn hash_asset_by_alg(
     alg: &str,
     asset_path: &Path,
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> Result<Vec<u8>> {
     let mut file = File::open(asset_path)?;
-    hash_stream_by_alg(alg, &mut file, exclusions)
+    hash_stream_by_alg(alg, &mut file, exclusions, true)
+}
+
+// Return hash inclusive bytes for asset using desired hashing algorithm.
+pub fn hash_asset_by_alg_with_inclusions(
+    alg: &str,
+    asset_path: &Path,
+    inclusions: Vec<HashRange>,
+) -> Result<Vec<u8>> {
+    let mut file = File::open(asset_path)?;
+    hash_stream_by_alg(alg, &mut file, Some(inclusions), false)
 }
 
 // Return hash bytes for stream using desired hashing algorithm.
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,
-    exclusions: Option<Vec<Exclusion>>,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
@@ -176,58 +194,78 @@ where
     let data_len = data.seek(SeekFrom::End(0))?;
     data.rewind()?;
 
-    let ranges = match exclusions {
-        Some(mut e) if !e.is_empty() => {
+    let ranges = match hash_range {
+        Some(mut hr) if !hr.is_empty() => {
             // hash data skipping excluded regions
             // sort the exclusions
-            e.sort_by_key(|a| a.start());
+            hr.sort_by_key(|a| a.start());
 
             // verify structure of blocks
-            let num_blocks = e.len();
-            let exclusion_end = e[num_blocks - 1].start() + e[num_blocks - 1].length();
+            let num_blocks = hr.len();
+            let range_end = hr[num_blocks - 1].start() + hr[num_blocks - 1].length();
             let data_end = data_len - 1;
 
-            // if not enough range we will just calc to the end
-            if data_len < exclusion_end as u64 {
+            // range extends past end of file so fail
+            if data_len < range_end as u64 {
                 return Err(Error::BadParam(
                     "The exclusion range exceed the data length".to_string(),
                 ));
             }
 
-            //build final ranges
-            let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
-            let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
-            for exclusion in e {
-                let end = (exclusion.start() + exclusion.length() - 1) as u64;
-                let exclusion_start = exclusion.start() as u64;
-                ranges.remove_range(exclusion_start..=end);
+            if is_exclusion {
+                //build final ranges
+                let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
+                let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
+                for exclusion in hr {
+                    let end = (exclusion.start() + exclusion.length() - 1) as u64;
+                    let exclusion_start = exclusion.start() as u64;
+                    ranges.remove_range(exclusion_start..=end);
 
-                // add new BMFF V2 offset as a new range to be included so that we can
-                // pause to add the offset hash
-                if let Some(offset) = exclusion.bmff_offset() {
-                    ranges_vec.push(RangeInclusive::new(offset, offset));
-                    bmff_v2_starts.push(offset);
-                }
-            }
-
-            // merge standard ranges and BMFF V2 ranges into single list
-            if !bmff_v2_starts.is_empty() {
-                // add regularly included ranges
-                for r in ranges.into_smallvec() {
-                    ranges_vec.push(r);
+                    // add new BMFF V2 offset as a new range to be included so that we can
+                    // pause to add the offset hash
+                    if let Some(offset) = exclusion.bmff_offset() {
+                        ranges_vec.push(RangeInclusive::new(offset, offset));
+                        bmff_v2_starts.push(offset);
+                    }
                 }
 
-                // sort by start position
-                ranges_vec.sort_by(|a, b| {
-                    let a_start = a.start();
-                    let b_start = b.start();
-                    a_start.cmp(b_start)
-                });
+                // merge standard ranges and BMFF V2 ranges into single list
+                if !bmff_v2_starts.is_empty() {
+                    // add regularly included ranges
+                    for r in ranges.into_smallvec() {
+                        ranges_vec.push(r);
+                    }
 
-                ranges_vec
+                    // sort by start position
+                    ranges_vec.sort_by(|a, b| {
+                        let a_start = a.start();
+                        let b_start = b.start();
+                        a_start.cmp(b_start)
+                    });
+
+                    ranges_vec
+                } else {
+                    for r in ranges.into_smallvec() {
+                        ranges_vec.push(r);
+                    }
+                    ranges_vec
+                }
             } else {
-                for r in ranges.into_smallvec() {
-                    ranges_vec.push(r);
+                //build final ranges
+                let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
+                for inclusion in hr {
+                    let end = (inclusion.start() + inclusion.length() - 1) as u64;
+                    let inclusion_start = inclusion.start() as u64;
+
+                    // add new BMFF V2 offset as a new range to be included so that we can
+                    // pause to add the offset hash
+                    if let Some(offset) = inclusion.bmff_offset() {
+                        ranges_vec.push(RangeInclusive::new(offset, offset));
+                        bmff_v2_starts.push(offset);
+                    }
+
+                    // add inclusion
+                    ranges_vec.push(RangeInclusive::new(inclusion_start, end));
                 }
                 ranges_vec
             }
@@ -329,7 +367,7 @@ pub fn verify_by_alg(
     alg: &str,
     hash: &[u8],
     data: &[u8],
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> bool {
     // hash with the same algorithm as target
     let data_hash = hash_by_alg(alg, data, exclusions);
@@ -341,7 +379,7 @@ pub fn verify_asset_by_alg(
     alg: &str,
     hash: &[u8],
     asset_path: &Path,
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> bool {
     // hash with the same algorithm as target
     if let Ok(data_hash) = hash_asset_by_alg(alg, asset_path, exclusions) {
@@ -483,5 +521,18 @@ pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
             }
         }
         Err(_) => None,
+    }
+}
+
+// Used by Merkle tree calculations to generate the pair wise hash
+pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> {
+    let mut temp = left.to_vec();
+
+    match right {
+        Some(r) => {
+            temp.append(&mut r.to_vec());
+            hash_by_alg(alg, &temp, None)
+        }
+        None => left.to_vec(),
     }
 }

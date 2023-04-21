@@ -12,21 +12,33 @@
 // each license.
 
 use std::{
-    fs,
-    io::Cursor,
+    cmp,
+    collections::HashMap,
+    fmt,
+    fs::{self, File},
+    io::{BufReader, Cursor, Seek},
+    ops::Deref,
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use mp4::*;
+
+use serde::{
+    de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
+};
 use serde_bytes::ByteBuf;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    asset_handlers::bmff_io::bmff_to_jumbf_exclusions,
+    asset_handlers::bmff_io::{
+        bmff_to_jumbf_exclusions, get_init_segment_boxes, read_bmff_c2pa_boxes,
+    },
     cbor_types::UriT,
-    error::Result,
-    utils::hash_utils::{hash_asset_by_alg, verify_asset_by_alg, verify_by_alg},
+    utils::hash_utils::{
+        concat_and_hash, hash_asset_by_alg, hash_asset_by_alg_with_inclusions, hash_by_alg,
+        vec_compare, verify_asset_by_alg, verify_by_alg, HashRange,
+    },
     Error,
 };
 
@@ -57,6 +69,62 @@ impl ExclusionsMap {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VecByteBuf(Vec<ByteBuf>);
+
+impl Deref for VecByteBuf {
+    type Target = Vec<ByteBuf>;
+    fn deref(&self) -> &Vec<ByteBuf> {
+        &self.0
+    }
+}
+
+impl Serialize for VecByteBuf {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for e in &self.0 {
+            seq.serialize_element(e)?;
+        }
+        seq.end()
+    }
+}
+
+struct VecByteBufVisitor;
+
+impl<'de> Visitor<'de> for VecByteBufVisitor {
+    type Value = VecByteBuf;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("Vec<ByteBuf>")
+    }
+
+    fn visit_seq<V>(self, mut visitor: V) -> std::result::Result<Self::Value, V::Error>
+    where
+        V: SeqAccess<'de>,
+    {
+        let len = cmp::min(visitor.size_hint().unwrap_or(0), 4096);
+        let mut byte_bufs: Vec<ByteBuf> = Vec::with_capacity(len);
+
+        while let Some(b) = visitor.next_element()? {
+            byte_bufs.push(b);
+        }
+
+        Ok(VecByteBuf(byte_bufs))
+    }
+}
+
+impl<'de> Deserialize<'de> for VecByteBuf {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<VecByteBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(VecByteBufVisitor {})
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct MerkleMap {
     #[serde(rename = "uniqueId")]
@@ -70,10 +138,33 @@ pub struct MerkleMap {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg: Option<String>,
 
-    #[serde(rename = "initHash")]
-    pub init_hash: Vec<u8>,
+    #[serde(rename = "initHash", skip_serializing_if = "Option::is_none")]
+    pub init_hash: Option<ByteBuf>,
 
-    pub hashes: Vec<ByteBuf>,
+    pub hashes: VecByteBuf,
+}
+
+impl MerkleMap {
+    pub fn hash_check(&self, indx: u32, merkle_hash: &[u8]) -> bool {
+        if let Some(h) = self.hashes.get(indx as usize) {
+            vec_compare(h, merkle_hash)
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct BmffMerkleMap {
+    #[serde(rename = "uniqueId")]
+    pub unique_id: u32,
+
+    #[serde(rename = "localId")]
+    pub local_id: u32,
+
+    pub location: u32,
+
+    pub hashes: Option<VecByteBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -97,8 +188,8 @@ pub struct BmffHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
 
-    #[serde(with = "serde_bytes")]
-    hash: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hash: Option<ByteBuf>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     merkle: Option<Vec<MerkleMap>>,
@@ -107,7 +198,7 @@ pub struct BmffHash {
     name: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<UriT>,
+    url: Option<UriT>, // deprecated in V2 and not to be used
 
     #[serde(skip)]
     pub path: PathBuf,
@@ -126,7 +217,7 @@ impl BmffHash {
         BmffHash {
             exclusions: Vec::new(),
             alg: Some(alg.to_string()),
-            hash: Vec::new(),
+            hash: None,
             merkle: None,
             name: Some(name.to_string()),
             url,
@@ -147,12 +238,16 @@ impl BmffHash {
         self.alg.as_ref()
     }
 
-    pub fn hash(&self) -> &[u8] {
-        self.hash.as_ref()
+    pub fn hash(&self) -> Option<&Vec<u8>> {
+        self.hash.as_deref()
+    }
+
+    pub fn merkle(&self) -> Option<&Vec<MerkleMap>> {
+        self.merkle.as_ref()
     }
 
     pub fn set_hash(&mut self, hash: Vec<u8>) {
-        self.hash = hash;
+        self.hash = Some(ByteBuf::from(hash));
     }
 
     pub fn name(&self) -> Option<&String> {
@@ -181,22 +276,22 @@ impl BmffHash {
     }
 
     /// Generate the hash value for the asset using the range from the BmffHash.
-    pub fn gen_hash(&mut self, asset_path: &Path) -> Result<()> {
-        self.hash = self.hash_from_asset(asset_path)?;
+    pub fn gen_hash(&mut self, asset_path: &Path) -> crate::error::Result<()> {
+        self.hash = Some(ByteBuf::from(self.hash_from_asset(asset_path)?));
         self.path = PathBuf::from(asset_path);
         Ok(())
     }
 
     /// Generate the hash again.
-    pub fn regen_hash(&mut self) -> Result<()> {
+    pub fn regen_hash(&mut self) -> crate::error::Result<()> {
         let p = self.path.clone();
-        self.hash = self.hash_from_asset(p.as_path())?;
+        self.hash = Some(ByteBuf::from(self.hash_from_asset(p.as_path())?));
         Ok(())
     }
 
     /// Generate the asset hash from a file asset using the constructed
     /// start and length values.
-    fn hash_from_asset(&mut self, asset_path: &Path) -> Result<Vec<u8>> {
+    fn hash_from_asset(&mut self, asset_path: &Path) -> crate::error::Result<Vec<u8>> {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
                 "asset hash is remote, not yet supported".to_owned(),
@@ -224,7 +319,11 @@ impl BmffHash {
         }
     }
 
-    pub fn verify_in_memory_hash(&self, data: &[u8], alg: Option<String>) -> Result<()> {
+    pub fn verify_in_memory_hash(
+        &self,
+        data: &[u8],
+        alg: Option<String>,
+    ) -> crate::error::Result<()> {
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
             None => match alg {
@@ -238,31 +337,244 @@ impl BmffHash {
         let mut data_reader = Cursor::new(data);
 
         // convert BMFF exclusion map to flat exclusion list
-        let exclusions =
-            bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions, self.bmff_version > 1)?;
-
-        if verify_by_alg(&curr_alg, &self.hash, data, Some(exclusions)) {
-            Ok(())
+        let exclusions = if self.hash.is_some() && self.merkle.is_some() {
+            bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions, false)?
         } else {
-            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+            bmff_to_jumbf_exclusions(&mut data_reader, bmff_exclusions, self.bmff_version > 1)?
+        };
+
+        // flat MP4 hash
+        if let Some(hash) = self.hash() {
+            if verify_by_alg(&curr_alg, hash, data, Some(exclusions.clone())) {
+                return Ok(());
+            }
+        }
+
+        // fragmented MP4 hash
+        if let Some(mm_vec) = self.merkle() {
+            for mm in mm_vec {
+                // check initialization segment
+                if let Some(init_hash) = &mm.init_hash {
+                    if !verify_by_alg(&curr_alg, init_hash, data, Some(exclusions.clone())) {
+                        return Err(Error::HashMismatch("Hashes do not match".to_owned()));
+                    }
+                }
+            }
+
+            return Ok(());
+        }
+
+        Err(Error::HashMismatch("Hashes do not match".to_owned()))
+    }
+
+    fn _get_merkle_root(&self, unique_id: u32, local_id: u32) -> Option<&MerkleMap> {
+        match &self.merkle {
+            Some(m) => m
+                .iter()
+                .find(|mm| mm.unique_id == unique_id && mm.local_id == local_id),
+            None => None,
         }
     }
 
-    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> Result<()> {
+    // The BMFFMerklMaps are stored contiguous in the file.  Break this Vec into groups based on
+    // the MerkleMap it matches.
+    fn split_bmff_merkle_map(
+        &self,
+        bmff_merkle_map: Vec<BmffMerkleMap>,
+    ) -> crate::Result<HashMap<u32, Vec<BmffMerkleMap>>> {
+        let mut current = bmff_merkle_map;
+        let mut output = HashMap::new();
+        if let Some(mm) = self.merkle() {
+            for m in mm {
+                let rest = current.split_off(m.count as usize);
+
+                if current.len() == m.count as usize {
+                    output.insert(m.local_id, current.to_owned());
+                } else {
+                    return Err(Error::HashMismatch("MerkleMap count incorrect".to_string()));
+                }
+                current = rest;
+            }
+        } else {
+            output.insert(0, current);
+        }
+        Ok(output)
+    }
+
+    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> crate::error::Result<()> {
         let curr_alg = alg.unwrap_or("sha256");
 
         let bmff_exclusions = &self.exclusions;
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions =
-            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
-
-        if verify_asset_by_alg(curr_alg, &self.hash, asset_path, Some(exclusions)) {
-            Ok(())
+        let exclusions = if self.hash.is_some() && self.merkle.is_some() {
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, false)?
         } else {
-            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?
+        };
+
+        // handle file level hashing
+        if let Some(hash) = self.hash() {
+            if verify_asset_by_alg(curr_alg, hash, asset_path, Some(exclusions)) {
+                return Ok(());
+            }
         }
+
+        // merkle hashed BMFF
+        if let Some(mm_vec) = self.merkle() {
+            // get merkle boxes from asset
+            let mut reader = File::open(asset_path)?;
+            let (_manifest_bytes, bmff_merkle) = read_bmff_c2pa_boxes(&mut reader)?;
+            let track_to_bmff_merkle_map = self.split_bmff_merkle_map(bmff_merkle)?;
+
+            reader.rewind()?;
+            let size = reader.metadata()?.len();
+            let mut buf_reader = BufReader::new(reader);
+            let mp4 = mp4::Mp4Reader::read_header(buf_reader, size)
+                .map_err(|_e| Error::InvalidAsset("Could not parse BMFF".to_string()))?;
+            let track_count = mp4.tracks().len();
+
+            let reader2 = File::open(asset_path)?;
+            buf_reader = BufReader::new(reader2);
+            let mut mp4_inner = mp4::Mp4Reader::read_header(buf_reader, size)
+                .map_err(|_e| Error::InvalidAsset("Could not parse BMFF".to_string()))?;
+
+            for mm in mm_vec {
+                // check initialization segment
+                if let Some(init_hash) = &mm.init_hash {
+                    let init_boxes = get_init_segment_boxes(asset_path)?;
+                    let mut inclusions = Vec::new();
+
+                    for ib in &init_boxes {
+                        let mut hr = HashRange::new(ib.offset as usize, ib.size as usize);
+                        if self.bmff_version() > 1 {
+                            hr.set_bmff_offset(ib.offset);
+                        }
+
+                        inclusions.push(hr);
+                    }
+
+                    let init_seg_box_hash =
+                        hash_asset_by_alg_with_inclusions(curr_alg, asset_path, inclusions)?;
+
+                    if !vec_compare(init_hash, &init_seg_box_hash) {
+                        //return Err(Error::HashMismatch("Hashes do not match".to_owned()));
+                    }
+                }
+
+                // check the merkle hashes
+                let alg = match &mm.alg {
+                    Some(a) => a,
+                    None => self
+                        .alg()
+                        .ok_or(Error::HashMismatch("no algorithm found".to_string()))?,
+                };
+
+                if track_count > 0 {
+                    // timed media case
+                    if let Some(track) = mp4.tracks().get(&mm.local_id) {
+                        let sample_cnt = mp4.sample_count(mm.local_id).map_err(|_e| {
+                            Error::InvalidAsset("Could not parse BMFF track sample".to_string())
+                        })?;
+
+                        if sample_cnt == 0 {
+                            return Err(Error::InvalidAsset("No samples".to_string()));
+                        }
+
+                        let track_id = track.track_id();
+                        println!("Track #:{track_id}, Sample Count:{sample_cnt}");
+
+                        // get the chunk count
+                        let stbl_box = &track.trak.mdia.minf.stbl;
+                        let chunk_cnt = match &stbl_box.stco {
+                            Some(stco) => stco.entries.len(),
+                            None => match &stbl_box.co64 {
+                                Some(co64) => co64.entries.len(),
+                                None => 0,
+                            },
+                        };
+
+                        // create sample to chunk mapping
+                        // create the Merkle tree per samples in a chunk
+                        let mut last_chunk_id = 0;
+                        let mut chunk_sampe_map: HashMap<u32, Vec<u8>> = HashMap::new();
+                        let stsc = &track.trak.mdia.minf.stbl.stsc;
+                        for sample_id in 1..sample_cnt {
+                            let stsc_idx = stsc_index(track, sample_id)?;
+
+                            let stsc_entry = &stsc.entries[stsc_idx];
+
+                            let first_chunk = stsc_entry.first_chunk;
+                            let first_sample = stsc_entry.first_sample;
+                            let samples_per_chunk = stsc_entry.samples_per_chunk;
+
+                            let chunk_id =
+                                first_chunk + (sample_id - first_sample) / samples_per_chunk;
+
+                            // detect chunk change and add new sample merkle tree
+                            if last_chunk_id != chunk_id {
+                                last_chunk_id = chunk_id;
+                                chunk_sampe_map.insert(chunk_id, Vec::new());
+                            }
+
+                            if let Ok(Some(sample)) = &mp4_inner.read_sample(track_id, sample_id) {
+                                let chunk_sample_bytes = chunk_sampe_map.get_mut(&chunk_id).ok_or(
+                                    Error::HashMismatch(
+                                        "Bad Merkle tree sample mapping".to_string(),
+                                    ),
+                                )?;
+                                chunk_sample_bytes.append(&mut sample.bytes.to_vec());
+                            } else {
+                                return Err(Error::HashMismatch(
+                                    "Merle location not found".to_owned(),
+                                ));
+                            }
+                        }
+
+                        if chunk_cnt != chunk_sampe_map.len() {
+                            return Err(Error::HashMismatch(
+                                "Incorrect number of Merkle trees".to_string(),
+                            ));
+                        }
+
+                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
+                            if let Some(hashes) = &chunk_bmff_mm.hashes {
+                                let chunk_sample_data = &chunk_sampe_map[&(chunk_bmff_mm.location + 1)];
+                                let mut last_hash = hash_by_alg(alg, chunk_sample_data, None);
+
+                                let mut indx = chunk_bmff_mm.location;
+                                for h in hashes.iter() {
+                                    if indx & 0x01 == 1 {
+                                        last_hash = concat_and_hash(alg, h, Some(&last_hash));
+                                    } else {
+                                        last_hash = concat_and_hash(alg, &last_hash, Some(h));
+                                    }
+                                    indx /= 2;
+                                }
+
+                                let valid = mm.hash_check(indx, &last_hash);
+                                println!("Chunk validated: {valid:?}");
+                                if !valid {
+                                    return Err(Error::HashMismatch(
+                                        "Merkle chunk hash mismatch".to_owned(),
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(Error::HashMismatch("Merkle location not found".to_owned()));
+                    }
+                } else {
+                    // non-timed so use iloc
+                    println!("track count: {track_count}");
+                }
+            }
+
+            return Ok(());
+        }
+
+        Err(Error::HashMismatch("Hashes do not match".to_owned()))
     }
 }
 
@@ -274,14 +586,30 @@ impl AssertionBase for BmffHash {
 
     // todo: this mechanism needs to change since a struct could support different versions
 
-    fn to_assertion(&self) -> Result<Assertion> {
+    fn to_assertion(&self) -> crate::error::Result<Assertion> {
         Self::to_cbor_assertion(self)
     }
 
-    fn from_assertion(assertion: &Assertion) -> Result<Self> {
+    fn from_assertion(assertion: &Assertion) -> crate::error::Result<Self> {
         let mut bmff_hash = Self::from_cbor_assertion(assertion)?;
         bmff_hash.set_bmff_version(assertion.get_ver().unwrap_or(1));
 
         Ok(bmff_hash)
     }
+}
+
+fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
+    if track.trak.mdia.minf.stbl.stsc.entries.is_empty() {
+        return Err(Error::InvalidAsset("BMFF has no stsc entries".to_string()));
+    }
+    for (i, entry) in track.trak.mdia.minf.stbl.stsc.entries.iter().enumerate() {
+        if sample_id < entry.first_sample {
+            return if i == 0 {
+                Err(Error::InvalidAsset("BMFF no sample not found".to_string()))
+            } else {
+                Ok(i - 1)
+            };
+        }
+    }
+    Ok(track.trak.mdia.minf.stbl.stsc.entries.len() - 1)
 }

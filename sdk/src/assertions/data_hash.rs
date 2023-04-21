@@ -24,7 +24,7 @@ use crate::{
     assertions::labels,
     cbor_types::UriT,
     error::{Error, Result},
-    utils::hash_utils::{hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, Exclusion},
+    utils::hash_utils::{hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, HashRange},
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -33,7 +33,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct DataHash {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclusions: Option<Vec<Exclusion>>,
+    pub exclusions: Option<Vec<HashRange>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -77,7 +77,7 @@ impl DataHash {
         }
     }
 
-    pub fn add_exclusion(&mut self, exclusion: Exclusion) {
+    pub fn add_exclusion(&mut self, exclusion: HashRange) {
         if self.exclusions.is_none() {
             self.exclusions = Some(Vec::new());
         }
@@ -178,8 +178,8 @@ impl DataHash {
 
         // sort the exclusions
         let hash = match self.exclusions {
-            Some(ref e) => hash_stream_by_alg(&alg, stream, Some(e.clone()))?,
-            None => hash_stream_by_alg(&alg, stream, None)?,
+            Some(ref e) => hash_stream_by_alg(&alg, stream, Some(e.clone()), true)?,
+            None => hash_stream_by_alg(&alg, stream, None, true)?,
         };
 
         if hash.is_empty() {
@@ -272,7 +272,7 @@ pub mod tests {
     fn test_build_assertion() {
         // try json based assertion
         let mut data_hash = DataHash::new("Some data", "sha256", None);
-        data_hash.add_exclusion(Exclusion::new(0, 1234));
+        data_hash.add_exclusion(HashRange::new(0, 1234));
         data_hash.hash = vec![1, 2, 3];
 
         let assertion = data_hash.to_assertion().unwrap();
@@ -313,8 +313,8 @@ pub mod tests {
     #[test]
     fn test_binary_round_trip() {
         let mut data_hash = DataHash::new("Some data", "sha256", None);
-        data_hash.add_exclusion(Exclusion::new(0x2000, 0x1000));
-        data_hash.add_exclusion(Exclusion::new(0x4000, 0x1000));
+        data_hash.add_exclusion(HashRange::new(0x2000, 0x1000));
+        data_hash.add_exclusion(HashRange::new(0x4000, 0x1000));
 
         // add some data to hash
         let ap = fixture_path("earth_apollo17.jpg");

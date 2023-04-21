@@ -47,7 +47,7 @@ use crate::{
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
-        hash_utils::{hash256, Exclusion},
+        hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, Signer,
@@ -1391,7 +1391,7 @@ impl Store {
             // add exclusion hash for bytes before and after jumbf
             let mut dh = DataHash::new("jumbf manifest", alg, None);
             if block_end > block_start {
-                dh.add_exclusion(Exclusion::new(block_start, block_end - block_start));
+                dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
             }
             if calc_hashes {
                 dh.gen_hash_from_stream(stream)?;
@@ -3695,7 +3695,7 @@ pub mod tests {
     #[test]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
-        let ap = fixture_path("legacy.mp4");
+        let ap = fixture_path("ms3.mp4");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
