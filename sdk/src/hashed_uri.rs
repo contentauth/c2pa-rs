@@ -26,7 +26,7 @@ pub struct HashedUri {
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
     #[serde(with = "serde_bytes")]
-    #[schemars(with = "Vec<u8>")]
+    #[cfg_attr(feature = "json_schema", schemars(with = "Vec<u8>"))]
     hash: Vec<u8>, // hash stored as cbor byte string
 
     // salt used to generate hash
