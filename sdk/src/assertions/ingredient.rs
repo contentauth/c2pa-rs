@@ -13,6 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Metadata, ReviewRating},
@@ -25,6 +28,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 // Used to differentiate a parent from a component
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum Relationship {
     #[serde(rename = "parentOf")]
     ParentOf,

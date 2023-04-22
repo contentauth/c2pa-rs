@@ -15,14 +15,19 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+
 /// Hashed Uri stucture as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {
     url: String, // URI stored as tagged cbor
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
     #[serde(with = "serde_bytes")]
+    #[schemars(with = "Vec<u8>")]
     hash: Vec<u8>, // hash stored as cbor byte string
 
     // salt used to generate hash

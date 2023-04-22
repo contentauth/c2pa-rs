@@ -17,6 +17,9 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -28,6 +31,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// The Metadata structure can be used as part of other assertions or on its own to reference others
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
@@ -156,6 +160,7 @@ pub mod c2pa_source {
 
 /// A description of the source for assertion data
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct DataSource {
     /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
@@ -194,6 +199,7 @@ impl DataSource {
 
 /// Identifies a person responsible for an action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Actor {
     /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -242,6 +248,7 @@ pub enum ReviewCode {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ReviewRating {
     pub explanation: String,
     #[serde(skip_serializing_if = "Option::is_none")]

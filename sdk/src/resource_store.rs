@@ -17,6 +17,9 @@ use std::{borrow::Cow, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+
 use crate::{Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
@@ -28,6 +31,7 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
 
 /// A reference to a resource to be used in JSON serialization
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ResourceRef {
     pub format: String,
     pub identifier: String,
@@ -44,6 +48,7 @@ impl ResourceRef {
 
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
@@ -123,6 +128,10 @@ impl ResourceStore {
         }
         self.resources.insert(id.into(), value.into());
         Ok(())
+    }
+
+    pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
+        &self.resources
     }
 
     /// Returns a copy on write reference to the resource if found.
