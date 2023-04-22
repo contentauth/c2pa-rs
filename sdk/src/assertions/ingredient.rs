@@ -11,10 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},

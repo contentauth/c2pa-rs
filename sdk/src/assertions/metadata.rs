@@ -14,11 +14,10 @@
 use std::collections::HashMap;
 
 use chrono::{SecondsFormat, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},

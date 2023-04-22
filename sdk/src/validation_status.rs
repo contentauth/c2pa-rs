@@ -18,10 +18,9 @@
 #![deny(missing_docs)]
 
 use log::debug;
-use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     assertion::AssertionBase,

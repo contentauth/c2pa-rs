@@ -16,6 +16,8 @@ use std::path::Path;
 use std::{borrow::Cow, collections::HashMap, io::Cursor};
 
 use log::{debug, error, warn};
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -34,9 +36,6 @@ use crate::{
     store::Store,
     Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
-
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Default, Deserialize, Serialize)]

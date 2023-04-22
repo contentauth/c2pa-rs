@@ -15,10 +15,9 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, collections::HashMap};
 
-use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 

@@ -17,11 +17,10 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use log::{debug, error};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},

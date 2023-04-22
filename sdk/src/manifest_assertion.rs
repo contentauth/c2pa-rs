@@ -1,8 +1,7 @@
-use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
-use serde_json::Value;
-
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
+use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
+use serde_json::Value;
 
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
