@@ -445,15 +445,13 @@ impl Ingredient {
         // if we can open the file try tto get xmp info
         let xmp_info = XmpInfo::from_source(stream, &format);
 
-        let mut ingredient = Self {
-            title: title.into(),
-            format,
-            ..Default::default()
+        let id = if let Some(id) = xmp_info.instance_id {
+            id
+        } else {
+            default_instance_id()
         };
 
-        if let Some(instance_id) = xmp_info.instance_id {
-            ingredient.instance_id = instance_id;
-        }
+        let mut ingredient = Self::new(title.into(), format, id);
 
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
@@ -1242,6 +1240,13 @@ mod tests_file_io {
         assert!(ingredient.provenance().is_none());
         assert!(ingredient.manifest_data().is_none());
         assert!(ingredient.metadata().is_none());
+        assert!(ingredient.instance_id().starts_with("xmp.iid:"));
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("xmp.iid"));
     }
 
     #[test]
