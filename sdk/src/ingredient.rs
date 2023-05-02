@@ -1023,12 +1023,6 @@ pub struct DefaultOptions {
 
 #[cfg(feature = "file_io")]
 impl IngredientOptions for DefaultOptions {
-    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
-        #[cfg(feature = "add_thumbnails")]
-        return crate::utils::thumbnail::make_thumbnail(_path).ok();
-        #[cfg(not(feature = "add_thumbnails"))]
-        None
-    }
 
     fn base_path(&self) -> Option<&Path> {
         self.base.as_deref()
