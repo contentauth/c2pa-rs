@@ -483,7 +483,7 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            self.set_memory_thumbnail(format, image)?;
+                            self.set_thumbnail(format, image)?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -623,7 +623,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_memory_thumbnail(format, image)?;
+                ingredient.set_thumbnail(format, image)?;
             }
         }
 
@@ -1023,6 +1023,13 @@ pub struct DefaultOptions {
 
 #[cfg(feature = "file_io")]
 impl IngredientOptions for DefaultOptions {
+    fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
+        #[cfg(feature = "add_thumbnails")]
+        return crate::utils::thumbnail::make_thumbnail(_path).ok();
+        #[cfg(not(feature = "add_thumbnails"))]
+        None
+    }
+
     fn base_path(&self) -> Option<&Path> {
         self.base.as_deref()
     }
@@ -1364,7 +1371,7 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
-        let ap = fixture_path("CIE-sig-CA.jpg");
+        let ap = fixture_path("CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
         let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
