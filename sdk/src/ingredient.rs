@@ -1023,7 +1023,6 @@ pub struct DefaultOptions {
 
 #[cfg(feature = "file_io")]
 impl IngredientOptions for DefaultOptions {
-
     fn base_path(&self) -> Option<&Path> {
         self.base.as_deref()
     }
