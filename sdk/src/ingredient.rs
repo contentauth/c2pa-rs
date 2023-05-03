@@ -938,7 +938,7 @@ impl Ingredient {
             let data = self.thumbnail_bytes()?;
             let hash_url = claim.add_assertion(&Thumbnail::new(
                 &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, &thumb_ref.format),
-                data.to_vec(),
+                data.into_owned(),
             ))?;
             thumbnail = Some(hash_url);
         }

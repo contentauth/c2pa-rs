@@ -626,7 +626,7 @@ impl Manifest {
         }
 
         // if a thumbnail is not already defined, create one here
-        if self.thumbnail().is_none() {
+        if self.thumbnail_ref().is_none() {
             #[cfg(feature = "add_thumbnails")]
             if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
                 // Do not write this as a file when reading from files
@@ -669,10 +669,12 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some((format, data)) = self.thumbnail() {
+
+        if let Some(thumb_ref) = self.thumbnail_ref() {
+            let data = self.resources.get(&thumb_ref.identifier)?;
             claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
-                data.to_vec(),
+                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
+                data.into_owned(),
             ))?;
         }
 
@@ -1769,10 +1771,14 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_create_file_based_ingredient() {
-        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        folder.push("tests/fixtures");
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures");
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
         let mut manifest = Manifest::new("claim_generator");
-        manifest.resources.set_base_path(folder);
+        manifest.with_base_path(fixtures).expect("with_base");
         // verify we can't set a references that don't exist
         assert!(manifest
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
@@ -1783,5 +1789,10 @@ pub(crate) mod tests {
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
             .is_ok());
         assert!(manifest.thumbnail_ref().is_some());
+
+        let signer = temp_signer();
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
     }
 }
