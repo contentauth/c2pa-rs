@@ -51,6 +51,7 @@ impl ResourceRef {
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
 }
 
