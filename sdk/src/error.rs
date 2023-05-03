@@ -198,6 +198,9 @@ pub enum Error {
     #[error("file not found: {0}")]
     FileNotFound(String),
 
+    #[error("resource not found: {0}")]
+    ResourceNotFound(String),
+
     #[error("XMP read error")]
     XmpReadError,
 
