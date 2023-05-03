@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use std::path::Path;
 use std::{borrow::Cow, collections::HashMap, io::Cursor};
+#[cfg(feature = "file_io")]
+use std::{fs::create_dir_all, path::Path};
 
 use log::{debug, error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -483,7 +483,7 @@ impl Manifest {
     /// Ingredients resources will also be relative to this path
     #[cfg(feature = "file_io")]
     pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
-        std::fs::create_dir_all(&base_path)?;
+        create_dir_all(&base_path)?;
         self.resources.set_base_path(base_path.as_ref());
         for i in 0..self.ingredients.len() {
             // todo: create different subpath for each ingredient?
@@ -806,6 +806,10 @@ impl Manifest {
         }
         // we need to copy the source to target before setting the asset info
         if !dest_path.as_ref().exists() {
+            // ensure the path to the file exists
+            if let Some(output_dir) = dest_path.as_ref().parent() {
+                create_dir_all(output_dir)?;
+            }
             std::fs::copy(&source_path, &dest_path)?;
             copied = true;
         }

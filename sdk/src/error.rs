@@ -17,6 +17,7 @@ use thiserror::Error;
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     // --- c2pa errors ---
     /// Could not find a claim with this label.
