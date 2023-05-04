@@ -154,6 +154,14 @@ Specify a parent file as the argument to the `--parent` / `-p` option; for examp
 c2patool sample/image.jpg -m sample/test.json -p sample/c.jpg -o signed_image.jpg
 ```
 
+You can pass an ingredient generated with the --ingredient option by giving the folder or ingredient.json file.
+
+```shell
+c2patool sample/C.jpg --ingredient --output ./ingredient
+
+c2patool sample/image.jpg -m sample/test.json -p ./ingredient -o signed_image.jpg
+```
+
 #### Forced overwrite
 
 The tool will return an error if the output file already exists. Use the `--force` / `-f` option to force overwriting the output file. For example:
@@ -270,6 +278,19 @@ Both the `private_key` and `sign_cert` must be in PEM format. The `sign_cert` mu
 This section gives a highlight of noteworthy changes 
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes
+
+# 0.5.3
+* fix bug where ingredient thumbnails were not generated
+* an ingredient.json file or folder can now be passed on the command line --parent option.
+* if a folder is passed as an ingredient, the tool will look for an ingredient.json fle in that folder.
+* fix --parent is no longer relative to the --manifest path
+# 0.5.2
+* remove manifest preview feature
+* test for similar extensions
+* Add svg support
+# 0.5.1
+* Updated the sample certs which had expired
+* Updates to the Readme, for 0.5.0 changes
 
 ## 0.5.0
 _27 March 2023_

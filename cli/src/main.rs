@@ -122,6 +122,28 @@ fn ext_normal(path: &Path) -> String {
     }
 }
 
+// loads an ingredient, allowing for a folder or json ingredient
+fn load_ingredient(path: &Path) -> Result<Ingredient> {
+    // if the path is a folder, look for ingredient.json
+    let mut path_buf = PathBuf::from(path);
+    let path = if path.is_dir() {
+        path_buf = path_buf.join("ingredient.json");
+        path_buf.as_path()
+    } else {
+        path
+    };
+    if path.extension() == Some(std::ffi::OsStr::new("json")) {
+        let json = std::fs::read_to_string(path)?;
+        let mut ingredient: Ingredient = serde_json::from_slice(json.as_bytes())?;
+        if let Some(base) = path.parent() {
+            ingredient.resources_mut().set_base_path(base);
+        }
+        Ok(ingredient)
+    } else {
+        Ok(Ingredient::from_file(path)?)
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -197,6 +219,12 @@ fn main() -> Result<()> {
             manifest.claim_generator = format!("{} {}", manifest.claim_generator, tool_generator);
         }
 
+        // set manifest base path before ingredients so ingredients can override it
+        if let Some(base) = base_path.as_ref() {
+            manifest.with_base_path(base)?;
+            sign_config.set_base_path(base);
+        }
+
         // Add any ingredients specified as file paths
         if let Some(paths) = manifest_def.ingredient_paths {
             for mut path in paths {
@@ -206,28 +234,14 @@ fn main() -> Result<()> {
                         path = base.join(&path)
                     }
                 }
-                // if the file is JSON then load it as an ingredient
-                if path.extension() == Some(std::ffi::OsStr::new("json")) {
-                    let json = std::fs::read_to_string(&path)?;
-                    let mut ingredient: Ingredient = serde_json::from_slice(json.as_bytes())?;
-                    if let Some(base) = path.parent() {
-                        ingredient.resources_mut().set_base_path(base);
-                    }
-                    manifest.add_ingredient(ingredient);
-                } else {
-                    let ingredient = Ingredient::from_file(&path)?;
-                    manifest.add_ingredient(ingredient);
-                }
+                let ingredient = load_ingredient(&path)?;
+                manifest.add_ingredient(ingredient);
             }
         }
 
-        if let Some(base) = base_path {
-            manifest.with_base_path(&base)?;
-            sign_config.set_base_path(base);
-        }
-
         if let Some(parent_path) = args.parent {
-            manifest.set_parent(c2pa::Ingredient::from_file(parent_path)?)?;
+            let ingredient = load_ingredient(&parent_path)?;
+            manifest.set_parent(ingredient)?;
         }
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
@@ -263,12 +277,6 @@ fn main() -> Result<()> {
             if output.extension().is_none() {
                 bail!("Missing extension output");
             }
-
-            // create any needed folders for the output path (embed should do this)
-            let mut output_dir = PathBuf::from(&output);
-            output_dir.pop();
-            manifest.resources_mut().set_base_path(&output_dir);
-            create_dir_all(&output_dir)?;
 
             let signer = sign_config.signer()?;
 

@@ -44,6 +44,6 @@
         }
     ],
     "ingredient_paths": [
-        "C.jpg", "libpng-test.png"
+        "C.jpg", "ingredient/ingredient.json"
     ]
 }
