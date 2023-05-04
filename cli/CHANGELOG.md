@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.5.3
+_04 May 2023_
+
+* Parent Ingredient JSON ([contentauth/c2patool#123](https://github.com/contentauth/c2patool/pull/123))
+
 ## 0.5.2
 _19 April 2023_
 
