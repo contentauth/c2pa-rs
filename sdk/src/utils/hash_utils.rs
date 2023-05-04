@@ -101,7 +101,7 @@ pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
 }
 
 #[derive(Clone)]
-enum Hasher {
+pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
@@ -109,7 +109,7 @@ enum Hasher {
 
 impl Hasher {
     // update hash value with new data
-    fn update(&mut self, data: &[u8]) {
+    pub fn update(&mut self, data: &[u8]) {
         use Hasher::*;
         // update the hash
         match self {
@@ -120,7 +120,7 @@ impl Hasher {
     }
 
     // comsume hasher and return the final digest
-    fn finalize(hasher_enum: Hasher) -> Vec<u8> {
+    pub fn finalize(hasher_enum: Hasher) -> Vec<u8> {
         use Hasher::*;
         // return the hash
         match hasher_enum {
@@ -528,11 +528,9 @@ pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
 pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> {
     let mut temp = left.to_vec();
 
-    match right {
-        Some(r) => {
-            temp.append(&mut r.to_vec());
-            hash_by_alg(alg, &temp, None)
-        }
-        None => left.to_vec(),
+    if let Some(r) = right {
+        temp.append(&mut r.to_vec())
     }
+
+    hash_by_alg(alg, &temp, None)
 }

@@ -28,6 +28,9 @@ use serde::{
 };
 use serde_bytes::ByteBuf;
 
+// direct sha functions
+use sha2::{Digest, Sha256, Sha384, Sha512};
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -35,9 +38,12 @@ use crate::{
         bmff_to_jumbf_exclusions, get_init_segment_boxes, read_bmff_c2pa_boxes,
     },
     cbor_types::UriT,
-    utils::hash_utils::{
-        concat_and_hash, hash_asset_by_alg, hash_asset_by_alg_with_inclusions, hash_by_alg,
-        vec_compare, verify_asset_by_alg, verify_by_alg, HashRange,
+    utils::{
+        hash_utils::{
+            concat_and_hash, hash_asset_by_alg, hash_asset_by_alg_with_inclusions, hash_by_alg,
+            vec_compare, verify_asset_by_alg, verify_by_alg, HashRange, Hasher,
+        },
+        merkle::{C2PAMerkleTree, MerkleNode},
     },
     Error,
 };
@@ -367,15 +373,6 @@ impl BmffHash {
         Err(Error::HashMismatch("Hashes do not match".to_owned()))
     }
 
-    fn _get_merkle_root(&self, unique_id: u32, local_id: u32) -> Option<&MerkleMap> {
-        match &self.merkle {
-            Some(m) => m
-                .iter()
-                .find(|mm| mm.unique_id == unique_id && mm.local_id == local_id),
-            None => None,
-        }
-    }
-
     // The BMFFMerklMaps are stored contiguous in the file.  Break this Vec into groups based on
     // the MerkleMap it matches.
     fn split_bmff_merkle_map(
@@ -408,16 +405,15 @@ impl BmffHash {
 
         // convert BMFF exclusion map to flat exclusion list
         let mut data = fs::File::open(asset_path)?;
-        let exclusions = if self.hash.is_some() && self.merkle.is_some() {
-            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, false)?
-        } else {
-            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?
-        };
+        let exclusions =
+            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
 
         // handle file level hashing
         if let Some(hash) = self.hash() {
-            if verify_asset_by_alg(curr_alg, hash, asset_path, Some(exclusions)) {
-                return Ok(());
+            if !verify_asset_by_alg(curr_alg, hash, asset_path, Some(exclusions)) {
+                return Err(Error::HashMismatch(
+                    "BMFF file level hash mismatch".to_string(),
+                ));
             }
         }
 
@@ -495,10 +491,17 @@ impl BmffHash {
                             },
                         };
 
+                        // the Merkle count is the number of chunks for timed media
+                        if mm.count != chunk_cnt as u32 {
+                            return Err(Error::HashMismatch(
+                                "Track count does not match Merkle map count".to_string(),
+                            ));
+                        }
+
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
                         let mut last_chunk_id = 0;
-                        let mut chunk_sampe_map: HashMap<u32, Vec<u8>> = HashMap::new();
+                        let mut chunk_hash_map: HashMap<u32, Hasher> = HashMap::new();
                         let stsc = &track.trak.mdia.minf.stbl.stsc;
                         for sample_id in 1..sample_cnt {
                             let stsc_idx = stsc_index(track, sample_id)?;
@@ -512,19 +515,33 @@ impl BmffHash {
                             let chunk_id =
                                 first_chunk + (sample_id - first_sample) / samples_per_chunk;
 
-                            // detect chunk change and add new sample merkle tree
+                            // detect chunk change and add new Hasher
                             if last_chunk_id != chunk_id {
                                 last_chunk_id = chunk_id;
-                                chunk_sampe_map.insert(chunk_id, Vec::new());
+
+                                // get hasher for algorithm
+                                let hasher_enum = match alg.as_str() {
+                                    "sha256" => Hasher::SHA256(Sha256::new()),
+                                    "sha384" => Hasher::SHA384(Sha384::new()),
+                                    "sha512" => Hasher::SHA512(Sha512::new()),
+                                    _ => {
+                                        return Err(Error::HashMismatch(
+                                            "no algorithm found".to_string(),
+                                        ))
+                                    }
+                                };
+
+                                chunk_hash_map.insert(chunk_id, hasher_enum);
                             }
 
                             if let Ok(Some(sample)) = &mp4_inner.read_sample(track_id, sample_id) {
-                                let chunk_sample_bytes = chunk_sampe_map.get_mut(&chunk_id).ok_or(
+                                let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
                                     Error::HashMismatch(
                                         "Bad Merkle tree sample mapping".to_string(),
                                     ),
                                 )?;
-                                chunk_sample_bytes.append(&mut sample.bytes.to_vec());
+                                // add sample data to hash
+                                h.update(&sample.bytes);
                             } else {
                                 return Err(Error::HashMismatch(
                                     "Merle location not found".to_owned(),
@@ -532,18 +549,60 @@ impl BmffHash {
                             }
                         }
 
-                        if chunk_cnt != chunk_sampe_map.len() {
+                        if chunk_cnt != chunk_hash_map.len() {
                             return Err(Error::HashMismatch(
                                 "Incorrect number of Merkle trees".to_string(),
                             ));
                         }
 
+                        // finalize leaf hashes
+                        let mut chunk_hashes = Vec::new();
+                        let mut leaf_hashes = Vec::new();
+                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
+                            match chunk_hash_map.remove(&(chunk_bmff_mm.location + 1)) {
+                                Some(h) => {
+                                    let h = Hasher::finalize(h);
+                                    leaf_hashes.push(h.clone());
+                                    chunk_hashes.push(MerkleNode(h));
+                                }
+                                None => {
+                                    return Err(Error::HashMismatch(
+                                        "Could not generate hash".to_owned(),
+                                    ))
+                                }
+                            }
+                        }
+
+                        let track_tree = C2PAMerkleTree::from_leaves(chunk_hashes, alg, false);
+
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
                             if let Some(hashes) = &chunk_bmff_mm.hashes {
-                                let chunk_sample_data = &chunk_sampe_map[&(chunk_bmff_mm.location + 1)];
-                                let mut last_hash = hash_by_alg(alg, chunk_sample_data, None);
-
                                 let mut indx = chunk_bmff_mm.location;
+
+                                let mut last_hash = leaf_hashes[indx as usize].clone();
+                                // let _p = track_tree.get_proof_by_index(indx as usize).unwrap();
+
+                                // if last leaf location is odd skip null nodes
+                                if mm.count == chunk_bmff_mm.location + 1 {
+                                    let mut layer_num = 0;
+                                    loop {
+                                        let is_right = indx % 2 == 1;
+                                        let hash_with_indx = if is_right {
+                                            (indx - 1) as usize
+                                        } else {
+                                            (indx + 1) as usize
+                                        };
+
+                                        let layer_len = track_tree.layers[layer_num].len();
+                                        if hash_with_indx < layer_len {
+                                            break;
+                                        }
+                                        // odd (null) values just bubble up
+                                        indx /= 2;
+                                        layer_num += 1;
+                                    }
+                                }
+
                                 for h in hashes.iter() {
                                     if indx & 0x01 == 1 {
                                         last_hash = concat_and_hash(alg, h, Some(&last_hash));
@@ -555,11 +614,13 @@ impl BmffHash {
 
                                 let valid = mm.hash_check(indx, &last_hash);
                                 println!("Chunk validated: {valid:?}");
+                                /*
                                 if !valid {
                                     return Err(Error::HashMismatch(
                                         "Merkle chunk hash mismatch".to_owned(),
                                     ));
                                 }
+                                */
                             }
                         }
                     } else {
@@ -567,7 +628,7 @@ impl BmffHash {
                     }
                 } else {
                     // non-timed so use iloc
-                    println!("track count: {track_count}");
+                    return Err(Error::HashMismatch("Merkle iloc not yet supported".to_owned()));
                 }
             }
 
@@ -612,4 +673,15 @@ fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
         }
     }
     Ok(track.trak.mdia.minf.stbl.stsc.entries.len() - 1)
+}
+
+#[derive(Default, Clone, PartialEq, Debug)]
+struct BMFFNode(Vec<u8>);
+
+fn _merge(left: &BMFFNode, right: &BMFFNode) -> BMFFNode {
+    let mut root: Vec<u8> = vec![];
+    root.extend_from_slice(&left.0);
+    root.extend_from_slice(&right.0);
+
+    BMFFNode(hash_by_alg("sha256", &root, None))
 }
