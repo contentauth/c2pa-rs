@@ -46,13 +46,8 @@ impl C2PAMerkleTree {
         C2PAMerkleTree { leaves, layers }
     }
 
-    pub fn get_root(&self) -> Option<Vec<u8>> {
-        if let Some(v) = self.layers.last() {
-            if let Some(n) = v.last() {
-                return Some(n.0.clone());
-            }
-        }
-        None
+    pub fn get_root(&self) -> Option<&Vec<u8>> {
+        Some(&self.layers.last()?.first()?.0)
     }
 
     fn generate_tree(alg: &str, leaves: &[MerkleNode]) -> Vec<Vec<MerkleNode>> {
@@ -67,7 +62,9 @@ impl C2PAMerkleTree {
             for i in (0..current_layer.len()).step_by(2) {
                 if i + 1 == current_layer.len() {
                     // just pass the current hash since last node is unbalanced
-                    parent_layer.push(current_layer[i].clone());
+                    //let h = concat_and_hash(alg, &current_layer[i].0, None);
+                    let h = current_layer[i].0.clone();
+                    parent_layer.push(MerkleNode(h));
                     continue;
                 }
                 let left = &current_layer[i];

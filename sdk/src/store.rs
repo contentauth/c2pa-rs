@@ -1076,7 +1076,7 @@ impl Store {
     fn ingredient_checks(
         store: &Store,
         claim: &Claim,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
@@ -1195,7 +1195,7 @@ impl Store {
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // walk the ingredients
@@ -1240,7 +1240,7 @@ impl Store {
                         )?;
                     }
                     // verify the ingredient claim
-                    Claim::verify_claim_async(ingredient, asset_bytes, false, validation_log)
+                    Claim::verify_claim_async(ingredient, asset_data, false, validation_log)
                         .await?;
                 } else {
                     let log_item = log_item!(
@@ -1272,7 +1272,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub async fn verify_store_async(
         store: &Store,
-        asset_bytes: &[u8],
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -1289,9 +1289,9 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_bytes, true, validation_log).await?;
+        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
 
-        Store::ingredient_checks_async(store, claim, asset_bytes, validation_log).await?;
+        Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
         Ok(())
     }
@@ -1303,7 +1303,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub fn verify_store(
         store: &Store,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -2151,7 +2151,7 @@ impl Store {
         asset_path: &'_ Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &ClaimAssetData::PathData(asset_path), validation_log)
+        Store::verify_store(self, &mut ClaimAssetData::Path(asset_path), validation_log)
     }
 
     // verify from a buffer without file i/o
@@ -2161,7 +2161,17 @@ impl Store {
         _asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &ClaimAssetData::ByteData(buf), validation_log)
+        Store::verify_store(self, &mut ClaimAssetData::Byte(buf), validation_log)
+    }
+
+    // verify from a buffer without file i/o
+    pub fn verify_from_stream(
+        &mut self,
+        reader: &mut dyn CAIRead,
+        _asset_type: &str,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<()> {
+        Store::verify_store(self, &mut ClaimAssetData::Stream(reader), validation_log)
     }
 
     // fetch remote manifest if possible
@@ -2396,7 +2406,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     pub fn load_from_memory(
         asset_type: &str,
-        data: &'_ [u8],
+        data: &[u8],
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
@@ -2404,7 +2414,7 @@ impl Store {
             // verify the store
             if verify {
                 // verify store and claims
-                Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
+                Store::verify_store(&store, &mut ClaimAssetData::Byte(data), validation_log)?;
             }
 
             Ok(store)
@@ -2413,7 +2423,7 @@ impl Store {
 
     /// Load Store from a in-memory asset asychronously validating
     /// asset_type: asset extension or mime type
-    /// data: reference to bytes of the the file
+    /// data: reference to bytes of the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     pub async fn load_from_memory_async(
@@ -2427,7 +2437,73 @@ impl Store {
         // verify the store
         if verify {
             // verify store and claims
-            Store::verify_store_async(&store, data, validation_log).await?;
+            Store::verify_store_async(&store, &mut ClaimAssetData::Byte(data), validation_log)
+                .await?;
+        }
+
+        Ok(store)
+    }
+
+    /// Load Store from a in-memory asset
+    /// asset_type: asset extension or mime type
+    /// data: reference to bytes of the the file
+    /// verify: if true will run verification checks when loading
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    pub fn load_fragment_from_memory(
+        asset_type: &str,
+        init_segment: &[u8],
+        fragment: &[u8],
+        verify: bool,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        Store::get_store_from_memory(asset_type, init_segment, validation_log).and_then(|store| {
+            // verify the store
+            if verify {
+                let mut init_segment_stream = Cursor::new(init_segment);
+                let mut fragment_stream = Cursor::new(fragment);
+
+                // verify store and claims
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::StreamFragment(
+                        &mut init_segment_stream,
+                        &mut fragment_stream,
+                    ),
+                    validation_log,
+                )?;
+            }
+
+            Ok(store)
+        })
+    }
+
+    /// Load Store from a in-memory asset asychronously validating
+    /// asset_type: asset extension or mime type
+    /// init_segment: reference to bytes of the init segment
+    /// fragment: reference to bytes of the fragment to validate
+    /// verify: if true will run verification checks when loading
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    pub async fn load_fragment_from_memory_async(
+        asset_type: &str,
+        init_segment: &[u8],
+        fragment: &[u8],
+        verify: bool,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        let store = Store::get_store_from_memory(asset_type, init_segment, validation_log)?;
+
+        // verify the store
+        if verify {
+            let mut init_segment_stream = Cursor::new(init_segment);
+            let mut fragment_stream = Cursor::new(fragment);
+
+            // verify store and claims
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::StreamFragment(&mut init_segment_stream, &mut fragment_stream),
+                validation_log,
+            )
+            .await?;
         }
 
         Ok(store)
@@ -3695,11 +3771,33 @@ pub mod tests {
     #[test]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
-        let ap = fixture_path("ms3.mp4");
+        let ap = fixture_path("legacy.mp4");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
+
+/* 
+    #[test]
+    fn test_bmff_fragments() {
+        let init_stream_path = fixture_path("dashinit.mp4");
+        let segment_stream_path = fixture_path("dash1.m4s");
+
+        let init_stream = std::fs::read(init_stream_path).unwrap();
+        let segment_stream = std::fs::read(segment_stream_path).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_fragment_from_memory(
+            "mp4",
+            &init_stream,
+            &segment_stream,
+            true,
+            &mut report,
+        )
+        .expect("load_from_asset");
+        println!("store = {store}");
+    }
+    */
     #[test]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
@@ -3724,7 +3822,6 @@ pub mod tests {
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
-
     #[test]
     #[cfg(all(feature = "file_io"))]
     fn test_removed_jumbf() {

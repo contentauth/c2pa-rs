@@ -387,9 +387,8 @@ pub fn bmff_to_jumbf_exclusions(
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
 ) -> Result<Vec<HashRange>> {
-    let start = reader.stream_position()?;
     let size = reader.seek(SeekFrom::End(0))?;
-    reader.seek(SeekFrom::Start(start))?;
+    reader.rewind()?;
 
     // create root node
     let root_box = BoxInfo {
@@ -1010,9 +1009,8 @@ fn get_manifest_token(
 pub(crate) fn read_bmff_c2pa_boxes(
     reader: &mut dyn CAIRead,
 ) -> Result<(Option<Vec<u8>>, Vec<BmffMerkleMap>)> {
-    let start = reader.stream_position()?;
     let size = reader.seek(SeekFrom::End(0))?;
-    reader.seek(SeekFrom::Start(start))?;
+    reader.rewind()?;
 
     // create root node
     let root_box = BoxInfo {
@@ -1588,13 +1586,7 @@ pub(crate) fn is_fragmented(asset: &mut dyn CAIRead) -> Result<bool> {
     Ok(bmff_map.get("/moovf").is_some())
 }
 
-pub(crate) fn get_init_segment_boxes(asset_path: &std::path::Path) -> Result<Vec<BoxInfo>> {
-    let mut asset = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(false)
-        .open(asset_path)?;
-
+pub(crate) fn get_init_segment_boxes(asset: &mut dyn CAIRead) -> Result<Vec<BoxInfo>> {
     asset.rewind()?;
 
     let start = asset.stream_position()?;
@@ -1617,7 +1609,7 @@ pub(crate) fn get_init_segment_boxes(asset_path: &std::path::Path) -> Result<Vec
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    build_bmff_tree(asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
     let mut boxes = Vec::new();
 

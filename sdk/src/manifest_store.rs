@@ -18,6 +18,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::{
+    claim::ClaimAssetData,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     validation_status::{status_for_store, ValidationStatus},
@@ -246,7 +247,12 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
-        Store::verify_store_async(&store, asset_bytes, &mut validation_log).await?;
+        Store::verify_store_async(
+            &store,
+            &mut ClaimAssetData::Byte(asset_bytes),
+            &mut validation_log,
+        )
+        .await?;
 
         Ok(Self::from_store(&store, &mut validation_log))
     }

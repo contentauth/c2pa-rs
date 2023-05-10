@@ -388,6 +388,24 @@ pub fn verify_asset_by_alg(
         false
     }
 }
+
+pub fn verify_stream_by_alg<R>(
+    alg: &str,
+    hash: &[u8],
+    reader: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+) -> bool
+where
+    R: Read + Seek + ?Sized,
+{
+    if let Ok(data_hash) = hash_stream_by_alg(alg, reader, hash_range, is_exclusion) {
+        vec_compare(hash, &data_hash)
+    } else {
+        false
+    }
+}
+
 /// Return a multihash (Sha256) of array of bytes
 #[allow(dead_code)]
 pub fn hash256(data: &[u8]) -> String {

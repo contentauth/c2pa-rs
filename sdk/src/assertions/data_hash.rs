@@ -22,9 +22,12 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    asset_io::CAIRead,
     cbor_types::UriT,
     error::{Error, Result},
-    utils::hash_utils::{hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, HashRange},
+    utils::hash_utils::{
+        hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, verify_stream_by_alg, HashRange,
+    },
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -190,7 +193,7 @@ impl DataHash {
     }
 
     // verify data using currently set algorithm or default alg is none currently set
-    pub fn verify_in_memory_hash(&self, data: &[u8], alg: Option<String>) -> Result<()> {
+    pub fn verify_in_memory_hash(&self, data: &[u8], alg: Option<&str>) -> Result<()> {
         if self.is_remote_hash() {
             return Err(Error::BadParam("asset hash is remote".to_owned()));
         }
@@ -198,7 +201,7 @@ impl DataHash {
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
             None => match alg {
-                Some(a) => a,
+                Some(a) => a.to_owned(),
                 None => "sha256".to_string(),
             },
         };
@@ -224,6 +227,29 @@ impl DataHash {
         let exclusions = self.exclusions.as_ref().cloned();
 
         if verify_asset_by_alg(curr_alg, &self.hash, asset_path, exclusions) {
+            Ok(())
+        } else {
+            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+        }
+    }
+
+    // verify data using currently set algorithm or default alg is none currently set
+    pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
+        if self.is_remote_hash() {
+            return Err(Error::BadParam("asset hash is remote".to_owned()));
+        }
+
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a.to_owned(),
+                None => "sha256".to_string(),
+            },
+        };
+
+        let exclusions = self.exclusions.as_ref().cloned();
+
+        if verify_stream_by_alg(&curr_alg, &self.hash, reader, exclusions, true) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))
