@@ -182,7 +182,6 @@ pub mod tests {
         assert_eq!(assertion.mime_type(), "application/json");
         assert_eq!(assertion.label(), CreativeWork::LABEL);
         let result = CreativeWork::from_assertion(&assertion).expect("extract_assertion");
-        dbg!(serde_json::to_string(&result).unwrap());
         assert_eq!(
             original.author().unwrap()[0].name(),
             result.author().unwrap()[0].name()
@@ -192,7 +191,6 @@ pub mod tests {
     #[test]
     fn from_creative_work_sample() {
         let original = CreativeWork::from_json_str(SAMPLE_CREATIVE_WORK).expect("from_json_str");
-        dbg!(&original);
         let original_publisher: SchemaDotOrgPerson = original.get("publisher").unwrap();
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/json");
@@ -207,7 +205,6 @@ pub mod tests {
     #[test]
     fn from_creative_work_stock() {
         let original = CreativeWork::from_json_str(STOCK_CREATIVE_WORK).expect("from_json_str");
-        dbg!(&original);
         let original_url: String = original.get("url").unwrap();
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/json");

@@ -92,7 +92,6 @@ impl ResourceStore {
             id = format!("{id_base}-{count}{ext}");
             count += 1;
         }
-        dbg!(&id);
         id
     }
 
@@ -136,10 +135,13 @@ impl ResourceStore {
                 Some(base) => {
                     // read the file, save in Map and then return a reference
                     let path = base.join(id);
-                    let value = std::fs::read(path)?;
+                    let value = std::fs::read(path).map_err(|_| {
+                        let path = base.join(id).to_string_lossy().into_owned();
+                        Error::ResourceNotFound(path)
+                    })?;
                     return Ok(Cow::Owned(value));
                 }
-                None => return Err(Error::NotFound),
+                None => return Err(Error::ResourceNotFound(id.to_string())),
             }
         }
         self.resources

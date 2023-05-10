@@ -6,6 +6,32 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.21.0
+_04 May 2023_
+
+* (MINOR) Added ResourceNotFound error ([#244](https://github.com/contentauth/c2pa-rs/pull/244))
+
+## 0.20.3
+_03 May 2023_
+
+* backed out calls to set_memory_thumbnail ([#243](https://github.com/contentauth/c2pa-rs/pull/243))
+* Revert "backed out calls to set_memory_thumbnail"
+* backed out calls to set_memory_thumbnail This was causing thumbnail files to not be generated.
+
+## 0.20.2
+_24 April 2023_
+
+* Fixes bug in Ingredient_from_stream_info ([#241](https://github.com/contentauth/c2pa-rs/pull/241))
+
+## 0.20.1
+_20 April 2023_
+
+* Ingredient async and thumbnail support ([#240](https://github.com/contentauth/c2pa-rs/pull/240))
+* Update actix requirement from 0.11.0 to 0.13.0 in /sdk ([#209](https://github.com/contentauth/c2pa-rs/pull/209))
+* Update uuid requirement from 0.8.1 to 1.3.1 in /sdk ([#237](https://github.com/contentauth/c2pa-rs/pull/237))
+* Upgrade x509-parser to 0.15.0 ([#229](https://github.com/contentauth/c2pa-rs/pull/229))
+* Add support for ARM on Linux ([#233](https://github.com/contentauth/c2pa-rs/pull/233))
+
 ## 0.20.0
 _05 April 2023_
 
