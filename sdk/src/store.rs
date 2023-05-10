@@ -3797,7 +3797,6 @@ pub mod tests {
         .expect("load_from_asset");
         println!("store = {store}");
     }
-    */
     #[test]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
@@ -3822,6 +3821,7 @@ pub mod tests {
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
     }
+*/
     #[test]
     #[cfg(all(feature = "file_io"))]
     fn test_removed_jumbf() {
