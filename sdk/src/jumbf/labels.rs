@@ -45,6 +45,18 @@ pub const SIGNATURE: &str = "c2pa.signature";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_storage>.
 pub const CREDENTIALS: &str = "c2pa.credentials";
 
+/// Label for the DataBox box.
+///
+/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_boxes>.
+pub const DATABOX: &str = "c2pa.data";
+
+
+/// Label for the DataBox store box.
+///
+/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_storage>.
+pub const DATABOXES: &str = "c2pa.databoxes";
+
+
 const JUMBF_PREFIX: &str = "self#jumbf";
 
 // Converts a manifest label to a JUMBF URI.
@@ -76,6 +88,18 @@ pub(crate) fn to_verifiable_credential_uri(manifest_label: &str, vc_id: &str) ->
         to_manifest_uri(manifest_label),
         CREDENTIALS,
         vc_id
+    )
+}
+
+// Converts a manifest label and a DataBox label to a JUMBF
+// HashedURI.
+pub(crate) fn to_databox_uri(manifest_label: &str, databox_id: &str) -> String {
+    // TO CONSIDER: Does this now belong in jumbf::labels?
+    format!(
+        "{}/{}/{}",
+        to_manifest_uri(manifest_label),
+        DATABOXES,
+        databox_id
     )
 }
 

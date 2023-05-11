@@ -26,7 +26,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        BmffHash, DataHash,
+        AssetType, BmffHash, DataHash, DataBox,
     },
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
@@ -36,7 +36,7 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOX},
     },
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
@@ -58,11 +58,11 @@ pub enum ClaimAssetData<'a> {
     ByteData(&'a [u8]),
 }
 
-#[derive(PartialEq, Eq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
 // save on parsing the cbor assertion each time we need its contents
+#[derive(PartialEq, Eq, Clone)]
 pub struct ClaimAssertion {
     assertion: Assertion,
     instance: usize,
@@ -151,6 +151,7 @@ impl fmt::Debug for ClaimAssertion {
         write!(f, "{:?}, instance: {}", self.assertion, self.instance)
     }
 }
+
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
 /// hashes of the asset itself, and a reference to the previous `Claim`.
@@ -231,6 +232,9 @@ pub struct Claim {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
+
+    #[serde(skip_deserializing, skip_serializing)]
+    data_boxes: Vec<(HashedUri, DataBox)>,  // list of the data boxes and their hashed URIs found for this manifest
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -314,6 +318,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -346,6 +351,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -622,6 +628,54 @@ impl Claim {
         self.assertions.push(c2pa_assertion.clone());
 
         Ok(c2pa_assertion)
+    }
+
+
+    // Add a new DataBox and return the HashedURI reference
+    pub fn add_databox(&mut self, format: &str, data: Vec<u8>, data_types: Option<Vec<AssetType>>) -> Result<HashedUri> {
+        // create data box
+        let new_db = DataBox {
+            format: format.to_string(),
+            data, 
+            data_types,
+        };
+
+        // serialize to cbor
+        let db_cbor = serde_cbor::to_vec(&new_db).map_err(|_err| Error::AssertionEncoding)?;
+
+        // get the index for the new assertion
+        let mut index = 0;
+        for (uri, _db) in &self.data_boxes {
+            let (_l, i) = Claim::assertion_label_from_link(&uri.url());
+             if i > index {
+                index = i + 1;
+             }
+        }
+
+        let label = Claim::label_with_instance(DATABOX, index);
+        let link = jumbf::labels::to_databox_uri(self.label(), &label);
+
+        // salt box for 1.2 VC redaction support
+        let ds = DefaultSalt::default();
+        let salt = ds.generate_salt();
+       
+        let assertion =  Assertion {
+            label: label.clone(),
+            version: Some(index),
+            data: AssertionData::Cbor(db_cbor),
+            content_type: "application/cbor".to_owned(),
+        };
+        
+         // assertion JUMBF box hash for 1.2 validation
+         let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
+
+        let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        databox_uri.add_salt(salt);
+
+        // add credential to vcstore
+        self.data_boxes.push((databox_uri.clone(), new_db));
+
+        Ok(databox_uri)
     }
 
     pub(crate) fn vc_id(vc_json: &str) -> Result<String> {

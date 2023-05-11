@@ -259,6 +259,23 @@ impl ReviewRating {
     }
 }
 
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub struct AssetType {
+    #[serde(rename = "type")]
+    pub asset_type: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub struct DataBox {
+    #[serde(rename(serialize = "dc:format"))]
+    pub format: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>, 
+    pub data_types: Option<Vec<AssetType>>,
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
