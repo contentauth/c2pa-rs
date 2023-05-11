@@ -331,7 +331,7 @@ impl BmffHash {
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
         let mut reader = Cursor::new(data);
-        
+
         self.verify_stream(&mut reader, alg)
     }
 
@@ -600,7 +600,6 @@ impl BmffHash {
                                     if hash_with_indx < layer_len {
                                         break;
                                     }
-                                    //concat_and_hash(alg, &last_hash, None);
                                     // odd (null) values just bubble up
                                     indx /= 2;
                                     layer_num += 1;
@@ -729,7 +728,6 @@ impl BmffHash {
                                     if hash_with_indx < layer_len as usize {
                                         break;
                                     }
-                                    //concat_and_hash(alg, &last_hash, None);
                                     // odd (null) values just bubble up
                                     indx /= 2;
                                     layer_len /= 2;

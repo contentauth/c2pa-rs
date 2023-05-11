@@ -62,9 +62,7 @@ impl C2PAMerkleTree {
             for i in (0..current_layer.len()).step_by(2) {
                 if i + 1 == current_layer.len() {
                     // just pass the current hash since last node is unbalanced
-                    //let h = concat_and_hash(alg, &current_layer[i].0, None);
-                    let h = current_layer[i].0.clone();
-                    parent_layer.push(MerkleNode(h));
+                    parent_layer.push(MerkleNode(current_layer[i].0.clone()));
                     continue;
                 }
                 let left = &current_layer[i];

@@ -230,9 +230,15 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_fragment_from_memory_async(format, init_bytes, fragment_bytes, verify, &mut validation_log)
-            .await
-            .map(|store| Self::from_store(&store, &mut validation_log))
+        Store::load_fragment_from_memory_async(
+            format,
+            init_bytes,
+            fragment_bytes,
+            verify,
+            &mut validation_log,
+        )
+        .await
+        .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer

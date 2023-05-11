@@ -726,9 +726,13 @@ impl Ingredient {
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
                         Ok(store) => {
                             // verify the store
-                            Store::verify_store_async(&store, &mut ClaimAssetData::Stream(stream), &mut validation_log)
-                                .await
-                                .map(|_| store)
+                            Store::verify_store_async(
+                                &store,
+                                &mut ClaimAssetData::Stream(stream),
+                                &mut validation_log,
+                            )
+                            .await
+                            .map(|_| store)
                         }
                         Err(e) => {
                             validation_log.log_silent(
@@ -1302,7 +1306,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
