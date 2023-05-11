@@ -746,7 +746,7 @@ impl BmffHash {
                             if !mm.hash_check(indx, &node_hash) {
                                 //return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
-                            println!("Fragment validated");
+                            //println!("Fragment validated");
                         } else {
                             // check MerkleMap for the hash
                             if !mm.hash_check(indx, &node_hash) {
@@ -754,7 +754,6 @@ impl BmffHash {
                             }
                         }
                     }
-                    println!("Found!");
                 } else {
                     return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
                 }
