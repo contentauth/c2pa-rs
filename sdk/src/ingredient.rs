@@ -91,15 +91,15 @@ pub struct Ingredient {
 
     /// A reference to the actual data of the ingredient.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<ResourceRef>,
+    data: Option<ResourceRef>,
 
     /// Additional description of the ingredient.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    description: Option<String>,
 
     /// URI to an informational page about the ingredient or its data.
     #[serde(rename = "informational_URI", skip_serializing_if = "Option::is_none")]
-    pub informational_uri: Option<String>,
+    informational_uri: Option<String>,
 
     /// Any additional [`Metadata`] as defined in the C2PA spec.
     ///
@@ -285,16 +285,29 @@ impl Ingredient {
         self.data.as_ref()
     }
 
-    /// Returns a copy on write ref to the data bytes or None`.
-    pub fn data(&self) -> Option<Cow<Vec<u8>>> {
-        self.data
-            .as_ref()
-            .and_then(|r| self.resources.get(&r.identifier).ok())
+    /// Returns the detailed description of the ingredient if it exists.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Returns an informational uri for the ingredient if it exists.
+    pub fn informational_uri(&self) -> Option<&str> {
+        self.informational_uri.as_deref()
     }
 
     /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
+        self
+    }
+
+    /// Sets the document instanceId.
+    ///
+    /// This call is optional for v2 ingredients.
+    ///
+    /// Typically this is found in XMP under `xmpMM:InstanceID`.
+    pub fn set_instance_id<S: Into<String>>(&mut self, instance_id: S) -> &mut Self {
+        self.instance_id = Some(instance_id.into());
         self
     }
 
@@ -433,12 +446,17 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Sets the Ingredient data with bytes
-    // pub fn set_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-    //     let base_id = self.instance_id().to_string();
-    //     self.data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
-    //     Ok(self)
-    // }
+    /// Sets a detailed description for this ingredient
+    pub fn set_description<S: Into<String>>(&mut self, description: S) -> &mut Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Sets an informational uri if needed
+    pub fn set_informational_uri<S: Into<String>>(&mut self, uri: S) -> &mut Self {
+        self.informational_uri = Some(uri.into());
+        self
+    }
 
     /// Return an immutable reference to the ingredient resources
     pub fn resources(&self) -> &ResourceStore {
@@ -1200,17 +1218,26 @@ mod tests {
     fn test_ingredient_api() {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient
+            .resources_mut()
+            .add("id", "data".as_bytes().to_vec())
+            .expect("add");
+        ingredient
             .set_document_id("document_id")
             .set_title("title2")
             .set_hash("hash")
             .set_provenance("provenance")
             .set_is_parent()
+            .set_relationship(Relationship::ParentOf)
             .set_metadata(Metadata::new())
             .set_thumbnail("format", "thumbnail".as_bytes().to_vec())
             .unwrap()
             .set_active_manifest("active_manifest")
             .set_manifest_data("data".as_bytes().to_vec())
             .expect("set_manifest")
+            .set_description("description")
+            .set_informational_uri("uri")
+            .set_data_ref(ResourceRef::new("format", "id"))
+            .expect("set_data_ref")
             .add_validation_status(ValidationStatus::new("status_code"));
         assert_eq!(ingredient.title(), "title2");
         assert_eq!(ingredient.format(), "format");
@@ -1219,6 +1246,11 @@ mod tests {
         assert_eq!(ingredient.provenance(), Some("provenance"));
         assert_eq!(ingredient.hash(), Some("hash"));
         assert!(ingredient.is_parent());
+        assert_eq!(ingredient.relationship(), &Relationship::ParentOf);
+        assert_eq!(ingredient.description(), Some("description"));
+        assert_eq!(ingredient.informational_uri(), Some("uri"));
+        assert_eq!(ingredient.data_ref().unwrap().format, "format");
+        assert_eq!(ingredient.data_ref().unwrap().identifier, "id");
         assert!(ingredient.metadata().is_some());
         assert_eq!(ingredient.thumbnail().unwrap().0, "format");
         assert_eq!(
