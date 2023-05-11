@@ -50,8 +50,9 @@ pub struct Ingredient {
     document_id: Option<String>,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
-    #[serde(default = "default_instance_id")]
-    instance_id: String,
+    //#[serde(default = "default_instance_id")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
 
     /// URI from `dcterms:provenance` in XMP metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,7 +71,6 @@ pub struct Ingredient {
     /// Set to `ParentOf` if this is the parent ingredient.
     ///
     /// There can only be one parent ingredient in the ingredients.
-    // #[serde(skip_serializing_if = "Option::is_none")]
     // is_parent: Option<bool>,
     #[serde(default = "default_relationship")]
     relationship: Relationship,
@@ -88,6 +88,18 @@ pub struct Ingredient {
     /// Validation results.
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
+
+    /// A reference to the actual data of the ingredient.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<ResourceRef>,
+
+    /// Additional description of the ingredient.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// URI to an informational page about the ingredient or its data.
+    #[serde(rename = "informational_URI", skip_serializing_if = "Option::is_none")]
+    pub informational_uri: Option<String>,
 
     /// Any additional [`Metadata`] as defined in the C2PA spec.
     ///
@@ -140,7 +152,32 @@ impl Ingredient {
         Self {
             title: title.into(),
             format: format.into(),
-            instance_id: instance_id.into(),
+            instance_id: Some(instance_id.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Constructs a new V2 `Ingredient`.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - A user-displayable name for this ingredient (often a filename).
+    /// * `format` - The MIME media type of the ingredient - i.e. `image/jpeg`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use c2pa::Ingredient;
+    /// let ingredient = Ingredient::new_v2("title", "image/jpeg");
+    /// ```
+    pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+    {
+        Self {
+            title: title.into(),
+            format: format.into(),
             ..Default::default()
         }
     }
@@ -161,8 +198,10 @@ impl Ingredient {
     }
 
     /// Returns the instance identifier.
+    ///
+    /// For v2 ingredients this can return an empty string
     pub fn instance_id(&self) -> &str {
-        self.instance_id.as_str()
+        self.instance_id.as_deref().unwrap_or("")
     }
 
     /// Returns the provenance uri if available.
@@ -198,6 +237,11 @@ impl Ingredient {
     /// Returns `true` if this is labeled as the parent ingredient.
     pub fn is_parent(&self) -> bool {
         self.relationship == Relationship::ParentOf
+    }
+
+    /// Returns the relationship status of the ingredient.
+    pub fn relationship(&self) -> &Relationship {
+        &self.relationship
     }
 
     /// Returns a reference to the [`ValidationStatus`]s if they exist.
@@ -236,6 +280,18 @@ impl Ingredient {
             .and_then(|r| self.resources.get(&r.identifier).ok())
     }
 
+    /// Returns a reference to ingredient data if it exists.
+    pub fn data_ref(&self) -> Option<&ResourceRef> {
+        self.data.as_ref()
+    }
+
+    /// Returns a copy on write ref to the data bytes or None`.
+    pub fn data(&self) -> Option<Cow<Vec<u8>>> {
+        self.data
+            .as_ref()
+            .and_then(|r| self.resources.get(&r.identifier).ok())
+    }
+
     /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = title.into();
@@ -268,6 +324,15 @@ impl Ingredient {
     /// Use Manifest.set_parent to ensure this is the only parent ingredient
     pub fn set_is_parent(&mut self) -> &mut Self {
         self.relationship = Relationship::ParentOf;
+        self
+    }
+
+    /// Set the ingredient Relationship status.
+    ///
+    /// Only one ingredient should be set as a parentOf.
+    /// Use Manifest.set_parent to ensure this is the only parent ingredient
+    pub fn set_relationship(&mut self, relationship: Relationship) -> &mut Self {
+        self.relationship = relationship;
         self
     }
 
@@ -341,7 +406,7 @@ impl Ingredient {
         self
     }
 
-    /// Sets a reference to Manifest C2PA data - does not verify the resource exists
+    /// Sets a reference to Manifest C2PA data
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
         // verify the resource referenced exists
         if !self.resources.exists(&data_ref.identifier) {
@@ -357,6 +422,23 @@ impl Ingredient {
         self.manifest_data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
         Ok(self)
     }
+
+    /// Sets a reference to Ingredient data
+    pub fn set_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if !self.resources.exists(&data_ref.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.data = Some(data_ref);
+        Ok(self)
+    }
+
+    /// Sets the Ingredient data with bytes
+    // pub fn set_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+    //     let base_id = self.instance_id().to_string();
+    //     self.data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
+    //     Ok(self)
+    // }
 
     /// Return an immutable reference to the ingredient resources
     pub fn resources(&self) -> &ResourceStore {
@@ -823,7 +905,9 @@ impl Ingredient {
         let mut ingredient = Ingredient::new(
             &ingredient_assertion.title,
             &ingredient_assertion.format,
-            &ingredient_assertion.instance_id,
+            &ingredient_assertion
+                .instance_id
+                .unwrap_or_else(default_instance_id),
         );
         ingredient.document_id = ingredient_assertion.document_id;
 
@@ -836,12 +920,43 @@ impl Ingredient {
             ingredient.set_thumbnail(format, image)?;
         }
 
+        if let Some(data_uri) = ingredient_assertion.data.as_ref() {
+            let target_label = match jumbf::labels::manifest_label_from_uri(&data_uri.url()) {
+                Some(label) => label,              // use the manifest from the thumbnail uri
+                None => ingredient_uri.to_owned(), /* relative so use the whole url from the thumbnail assertion */
+            };
+            let data_ref =
+                match store.get_assertion_from_uri_and_claim(&data_uri.url(), &target_label) {
+                    Some(assertion) => {
+                        let user_cbor = crate::assertions::UserCbor::from_assertion(assertion)?;
+                        let data_box: crate::resource_store::DataBox =
+                            serde_cbor::from_slice(user_cbor.data())
+                                .map_err(|_err| Error::AssertionEncoding)?;
+                        let mut resource_ref = ResourceRef::new(&data_box.format, "promptxx.txt");
+                        resource_ref.data_types = data_box.data_types;
+                        ingredient
+                            .resources_mut()
+                            .add("promptxx.txt", data_box.data)?;
+                        Ok(resource_ref)
+                    }
+                    None => {
+                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        Err(Error::AssertionMissing {
+                            url: data_uri.url(),
+                        })
+                    }
+                }?;
+            ingredient.set_data_ref(data_ref)?;
+        }
+
         ingredient.relationship = ingredient_assertion.relationship;
         ingredient.active_manifest = active_manifest;
         if !validation_status.is_empty() {
             ingredient.validation_status = Some(validation_status)
         }
         ingredient.metadata = ingredient_assertion.metadata;
+        ingredient.description = ingredient_assertion.description;
+        ingredient.informational_uri = ingredient_assertion.informational_uri;
         Ok(ingredient)
     }
 
@@ -874,11 +989,15 @@ impl Ingredient {
                 };
 
                 // get the c2pa manifest bytes
-                let data = self.resources.get(&resource_ref.identifier)?;
+                let manifest_data = self.resources.get(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
-                let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_label, &data, redactions)?;
+                let ingredient_store = Store::load_ingredient_to_claim(
+                    claim,
+                    &manifest_label,
+                    &manifest_data,
+                    redactions,
+                )?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -943,18 +1062,48 @@ impl Ingredient {
             thumbnail = Some(hash_url);
         }
 
-        let mut ingredient_assertion = assertions::Ingredient::new(
-            &self.title,
-            &self.format,
-            &self.instance_id,
-            self.document_id.as_deref(),
-        );
+        let mut data = None;
+        if let Some(data_ref) = self.data_ref() {
+            let box_data = self.resources.get(&data_ref.identifier)?;
+            // since we don't support data blocks, add this as an assertion for now
+            use crate::resource_store::DataBox;
+            let data_box = DataBox {
+                data: box_data.into_owned(),
+                format: data_ref.format.clone(),
+                data_types: data_ref.data_types.clone(),
+            };
+            let assertion =
+                crate::assertions::UserCbor::new("adobe.data_box", serde_cbor::to_vec(&data_box)?);
+            let hash_url = claim.add_assertion(&assertion)?;
+            data = Some(hash_url);
+        };
 
+        // instance_id is required in V1 so we generate one if it's not provided
+        let instance_id = match self.instance_id.as_ref() {
+            Some(id) => Some(id.to_owned()),
+            None => {
+                if self.data.is_some()
+                    || self.description.is_some()
+                    || self.informational_uri.is_some()
+                {
+                    None // not required in V2
+                } else {
+                    Some(default_instance_id())
+                }
+            }
+        };
+
+        let mut ingredient_assertion = assertions::Ingredient::new_v2(&self.title, &self.format);
+        ingredient_assertion.instance_id = instance_id;
+        ingredient_assertion.document_id = self.document_id.to_owned();
         ingredient_assertion.c2pa_manifest = c2pa_manifest;
         ingredient_assertion.relationship = self.relationship.clone();
         ingredient_assertion.thumbnail = thumbnail;
         ingredient_assertion.metadata = self.metadata.clone();
         ingredient_assertion.validation_status = self.validation_status.clone();
+        ingredient_assertion.data = data;
+        ingredient_assertion.description = self.description.clone();
+        ingredient_assertion.informational_uri = self.informational_uri.clone();
         claim.add_assertion(&ingredient_assertion)
     }
 
@@ -1416,5 +1565,53 @@ mod tests_file_io {
             .set_manifest_data_ref(ResourceRef::new("c2pa", "cloud_manifest.c2pa"))
             .is_ok());
         assert!(ingredient.manifest_data_ref().is_some());
+    }
+
+    #[test]
+    fn test_input_to_ingredient() {
+        // create an inputTo ingredient
+        let mut ingredient = Ingredient::new_v2("prompt", "text/plain");
+        ingredient.relationship = Relationship::InputTo;
+
+        // add a resource containing our data
+        ingredient
+            .resources_mut()
+            .add("prompt_id", "pirate with bird on shoulder")
+            .expect("add");
+
+        // create a resource reference for the data
+        let mut data_ref = ResourceRef::new("text/plain", "prompt_id");
+        let data_type = crate::resource_store::DataType {
+            data_type: "c2pa.types.generator.prompt".to_string(),
+            version: None,
+        };
+        data_ref.data_types = Some([data_type].to_vec());
+
+        // add the data reference to the ingredient
+        ingredient.set_data_ref(data_ref).expect("set_data_ref");
+
+        println!("ingredient = {ingredient}");
+
+        assert_eq!(ingredient.title(), "prompt");
+        assert_eq!(ingredient.format(), "text/plain");
+        assert_eq!(ingredient.instance_id(), "");
+        assert_eq!(ingredient.data_ref().unwrap().identifier, "prompt_id");
+        assert_eq!(ingredient.data_ref().unwrap().format, "text/plain");
+        assert_eq!(ingredient.relationship(), &Relationship::InputTo);
+        assert_eq!(
+            ingredient.data_ref().unwrap().data_types.as_ref().unwrap()[0].data_type,
+            "c2pa.types.generator.prompt"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_input_to_file_based_ingredient() {
+        let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        folder.push("tests/fixtures");
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        ingredient.resources.set_base_path(folder);
+        //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
+        //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];
     }
 }
