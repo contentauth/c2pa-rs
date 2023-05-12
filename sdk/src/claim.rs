@@ -36,7 +36,7 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOX},
+        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOX, DATABOXES},
     },
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
@@ -437,7 +437,7 @@ impl Claim {
 
     /// order to process
     pub fn get_box_order(&self) -> &[&str] {
-        const DEFAULT_MANIFEST_ORDER: [&str; 4] = [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS];
+        const DEFAULT_MANIFEST_ORDER: [&str; 5] = [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
 
         if let Some(bo) = &self.original_box_order {
             bo
@@ -658,15 +658,9 @@ impl Claim {
         // salt box for 1.2 VC redaction support
         let ds = DefaultSalt::default();
         let salt = ds.generate_salt();
-       
-        let assertion =  Assertion {
-            label: label.clone(),
-            version: Some(index),
-            data: AssertionData::Cbor(db_cbor),
-            content_type: "application/cbor".to_owned(),
-        };
-        
+            
          // assertion JUMBF box hash for 1.2 validation
+         let assertion =  Assertion::from_data_cbor(&label, &db_cbor);
          let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
 
         let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
@@ -676,6 +670,34 @@ impl Claim {
         self.data_boxes.push((databox_uri.clone(), new_db));
 
         Ok(databox_uri)
+    }
+
+    pub(crate) fn databoxes(&self) -> &Vec<(HashedUri, DataBox)> {
+        &self.data_boxes
+    }
+
+    /// Load known VC with optional salt
+    pub(crate) fn put_data_box(
+        &mut self,
+        label: &str,
+        databox_cbor: &[u8],
+        salt: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let link = jumbf::labels::to_databox_uri(self.label(), label);
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(label, databox_cbor);
+        let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), self.alg())?;
+
+        let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        uri.add_salt(salt);
+
+        let db: DataBox = serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+
+        // add data box  to data box store
+        self.data_boxes.push((uri, db));
+
+        Ok(())
     }
 
     pub(crate) fn vc_id(vc_json: &str) -> Result<String> {
@@ -728,7 +750,7 @@ impl Claim {
     }
 
     /// Load known VC with optional salt
-    pub fn put_verifiable_credential(
+    pub(crate) fn put_verifiable_credential(
         &mut self,
         vc_json: &str,
         salt: Option<Vec<u8>>,

@@ -790,6 +790,8 @@ pub const CAI_EMBEDDED_FILE_DESCRIPTION_UUID: &str = "6266646200110010800000AA00
 pub const CAI_EMBEDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"; // bidb
 pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; //c2vc
 pub const CAI_UUID_ASSERTION_UUID: &str = "7575696400110010800000AA00389B71"; // uuid
+pub const CAI_DATABOXES_STORE_UUID: &str = "6332646200110010800000AA00389B71"; // c2db
+                                        
 
 // ANCHOR Salt Content Box
 /// Salt Content Box
@@ -1237,6 +1239,58 @@ impl CAIAssertionStore {
 }
 
 impl Default for CAIAssertionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct CAIDataboxStore {
+    store: JUMBFSuperBox,
+}
+
+impl BMFFBox for CAIDataboxStore {
+    fn box_type(&self) -> &'static [u8; 4] {
+        b"    "
+    }
+
+    fn box_uuid(&self) -> &'static str {
+        CAI_DATABOXES_STORE_UUID
+    }
+
+    fn box_payload_size(&self) -> IoResult<u32> {
+        let size = boxio::ByteCounter::calculate(|w| self.write_box_payload(w))?;
+        Ok(size as u32)
+    }
+
+    fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
+        self.store.write_box(writer)
+    }
+
+    // Necessary method to enable conversion between types...
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl CAIDataboxStore {
+    pub fn new() -> Self {
+        CAIDataboxStore {
+            store: JUMBFSuperBox::new(labels::ASSERTIONS, Some(CAI_DATABOXES_STORE_UUID)),
+        }
+    }
+
+    pub fn from(in_box: JUMBFSuperBox) -> Self {
+        CAIDataboxStore { store: in_box }
+    }
+
+    // add an assertion box (of various types) *WITHOUT* taking ownership of the box
+    pub fn add_databox(&mut self, b: Box<dyn BMFFBox>) {
+        self.store.add_data_box(b)
+    }
+}
+
+impl Default for CAIDataboxStore {
     fn default() -> Self {
         Self::new()
     }

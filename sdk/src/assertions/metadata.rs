@@ -269,7 +269,7 @@ pub struct AssetType {
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct DataBox {
-    #[serde(rename(serialize = "dc:format"))]
+    #[serde(rename = "dc:format")]
     pub format: String,
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>, 

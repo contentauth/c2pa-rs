@@ -39,7 +39,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOXES},
     },
     jumbf_io::{
         get_assetio_handler, load_jumbf_from_memory, object_locations_from_stream,
@@ -707,6 +707,19 @@ impl Store {
                         cai_store.add_box(Box::new(vc_store)); // add the CAI assertion store to manifest
                     }
                 }
+                DATABOXES => {
+                    let mut databoxes = CAIDataboxStore::new();
+
+                    // Add the data boxes
+                    for (_uri, db) in claim.databoxes() {
+                        let db_cbor_bytes = serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
+                        let db_cbor = JUMBFCBORContentBox::new(db_cbor_bytes);
+
+                        databoxes.add_databox(Box::new(db_cbor));
+                    }
+                   
+                    cai_store.add_box(Box::new(databoxes)); // add claim to manifest
+                }
                 _ => return Err(Error::ClaimInvalidContent),
             }
         }
@@ -849,6 +862,7 @@ impl Store {
                     CLAIM => box_order.push(CLAIM),
                     SIGNATURE => box_order.push(SIGNATURE),
                     CREDENTIALS => box_order.push(CREDENTIALS),
+                    DATABOXES => box_order.push(DATABOXES),
                     _ => {
                         let log_item =
                             log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
@@ -1047,6 +1061,27 @@ impl Store {
                     let salt = vc_desc_box.get_salt();
 
                     claim.put_verifiable_credential(&json_str, salt)?;
+                }
+            }
+
+            // load databox store if available
+            if let Some(mi) = manifest_boxes.get(CAI_DATABOXES_STORE_UUID) {
+                let databox_store = mi.sbox;
+                let num_databoxes = databox_store.data_box_count();
+
+                for idx in 0..num_databoxes {
+                    let db_box = databox_store
+                        .data_box_as_superbox(idx)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_cbor = db_box
+                        .data_box_as_cbor_box(0)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_desc_box = db_box.desc_box();
+                    let label = db_desc_box.label();
+
+                    let salt = db_desc_box.get_salt();
+
+                    claim.put_data_box(&label, db_cbor.cbor(), salt)?;
                 }
             }
 
