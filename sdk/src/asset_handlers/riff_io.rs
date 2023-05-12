@@ -22,8 +22,8 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashBlockObjectType,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     jumbf_io::get_file_extension,
@@ -196,6 +196,7 @@ impl AssetIO for RiffIO {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
+
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let asset = std::fs::read(asset_path)?;
         let mut chunk_reader = Cursor::new(asset);
@@ -278,6 +279,7 @@ impl AssetIO for RiffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -334,6 +336,15 @@ impl RemoteRefEmbed for RiffIO {
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 

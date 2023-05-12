@@ -11,18 +11,24 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::Cursor, path::*};
+use std::{
+    convert::{From, TryFrom},
+    fs::File,
+    io::Cursor,
+    path::*,
+};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use img_parts::{
     jpeg::{markers, Jpeg, JpegSegment},
     Bytes, DynImage,
 };
+use tempfile::Builder;
 
 use crate::{
     asset_io::{
         AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -64,11 +70,14 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     }
 }
 
-fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
+fn add_required_segs_to_stream(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+) -> Result<()> {
     let mut buf: Vec<u8> = Vec::new();
-    stream.rewind()?;
-    stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    stream.rewind()?;
+    input_stream.rewind()?;
+    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+    input_stream.rewind()?;
 
     let dimg_opt = DynImage::from_bytes(buf.into())
         .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
@@ -82,7 +91,13 @@ fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
             let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
             no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
             let aio = JpegIO {};
-            aio.write_cai(stream, &no_bytes)?;
+            aio.write_cai(input_stream, output_stream, &no_bytes)?;
+        } else {
+            // just move input to output
+            let mut buf: Vec<u8> = Vec::new();
+            input_stream.rewind()?;
+            input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+            output_stream.write_all(&buf)?;
         }
     } else {
         return Err(Error::UnsupportedType);
@@ -93,8 +108,10 @@ fn add_required_segs_to_stream(stream: &mut dyn CAIReadWrite) -> Result<()> {
 
 // all cai specific segments
 fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
-    let segments = jpeg.segments();
     let mut cai_segs: Vec<usize> = Vec::new();
+
+    let segments = jpeg.segments();
+
     let mut cai_en: Vec<u8> = Vec::new();
     let mut cai_seg_cnt: u32 = 0;
 
@@ -127,6 +144,7 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
             }
         }
     }
+
     Ok(cai_segs)
 }
 
@@ -152,6 +170,7 @@ impl CAIReader for JpegIO {
 
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
+
         asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
@@ -193,6 +212,7 @@ impl CAIReader for JpegIO {
                                 // check if this is a CAI JUMBF block
                                 let jumb_type = &raw_vec.as_mut_slice()[24..28];
                                 let is_cai = vec_compare(&C2PA_MARKER, jumb_type);
+
                                 if is_cai {
                                     if manifest_store_cnt == 1 {
                                         return Err(Error::TooManyManifestStores);
@@ -233,12 +253,16 @@ impl CAIReader for JpegIO {
 }
 
 impl CAIWriter for JpegIO {
-    fn write_cai(&self, stream: &mut dyn CAIReadWrite, store_bytes: &[u8]) -> Result<()> {
-        //fn write_cai<W: Write>(buf: Vec<u8>, writer: W, store_bytes: &[u8]) -> Result<()> {
+    fn write_cai(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
-        stream.rewind()?;
-        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
@@ -261,14 +285,15 @@ impl CAIWriter for JpegIO {
             // En: Box Instance Number  - 0x0001
             //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
             // Z: Packet sequence number - 0x00000001...
-            let ci = vec![0x4A, 0x50];
+            let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z = seg.to_be_bytes();
+            let z: u32 = u32::try_from(seg)
+                .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
-            seg_data.extend(&z[4..]);
+            seg_data.extend(z.to_be_bytes());
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
@@ -283,21 +308,23 @@ impl CAIWriter for JpegIO {
             } else {
                 seg_data.extend(store_bytes);
             }
+
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
             jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
         }
 
-        stream.rewind()?;
+        output_stream.rewind()?;
         jpeg.encoder()
-            .write_to(stream)
+            .write_to(output_stream)
             .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+
         Ok(())
     }
 
     fn get_object_locations_from_stream(
         &self,
-        stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
         let mut cai_en: Vec<u8> = Vec::new();
         let mut cai_seg_cnt: u32 = 0;
@@ -305,13 +332,12 @@ impl CAIWriter for JpegIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
         let mut curr_offset = 2; // start after JPEG marker
 
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
         // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs_to_stream(stream)?;
+        add_required_segs_to_stream(input_stream, &mut output_stream)?;
 
-        let mut buf: Vec<u8> = Vec::new();
-        stream.rewind()?;
-        stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-        stream.rewind()?;
+        let buf: Vec<u8> = output_stream.into_inner();
 
         let dimg = DynImage::from_bytes(buf.into())
             .map_err(|e| Error::OtherError(Box::new(e)))?
@@ -398,6 +424,28 @@ impl CAIWriter for JpegIO {
 
         Ok(positions)
     }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        let mut buf = Vec::new();
+        // read the whole asset
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // remove existing CAI segments
+        delete_cai_segments(&mut jpeg)?;
+
+        output_stream.rewind()?;
+        jpeg.encoder()
+            .write_to(output_stream)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+
+        Ok(())
+    }
 }
 
 impl AssetIO for JpegIO {
@@ -408,22 +456,27 @@ impl AssetIO for JpegIO {
     }
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut stream = std::fs::OpenOptions::new()
+        let mut input_stream = std::fs::OpenOptions::new()
             .read(true)
-            .write(true)
             //.truncate(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        self.write_cai(&mut stream, store_bytes)?;
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
 
-        Ok(())
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+
+        // copy temp file to asset
+        std::fs::rename(temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
+    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
         let mut file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -433,7 +486,7 @@ impl AssetIO for JpegIO {
         self.get_object_locations_from_stream(&mut file)
     }
 
-    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
         let input = std::fs::read(asset_path).map_err(Error::IoError)?;
 
         let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
@@ -508,6 +561,15 @@ impl RemoteRefEmbed for JpegIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +613,31 @@ pub mod tests {
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match jpeg_io.read_cai_store(&output) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_remove_c2pa_from_stream() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let source_bytes = std::fs::read(source).unwrap();
+        let mut source_stream = Cursor::new(source_bytes);
+
+        let jpeg_io = JpegIO {};
+        let jpg_writer = jpeg_io.get_writer("jpg").unwrap();
+
+        let output_bytes = Vec::new();
+        let mut output_stream = Cursor::new(output_bytes);
+
+        jpg_writer
+            .remove_cai_store_from_stream(&mut source_stream, &mut output_stream)
+            .unwrap();
+
+        // read back in asset, JumbfNotFound is expected since it was removed
+        let jpg_reader = jpeg_io.get_reader();
+        match jpg_reader.read_cai(&mut output_stream) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

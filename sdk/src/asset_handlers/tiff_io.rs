@@ -26,8 +26,8 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReader, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashBlockObjectType,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -35,8 +35,8 @@ use crate::{
 const II: [u8; 2] = *b"II";
 const MM: [u8; 2] = *b"MM";
 
-const C2PA_TAG: u16 = 0xCD41;
-const XMP_TAG: u16 = 0x02BC;
+const C2PA_TAG: u16 = 0xcd41;
+const XMP_TAG: u16 = 0x02bc;
 const SUBFILE_TAG: u16 = 0x014a;
 const EXIFIFD_TAG: u16 = 0x8769;
 const GPSIFD_TAG: u16 = 0x8825;
@@ -49,7 +49,7 @@ const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
 
-static SUPPORTED_TYPES: [&str; 4] = ["dng", "tif", "tiff", "image/tiff"];
+static SUPPORTED_TYPES: [&str; 5] = ["tif", "tiff", "image/tiff", "dng", "image/x-adobe-dng"];
 
 // The type of an IFD entry
 enum IFDEntryType {
@@ -1371,6 +1371,7 @@ impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
+
     fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
         let mut reader = std::fs::File::open(asset_path)?;
 
@@ -1484,6 +1485,7 @@ impl AssetIO for TiffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -1551,6 +1553,15 @@ impl RemoteRefEmbed for TiffIO {
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
     }
 }
 

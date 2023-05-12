@@ -247,8 +247,8 @@ pub enum AssertionStoreJsonFormat {
 pub enum RemoteManifest {
     NoRemote,                // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
-    Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
-    EmbedWithRemote(String), // Manifest will be embedded with a remote reference, sidecar will be generated
+    Remote(String), /* Manifest will be saved as a side car file, output asset will contain remote reference */
+    EmbedWithRemote(String), /* Manifest will be embedded with a remote reference, sidecar will be generated */
 }
 
 impl Default for RemoteManifest {
@@ -281,10 +281,10 @@ impl Claim {
             Some(v) => format!(
                 "{}:{}",
                 v.to_lowercase(),
-                urn.to_urn().encode_lower(&mut Uuid::encode_buffer())
+                urn.urn().encode_lower(&mut Uuid::encode_buffer())
             ),
             None => urn
-                .to_urn()
+                .urn()
                 .encode_lower(&mut Uuid::encode_buffer())
                 .to_string(),
         };
@@ -479,11 +479,11 @@ impl Claim {
 
         Ok(())
     }
+
     pub fn set_external_manifest(&mut self) {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
-    #[cfg(feature = "file_io")]
     pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }
@@ -491,6 +491,7 @@ impl Claim {
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
     }
+
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
         if self.claim_generator_hints.is_none() {
             self.claim_generator_hints = Some(HashMap::new());
@@ -710,7 +711,6 @@ impl Claim {
     }
 
     // crate private function to allow for patching a data hash with final contents
-    #[cfg(feature = "sign")]
     pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
         let mut replacement_assertion = data_hash.to_assertion()?;
 
@@ -1247,6 +1247,7 @@ impl Claim {
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash)
     }
+
     /// Return list of ingredient assertions. This function
     /// is only useful on commited or loaded claims since ingredients
     /// are resolved at commit time.

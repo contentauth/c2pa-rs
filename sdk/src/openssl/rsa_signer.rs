@@ -87,7 +87,7 @@ impl ConfigurableSigner for RsaSigner {
             signcerts,
             pkey,
             certs_size: signcert.len(),
-            timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
+            timestamp_size: 10000, /* todo: call out to TSA to get actual timestamp and use that size */
             ocsp_size: Cell::new(0),
             alg,
             tsa_url,

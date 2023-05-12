@@ -69,6 +69,11 @@ impl ResourceStore {
         self.base_path = Some(base_path.into());
     }
 
+    #[cfg(feature = "file_io")]
+    pub fn take_base_path(&mut self) -> Option<PathBuf> {
+        self.base_path.take()
+    }
+
     ///  generate a unique id for a given content type (adds a file extension)
     pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
@@ -87,7 +92,6 @@ impl ResourceStore {
             id = format!("{id_base}-{count}{ext}");
             count += 1;
         }
-        dbg!(&id);
         id
     }
 
@@ -131,10 +135,13 @@ impl ResourceStore {
                 Some(base) => {
                     // read the file, save in Map and then return a reference
                     let path = base.join(id);
-                    let value = std::fs::read(path)?;
+                    let value = std::fs::read(path).map_err(|_| {
+                        let path = base.join(id).to_string_lossy().into_owned();
+                        Error::ResourceNotFound(path)
+                    })?;
                     return Ok(Cow::Owned(value));
                 }
-                None => return Err(Error::NotFound),
+                None => return Err(Error::ResourceNotFound(id.to_string())),
             }
         }
         self.resources
@@ -174,7 +181,7 @@ impl Default for ResourceStore {
 }
 
 #[cfg(test)]
-#[cfg(feature = "sign")]
+#[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
@@ -182,7 +189,7 @@ mod tests {
     use crate::{utils::test::temp_signer, Manifest};
 
     #[test]
-    #[cfg(feature = "sign")]
+    #[cfg(feature = "openssl_sign")]
     fn resource_store() {
         let mut c = ResourceStore::new();
         let value = b"my value";
@@ -233,15 +240,12 @@ mod tests {
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        manifest
-            .embed_stream("jpeg", &mut stream, &signer)
+        let output_image = manifest
+            .embed_stream("jpeg", &mut stream, signer.as_ref())
             .expect("embed_stream");
 
-        // get the updated image
-        let image = stream.into_inner();
-
         let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &image, true).expect("from_bytes");
+            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
         // println!("{manifest_store}");
     }
 }

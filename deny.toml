@@ -13,20 +13,26 @@ targets = [
 
 # Deny all advisories unless explicitly ignored.
 [advisories]
-vulnerability = "allow" # "deny" # TODO: Re-enable when possible.
-unmaintained = "allow" # "deny" # TODO: Re-enable when possible.
-yanked = "allow" # "deny" # TODO: Re-enable when possible.
-notice = "allow" # "deny" # TODO: Re-enable when possible.
+vulnerability = "deny"
+unmaintained = "deny"
+yanked = "deny"
+notice = "deny"
+
 ignore = [
-  "RUSTSEC-2021-0127" # serde_cbor
+  "RUSTSEC-2020-0071", # time 0.1.45 (see https://github.com/indygreg/cryptography-rs/issues/10)
+  "RUSTSEC-2021-0127", # serde_cbor
+  "RUSTSEC-2021-0146", # twoway (see https://github.com/contentauth/c2pa-rs/issues/234)
 ]
 
 # Deny multiple versions unless explicitly skipped.
 [bans]
-multiple-versions = "allow" # "deny" # TODO: Re-enable when possible.
-wildcards = "allow"
+multiple-versions = "allow"
+# multiple-versions = "deny"
 
-# List of allowed licenses.
+wildcards = "allow"
+  # I'd rather have this be "deny", but the local path ref in make_test_images
+  # falsely reports as a wildcard. (See https://github.com/contentauth/c2pa-rs/issues/234.)
+
 [licenses]
 allow = [
   "Apache-2.0",
