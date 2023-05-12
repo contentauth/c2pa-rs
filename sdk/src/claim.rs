@@ -26,7 +26,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        AssetType, BmffHash, DataHash, DataBox,
+        AssetType, BmffHash, DataBox, DataHash,
     },
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
@@ -36,7 +36,7 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOX, DATABOXES},
+        labels::{ASSERTIONS, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE},
     },
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
@@ -234,7 +234,7 @@ pub struct Claim {
     claim_generator_hints: Option<HashMap<String, Value>>,
 
     #[serde(skip_deserializing, skip_serializing)]
-    data_boxes: Vec<(HashedUri, DataBox)>,  // list of the data boxes and their hashed URIs found for this manifest
+    data_boxes: Vec<(HashedUri, DataBox)>, // list of the data boxes and their hashed URIs found for this manifest
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -437,7 +437,8 @@ impl Claim {
 
     /// order to process
     pub fn get_box_order(&self) -> &[&str] {
-        const DEFAULT_MANIFEST_ORDER: [&str; 5] = [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
+        const DEFAULT_MANIFEST_ORDER: [&str; 5] =
+            [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
 
         if let Some(bo) = &self.original_box_order {
             bo
@@ -630,13 +631,17 @@ impl Claim {
         Ok(c2pa_assertion)
     }
 
-
     // Add a new DataBox and return the HashedURI reference
-    pub fn add_databox(&mut self, format: &str, data: Vec<u8>, data_types: Option<Vec<AssetType>>) -> Result<HashedUri> {
+    pub fn add_databox(
+        &mut self,
+        format: &str,
+        data: Vec<u8>,
+        data_types: Option<Vec<AssetType>>,
+    ) -> Result<HashedUri> {
         // create data box
         let new_db = DataBox {
             format: format.to_string(),
-            data, 
+            data,
             data_types,
         };
 
@@ -647,9 +652,9 @@ impl Claim {
         let mut index = 0;
         for (uri, _db) in &self.data_boxes {
             let (_l, i) = Claim::assertion_label_from_link(&uri.url());
-             if i > index {
+            if i >= index {
                 index = i + 1;
-             }
+            }
         }
 
         let label = Claim::label_with_instance(DATABOX, index);
@@ -658,10 +663,10 @@ impl Claim {
         // salt box for 1.2 VC redaction support
         let ds = DefaultSalt::default();
         let salt = ds.generate_salt();
-            
-         // assertion JUMBF box hash for 1.2 validation
-         let assertion =  Assertion::from_data_cbor(&label, &db_cbor);
-         let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(&label, &db_cbor);
+        let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
 
         let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         databox_uri.add_salt(salt);
@@ -692,7 +697,8 @@ impl Claim {
         let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         uri.add_salt(salt);
 
-        let db: DataBox = serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+        let db: DataBox =
+            serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
 
         // add data box  to data box store
         self.data_boxes.push((uri, db));

@@ -36,7 +36,9 @@ pub(crate) use ingredient::{Ingredient, Relationship};
 pub mod labels;
 
 mod metadata;
-pub use metadata::{c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating};
+pub use metadata::{
+    c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,
+};
 
 mod schema_org;
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};

@@ -50,12 +50,10 @@ pub const CREDENTIALS: &str = "c2pa.credentials";
 /// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_boxes>.
 pub const DATABOX: &str = "c2pa.data";
 
-
 /// Label for the DataBox store box.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_storage>.
 pub const DATABOXES: &str = "c2pa.databoxes";
-
 
 const JUMBF_PREFIX: &str = "self#jumbf";
 

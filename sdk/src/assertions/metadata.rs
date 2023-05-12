@@ -272,7 +272,7 @@ pub struct DataBox {
     #[serde(rename = "dc:format")]
     pub format: String,
     #[serde(with = "serde_bytes")]
-    pub data: Vec<u8>, 
+    pub data: Vec<u8>,
     pub data_types: Option<Vec<AssetType>>,
 }
 

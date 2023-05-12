@@ -39,7 +39,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE, DATABOXES},
+        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
         get_assetio_handler, load_jumbf_from_memory, object_locations_from_stream,
@@ -711,13 +711,23 @@ impl Store {
                     let mut databoxes = CAIDataboxStore::new();
 
                     // Add the data boxes
-                    for (_uri, db) in claim.databoxes() {
-                        let db_cbor_bytes = serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
-                        let db_cbor = JUMBFCBORContentBox::new(db_cbor_bytes);
+                    for (uri, db) in claim.databoxes() {
+                        let db_cbor_bytes =
+                            serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
+
+                        let (link, instance) = Claim::assertion_label_from_link(&uri.url());
+                        let label = Claim::label_with_instance(&link, instance);
+        
+                        let mut db_cbor = CAICBORAssertionBox::new(&label);
+                        db_cbor.add_cbor(db_cbor_bytes);
+
+                        if let Some(salt) = uri.salt() {
+                            db_cbor.set_salt(salt.clone())?;
+                        }
 
                         databoxes.add_databox(Box::new(db_cbor));
                     }
-                   
+
                     cai_store.add_box(Box::new(databoxes)); // add claim to manifest
                 }
                 _ => return Err(Error::ClaimInvalidContent),
@@ -3504,7 +3514,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
         let mut store = create_test_store().unwrap();
@@ -3528,6 +3538,45 @@ pub mod tests {
                 assert!(s.contains("did:nppa:eb1bb9934d9896a374c384521410c7f14"))
             }
             _ => panic!("expected JSON assertion data"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_data_box_creation() {
+        use crate::utils::test::create_test_store;
+
+        let signer = temp_signer();
+
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
+
+        // get default store with default claim
+        let mut store = create_test_store().unwrap();
+
+        // save to output
+        store
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
+            .unwrap();
+
+        // read back in
+        let restored_store =
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+
+        let pc = restored_store.provenance_claim().unwrap();
+
+        let databoxes = pc.databoxes();
+
+        assert!(!databoxes.is_empty());
+
+        for (uri, db) in databoxes {
+            println!(
+                "URI: {}, data: {}",
+                uri.url(),
+                String::from_utf8_lossy(&db.data)
+            );
         }
     }
 
