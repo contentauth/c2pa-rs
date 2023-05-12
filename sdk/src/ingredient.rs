@@ -485,7 +485,7 @@ impl Ingredient {
                         {
                             let (format, image) =
                                 Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            self.set_memory_thumbnail(format, image)?;
+                            self.set_thumbnail(format, image)?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -625,7 +625,7 @@ impl Ingredient {
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
             if let Some((format, image)) = options.thumbnail(path) {
-                ingredient.set_memory_thumbnail(format, image)?;
+                ingredient.set_thumbnail(format, image)?;
             }
         }
 
@@ -857,8 +857,8 @@ impl Ingredient {
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
-        let c2pa_manifest = match self.manifest_data() {
-            Some(buffer) => {
+        let c2pa_manifest = match self.manifest_data_ref() {
+            Some(resource_ref) => {
                 let manifest_label = self
                     .active_manifest
                     .clone()
@@ -875,9 +875,12 @@ impl Ingredient {
                     false => None,
                 };
 
+                // get the c2pa manifest bytes
+                let data = self.resources.get(&resource_ref.identifier)?;
+
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_label, &data, redactions)?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -933,10 +936,11 @@ impl Ingredient {
 
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
-        if let Some((format, data)) = self.thumbnail() {
+        if let Some(thumb_ref) = self.thumbnail_ref() {
+            let data = self.thumbnail_bytes()?;
             let hash_url = claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
-                data.to_vec(),
+                &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, &thumb_ref.format),
+                data.into_owned(),
             ))?;
             thumbnail = Some(hash_url);
         }
@@ -1366,14 +1370,14 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
-        let ap = fixture_path("CIE-sig-CA.jpg");
+        let ap = fixture_path("CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
         let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
 
-        // verify we can't set a references that don't exist
+        // verify we can't set references that don't exist
         assert!(ingredient
             .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
             .is_err());
