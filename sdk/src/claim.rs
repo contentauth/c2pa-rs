@@ -234,7 +234,7 @@ pub struct Claim {
     claim_generator_hints: Option<HashMap<String, Value>>,
 
     #[serde(skip_deserializing, skip_serializing)]
-    data_boxes: Vec<(HashedUri, DataBox)>, // list of the data boxes and their hashed URIs found for this manifest
+    data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 }
 
 /// Enum to define how assertions are are stored when output to json
