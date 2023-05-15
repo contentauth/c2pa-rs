@@ -22,11 +22,10 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    jumbf_io::get_file_extension,
 };
 
 static SUPPORTED_TYPES: [&str; 9] = [
@@ -50,6 +49,10 @@ const C2PA_CHUNK_ID: ChunkId = ChunkId {
     value: [0x43, 0x32, 0x50, 0x41],
 }; // C2PA
 
+const _VP8X_ID: ChunkId = ChunkId {
+    value: [0x56, 0x50, 0x38, 0x58],
+}; // VP8X  chunk to hold auxilary info
+
 fn read_items<T>(iter: &mut T) -> Vec<T::Item>
 where
     T: Iterator,
@@ -61,18 +64,19 @@ where
     vec
 }
 
-fn inject_c2pa<T>(chunk: &Chunk, file: &mut T, data: &[u8], format: &str) -> Result<ChunkContents>
+fn inject_c2pa<T>(chunk: &Chunk, stream: &mut T, data: &[u8], format: &str) -> Result<ChunkContents>
 where
     T: std::io::Seek + std::io::Read,
 {
     let id = chunk.id();
     let is_riff_chunk: bool = id == riff::RIFF_ID;
+    stream.rewind()?;
 
     if is_riff_chunk || id == riff::LIST_ID {
-        let chunk_type = chunk.read_type(file).map_err(|_| {
+        let chunk_type = chunk.read_type(stream).map_err(|_| {
             Error::InvalidAsset("RIFF handler could not parse file format {format}".to_string())
         })?;
-        let mut children = read_items(&mut chunk.iter(file));
+        let mut children = read_items(&mut chunk.iter(stream));
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         if is_riff_chunk {
@@ -87,7 +91,7 @@ where
         }
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, file, data, format)?);
+            children_contents.push(inject_c2pa(&child, stream, data, format)?);
         }
 
         // for non webp we can place at the front
@@ -98,17 +102,17 @@ where
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
     } else if id == riff::SEQT_ID {
-        let children = read_items(&mut chunk.iter_no_type(file));
+        let children = read_items(&mut chunk.iter_no_type(stream));
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, file, data, format)?);
+            children_contents.push(inject_c2pa(&child, stream, data, format)?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
     } else {
         let contents = chunk
-            .read_contents(file)
+            .read_contents(stream)
             .map_err(|_| Error::InvalidAsset("RIFF handler could not parse file".to_string()))?;
         Ok(ChunkContents::Data(id, contents))
     }
@@ -134,12 +138,10 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
 }
 
 impl CAIReader for RiffIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let mut asset: Vec<u8> = Vec::new();
-        reader.rewind()?;
-        reader.read_to_end(&mut asset)?;
-
-        let mut chunk_reader = Cursor::new(asset);
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let mut chunk_reader = CAIReadWrapper {
+            reader: input_stream,
+        };
 
         let top_level_chunks = riff::Chunk::read(&mut chunk_reader, 0)?;
 
@@ -158,18 +160,39 @@ impl CAIReader for RiffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None // todo: figure out where XMP is stored for supported formats
+    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+        /*
+        let mut chunk_reader = CAIReadWrapper {
+            reader: input_stream,
+        };
+
+        let top_level_chunks = riff::Chunk::read(&mut chunk_reader, 0)?;
+
+        if top_level_chunks.id() != RIFF_ID {
+            return None;
+        }
+
+        for c in top_level_chunks.iter(&mut chunk_reader) {
+            if c.id() == C2PA_CHUNK_ID {
+                let output = c.read_contents(&mut chunk_reader)?;
+                return Ok("test".into());
+            }
+        }
+        */
+        None
     }
 }
 
-fn add_required_chunks(asset_path: &std::path::Path) -> Result<()> {
-    let mut f = File::open(asset_path)?;
-    let aio = RiffIO::new(&get_file_extension(asset_path).ok_or(Error::UnsupportedType)?);
+fn add_required_chunks(
+    asset_type: &str,
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+) -> Result<()> {
+    let aio = RiffIO::new(asset_type);
 
-    match aio.read_cai(&mut f) {
+    match aio.read_cai(input_stream) {
         Ok(_) => Ok(()),
-        Err(_) => aio.save_cai_store(asset_path, &[1, 2, 3, 4]), // save arbitrary data
+        Err(_) => aio.write_cai(input_stream, output_stream, &[1, 2, 3, 4]), // save arbitrary data
     }
 }
 
@@ -188,6 +211,9 @@ impl AssetIO for RiffIO {
         self
     }
 
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(RiffIO::new(asset_type)))
+    }
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
@@ -198,46 +224,94 @@ impl AssetIO for RiffIO {
     }
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let asset = std::fs::read(asset_path)?;
-        let mut chunk_reader = Cursor::new(asset);
+        let mut input_stream = File::open(asset_path)?;
 
-        let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
-
-        if top_level_chunks.id() != RIFF_ID {
-            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-        }
-
-        // replace/add manifest in memory
-        let new_contents = inject_c2pa(
-            &top_level_chunks,
-            &mut chunk_reader,
-            store_bytes,
-            &self.riff_format,
-        )?;
-
-        // save contents
-        let mut output = OpenOptions::new()
+        let mut output_stream = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
-        match new_contents.write(&mut output) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(Error::IoError(e)),
-        }
+
+        self.write_cai(&mut input_stream, &mut output_stream, store_bytes)
     }
 
     fn get_object_locations(
         &self,
         asset_path: &std::path::Path,
     ) -> Result<Vec<HashObjectPositions>> {
-        add_required_chunks(asset_path)?;
-
         let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
+
+        self.get_object_locations_from_stream(&mut f)
+    }
+
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+        self.save_cai_store(asset_path, &[])
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
+    }
+}
+
+impl CAIWriter for RiffIO {
+    fn write_cai(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let top_level_chunks = {
+            let mut reader = CAIReadWrapper {
+                reader: input_stream,
+            };
+            Chunk::read(&mut reader, 0)?
+        };
+
+        if top_level_chunks.id() != RIFF_ID {
+            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+        }
+
+        let mut reader = CAIReadWrapper {
+            reader: input_stream,
+        };
+
+        // replace/add manifest in memory
+        let new_contents = inject_c2pa(
+            &top_level_chunks,
+            &mut reader,
+            store_bytes,
+            &self.riff_format,
+        )?;
+
+        let out_buf: Vec<u8> = Vec::new();
+        let mut writer = Cursor::new(out_buf);
+
+        // save contents
+        match new_contents.write(&mut writer) {
+            Ok(_) => output_stream
+                .write_all(&writer.into_inner())
+                .map_err(|_e| Error::EmbeddingError),
+            Err(e) => Err(Error::IoError(e)),
+        }
+    }
+
+    fn get_object_locations_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let output_buf: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_buf);
+
+        add_required_chunks(&self.riff_format, input_stream, &mut output_stream)?;
 
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
-        let (manifest_pos, manifest_len) = get_manifest_pos(&mut f).ok_or(Error::EmbeddingError)?;
+        let (manifest_pos, manifest_len) =
+            get_manifest_pos(input_stream).ok_or(Error::EmbeddingError)?;
 
         positions.push(HashObjectPositions {
             offset: usize::value_from(manifest_pos)
@@ -260,7 +334,7 @@ impl AssetIO for RiffIO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = f.metadata()?.len();
+        let file_end = input_stream.seek(SeekFrom::End(0))?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
@@ -272,16 +346,12 @@ impl AssetIO for RiffIO {
         Ok(positions)
     }
 
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        Some(self)
-    }
-
-    fn supported_types(&self) -> &[&str] {
-        &SUPPORTED_TYPES
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        self.write_cai(input_stream, output_stream, &[])
     }
 }
 

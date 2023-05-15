@@ -48,6 +48,24 @@ impl CAIRead for std::io::Cursor<&mut [u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
 impl CAIRead for NamedTempFile {}
 
+// Helper struct to create a concrete type for CAIRead when
+// that is required
+pub struct CAIReadWrapper<'a> {
+    pub reader: &'a mut dyn CAIRead,
+}
+
+impl Read for CAIReadWrapper<'_> {
+    fn read<'a>(&'a mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl Seek for CAIReadWrapper<'_> {
+    fn seek<'a>(&'a mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
 pub trait CAIReadWrite: CAIRead + Write {}
 
 impl CAIReadWrite for std::fs::File {}

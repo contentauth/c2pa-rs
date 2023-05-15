@@ -1306,7 +1306,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {}", ingredient);
+        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
