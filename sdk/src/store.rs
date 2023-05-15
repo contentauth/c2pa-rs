@@ -708,27 +708,29 @@ impl Store {
                     }
                 }
                 DATABOXES => {
-                    let mut databoxes = CAIDataboxStore::new();
-
                     // Add the data boxes
-                    for (uri, db) in claim.databoxes() {
-                        let db_cbor_bytes =
-                            serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
+                    if !claim.databoxes().is_empty() {
+                        let mut databoxes = CAIDataboxStore::new();
 
-                        let (link, instance) = Claim::assertion_label_from_link(&uri.url());
-                        let label = Claim::label_with_instance(&link, instance);
-        
-                        let mut db_cbor = CAICBORAssertionBox::new(&label);
-                        db_cbor.add_cbor(db_cbor_bytes);
+                        for (uri, db) in claim.databoxes() {
+                            let db_cbor_bytes =
+                                serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
 
-                        if let Some(salt) = uri.salt() {
-                            db_cbor.set_salt(salt.clone())?;
+                            let (link, instance) = Claim::assertion_label_from_link(&uri.url());
+                            let label = Claim::label_with_instance(&link, instance);
+
+                            let mut db_cbor = CAICBORAssertionBox::new(&label);
+                            db_cbor.add_cbor(db_cbor_bytes);
+
+                            if let Some(salt) = uri.salt() {
+                                db_cbor.set_salt(salt.clone())?;
+                            }
+
+                            databoxes.add_databox(Box::new(db_cbor));
                         }
 
-                        databoxes.add_databox(Box::new(db_cbor));
+                        cai_store.add_box(Box::new(databoxes)); // add claim to manifest
                     }
-
-                    cai_store.add_box(Box::new(databoxes)); // add claim to manifest
                 }
                 _ => return Err(Error::ClaimInvalidContent),
             }

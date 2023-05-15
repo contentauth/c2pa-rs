@@ -1275,7 +1275,7 @@ impl BMFFBox for CAIDataboxStore {
 impl CAIDataboxStore {
     pub fn new() -> Self {
         CAIDataboxStore {
-            store: JUMBFSuperBox::new(labels::ASSERTIONS, Some(CAI_DATABOXES_STORE_UUID)),
+            store: JUMBFSuperBox::new(labels::DATABOXES, Some(CAI_DATABOXES_STORE_UUID)),
         }
     }
 
