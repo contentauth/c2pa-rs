@@ -55,13 +55,13 @@ pub struct CAIReadWrapper<'a> {
 }
 
 impl Read for CAIReadWrapper<'_> {
-    fn read<'a>(&'a mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.reader.read(buf)
     }
 }
 
 impl Seek for CAIReadWrapper<'_> {
-    fn seek<'a>(&'a mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.reader.seek(pos)
     }
 }
