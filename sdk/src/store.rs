@@ -26,7 +26,7 @@ use crate::{
     },
     assertions::{
         labels::{self, CLAIM},
-        DataHash, Ingredient, Relationship,
+        DataBox, DataHash, Ingredient, Relationship,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -336,6 +336,27 @@ impl Store {
         } else {
             None
         }
+    }
+
+    /// Returns a DataBox referenced by JUMBF URI if it exists.
+    ///
+    /// Relative paths will use the provenance claim to resolve the DataBox.d
+    pub fn get_data_box_from_uri_and_claim(
+        &self,
+        uri: &str,
+        target_claim_label: &str,
+    ) -> Option<&DataBox> {
+        match jumbf::labels::manifest_label_from_uri(uri) {
+            Some(label) => self.get_claim(&label), // use the manifest label from the thumbnail uri
+            None => self.get_claim(target_claim_label), //  relative so use the target claim label
+        }
+        .and_then(|claim| {
+            claim
+                .databoxes()
+                .iter()
+                .find(|(h, _d)| h.url() == uri)
+                .map(|(_sh, data_box)| data_box)
+        })
     }
 
     // Returns placeholder that will be searched for and replaced

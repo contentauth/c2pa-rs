@@ -17,7 +17,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{assertions::AssetType, Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -46,12 +46,12 @@ pub struct DataBox {
 }
 
 /// A reference to a resource to be used in JSON serialization
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ResourceRef {
     pub format: String,
     pub identifier: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_types: Option<Vec<DataType>>,
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 impl ResourceRef {

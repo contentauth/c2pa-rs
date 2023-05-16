@@ -558,6 +558,7 @@ impl Manifest {
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(
                         store,
+                        manifest_label,
                         &assertion_uri,
                         #[cfg(feature = "file_io")]
                         resource_path,
@@ -1755,9 +1756,10 @@ pub(crate) mod tests {
         assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
         assert!(m.ingredients()[1].data_ref().is_some());
         assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
+        let id = m.ingredients()[1].data_ref().unwrap().identifier.as_str();
         assert_eq!(
-            m.ingredients()[1].data_ref().unwrap().identifier,
-            "promptxx.txt"
+            m.ingredients()[1].resources().get(id).unwrap().into_owned(),
+            b"pirate with bird on shoulder"
         );
         // println!("{manifest_store}");
     }

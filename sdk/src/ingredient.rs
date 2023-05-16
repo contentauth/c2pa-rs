@@ -873,8 +873,10 @@ impl Ingredient {
     }
 
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
+    /// claim_label identifies the claim for relative paths
     pub(crate) fn from_ingredient_uri(
         store: &Store,
+        claim_label: &str,
         ingredient_uri: &str,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> Result<Self> {
@@ -898,8 +900,8 @@ impl Ingredient {
         let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
             // This could be a relative or absolute thumbnail reference to another manifest
             let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
-                Some(label) => label,              // use the manifest from the thumbnail uri
-                None => ingredient_uri.to_owned(), // relative so use the whole url from the thumbnail assertion
+                Some(label) => label,       // use the manifest from the thumbnail uri
+                None => claim_label.to_owned(),     // relative so use the whole url from the thumbnail assertion
             };
             match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
                 Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
@@ -939,31 +941,22 @@ impl Ingredient {
         }
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
-            let target_label = match jumbf::labels::manifest_label_from_uri(&data_uri.url()) {
-                Some(label) => label,              // use the manifest from the thumbnail uri
-                None => ingredient_uri.to_owned(), /* relative so use the whole url from the thumbnail assertion */
-            };
-            let data_ref =
-                match store.get_assertion_from_uri_and_claim(&data_uri.url(), &target_label) {
-                    Some(assertion) => {
-                        let user_cbor = crate::assertions::UserCbor::from_assertion(assertion)?;
-                        let data_box: crate::resource_store::DataBox =
-                            serde_cbor::from_slice(user_cbor.data())
-                                .map_err(|_err| Error::AssertionEncoding)?;
-                        let mut resource_ref = ResourceRef::new(&data_box.format, "promptxx.txt");
-                        resource_ref.data_types = data_box.data_types;
-                        ingredient
-                            .resources_mut()
-                            .add("promptxx.txt", data_box.data)?;
-                        Ok(resource_ref)
+            let data_box = store
+                .get_data_box_from_uri_and_claim(&data_uri.url(), claim_label)
+                .ok_or_else(|| {
+                    error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                    Error::AssertionMissing {
+                        url: data_uri.url(),
                     }
-                    None => {
-                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                        Err(Error::AssertionMissing {
-                            url: data_uri.url(),
-                        })
-                    }
-                }?;
+                })?;
+
+            let id_base = ingredient.instance_id().to_owned();
+            let mut data_ref = ingredient.resources_mut().add_with(
+                &id_base,
+                &data_box.format,
+                data_box.data.clone(),
+            )?;
+            data_ref.data_types = data_box.data_types.clone();
             ingredient.set_data_ref(data_ref)?;
         }
 
@@ -1083,16 +1076,12 @@ impl Ingredient {
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
             let box_data = self.resources.get(&data_ref.identifier)?;
-            // since we don't support data blocks, add this as an assertion for now
-            use crate::resource_store::DataBox;
-            let data_box = DataBox {
-                data: box_data.into_owned(),
-                format: data_ref.format.clone(),
-                data_types: data_ref.data_types.clone(),
-            };
-            let assertion =
-                crate::assertions::UserCbor::new("adobe.data_box", serde_cbor::to_vec(&data_box)?);
-            let hash_url = claim.add_assertion(&assertion)?;
+            let hash_url = claim.add_databox(
+                &data_ref.format,
+                box_data.into_owned(),
+                data_ref.data_types.clone(),
+            )?;
+
             data = Some(hash_url);
         };
 
@@ -1613,8 +1602,8 @@ mod tests_file_io {
 
         // create a resource reference for the data
         let mut data_ref = ResourceRef::new("text/plain", "prompt_id");
-        let data_type = crate::resource_store::DataType {
-            data_type: "c2pa.types.generator.prompt".to_string(),
+        let data_type = crate::assertions::AssetType {
+            asset_type: "c2pa.types.generator.prompt".to_string(),
             version: None,
         };
         data_ref.data_types = Some([data_type].to_vec());
@@ -1631,7 +1620,7 @@ mod tests_file_io {
         assert_eq!(ingredient.data_ref().unwrap().format, "text/plain");
         assert_eq!(ingredient.relationship(), &Relationship::InputTo);
         assert_eq!(
-            ingredient.data_ref().unwrap().data_types.as_ref().unwrap()[0].data_type,
+            ingredient.data_ref().unwrap().data_types.as_ref().unwrap()[0].asset_type,
             "c2pa.types.generator.prompt"
         );
     }
