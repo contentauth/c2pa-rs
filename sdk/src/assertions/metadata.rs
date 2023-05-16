@@ -262,7 +262,7 @@ impl ReviewRating {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct AssetType {
     #[serde(rename = "type")]
-    pub asset_type: Vec<String>,
+    pub asset_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }

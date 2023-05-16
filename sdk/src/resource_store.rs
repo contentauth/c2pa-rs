@@ -17,7 +17,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{assertions::AssetType, Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -26,11 +26,32 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
     !cfg!(feature = "serialize_thumbnails") || cfg!(test)
 }
 
-/// A reference to a resource to be used in JSON serialization
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct DataType {
+    #[serde(rename = "type")]
+    pub data_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+// this is a temporary struct to simulate a data box
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct DataBox {
+    #[serde(rename = "dc:format")]
+    pub format: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<DataType>>,
+}
+
+/// A reference to a resource to be used in JSON serialization
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ResourceRef {
     pub format: String,
     pub identifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 impl ResourceRef {
@@ -38,6 +59,7 @@ impl ResourceRef {
         Self {
             format: format.into(),
             identifier: identifier.into(),
+            data_types: None,
         }
     }
 }

@@ -553,15 +553,20 @@ impl Manifest {
             let base_label = assertion.label();
             debug!("assertion = {}", &label);
             match base_label.as_ref() {
-                labels::INGREDIENT => {
+                base if base.starts_with(labels::INGREDIENT) => {
+                    // note that we use the original label here, not the base label
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(
                         store,
+                        manifest_label,
                         &assertion_uri,
                         #[cfg(feature = "file_io")]
                         resource_path,
                     )?;
                     manifest.add_ingredient(ingredient);
+                }
+                labels::DATA_HASH | labels::BMFF_HASH => {
+                    // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
@@ -884,7 +889,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of the  manifest that was embedded
+    /// returns the bytes of the new asset
     pub fn embed_stream(
         &mut self,
         format: &str,
@@ -1685,13 +1690,30 @@ pub(crate) mod tests {
                 "format": "image/png",
                 "identifier": "exp-test1.png"
             }
-        }]
+        },
+        {
+            "title": "prompt",
+            "format": "text/plain",
+            "relationship": "inputTo",
+            "data": {
+              "format": "text/plain",
+              "identifier": "prompt.txt",
+              "data_types": [
+                {
+                  "type": "c2pa.types.generator.prompt"
+                }
+              ]
+            }
+          }
+        ]
     }"#;
 
     #[test]
     #[cfg(feature = "openssl_sign")]
     /// tests and illustrates how to add assets to a non-file based manifest
     fn from_json_with_memory() {
+        use crate::assertions::Relationship;
+
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
@@ -1701,6 +1723,10 @@ pub(crate) mod tests {
         manifest.ingredients_mut()[0]
             .resources_mut()
             .add("exp-test1.png", *b"my value")
+            .expect("add_resource");
+        manifest.ingredients_mut()[1]
+            .resources_mut()
+            .add("prompt.txt", *b"pirate with bird on shoulder")
             .expect("add_resource");
 
         println!("{manifest}");
@@ -1717,12 +1743,24 @@ pub(crate) mod tests {
 
         let manifest_store =
             crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        println!("manifest_store = {manifest_store}");
         let m = manifest_store.get_active().unwrap();
+
+        //println!("after = {m}");
 
         assert!(m.thumbnail().is_some());
         let (format, image) = m.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
+        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
+        assert!(m.ingredients()[1].data_ref().is_some());
+        assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
+        let id = m.ingredients()[1].data_ref().unwrap().identifier.as_str();
+        assert_eq!(
+            m.ingredients()[1].resources().get(id).unwrap().into_owned(),
+            b"pirate with bird on shoulder"
+        );
         // println!("{manifest_store}");
     }
 
