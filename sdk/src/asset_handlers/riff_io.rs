@@ -61,7 +61,7 @@ const VP8_ID: ChunkId = ChunkId {
 
 const VP8L_ID: ChunkId = ChunkId {
     value: [0x56, 0x50, 0x38, 0x4c],
-}; // VP8 chunk
+}; // VP8L chunk
 
 const XMP_CHUNK_ID: ChunkId = ChunkId {
     value: [0x58, 0x4d, 0x50, 0x20],

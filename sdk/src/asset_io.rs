@@ -50,7 +50,7 @@ impl CAIRead for NamedTempFile {}
 
 // Helper struct to create a concrete type for CAIRead when
 // that is required
-pub struct CAIReadWrapper<'a> {
+pub(crate) struct CAIReadWrapper<'a> {
     pub reader: &'a mut dyn CAIRead,
 }
 
@@ -75,7 +75,7 @@ impl CAIReadWrite for NamedTempFile {}
 
 // Helper struct to create a concrete type for CAIReadWrite when
 // that is required
-pub struct CAIReadWriteWrapper<'a> {
+pub(crate) struct CAIReadWriteWrapper<'a> {
     pub reader_writer: &'a mut dyn CAIReadWrite,
 }
 
