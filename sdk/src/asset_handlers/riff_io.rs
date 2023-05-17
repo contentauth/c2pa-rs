@@ -272,7 +272,13 @@ impl CAIReader for RiffIO {
 
         for c in top_level_chunks.iter(&mut chunk_reader) {
             if c.id() == C2PA_CHUNK_ID {
-                let output = c.read_contents(&mut chunk_reader)?;
+                let mut output = c.read_contents(&mut chunk_reader)?;
+                // the data may have been padded to account for even boundary requirement
+                if let Some(last_byte) = output.last() {
+                    if *last_byte == 0 {
+                        output.pop();
+                    }
+                }
                 return Ok(output);
             }
         }
@@ -318,8 +324,17 @@ fn add_required_chunks(
     let aio = RiffIO::new(asset_type);
 
     match aio.read_cai(input_stream) {
-        Ok(_) => Ok(()),
-        Err(_) => aio.write_cai(input_stream, output_stream, &[1, 2, 3, 4]), // save arbitrary data
+        Ok(_) => {
+            // just clone
+            input_stream.rewind()?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
+            Ok(())
+        }
+        Err(_) => {
+            input_stream.rewind()?;
+            aio.write_cai(input_stream, output_stream, &[1, 2, 3, 4]) // save arbitrary data
+        }
     }
 }
 
@@ -438,7 +453,7 @@ impl CAIWriter for RiffIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
         let (manifest_pos, manifest_len) =
-            get_manifest_pos(input_stream).ok_or(Error::EmbeddingError)?;
+            get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
 
         positions.push(HashObjectPositions {
             offset: usize::value_from(manifest_pos)
@@ -461,7 +476,7 @@ impl CAIWriter for RiffIO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = input_stream.seek(SeekFrom::End(0))?;
+        let file_end = output_stream.seek(SeekFrom::End(0))?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
