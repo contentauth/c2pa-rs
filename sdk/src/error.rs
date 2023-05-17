@@ -17,6 +17,7 @@ use thiserror::Error;
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     // --- c2pa errors ---
     /// Could not find a claim with this label.
@@ -90,9 +91,9 @@ pub enum Error {
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {
-        coset_error: coset::CoseError, // NOTE: We can not use #[transparent] here because
-                                       // coset::CoseError does not implement std::Error::error
-                                       // and can't because coset is nostd.
+        coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
+                                        * coset::CoseError does not implement std::Error::error
+                                        * and can't because coset is nostd. */
     },
 
     /// The COSE signature uses an algorithm that is not supported by this crate.
@@ -198,6 +199,9 @@ pub enum Error {
     #[error("file not found: {0}")]
     FileNotFound(String),
 
+    #[error("resource not found: {0}")]
+    ResourceNotFound(String),
+
     #[error("XMP read error")]
     XmpReadError,
 
@@ -234,6 +238,9 @@ pub enum Error {
     /// Could not parse ECDSA signature. (Only appears when using WASM web crypto.)
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
+
+    #[error("could not generate XML")]
+    XmlWriteError,
 
     // --- third-party errors ---
     #[error(transparent)]

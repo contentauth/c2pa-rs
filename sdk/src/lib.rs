@@ -52,19 +52,17 @@
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::{
-//!     assertions::User,
-//!     create_signer,
-//!     Manifest,
-//!     SigningAlg,
-//! };
-//!
 //! use std::path::PathBuf;
+//!
+//! use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
 //! use tempfile::tempdir;
 //!
 //! # fn main() -> Result<()> {
 //! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
+//! manifest.add_assertion(&User::new(
+//!     "org.contentauth.mylabel",
+//!     r#"{"my_tag":"Anything I want"}"#,
+//! ))?;
 //!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;

@@ -45,7 +45,7 @@ const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
 const C2PA_UUID: [u8; 16] = [
-    0xD8, 0xFE, 0xC3, 0xD6, 0x1B, 0x0E, 0x48, 0x3C, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7E, 0xC4, 0x81,
+    0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81,
 ];
 const MANIFEST: &str = "manifest";
 const MERKLE: &str = "merkle";
@@ -187,6 +187,7 @@ impl BoxHeaderLite {
             large_size: false,
         }
     }
+
     pub fn read<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
@@ -690,16 +691,16 @@ fn adjust_known_offsets<W: Write + CAIRead>(
             output.read_exact(&mut iloc_header)?;
 
             // get offset size (high nibble)
-            let offset_size: u8 = (iloc_header[0] & 0xF0) >> 4;
+            let offset_size: u8 = (iloc_header[0] & 0xf0) >> 4;
 
             // get length size (low nibble)
-            let length_size: u8 = iloc_header[0] & 0x0F;
+            let length_size: u8 = iloc_header[0] & 0x0f;
 
             // get box offset size (high nibble)
-            let base_offset_size: u8 = (iloc_header[1] & 0xF0) >> 4;
+            let base_offset_size: u8 = (iloc_header[1] & 0xf0) >> 4;
 
             // get index size (low nibble)
-            let index_size: u8 = iloc_header[1] & 0x0F;
+            let index_size: u8 = iloc_header[1] & 0x0f;
 
             // get item count
             let item_count = match version {
@@ -731,7 +732,7 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                     output.read_exact(&mut cm_bytes)?;
 
                     // lower nibble of 2nd byte
-                    cm_bytes[1] & 0x0F
+                    cm_bytes[1] & 0x0f
                 } else {
                     0
                 };
@@ -1133,6 +1134,7 @@ impl AssetIO for BmffIO {
         let mut f = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
+
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input = File::open(asset_path)?;
         let size = input.seek(SeekFrom::End(0))?;
@@ -1426,6 +1428,7 @@ impl AssetIO for BmffIO {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }

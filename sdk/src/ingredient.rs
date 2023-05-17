@@ -131,7 +131,7 @@ impl Ingredient {
     ///
     /// ```
     /// use c2pa::Ingredient;
-    /// let ingredient = Ingredient::new("title","image/jpeg","ed610ae51f604002be3dbf0c589a2f1f");
+    /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
@@ -176,7 +176,6 @@ impl Ingredient {
     }
 
     /// Returns thumbnail tuple Some((format, bytes)) or None
-    ///
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -184,7 +183,6 @@ impl Ingredient {
     }
 
     /// Returns a Cow of thumbnail bytes or Err(Error::NotFound)`.
-    ///
     pub fn thumbnail_bytes(&self) -> Result<Cow<Vec<u8>>> {
         match self.thumbnail.as_ref() {
             Some(thumbnail) => self.resources.get(&thumbnail.identifier),
@@ -291,6 +289,28 @@ impl Ingredient {
     ) -> Result<&mut Self> {
         let base_id = self.instance_id().to_string();
         self.thumbnail = Some(self.resources.add_with(&base_id, &format.into(), bytes)?);
+        Ok(self)
+    }
+
+    /// Sets the thumbnail format and image data only in memory
+    ///
+    /// This is only used for internally generated thumbnails - when
+    /// reading thumbnails from files, we don't want to write these to file
+    /// So this ensures they stay in memory unless written out.
+    pub fn set_memory_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
+        &mut self,
+        format: S,
+        bytes: B,
+    ) -> Result<&mut Self> {
+        // Do not write this as a file when reading from files
+        #[cfg(feature = "file_io")]
+        let base_path = self.resources_mut().take_base_path();
+        let base_id = self.instance_id().to_string();
+        self.thumbnail = Some(self.resources.add_with(&base_id, &format.into(), bytes)?);
+        #[cfg(feature = "file_io")]
+        if let Some(path) = base_path {
+            self.resources_mut().set_base_path(path)
+        }
         Ok(self)
     }
 
@@ -401,25 +421,38 @@ impl Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
-        fn make_id(id_type: &str) -> String {
-            let uuid = Uuid::new_v4();
-            //warn!("Generating fake id {}", uuid);
-            format!("xmp:{id_type}id:{uuid}")
-        }
-
         // get required information from the file path
         let (title, _, format) = Self::get_path_info(path.as_ref());
 
         // if we can open the file try tto get xmp info
-        let xmp_info = match std::fs::File::open(path).map_err(Error::IoError) {
-            Ok(mut file) => XmpInfo::from_source(&mut file, &format),
-            Err(_) => XmpInfo::default(),
+        match std::fs::File::open(path).map_err(Error::IoError) {
+            Ok(mut file) => Self::from_stream_info(&mut file, &format, &title),
+            Err(_) => Self {
+                title,
+                format,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Generates an `Ingredient` from a stream, including XMP info
+    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    where
+        F: Into<String>,
+        S: Into<String>,
+    {
+        let format = format.into();
+        // if we can open the file try tto get xmp info
+        let xmp_info = XmpInfo::from_source(stream, &format);
+
+        let id = if let Some(id) = xmp_info.instance_id {
+            id
+        } else {
+            default_instance_id()
         };
 
-        // instance id is required so generate one if we don't have one
-        let instance_id = xmp_info.instance_id.unwrap_or_else(|| make_id("i"));
+        let mut ingredient = Self::new(title.into(), format, id);
 
-        let mut ingredient = Self::new(&title, &format, &instance_id);
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
 
@@ -427,6 +460,7 @@ impl Ingredient {
     }
 
     // utility method to set the validation status from store result and log
+    // also sets the thumbnail from the claim if valid and it exists
     fn update_validation_status(
         &mut self,
         result: Result<Store>,
@@ -525,6 +559,7 @@ impl Ingredient {
     ) -> Result<Self> {
         Self::from_file_impl(path.as_ref(), options)
     }
+
     // Internal implementation to avoid code bloat.
     #[cfg(feature = "file_io")]
     fn from_file_impl(path: &Path, options: &dyn IngredientOptions) -> Result<Self> {
@@ -609,23 +644,8 @@ impl Ingredient {
     /// This does not set title or hash
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        fn make_id(id_type: &str) -> String {
-            let uuid = Uuid::new_v4();
-            format!("xmp:{id_type}id:{uuid}")
-        }
-
-        let xmp_info = XmpInfo::from_source(stream, format);
-
-        let title = "untitled";
-        // instance id is required so generate one if we don't have one
-        let instance_id = xmp_info.instance_id.unwrap_or_else(|| make_id("i"));
-
-        let mut ingredient = Self::new(title, format, instance_id.as_str());
-        ingredient.document_id = xmp_info.document_id; // use document id if one exists
-        ingredient.provenance = xmp_info.provenance;
-
-        // optionally generate a hash so we know if the file has changed
-        //ingredient.hash = options.hash(path);
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
 
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -671,7 +691,79 @@ impl Ingredient {
                     ingredient.set_thumbnail(format, image)?;
                 }
                 Err(err) => {
-                    dbg!(&err);
+                    log::warn!("Could not create thumbnail. {err}");
+                }
+            }
+        }
+
+        Ok(ingredient)
+    }
+
+    /// Creates an `Ingredient` from a memory buffer (async version).
+    ///
+    /// This does not set title or hash
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
+        let mut stream = Cursor::new(buffer);
+        Self::from_stream_async(format, &mut stream).await
+    }
+
+    /// Creates an `Ingredient` from a stream (async version).
+    ///
+    /// This does not set title or hash
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
+
+        let mut validation_log = DetailedStatusTracker::new();
+
+        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
+        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
+            Ok(manifest_bytes) => {
+                (
+                    // generate a store from the buffer and then validate from the asset path
+                    match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+                        Ok(store) => {
+                            // verify the store
+                            //todo, change this when we have a stream version of verify
+                            let mut buf: Vec<u8> = Vec::new();
+                            stream.rewind()?;
+                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+                            Store::verify_store_async(&store, &buf, &mut validation_log)
+                                .await
+                                .map(|_| store)
+                        }
+                        Err(e) => {
+                            validation_log.log_silent(
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .set_error(&e),
+                            );
+                            Err(e)
+                        }
+                    },
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
+
+        // set validation status from result and log
+        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
+        #[cfg(feature = "add_thumbnails")]
+        if ingredient.thumbnail.is_none() {
+            stream.rewind()?;
+            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
+                Ok((format, image)) => {
+                    ingredient.set_thumbnail(format, image)?;
+                }
+                Err(err) => {
                     log::warn!("Could not create thumbnail. {err}");
                 }
             }
@@ -763,8 +855,8 @@ impl Ingredient {
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
-        let c2pa_manifest = match self.manifest_data() {
-            Some(buffer) => {
+        let c2pa_manifest = match self.manifest_data_ref() {
+            Some(resource_ref) => {
                 let manifest_label = self
                     .active_manifest
                     .clone()
@@ -781,9 +873,12 @@ impl Ingredient {
                     false => None,
                 };
 
+                // get the c2pa manifest bytes
+                let data = self.resources.get(&resource_ref.identifier)?;
+
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_label, &buffer, redactions)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_label, &data, redactions)?;
 
                 // get the ingredient map loaded in previous
                 match claim.claim_ingredient(&manifest_label) {
@@ -837,16 +932,15 @@ impl Ingredient {
             None => None,
         };
 
-        // add ingredient thumbnail assertion if one is given and we don't already have one from the parent claim
-        if thumbnail.is_none() {
-            if let Some((format, data)) = self.thumbnail() {
-                let hash_url = claim.add_assertion(&Thumbnail::new(
-                    &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, format),
-                    data.to_vec(),
-                ))?;
-
-                thumbnail = Some(hash_url);
-            }
+        // if the ingredient defines a thumbnail, add it to the claim
+        // otherwise use the parent claim thumbnail if available
+        if let Some(thumb_ref) = self.thumbnail_ref() {
+            let data = self.thumbnail_bytes()?;
+            let hash_url = claim.add_assertion(&Thumbnail::new(
+                &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, &thumb_ref.format),
+                data.into_owned(),
+            ))?;
+            thumbnail = Some(hash_url);
         }
 
         let mut ingredient_assertion = assertions::Ingredient::new(
@@ -996,29 +1090,46 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn test_stream_jpg() {
+    async fn test_stream_async_jpg() {
+        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let title = "Test Image";
+        let format = "image/jpeg";
+        let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory");
+        ingredient.set_title(title);
+
+        println!("ingredient = {ingredient}");
+        assert_eq!(&ingredient.title, title);
+        assert_eq!(ingredient.format(), format);
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.metadata().is_none());
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::debug_2(
+            &"ingredient_from_memory_async:".into(),
+            &ingredient.to_string().into(),
+        );
+        assert!(ingredient.validation_status().is_none());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    // Note this does not work from wasm32, due to validation issues
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_stream_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let title = "Test Image";
         let format = "image/jpeg";
         let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
         ingredient.set_title(title);
 
-        // #[cfg(target_arch = "wasm32")]
-        // console_log::init_with_level(log::Level::Debug).expect("init log");
-
-        // log::debug!(
-        //     "ingredient = {}",
-        //     ingredient
-        // );
-
         println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
-        //assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
-        //assert!(ingredient.validation_status().is_some());
+        assert!(ingredient.validation_status().is_none());
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1027,7 +1138,9 @@ mod tests {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
         let format = "image/jpeg";
-        let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
+        let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory");
         ingredient.set_title(title);
 
         println!("ingredient = {ingredient}");
@@ -1131,6 +1244,13 @@ mod tests_file_io {
         assert!(ingredient.provenance().is_none());
         assert!(ingredient.manifest_data().is_none());
         assert!(ingredient.metadata().is_none());
+        assert!(ingredient.instance_id().starts_with("xmp.iid:"));
+        #[cfg(feature = "add_thumbnails")]
+        assert!(ingredient
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("xmp.iid"));
     }
 
     #[test]
@@ -1141,9 +1261,11 @@ mod tests_file_io {
             fn title(&self, _path: &Path) -> Option<String> {
                 Some("MyTitle".to_string())
             }
+
             fn hash(&self, _path: &Path) -> Option<String> {
                 Some("1234568abcdef".to_string())
             }
+
             fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
                 Some(("image/foo".to_string(), "bits".as_bytes().to_owned()))
             }
@@ -1184,7 +1306,7 @@ mod tests_file_io {
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
-        //println!("ingredient = {}", ingredient);
+        println!("ingredient = {}", ingredient);
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
@@ -1246,14 +1368,14 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
-        let ap = fixture_path("CIE-sig-CA.jpg");
+        let ap = fixture_path("CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
         let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
 
-        // verify we can't set a references that don't exist
+        // verify we can't set references that don't exist
         assert!(ingredient
             .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
             .is_err());
