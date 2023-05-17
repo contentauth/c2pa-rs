@@ -171,12 +171,10 @@ where
                         // add in XMP flag
                         flags |= XMP_FLAG;
 
-                        println!("flags: {flags}");
-
                         chunk_stream.rewind()?;
 
                         // write back changes
-                        //chunk_stream.write_u32::<LittleEndian>(flags)?;
+                        chunk_stream.write_u32::<LittleEndian>(flags)?;
                     } else {
                         // add new VP8X
 
