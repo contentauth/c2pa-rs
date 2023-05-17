@@ -17,15 +17,18 @@ use std::{
     path::Path,
 };
 
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
 use conv::ValueFrom;
 use riff::*;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
+        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::add_provenance,
 };
 
 static SUPPORTED_TYPES: [&str; 9] = [
@@ -49,9 +52,23 @@ const C2PA_CHUNK_ID: ChunkId = ChunkId {
     value: [0x43, 0x32, 0x50, 0x41],
 }; // C2PA
 
-const _VP8X_ID: ChunkId = ChunkId {
+const VP8X_ID: ChunkId = ChunkId {
     value: [0x56, 0x50, 0x38, 0x58],
-}; // VP8X  chunk to hold auxilary info
+}; // VP8X  chunk to hold auxiliary info
+
+const VP8_ID: ChunkId = ChunkId {
+    value: [0x56, 0x50, 0x38, 0x20],
+}; // VP8 chunk
+
+const VP8L_ID: ChunkId = ChunkId {
+    value: [0x56, 0x50, 0x38, 0x4C],
+}; // VP8 chunk
+
+const XMP_CHUNK_ID: ChunkId = ChunkId {
+    value: [0x58, 0x4D, 0x50, 0x20],
+}; // XMP
+
+const XMP_FLAG: u32 = 4;
 
 fn read_items<T>(iter: &mut T) -> Vec<T::Item>
 where
@@ -64,7 +81,48 @@ where
     vec
 }
 
-fn inject_c2pa<T>(chunk: &Chunk, stream: &mut T, data: &[u8], format: &str) -> Result<ChunkContents>
+fn get_height_and_width(chunk_contents: &[ChunkContents]) -> Result<(u16, u16)> {
+    if let Some(ChunkContents::Data(_id, chunk_data)) = chunk_contents.iter().find(|c| match c {
+        ChunkContents::Data(id, _) => *id == VP8L_ID,
+        _ => false,
+    }) {
+        let mut chunk_stream = Cursor::new(chunk_data);
+        chunk_stream.seek(SeekFrom::Start(1))?; // skip signature byte
+
+        // width and length are 12 bits packed together
+        let first_bytes = chunk_stream.read_u16::<LittleEndian>()?;
+        let width = 1 + (first_bytes & 0x3FFF); // add 1 for VP8L
+        let last_two = (first_bytes & 0xC000) >> 14; // last two bits of first bytes are first 2 of height
+        let height = 1 + (((chunk_stream.read_u16::<LittleEndian>()? & 0xFFF) << 2) | last_two);
+
+        return Ok((height, width));
+    }
+
+    if let Some(ChunkContents::Data(_id, chunk_data)) = chunk_contents.iter().find(|c| match c {
+        ChunkContents::Data(id, _) => *id == VP8_ID,
+        _ => false,
+    }) {
+        let mut chunk_stream = Cursor::new(chunk_data);
+        chunk_stream.seek(SeekFrom::Start(6))?; // skip frame tag and start code
+
+        let width = chunk_stream.read_u16::<LittleEndian>()? & 0x3FFF;
+        let height = chunk_stream.read_u16::<LittleEndian>()? & 0x3FFF;
+
+        return Ok((height, width));
+    }
+
+    Err(Error::InvalidAsset(
+        "WEBP missing VP8 or VP8L segment".to_string(),
+    ))
+}
+
+fn inject_c2pa<T>(
+    chunk: &Chunk,
+    stream: &mut T,
+    data: &[u8],
+    xmp_data: Option<&[u8]>,
+    format: &str,
+) -> Result<ChunkContents>
 where
     T: std::io::Seek + std::io::Read,
 {
@@ -79,25 +137,90 @@ where
         let mut children = read_items(&mut chunk.iter(stream));
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
-        if is_riff_chunk {
+        if is_riff_chunk && !data.is_empty() {
             // remove c2pa manifest store in RIFF chunk
             children.retain(|c| c.id() != C2PA_CHUNK_ID);
         }
 
-        // for non webp we can place at the front
-        // add c2pa manifest
-        if is_riff_chunk && !data.is_empty() && !format.contains("webp") {
-            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
+        if is_riff_chunk && xmp_data.is_some() {
+            // remove XMP in RIFF chunk so we can replace
+            children.retain(|c| c.id() != XMP_CHUNK_ID);
         }
 
+        // duplicate all top level children
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, format)?);
+            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
         }
 
-        // for non webp we can place at the front
-        // add c2pa manifest
-        if is_riff_chunk && !data.is_empty() && format.contains("webp") {
-            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
+        // add XMP if needed
+        if let Some(xmp) = xmp_data {
+            if is_riff_chunk && !xmp.is_empty() {
+                // if this is a webp doc we must also update VP8X
+                if format == "webp" {
+                    // if already present we can patch otherwise add
+                    if let Some(ChunkContents::Data(_id, chunk_data)) =
+                        children_contents.iter_mut().find(|c| match c {
+                            ChunkContents::Data(id, _) => *id == VP8X_ID,
+                            _ => false,
+                        })
+                    {
+                        let mut chunk_stream = Cursor::new(chunk_data);
+
+                        let mut flags = chunk_stream.read_u32::<LittleEndian>()?;
+
+                        // add in XMP flag
+                        flags |= XMP_FLAG;
+
+                        println!("flags: {flags}");
+
+                        chunk_stream.rewind()?;
+
+                        // write back changes
+                        //chunk_stream.write_u32::<LittleEndian>(flags)?;
+                    } else {
+                        // add new VP8X
+
+                        // get height and width from VBL
+                        if let Ok((height, width)) = get_height_and_width(&children_contents) {
+                            let data: Vec<u8> = Vec::new();
+                            let mut chunk_writer = Cursor::new(data);
+
+                            let flags: u32 = XMP_FLAG;
+                            let vp8x_height = height as u32 - 1;
+                            let vp8x_width = width as u32 - 1;
+
+                            // write flags
+                            chunk_writer.write_u32::<LittleEndian>(flags)?;
+
+                            // write width then height
+                            chunk_writer.write_u24::<LittleEndian>(vp8x_width)?;
+                            chunk_writer.write_u24::<LittleEndian>(vp8x_height)?;
+
+                            // make new VP8X chunk and prepend to children list
+                            let mut tmp_vec: Vec<ChunkContents> = Vec::new();
+                            tmp_vec.push(ChunkContents::Data(VP8X_ID, chunk_writer.into_inner()));
+                            tmp_vec.extend(children_contents);
+                            children_contents = tmp_vec;
+                        } else {
+                            return Err(Error::InvalidAsset(
+                                "Could not parse VP8 or VP8L".to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                children_contents.push(ChunkContents::Data(XMP_CHUNK_ID, xmp.to_vec()));
+            }
+        }
+
+        // place at the end for maximum compatibility
+        if is_riff_chunk && !data.is_empty() {
+            let mut d = data.to_vec();
+            if d.len() % 2 == 1 {
+                // must be even
+                d.push(0);
+            }
+            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, d));
         }
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
@@ -106,7 +229,7 @@ where
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, format)?);
+            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
@@ -160,25 +283,31 @@ impl CAIReader for RiffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
-        /*
-        let mut chunk_reader = CAIReadWrapper {
-            reader: input_stream,
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let top_level_chunks = {
+            let mut reader = CAIReadWrapper {
+                reader: input_stream,
+            };
+            Chunk::read(&mut reader, 0).ok()?
         };
-
-        let top_level_chunks = riff::Chunk::read(&mut chunk_reader, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
             return None;
         }
 
+        let mut chunk_reader = CAIReadWrapper {
+            reader: input_stream,
+        };
+
         for c in top_level_chunks.iter(&mut chunk_reader) {
-            if c.id() == C2PA_CHUNK_ID {
-                let output = c.read_contents(&mut chunk_reader)?;
-                return Ok("test".into());
+            if c.id() == XMP_CHUNK_ID {
+                let output = c.read_contents(&mut chunk_reader).ok()?;
+                let output_string = String::from_utf8_lossy(&output);
+
+                return Some(output_string.to_string());
             }
         }
-        */
+
         None
     }
 }
@@ -284,19 +413,19 @@ impl CAIWriter for RiffIO {
             &top_level_chunks,
             &mut reader,
             store_bytes,
+            None,
             &self.riff_format,
         )?;
 
-        let out_buf: Vec<u8> = Vec::new();
-        let mut writer = Cursor::new(out_buf);
+        let mut writer = CAIReadWriteWrapper {
+            reader_writer: output_stream,
+        };
 
         // save contents
-        match new_contents.write(&mut writer) {
-            Ok(_) => output_stream
-                .write_all(&writer.into_inner())
-                .map_err(|_e| Error::EmbeddingError),
-            Err(e) => Err(Error::IoError(e)),
-        }
+        new_contents
+            .write(&mut writer)
+            .map_err(|_e| Error::EmbeddingError)?;
+        Ok(())
     }
 
     fn get_object_locations_from_stream(
@@ -385,36 +514,117 @@ impl RemoteRefEmbed for RiffIO {
         asset_path: &Path,
         embed_ref: crate::asset_io::RemoteRefEmbedType,
     ) -> Result<()> {
+        let mut input_stream = File::open(asset_path)?;
+
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
-                {
-                    match self.riff_format.as_ref() {
-                        "avi" | "wav" => {
-                            crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
-                        }
-                        _ => Err(Error::XmpNotSupported),
-                    }
-                }
+                match self.riff_format.as_ref() {
+                    "avi" | "wav" | "webp" => {
+                        if let Some(curr_xmp) = self.read_xmp(input_stream) {
+                            let mut new_xmp = add_provenance(&curr_xmp, &manifest_uri)?;
+                            if new_xmp.len() % 2 == 1 {
+                                // pad if needed to even length
+                                new_xmp.push(' ');
+                            }
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                            let top_level_chunks = {
+                                let mut reader = CAIReadWrapper {
+                                    reader: input_stream,
+                                };
+                                Chunk::read(&mut reader, 0)?
+                            };
+
+                            if top_level_chunks.id() != RIFF_ID {
+                                return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+                            }
+
+                            let mut reader = CAIReadWrapper {
+                                reader: input_stream,
+                            };
+
+                            // replace/add manifest in memory
+                            let new_contents = inject_c2pa(
+                                &top_level_chunks,
+                                &mut reader,
+                                &[],
+                                Some(new_xmp.as_bytes()),
+                                &self.riff_format,
+                            )?;
+
+                            // save contents
+                            let mut writer = CAIReadWriteWrapper {
+                                reader_writer: output_stream,
+                            };
+                            new_contents
+                                .write(&mut writer)
+                                .map_err(|_e| Error::EmbeddingError)?;
+                            Ok(())
+                        } else {
+                            const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" > </rdf:Description></rdf:RDF> </x:xmpmeta> "#;
+
+                            let mut new_xmp = add_provenance(MIN_XMP, &manifest_uri)?;
+
+                            if new_xmp.len() % 2 == 1 {
+                                // pad if needed to even length
+                                new_xmp.push(' ');
+                            }
+
+                            let top_level_chunks = {
+                                let mut reader = CAIReadWrapper {
+                                    reader: input_stream,
+                                };
+                                Chunk::read(&mut reader, 0)?
+                            };
+
+                            if top_level_chunks.id() != RIFF_ID {
+                                return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+                            }
+
+                            let mut reader = CAIReadWrapper {
+                                reader: input_stream,
+                            };
+
+                            // replace/add manifest in memory
+                            let new_contents = inject_c2pa(
+                                &top_level_chunks,
+                                &mut reader,
+                                &[],
+                                Some(new_xmp.as_bytes()),
+                                &self.riff_format,
+                            )?;
+
+                            // save contents
+                            let mut writer = CAIReadWriteWrapper {
+                                reader_writer: output_stream,
+                            };
+                            new_contents
+                                .write(&mut writer)
+                                .map_err(|_e| Error::EmbeddingError)?;
+                            Ok(())
+                        }
+                    }
+                    _ => Err(Error::UnsupportedType),
                 }
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
-    }
-
-    fn embed_reference_to_stream(
-        &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
-        Err(Error::UnsupportedType)
     }
 }
 
@@ -430,6 +640,7 @@ pub mod tests {
     use crate::utils::{
         hash_utils::vec_compare,
         test::{fixture_path, temp_dir_path},
+        xmp_inmemory_utils::extract_provenance,
     };
 
     #[test]
@@ -503,5 +714,124 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_read_xmp() {
+        let source = fixture_path("test_xmp.webp");
+        let mut reader = std::fs::File::open(source).unwrap();
+
+        let riff_io = RiffIO::new("webp");
+
+        let xmp = riff_io.read_xmp(&mut reader).unwrap();
+        println!("XMP: {xmp}");
+    }
+
+    #[test]
+    fn test_write_xmp() {
+        let more_data = "some more test data";
+        let source = fixture_path("test_xmp.webp");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "test_xmp.webp");
+
+            std::fs::copy(source, &output).unwrap();
+
+            let riff_io = RiffIO::new("webp");
+
+            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
+                if let Ok(()) = embed_handler.embed_reference(
+                    output.as_path(),
+                    RemoteRefEmbedType::Xmp(more_data.to_string()),
+                ) {
+                    let mut output_stream = std::fs::File::open(&output).unwrap();
+
+                    // check the xmp
+                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                        println!("XMP: {xmp}");
+
+                        if let Some(xmp_val) = extract_provenance(&xmp) {
+                            if xmp_val == more_data {
+                                success = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_insert_xmp() {
+        let more_data = "some more test data";
+        let source = fixture_path("test.webp");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "test.webp");
+
+            std::fs::copy(source, &output).unwrap();
+
+            let riff_io = RiffIO::new("webp");
+
+            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
+                if let Ok(()) = embed_handler.embed_reference(
+                    output.as_path(),
+                    RemoteRefEmbedType::Xmp(more_data.to_string()),
+                ) {
+                    let mut output_stream = std::fs::File::open(&output).unwrap();
+
+                    // check the xmp
+                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                        println!("XMP: {xmp}");
+
+                        if let Some(xmp_val) = extract_provenance(&xmp) {
+                            if xmp_val == more_data {
+                                success = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_insert_xmp_lossless() {
+        let more_data = "some more test data";
+        let source = fixture_path("test_lossless.webp");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "test_lossless.webp");
+
+            std::fs::copy(source, &output).unwrap();
+
+            let riff_io = RiffIO::new("webp");
+
+            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
+                if let Ok(()) = embed_handler.embed_reference(
+                    output.as_path(),
+                    RemoteRefEmbedType::Xmp(more_data.to_string()),
+                ) {
+                    let mut output_stream = std::fs::File::open(&output).unwrap();
+
+                    // check the xmp
+                    if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
+                        println!("XMP: {xmp}");
+
+                        if let Some(xmp_val) = extract_provenance(&xmp) {
+                            if xmp_val == more_data {
+                                success = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(success)
     }
 }

@@ -73,6 +73,34 @@ impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
 impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
 impl CAIReadWrite for NamedTempFile {}
 
+// Helper struct to create a concrete type for CAIReadWrite when
+// that is required
+pub struct CAIReadWriteWrapper<'a> {
+    pub reader_writer: &'a mut dyn CAIReadWrite,
+}
+
+impl Read for CAIReadWriteWrapper<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader_writer.read(buf)
+    }
+}
+
+impl Write for CAIReadWriteWrapper<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.reader_writer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.reader_writer.flush()
+    }
+}
+
+impl Seek for CAIReadWriteWrapper<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader_writer.seek(pos)
+    }
+}
+
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {
     // Return entire CAI block as Vec<u8>

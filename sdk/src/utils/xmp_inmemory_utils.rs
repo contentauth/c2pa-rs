@@ -160,8 +160,7 @@ fn extract_document_id(xmp: &str) -> Option<String> {
 }
 
 /// add or replace a dc:provenance value to xmp, including dc:terms if needed
-#[allow(dead_code)] // keep for future
-fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
+pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
     let xmp = add_xmp_key(xmp, "xmlns:dcterms", "http://purl.org/dc/terms/")?;
     add_xmp_key(&xmp, "dcterms:provenance", provenance)
 }
