@@ -26,7 +26,7 @@ use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
     asset_io::CAIRead,
-    claim::{Claim, RemoteManifest},
+    claim::{Claim, ClaimGeneratorInfo, RemoteManifest},
     error::{Error, Result},
     jumbf,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
@@ -47,6 +47,10 @@ pub struct Manifest {
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
     #[serde(default = "default_claim_generator")]
     pub claim_generator: String,
+
+    ///
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]

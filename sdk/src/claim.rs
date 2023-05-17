@@ -160,7 +160,7 @@ impl fmt::Debug for ClaimAssertion {
 /// assigned a label (`c2pa.claim.v1`) and being either embedded into the
 /// asset or in the cloud. The claim is cryptographically hashed and
 /// that hash is signed to produce the claim signature.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Clone)]
 pub struct Claim {
     // external manifest
     #[serde(skip_deserializing, skip_serializing)]
@@ -210,6 +210,8 @@ pub struct Claim {
 
     claim_generator: String, // generator of this claim
 
+    claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, // detailed generator info of this claim
+
     signature: String,              // link to signature box
     assertions: Vec<C2PAAssertion>, // list of assertion hashed URIs
 
@@ -235,6 +237,49 @@ pub struct Claim {
 
     #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
+}
+
+/// Description of the claim generator, or the software used in generating the claim.
+///
+/// This structure is also used for actions softwareAgent
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ClaimGeneratorInfo {
+    /// A human readable string naming the claim_generator
+    pub name: String,
+    /// A human readable string of the product's version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// hashed URI to the icon (either embedded or remote)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HashedUri>,
+    // Any other values that are not part of the standard
+    #[serde(flatten)]
+    other: HashMap<String, Value>,
+}
+
+impl ClaimGeneratorInfo {
+    pub fn new<S: Into<String>>(name: S) -> Self {
+        Self {
+            name: name.into(),
+            version: None,
+            icon: None,
+            other: HashMap::new(),
+        }
+    }
+
+    pub fn insert<K, V>(&mut self, key: K, value: V) -> &Self
+    where
+        K: Into<String>,
+        V: Into<Value>,
+    {
+        self.other.insert(key.into(), value.into());
+        self
+    }
+
+    /// Gets additional values by key.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.other.get(key)
+    }
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -303,6 +348,7 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
@@ -336,6 +382,7 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
@@ -497,6 +544,18 @@ impl Claim {
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
+    }
+
+    pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
+        match self.claim_generator_info.as_mut() {
+            Some(cgi) => cgi.push(info),
+            None => self.claim_generator_info = Some([info].to_vec()),
+        }
+        self
+    }
+
+    pub fn get_claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+        self.claim_generator_info.as_deref()
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -1858,5 +1917,28 @@ pub mod tests {
         let value = &cg_map[GH_FULL_VERSION_LIST];
 
         assert_eq!(expected_value, value.as_str().unwrap());
+    }
+
+    #[test]
+    fn test_build_claim_generator_info() {
+        // Create a new claim.
+        let mut claim = create_test_claim().expect("create test claim");
+
+        let mut info = ClaimGeneratorInfo::new("test app");
+        info.version = Some("2.3.4".to_string());
+        info.icon = Some(HashedUri::new(
+            "self#jumbf=c2pa.databoxes.data_box".to_string(),
+            None,
+            b"hashed",
+        ));
+        info.insert("something", "else");
+
+        claim.add_claim_generator_info(info);
+
+        let cgi = claim.get_claim_generator_info().unwrap();
+
+        assert_eq!(&cgi[0].name, "test app");
+        assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
+        assert_eq!(cgi[0].icon.as_ref().unwrap().hash(), b"hashed");
     }
 }

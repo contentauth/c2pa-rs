@@ -19,9 +19,13 @@ use serde_json::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Actor, Metadata},
+    claim::ClaimGeneratorInfo,
     error::Result,
+    hashed_uri::HashedUri,
     Error,
 };
+
+const ASSERTION_CREATION_VERSION: usize = 2;
 
 /// Specification defined C2PA actions
 pub mod c2pa_action {
@@ -59,6 +63,26 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+/// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SoftwareAgent {
+    String(String),
+    ClaimGeneratorInfo(ClaimGeneratorInfo),
+}
+
+impl From<&str> for SoftwareAgent {
+    fn from(s: &str) -> Self {
+        Self::String(s.to_owned())
+    }
+}
+
+impl From<ClaimGeneratorInfo> for SoftwareAgent {
+    fn from(c: ClaimGeneratorInfo) -> Self {
+        Self::ClaimGeneratorInfo(c)
+    }
+}
+
 /// Defines a single action taken on an asset.
 ///
 /// An [`Action`] describes what took place on the asset, when it took place,
@@ -77,7 +101,7 @@ pub struct Action {
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    software_agent: Option<String>,
+    software_agent: Option<SoftwareAgent>,
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     ///
@@ -122,6 +146,10 @@ impl Action {
         }
     }
 
+    fn is_v2(&self) -> bool {
+        false
+    }
+
     /// Returns the label for this action.
     ///
     /// This label is often one of the labels defined in [`c2pa_action`],
@@ -138,8 +166,8 @@ impl Action {
     }
 
     /// Returns the software agent that performed the action.
-    pub fn software_agent(&self) -> Option<&str> {
-        self.software_agent.as_deref()
+    pub fn software_agent(&self) -> Option<&SoftwareAgent> {
+        self.software_agent.as_ref()
     }
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
@@ -182,7 +210,7 @@ impl Action {
     }
 
     /// Sets the software agent that performed the action.
-    pub fn set_software_agent<S: Into<String>>(mut self, software_agent: S) -> Self {
+    pub fn set_software_agent<S: Into<SoftwareAgent>>(mut self, software_agent: S) -> Self {
         self.software_agent = Some(software_agent.into());
         self
     }
@@ -237,6 +265,29 @@ impl Action {
     }
 }
 
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+pub struct ActionTemplate {
+    /// The label associated with this action. See ([`c2pa_action`]).
+    action: String,
+
+    /// The software agent that performed the action.
+    #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
+    software_agent: Option<SoftwareAgent>,
+
+    /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
+    #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
+    source_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<HashedUri>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<HashMap<String, Value>>,
+}
+
 /// An `Actions` assertion provides information on edits and other
 /// actions taken that affect the asset’s content.
 ///
@@ -249,6 +300,9 @@ impl Action {
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,
+
+    /// list of templates for the [`Action`]s
+    pub templates: Option<Vec<ActionTemplate>>,
 
     /// Additional information about the assertion.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,9 +319,16 @@ impl Actions {
     pub fn new() -> Self {
         Self {
             actions: Vec::new(),
+            templates: None,
             metadata: None,
         }
     }
+
+    /// determines if actions is V2
+    // fn is_v2(&self) -> bool {
+    //     if self.templates.is_some() {return true };
+    //     self.actions.iter().any(|a| a.is_v2())
+    // }
 
     /// Returns the list of [`Action`]s.
     pub fn actions(&self) -> &[Action] {
@@ -308,6 +369,19 @@ impl AssertionCbor for Actions {}
 
 impl AssertionBase for Actions {
     const LABEL: &'static str = labels::ACTIONS;
+    const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+
+    /// if we require v2 fields then use V2
+    fn version(&self) -> Option<usize> {
+        if self.templates.is_some() {
+            return Some(1);
+        };
+        if self.actions.iter().any(|a| a.is_v2()) {
+            Some(2)
+        } else {
+            Some(1)
+        }
+    }
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)
@@ -516,7 +590,8 @@ pub mod tests {
                     "parameters": {
                       "description": "gradient",
                       "name": "any value"
-                    }
+                    },
+                    "softwareAgent": "TestApp"
                   },
                   {
                     "action": "c2pa.opened",
@@ -524,7 +599,12 @@ pub mod tests {
                     "parameters": {
                       "description": "import"
                     },
-                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                    "softwareAgent": {
+                        "name": "TestApp",
+                        "version": "1.0",
+                        "something": "else"
+                    },
                   },
                 ],
             "metadata": {
@@ -534,7 +614,11 @@ pub mod tests {
         let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
-        println!("{:?}", serde_json::to_string(&result));
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(original.actions, result.actions);
+        assert_eq!(
+            result.actions[0].software_agent().unwrap(),
+            &SoftwareAgent::String("TestApp".to_string())
+        );
     }
 }

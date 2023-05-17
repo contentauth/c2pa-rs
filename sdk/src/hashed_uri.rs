@@ -15,7 +15,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Hashed Uri stucture as defined by C2PA spec
+/// Hashed Uri structure as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HashedUri {
