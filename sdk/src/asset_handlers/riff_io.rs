@@ -18,7 +18,6 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
 use conv::ValueFrom;
 use riff::*;
 
