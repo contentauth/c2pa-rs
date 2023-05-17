@@ -61,11 +61,11 @@ const VP8_ID: ChunkId = ChunkId {
 }; // VP8 chunk
 
 const VP8L_ID: ChunkId = ChunkId {
-    value: [0x56, 0x50, 0x38, 0x4C],
+    value: [0x56, 0x50, 0x38, 0x4c],
 }; // VP8 chunk
 
 const XMP_CHUNK_ID: ChunkId = ChunkId {
-    value: [0x58, 0x4D, 0x50, 0x20],
+    value: [0x58, 0x4d, 0x50, 0x20],
 }; // XMP
 
 const XMP_FLAG: u32 = 4;
@@ -356,6 +356,7 @@ impl AssetIO for RiffIO {
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         Some(Box::new(RiffIO::new(asset_type)))
     }
+
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
