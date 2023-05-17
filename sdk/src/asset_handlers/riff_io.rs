@@ -91,9 +91,9 @@ fn get_height_and_width(chunk_contents: &[ChunkContents]) -> Result<(u16, u16)> 
 
         // width and length are 12 bits packed together
         let first_bytes = chunk_stream.read_u16::<LittleEndian>()?;
-        let width = 1 + (first_bytes & 0x3FFF); // add 1 for VP8L
-        let last_two = (first_bytes & 0xC000) >> 14; // last two bits of first bytes are first 2 of height
-        let height = 1 + (((chunk_stream.read_u16::<LittleEndian>()? & 0xFFF) << 2) | last_two);
+        let width = 1 + (first_bytes & 0x3fff); // add 1 for VP8L
+        let last_two = (first_bytes & 0xc000) >> 14; // last two bits of first bytes are first 2 of height
+        let height = 1 + (((chunk_stream.read_u16::<LittleEndian>()? & 0xfff) << 2) | last_two);
 
         return Ok((height, width));
     }
@@ -105,8 +105,8 @@ fn get_height_and_width(chunk_contents: &[ChunkContents]) -> Result<(u16, u16)> 
         let mut chunk_stream = Cursor::new(chunk_data);
         chunk_stream.seek(SeekFrom::Start(6))?; // skip frame tag and start code
 
-        let width = chunk_stream.read_u16::<LittleEndian>()? & 0x3FFF;
-        let height = chunk_stream.read_u16::<LittleEndian>()? & 0x3FFF;
+        let width = chunk_stream.read_u16::<LittleEndian>()? & 0x3fff;
+        let height = chunk_stream.read_u16::<LittleEndian>()? & 0x3fff;
 
         return Ok((height, width));
     }
