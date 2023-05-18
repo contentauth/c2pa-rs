@@ -365,6 +365,8 @@ impl BmffHash {
         self.verify_stream(&mut data, alg)
     }
 
+    // Verifies BMFF hashes from a single file asset.  Both flat and fragmented (in a single file)
+    // are supported.
     pub fn verify_stream(
         &self,
         reader: &mut dyn CAIRead,
@@ -508,7 +510,7 @@ impl BmffHash {
                     let mut last_chunk_id = 0;
                     let mut chunk_hash_map: HashMap<u32, Hasher> = HashMap::new();
                     let stsc = &track.trak.mdia.minf.stbl.stsc;
-                    for sample_id in 1..sample_cnt {
+                    for sample_id in 1..=sample_cnt {
                         let stsc_idx = stsc_index(&track, sample_id)?;
 
                         let stsc_entry = &stsc.entries[stsc_idx];
@@ -583,7 +585,6 @@ impl BmffHash {
                             let mut indx = chunk_bmff_mm.location;
 
                             let mut last_hash = leaf_hashes[indx as usize].clone();
-                            // let _p = track_tree.get_proof_by_index(indx as usize).unwrap();
 
                             // if last leaf location is odd skip null nodes
                             if mm.count == chunk_bmff_mm.location + 1 {
@@ -615,19 +616,15 @@ impl BmffHash {
                                 indx /= 2;
                             }
 
-                            let valid = mm.hash_check(indx, &last_hash);
-                            println!("Chunk validated: {valid:?}");
-                            /*
-                            if !valid {
+                            if !mm.hash_check(indx, &last_hash) {
                                 return Err(Error::HashMismatch(
                                     "Merkle chunk hash mismatch".to_owned(),
                                 ));
                             }
-                            */
                         }
                     }
                 } else {
-                    // non-timed so use iloc
+                    // non-timed so use iloc (awaiting use case/example)
                     return Err(Error::HashMismatch(
                         "Merkle iloc not yet supported".to_owned(),
                     ));
@@ -638,6 +635,7 @@ impl BmffHash {
         Ok(())
     }
 
+    // Used to verify fragmented BMFF assets spread across multiple file.
     pub fn verify_stream_segment(
         &self,
         init_stream: &mut dyn CAIRead,
@@ -659,10 +657,14 @@ impl BmffHash {
             ));
         }
 
-        // merkle hashed BMFF
+        // Merkle hashed BMFF
         if let Some(mm_vec) = self.merkle() {
             // get merkle boxes from segment
             let (_manifest_bytes, bmff_merkle) = read_bmff_c2pa_boxes(fragment_stream)?;
+
+            if bmff_merkle.is_empty() {
+                return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
+            }
 
             for bmff_mm in bmff_merkle {
                 // find matching MerkleMap for this uniqueId & localId
@@ -675,7 +677,7 @@ impl BmffHash {
                         None => &curr_alg,
                     };
 
-                    // check the inithash (for fragmented MP4 wtih multiple files this is the hash of the init_segment minus any exclusions)
+                    // check the inithash (for fragmented MP4 with multiple files this is the hash of the init_segment minus any exclusions)
                     if let Some(init_hash) = &mm.init_hash {
                         let bmff_exclusions = &self.exclusions;
 
@@ -744,9 +746,8 @@ impl BmffHash {
                             }
 
                             if !mm.hash_check(indx, &node_hash) {
-                                //return Err(Error::HashMismatch("Fragment not valid".to_string()));
+                                return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
-                            //println!("Fragment validated");
                         } else {
                             // check MerkleMap for the hash
                             if !mm.hash_check(indx, &node_hash) {
@@ -758,6 +759,10 @@ impl BmffHash {
                     return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
                 }
             }
+        } else {
+            return Err(Error::HashMismatch(
+                "Merkle value must be present for a fragmented BMFF asset".to_string(),
+            ));
         }
 
         Ok(())
@@ -811,7 +816,7 @@ fn stream_len(reader: &mut dyn CAIRead) -> crate::Result<u64> {
     Ok(len)
 }
 
-/*  restore when we have the rights to the samples
+/* we need shippable examples
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -834,10 +839,14 @@ pub mod tests {
         let init_stream_path = fixture_path("dashinit.mp4");
         let segment_stream_path = fixture_path("dash1.m4s");
         let segment_stream_path10 = fixture_path("dash10.m4s");
+        let segment_stream_path11 = fixture_path("dash11.m4s");
+
 
         let mut init_stream = std::fs::File::open(init_stream_path).unwrap();
         let mut segment_stream = std::fs::File::open(segment_stream_path).unwrap();
         let mut segment_stream10 = std::fs::File::open(segment_stream_path10).unwrap();
+        let mut segment_stream11 = std::fs::File::open(segment_stream_path11).unwrap();
+
 
         let mut log = DetailedStatusTracker::default();
 
@@ -859,6 +868,10 @@ pub mod tests {
 
                 bmff_hash
                     .verify_stream_segment(&mut init_stream, &mut segment_stream10, None)
+                    .unwrap();
+
+                bmff_hash
+                    .verify_stream_segment(&mut init_stream, &mut segment_stream11, None)
                     .unwrap();
             }
         }
