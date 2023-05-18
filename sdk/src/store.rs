@@ -1381,19 +1381,21 @@ impl Store {
             }
         }
 
-        if block_end as u64 > stream_len {
-            return Err(Error::BadParam(
-                "data hash exclusions out of range".to_string(),
-            ));
-        }
-
         if found_jumbf {
             // add exclusion hash for bytes before and after jumbf
             let mut dh = DataHash::new("jumbf manifest", alg, None);
             if block_end > block_start {
                 dh.add_exclusion(Exclusion::new(block_start, block_end - block_start));
             }
+
             if calc_hashes {
+                // this check is only valid on the final sized asset
+                if block_end as u64 > stream_len {
+                    return Err(Error::BadParam(
+                        "data hash exclusions out of range".to_string(),
+                    ));
+                }
+
                 dh.gen_hash_from_stream(stream)?;
             } else {
                 match alg {
