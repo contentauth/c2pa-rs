@@ -1032,9 +1032,13 @@ impl Ingredient {
                 let mut buf: Vec<u8> = Vec::new();
                 stream.rewind()?;
                 stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                Store::verify_store_async(&store, &mut ClaimAssetData::Bytes(&buf), &mut validation_log)
-                    .await
-                    .map(|_| store)
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::Bytes(&buf),
+                    &mut validation_log,
+                )
+                .await
+                .map(|_| store)
             }
             Err(e) => {
                 // add a log entry for the error so we act like verify

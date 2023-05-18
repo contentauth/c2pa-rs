@@ -1043,6 +1043,7 @@ impl Claim {
             .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
             validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
         }
+
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
@@ -1139,8 +1140,8 @@ impl Claim {
                             ClaimAssetData::Stream(stream_data) => {
                                 dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                             }
-                            _ => return Err(Error::UnsupportedType), // this should never happen (coding error)
-                        };
+                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
+                        }; 
 
                         match hash_result {
                             Ok(_a) => {

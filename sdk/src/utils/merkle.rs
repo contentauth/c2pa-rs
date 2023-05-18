@@ -12,7 +12,6 @@
 // each license.
 
 use crate::{Error, Result};
-
 use extfmt::Hexlify;
 
 use super::hash_utils::{concat_and_hash, hash_by_alg};
