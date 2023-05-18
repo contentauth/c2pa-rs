@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.22.0
+_18 May 2023_
+
+* (MINOR) Improved Remote Manifest handling ([#250](https://github.com/contentauth/c2pa-rs/pull/250))
+* Riff streaming support ([#248](https://github.com/contentauth/c2pa-rs/pull/248))
+
 ## 0.21.0
 _04 May 2023_
 
