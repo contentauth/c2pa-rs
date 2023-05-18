@@ -42,8 +42,8 @@ use crate::{
         labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_memory, object_locations_from_stream,
-        save_jumbf_to_memory, save_jumbf_to_stream,
+        get_assetio_handler, load_jumbf_from_memory, load_jumbf_from_stream,
+        object_locations_from_stream, save_jumbf_to_memory, save_jumbf_to_stream,
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
@@ -2210,9 +2210,7 @@ impl Store {
                 code,
                 resp.status_text()
             ))),
-            Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(format!(
-                "fetch failed: url: {url}"
-            ))),
+            Err(uError::Transport(_)) => Err(Error::RemoteManifestFetch(url.to_string())),
         }
     }
 
@@ -2234,6 +2232,31 @@ impl Store {
                     asset_type,
                 )
                 .provenance
+                {
+                    // return an error with the url that should be read
+                    Err(Error::RemoteManifestUrl(ext_ref))
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// load jumbf given a stream
+    ///
+    /// This handles, embedded and remote manifests
+    ///
+    /// asset_type -  mime type of the stream
+    /// stream - a readable stream of an asset
+    pub fn load_jumbf_from_stream(asset_type: &str, stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        match load_jumbf_from_stream(asset_type, stream) {
+            Ok(manifest_bytes) => Ok(manifest_bytes),
+            Err(Error::JumbfNotFound) => {
+                stream.rewind()?;
+                if let Some(ext_ref) =
+                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
+                        .provenance
                 {
                     // return an error with the url that should be read
                     Err(Error::RemoteManifestUrl(ext_ref))
