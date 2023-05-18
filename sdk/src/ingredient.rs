@@ -981,6 +981,87 @@ impl Ingredient {
         self.resources.set_base_path(base_path.as_ref());
         Ok(self)
     }
+
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes
+    ///
+    /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
+    /// ```
+    /// use c2pa::{Result, Ingredient};
+    ///
+    /// # fn main() -> Result<()> {
+    /// #    async {
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///
+    ///         let ingredient = Ingredient::from_manifest_and_asset_bytes_async(manifest_bytes.to_vec(), "image/jpeg", asset_bytes)
+    ///             .await
+    ///             .unwrap();
+    ///
+    ///         println!("{}", ingredient);
+    /// #    };
+    /// #
+    /// #    Ok(())
+    /// }
+    /// ```
+    pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
+        manifest_bytes: M,
+        format: &str,
+        asset_bytes: &[u8],
+    ) -> Result<Self> {
+        let mut stream = Cursor::new(asset_bytes);
+        Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
+    }
+
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset
+    pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
+        manifest_bytes: M,
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Self> {
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
+
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let manifest_bytes: Vec<u8> = manifest_bytes.into();
+        // generate a store from the buffer and then validate from the asset path
+        let result = Store::from_jumbf(&manifest_bytes, &mut validation_log)
+            .and_then(|mut store| {
+                // verify the store
+                //todo, change this when we have a stream version of verify
+                let mut buf: Vec<u8> = Vec::new();
+                stream.rewind()?;
+                stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+                store
+                    .verify_from_buffer(&buf, format, &mut validation_log)
+                    .map(|_| store)
+            })
+            .map_err(|e| {
+                // add a log entry for the error so we act like verify
+                validation_log.log_silent(
+                    log_item!("asset", "error loading file", "Ingredient::from_file").set_error(&e),
+                );
+                e
+            });
+
+        // set validation status from result and log
+        ingredient.update_validation_status(result, Some(manifest_bytes), &mut validation_log)?;
+
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
+        #[cfg(feature = "add_thumbnails")]
+        if ingredient.thumbnail.is_none() {
+            stream.rewind()?;
+            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
+                Ok((format, image)) => {
+                    ingredient.set_thumbnail(format, image)?;
+                }
+                Err(err) => {
+                    log::warn!("Could not create thumbnail. {err}");
+                }
+            }
+        }
+        Ok(ingredient)
+    }
 }
 
 impl std::fmt::Display for Ingredient {
@@ -1162,13 +1243,15 @@ mod tests {
         assert_eq!(ingredient.format(), format);
         #[cfg(feature = "add_thumbnails")]
         assert!(ingredient.thumbnail().is_some());
-        //assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
-        //assert!(ingredient.validation_status().is_none());
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::ASSERTION_DATAHASH_MISMATCH
+        );
     }
 
-    //#[cfg(feature = "fetch_remote_manifests")]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_jpg_cloud_from_memory() {
@@ -1177,12 +1260,41 @@ mod tests {
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        println!("ingredient = {ingredient}");
+        //println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
             validation_status::MANIFEST_INACCESSIBLE
         );
+        assert!(ingredient.validation_status().unwrap()[0]
+            .url()
+            .unwrap()
+            .starts_with("http"));
+        assert!(ingredient.manifest_data().is_none());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_jpg_cloud_from_memory_and_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
+            manifest_bytes.to_vec(),
+            format,
+            asset_bytes,
+        )
+        .await
+        .unwrap();
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::debug_2(
+            &"ingredient_from_memory_async:".into(),
+            &ingredient.to_string().into(),
+        );
+        #[cfg(not(target_arch = "wasm32"))] // wasm has claim signature mismatch, fix this
+        assert!(ingredient.validation_status().is_none());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.provenance().is_some());
     }
 }
 
