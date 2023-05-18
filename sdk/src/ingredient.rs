@@ -1025,24 +1025,25 @@ impl Ingredient {
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
-        let result = Store::from_jumbf(&manifest_bytes, &mut validation_log)
-            .and_then(|mut store| {
+        let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+            Ok(store) => {
                 // verify the store
                 //todo, change this when we have a stream version of verify
                 let mut buf: Vec<u8> = Vec::new();
                 stream.rewind()?;
                 stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                store
-                    .verify_from_buffer(&buf, format, &mut validation_log)
+                Store::verify_store_async(&store, &buf, &mut validation_log)
+                    .await
                     .map(|_| store)
-            })
-            .map_err(|e| {
+            }
+            Err(e) => {
                 // add a log entry for the error so we act like verify
                 validation_log.log_silent(
                     log_item!("asset", "error loading file", "Ingredient::from_file").set_error(&e),
                 );
-                e
-            });
+                Err(e)
+            }
+        };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, Some(manifest_bytes), &mut validation_log)?;
@@ -1291,7 +1292,6 @@ mod tests {
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
         );
-        #[cfg(not(target_arch = "wasm32"))] // wasm has claim signature mismatch, fix this
         assert!(ingredient.validation_status().is_none());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.provenance().is_some());
