@@ -271,7 +271,7 @@ impl ManifestStore {
 
         Store::verify_store_async(
             &store,
-            &mut ClaimAssetData::Byte(asset_bytes),
+            &mut ClaimAssetData::Bytes(asset_bytes),
             &mut validation_log,
         )
         .await?;

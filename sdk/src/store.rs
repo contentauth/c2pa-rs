@@ -2161,7 +2161,7 @@ impl Store {
         _asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Byte(buf), validation_log)
+        Store::verify_store(self, &mut ClaimAssetData::Bytes(buf), validation_log)
     }
 
     // verify from a buffer without file i/o
@@ -2414,7 +2414,7 @@ impl Store {
             // verify the store
             if verify {
                 // verify store and claims
-                Store::verify_store(&store, &mut ClaimAssetData::Byte(data), validation_log)?;
+                Store::verify_store(&store, &mut ClaimAssetData::Bytes(data), validation_log)?;
             }
 
             Ok(store)
@@ -2437,7 +2437,7 @@ impl Store {
         // verify the store
         if verify {
             // verify store and claims
-            Store::verify_store_async(&store, &mut ClaimAssetData::Byte(data), validation_log)
+            Store::verify_store_async(&store, &mut ClaimAssetData::Bytes(data), validation_log)
                 .await?;
         }
 

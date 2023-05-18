@@ -59,7 +59,7 @@ const GH_UA: &str = "Sec-CH-UA";
 // used to handle different data types.
 pub enum ClaimAssetData<'a> {
     Path(&'a Path),
-    Byte(&'a [u8]),
+    Bytes(&'a [u8]),
     Stream(&'a mut dyn CAIRead),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead),
 }
@@ -1133,7 +1133,7 @@ impl Claim {
                             ClaimAssetData::Path(asset_path) => {
                                 dh.verify_hash(asset_path, Some(claim.alg()))
                             }
-                            ClaimAssetData::Byte(asset_bytes) => {
+                            ClaimAssetData::Bytes(asset_bytes) => {
                                 dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                             }
                             ClaimAssetData::Stream(stream_data) => {
@@ -1180,7 +1180,7 @@ impl Claim {
                         ClaimAssetData::Path(asset_path) => {
                             dh.verify_hash(asset_path, Some(claim.alg()))
                         }
-                        ClaimAssetData::Byte(asset_bytes) => {
+                        ClaimAssetData::Bytes(asset_bytes) => {
                             dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                         }
                         ClaimAssetData::Stream(stream_data) => {
