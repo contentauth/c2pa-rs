@@ -13,6 +13,8 @@
 
 use crate::{Error, Result};
 
+use extfmt::Hexlify;
+
 use super::hash_utils::{concat_and_hash, hash_by_alg};
 
 #[derive(Default, Clone, PartialEq, Debug)]
@@ -104,5 +106,14 @@ impl C2PAMerkleTree {
             index /= 2;
         }
         Ok(proof)
+    }
+
+    pub fn tree_dump(&self) {
+        for (i, layer) in self.layers.iter().enumerate() {
+            println!("Level: {i}");
+            for (j, mn) in layer.iter().enumerate() {
+                println!("{} (Node: {j})", Hexlify(&mn.0));
+            }
+        }
     }
 }
