@@ -27,7 +27,7 @@ use crate::{
         CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::add_provenance,
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 static SUPPORTED_TYPES: [&str; 9] = [
@@ -588,8 +588,6 @@ impl RemoteRefEmbed for RiffIO {
                                 .map_err(|_e| Error::EmbeddingError)?;
                             Ok(())
                         } else {
-                            const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" > </rdf:Description></rdf:RDF> </x:xmpmeta> "#;
-
                             let mut new_xmp = add_provenance(MIN_XMP, &manifest_uri)?;
 
                             if new_xmp.len() % 2 == 1 {

@@ -49,7 +49,10 @@ impl CAIRead for std::io::Cursor<Vec<u8>> {}
 impl CAIRead for NamedTempFile {}
 
 // Helper struct to create a concrete type for CAIRead when
-// that is required
+// that is required.  For example a function defined like this
+//  pub fn read<T>(&self, reader: &mut T) cannot currently accept
+// a CAIRead trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
 pub(crate) struct CAIReadWrapper<'a> {
     pub reader: &'a mut dyn CAIRead,
 }
@@ -74,7 +77,11 @@ impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
 impl CAIReadWrite for NamedTempFile {}
 
 // Helper struct to create a concrete type for CAIReadWrite when
-// that is required
+// that is required. For example a function defined like this
+//  pub fn write<T>(&self, writer: &mut T) cannot currently accept
+// a CAIReadWrite trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
+// go away in future revisions of Rust.
 pub(crate) struct CAIReadWriteWrapper<'a> {
     pub reader_writer: &'a mut dyn CAIReadWrite,
 }
