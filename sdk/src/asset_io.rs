@@ -48,12 +48,65 @@ impl CAIRead for std::io::Cursor<&mut [u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
 impl CAIRead for NamedTempFile {}
 
+// Helper struct to create a concrete type for CAIRead when
+// that is required.  For example a function defined like this
+//  pub fn read<T>(&self, reader: &mut T) cannot currently accept
+// a CAIRead trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
+pub(crate) struct CAIReadWrapper<'a> {
+    pub reader: &'a mut dyn CAIRead,
+}
+
+impl Read for CAIReadWrapper<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl Seek for CAIReadWrapper<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
 pub trait CAIReadWrite: CAIRead + Write {}
 
 impl CAIReadWrite for std::fs::File {}
 impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
 impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
 impl CAIReadWrite for NamedTempFile {}
+
+// Helper struct to create a concrete type for CAIReadWrite when
+// that is required. For example a function defined like this
+//  pub fn write<T>(&self, writer: &mut T) cannot currently accept
+// a CAIReadWrite trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
+// go away in future revisions of Rust.
+pub(crate) struct CAIReadWriteWrapper<'a> {
+    pub reader_writer: &'a mut dyn CAIReadWrite,
+}
+
+impl Read for CAIReadWriteWrapper<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader_writer.read(buf)
+    }
+}
+
+impl Write for CAIReadWriteWrapper<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.reader_writer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.reader_writer.flush()
+    }
+}
+
+impl Seek for CAIReadWriteWrapper<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader_writer.seek(pos)
+    }
+}
 
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {

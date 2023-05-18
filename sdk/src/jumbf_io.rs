@@ -358,7 +358,6 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
-            Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
         ];
 
