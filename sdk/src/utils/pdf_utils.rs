@@ -207,41 +207,38 @@ impl Pdf {
             "Rect" => vec![0.into(), 0.into(), 10.into(), 10.into()],
         };
 
-        // Insert annotation into the PDF.
+        // Add C2PA annotation as an indirect object.
         let annotation_ref = self.document.add_object(annotation);
 
-        // Find the first page of the PDF.
+        // Find the reference to the first page of the PDF.
         let first_page_ref = self
             .document
             .page_iter()
             .next()
             .ok_or_else(|| Error::AddingAnnotation)?;
 
-        // Get the annotations of the first page of the PDF and add the reference to the newly
-        // inserted annotation.
-        let mut annotations = self.get_page_annotations(first_page_ref)?;
+        // Get a mutable ref to the first page as a `Dictionary` object.
+        let first_page = self
+            .document
+            .get_object_mut(first_page_ref)?
+            .as_dict_mut()?;
+
+        // Ensures the `/Annots` key is present exists on the page.
+        if !first_page.has(ANNOTATIONS_KEY) {
+            first_page.set(ANNOTATIONS_KEY, Array(vec![]))
+        }
+
+        // Follow a reference to the indirect annotations array, if it exists.
+        let annotation_object = first_page.get_mut(ANNOTATIONS_KEY)?;
+        let annotations = if let Ok(v) = annotation_object.as_reference() {
+            self.document.get_object_mut(v)?
+        } else {
+            annotation_object
+        }
+        .as_array_mut()?;
+
         annotations.push(Reference(annotation_ref));
-
-        // Update the first page's `Annots` value with the updated annotations array.
-        let first_page_dict = self.document.get_dictionary_mut(first_page_ref)?;
-        first_page_dict.set(ANNOTATIONS_KEY, annotations.to_vec());
-
         Ok(())
-    }
-
-    /// Gets the `Annotation`s for the provided Page `ObjectId`.
-    ///
-    /// This function will create an empty vector of annotations if the associated page of the PDF
-    /// doesn't have a vector of annotations already defined.
-    fn get_page_annotations(&self, page_ref: ObjectId) -> Result<Vec<Object>, Error> {
-        let first_page = self.document.get_object(page_ref)?.as_dict()?;
-
-        Ok(first_page
-            .get_deref(ANNOTATIONS_KEY, &self.document)
-            .cloned()
-            .unwrap_or_else(|_| Array(vec![]))
-            .as_array()?
-            .clone())
     }
 
     /// Sets the PDF's Associated File (`/AF`) key to the provided embedded file spec reference.
