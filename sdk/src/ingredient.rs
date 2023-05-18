@@ -504,6 +504,20 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
+            Err(Error::RemoteManifestUrl(url)) => {
+                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
+                    .set_url(url)
+                    .set_explanation("Remote manifest not fetched".to_string());
+                self.validation_status = Some(vec![status]);
+                Ok(())
+            }
+            Err(Error::RemoteManifestFetch(url)) => {
+                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
+                    .set_url(url)
+                    .set_explanation("Unable to fetch remote manifest".to_string());
+                self.validation_status = Some(vec![status]);
+                Ok(())
+            }
             Err(e) => {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
@@ -719,7 +733,7 @@ impl Ingredient {
         let mut validation_log = DetailedStatusTracker::new();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
+        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
@@ -1153,6 +1167,23 @@ mod tests {
         assert!(ingredient.metadata().is_none());
         //assert!(ingredient.validation_status().is_none());
     }
+
+    //#[cfg(feature = "fetch_remote_manifests")]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_jpg_cloud_from_memory() {
+        let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory_async");
+        println!("ingredient = {ingredient}");
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::MANIFEST_INACCESSIBLE
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1350,7 +1381,6 @@ mod tests_file_io {
         assert!(ingredient.manifest_data().is_some());
     }
 
-    /*  this test cannot succeed because memory loading path does not support validation status at the moment
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
@@ -1363,7 +1393,6 @@ mod tests_file_io {
             validation_status::MANIFEST_INACCESSIBLE
         );
     }
-    */
 
     #[test]
     #[cfg(feature = "file_io")]
