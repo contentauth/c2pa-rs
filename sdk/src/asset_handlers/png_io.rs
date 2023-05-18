@@ -159,11 +159,10 @@ fn add_required_chunks_to_stream(
             let aio = PngIO {};
             aio.write_cai(input_stream, output_stream, &no_bytes)?;
         } else {
-            // just move input to output
-            let mut buf: Vec<u8> = Vec::new();
+            // just clone
             input_stream.rewind()?;
-            input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-            output_stream.write_all(&buf)?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
         }
     } else {
         return Err(Error::UnsupportedType);
