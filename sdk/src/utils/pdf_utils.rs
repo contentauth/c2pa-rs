@@ -22,7 +22,7 @@ pub(crate) enum Error {
     #[error(transparent)]
     UnableToReadPdf(#[from] lopdf::Error),
 
-    #[error("Unable to add c2pa manifest as an annotation to the PDF.")]
+    #[error("Unable to add C2PA manifest as an annotation to the PDF.")]
     AddingAnnotation,
 }
 
