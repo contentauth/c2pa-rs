@@ -1032,7 +1032,7 @@ impl Ingredient {
                 let mut buf: Vec<u8> = Vec::new();
                 stream.rewind()?;
                 stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                Store::verify_store_async(&store, &buf, &mut validation_log)
+                Store::verify_store_async(&store, &mut ClaimAssetData::Bytes(&buf), &mut validation_log)
                     .await
                     .map(|_| store)
             }
