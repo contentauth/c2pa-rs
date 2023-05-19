@@ -27,8 +27,6 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use serde_bytes::ByteBuf;
-
-// direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{
