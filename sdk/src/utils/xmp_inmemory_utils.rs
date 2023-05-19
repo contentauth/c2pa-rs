@@ -26,6 +26,8 @@ use crate::{
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 
+pub const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" > </rdf:Description></rdf:RDF> </x:xmpmeta> "#;
+
 #[derive(Default)]
 pub struct XmpInfo {
     pub document_id: Option<String>,
@@ -160,8 +162,7 @@ fn extract_document_id(xmp: &str) -> Option<String> {
 }
 
 /// add or replace a dc:provenance value to xmp, including dc:terms if needed
-#[allow(dead_code)] // keep for future
-fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
+pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
     let xmp = add_xmp_key(xmp, "xmlns:dcterms", "http://purl.org/dc/terms/")?;
     add_xmp_key(&xmp, "dcterms:provenance", provenance)
 }
@@ -189,12 +190,6 @@ mod tests {
             </rdf:Description>
         </rdf:RDF>
     </x:xmpmeta>"#;
-
-    const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?> 
-    <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">
-     <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"> 
-     <rdf:Description rdf:about="" >  </rdf:Description>
-     </rdf:RDF> </x:xmpmeta> "#;
 
     const PROVENANCE: &str =
         "self#jumbf=c2pa/contentauth:urn:uuid:a58065fb-79ae-4eb3-87b9-a19830860059/c2pa.claim";
