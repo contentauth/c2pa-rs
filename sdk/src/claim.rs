@@ -1141,7 +1141,7 @@ impl Claim {
                                 dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                             }
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
-                        }; 
+                        };
 
                         match hash_result {
                             Ok(_a) => {

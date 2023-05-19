@@ -21,9 +21,10 @@ use std::{
 };
 
 use mp4::*;
-
 use serde::{
-    de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
+    de::{SeqAccess, Visitor},
+    ser::SerializeSeq,
+    Deserialize, Deserializer, Serialize, Serializer,
 };
 use serde_bytes::ByteBuf;
 
@@ -80,6 +81,7 @@ pub struct VecByteBuf(Vec<ByteBuf>);
 
 impl Deref for VecByteBuf {
     type Target = Vec<ByteBuf>;
+
     fn deref(&self) -> &Vec<ByteBuf> {
         &self.0
     }

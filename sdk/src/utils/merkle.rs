@@ -11,10 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{Error, Result};
 use extfmt::Hexlify;
 
 use super::hash_utils::{concat_and_hash, hash_by_alg};
+use crate::{Error, Result};
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct MerkleNode(pub Vec<u8>);
