@@ -165,7 +165,44 @@ pub fn hash_asset_by_alg_with_inclusions(
     hash_stream_by_alg(alg, &mut file, Some(inclusions), false)
 }
 
-// Return hash bytes for stream using desired hashing algorithm.
+/*  Returns hash bytes for a stream using desired hashing algorithm.  The function handles the many
+    possible hash requirements of C2PA.  The function accepts a source stream 'data', an optional
+    set of hash ranges 'hash_range' and a boolean to indicate whether the hash range is an exclusion
+    or inclusion set of hash ranges.
+
+    The basic case is to hash a stream without hash ranges:
+    The data represents a single contiguous stream of bytes to be hash where D are data bytes
+
+    to_be_hashed: [DDDDDDDDD...DDDDDDDDDD]
+
+    The data is then chunked and hashed in groups to reduce memory
+    footprint and increase performance.
+
+    The most common case for C2PA is the use of an exclusion hash.  In this case the 'hash_range' indicate
+    which byte ranges should be excluded shown here depicted with I for included bytes and  X for excluded bytes
+
+    to_be_hashed: [IIIIXXXIIIIXXXXXIIIXXIII...IIII]
+
+    In this case the data is split into a set of ranges covering the included bytes.  The set of ranged bytes
+    are then chunked and hashed just like the default case.
+
+    The opposite of this is when 'is_exclusion' is set to true indicating the 'hash_ranges' represent the bytes
+    to include in the hash. Here are the bytes in 'data' are excluded except those explicitly referenced.
+
+    to_be_hashed: [XXXXXXIIIIXXXXXIIXXXX...XXXX]
+
+    Again a set of ranged bytes are created and hashed as described above.
+
+    The last case is a special requirement for BMFF based assets (exclusion hashes only).  For this case we not
+    only hash the data but also the location where the data was found in the asset.  To do this we add a special
+    HashRange object to the hash ranges to indicate which locations in the stream require this special offset
+    hash.  To make processing efficient we again split the data into ranges at not just the exclusion
+    points but also for these markers.  The hashing loop knows to pause at these special marker ranges to insert
+    the hash of the offset.  The stream sent to the hashing loop logically looks like this where M is the marker.
+    to_be_hashed: [IIIIIXXXXXMIIIIIMXXXXXMXXXXIII...III]
+
+    The data is again split into range sets breaking at the exclusion points and now also the markers.
+*/
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,
@@ -224,13 +261,20 @@ where
                     // add new BMFF V2 offset as a new range to be included so that we can
                     // pause to add the offset hash
                     if let Some(offset) = exclusion.bmff_offset() {
-                        ranges_vec.push(RangeInclusive::new(offset, offset));
                         bmff_v2_starts.push(offset);
                     }
                 }
 
                 // merge standard ranges and BMFF V2 ranges into single list
                 if !bmff_v2_starts.is_empty() {
+                    // remove any offset hashes that would be excluded
+                    bmff_v2_starts.retain(|o| ranges.iter().any(|r| *o + 1 == r));
+
+                    // add in remaining BMFF V2 offsets
+                    for os in bmff_v2_starts.iter() {
+                        ranges_vec.push(RangeInclusive::new(*os, *os));
+                    }
+
                     // add regularly included ranges
                     for r in ranges.into_smallvec() {
                         ranges_vec.push(r);
