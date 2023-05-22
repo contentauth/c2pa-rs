@@ -47,6 +47,32 @@ impl C2PAMerkleTree {
         C2PAMerkleTree { leaves, layers }
     }
 
+    // generate layer layout
+    pub fn to_layout(num_leaves: usize) -> Vec<usize> {
+        let mut layers = Vec::new();
+
+        layers.push(num_leaves);
+        let mut current_layer = layers[0];
+
+        while current_layer > 1 {
+            let parent_layer_index = layers.len();
+            let mut parent_layer_cnt: usize = 0;
+
+            for i in (0..current_layer).step_by(2) {
+                if i + 1 == current_layer {
+                    parent_layer_cnt += 1;
+                    continue;
+                }
+
+                parent_layer_cnt += 1;
+            }
+            layers.push(parent_layer_cnt);
+            current_layer = layers[parent_layer_index];
+        }
+
+        layers
+    }
+
     pub fn get_root(&self) -> Option<&Vec<u8>> {
         Some(&self.layers.last()?.first()?.0)
     }
@@ -105,6 +131,12 @@ impl C2PAMerkleTree {
             index /= 2;
         }
         Ok(proof)
+    }
+
+    pub fn num_layers_required(n: u32) -> i32 {
+        let f = 1.0 * n as f32;
+
+        f.log2().ceil() as i32
     }
 
     pub fn tree_dump(&self) {

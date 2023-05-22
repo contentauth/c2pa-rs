@@ -186,7 +186,7 @@ pub fn hash_asset_by_alg_with_inclusions(
     In this case the data is split into a set of ranges covering the included bytes.  The set of ranged bytes
     are then chunked and hashed just like the default case.
 
-    The opposite of this is when 'is_exclusion' is set to true indicating the 'hash_ranges' represent the bytes
+    The opposite of this is when 'is_exclusion' is set to false indicating the 'hash_ranges' represent the bytes
     to include in the hash. Here are the bytes in 'data' are excluded except those explicitly referenced.
 
     to_be_hashed: [XXXXXXIIIIXXXXXIIXXXX...XXXX]
