@@ -245,6 +245,13 @@ pub(crate) struct BoxInfo {
     flags: Option<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BoxInfoLite {
+    pub path: String,
+    pub offset: u64,
+    pub size: u64,
+}
+
 fn read_box_header_ext(reader: &mut dyn CAIRead) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
@@ -380,6 +387,30 @@ fn get_top_level_box_offsets(
     }
 
     tl_offsets
+}
+
+fn get_top_level_boxes(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_path_map: &HashMap<String, Vec<Token>>,
+) -> Vec<BoxInfoLite> {
+    let mut tl_boxes = Vec::new();
+
+    for (p, t) in bmff_path_map {
+        // look for top level offsets
+        if p.matches('/').count() == 1 {
+            for token in t {
+                if let Some(box_info) = bmff_tree.get(*token) {
+                    tl_boxes.push(BoxInfoLite {
+                        path: box_info.data.path.clone(),
+                        offset: box_info.data.offset,
+                        size: box_info.data.size,
+                    });
+                }
+            }
+        }
+    }
+
+    tl_boxes
 }
 
 pub fn bmff_to_jumbf_exclusions(
@@ -1006,9 +1037,13 @@ fn get_manifest_token(
     None
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(
-    reader: &mut dyn CAIRead,
-) -> Result<(Option<Vec<u8>>, Vec<BmffMerkleMap>)> {
+pub(crate) struct C2PABmffBoxes {
+    pub manifest_bytes: Option<Vec<u8>>,
+    pub bmff_merkle: Vec<BmffMerkleMap>,
+    pub box_infos: Vec<BoxInfoLite>,
+}
+
+pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
     let size = reader.seek(SeekFrom::End(0))?;
     reader.rewind()?;
 
@@ -1118,14 +1153,23 @@ pub(crate) fn read_bmff_c2pa_boxes(
         }
     }
 
-    Ok((output, merkle_boxes))
+    // get position ordered list of boxes
+    let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(&bmff_tree, &bmff_map);
+    //box_infos.retain(|b| b.path == "uuid" || b.path == "moof");
+    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+
+    Ok(C2PABmffBoxes {
+        manifest_bytes: output,
+        bmff_merkle: merkle_boxes,
+        box_infos,
+    })
 }
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let (output, _merkle_boxes) = read_bmff_c2pa_boxes(reader)?;
+        let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
 
-        output.ok_or(Error::JumbfNotFound)
+        c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
@@ -1584,44 +1628,6 @@ pub(crate) fn is_fragmented(asset: &mut dyn CAIRead) -> Result<bool> {
     build_bmff_tree(asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
     Ok(bmff_map.get("/moovf").is_some())
-}
-
-pub(crate) fn get_init_segment_boxes(asset: &mut dyn CAIRead) -> Result<Vec<BoxInfo>> {
-    asset.rewind()?;
-
-    let start = asset.stream_position()?;
-    let size = asset.seek(SeekFrom::End(0))?;
-    asset.seek(SeekFrom::Start(start))?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    build_bmff_tree(asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
-
-    let mut boxes = Vec::new();
-
-    if let Some(ftyp_tokens) = bmff_map.get("/ftyp") {
-        boxes.push(bmff_tree[ftyp_tokens[0]].data.clone());
-    }
-
-    if let Some(moov_tokens) = bmff_map.get("/moov") {
-        boxes.push(bmff_tree[moov_tokens[0]].data.clone());
-    }
-
-    Ok(boxes)
 }
 
 #[allow(dead_code)]
