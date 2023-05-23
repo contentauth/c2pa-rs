@@ -15,7 +15,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
-use log::{debug, error, warn};
+use log::{debug, error};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -293,38 +293,15 @@ impl Manifest {
             error!("parent already added");
             return Err(Error::BadParam("Parent parent already added".to_owned()));
         }
-        // if the hash of our new ingredient does not match any of the ingredients
-        // then add it
-        if !self
-            .ingredients
-            .iter()
-            .any(|i| ingredient.hash().is_some() && i.hash() == ingredient.hash())
-        {
-            debug!("ingredients:set_is_parent {:?}", ingredient.title());
-            ingredient.set_is_parent();
-            self.ingredients.insert(0, ingredient);
-        } else {
-            // dup so just keep the ingredient instead of adding the parent
-            warn!("duplicate parent {}", ingredient.title());
-        }
+        ingredient.set_is_parent();
+        self.ingredients.insert(0, ingredient);
 
         Ok(self)
     }
 
     /// Add an ingredient removing duplicates (consumes the asset)
     pub fn add_ingredient(&mut self, ingredient: Ingredient) -> &mut Self {
-        // if the hash of the new asset does not match any of the ingredients
-        // then add it
-        if !self
-            .ingredients
-            .iter()
-            .any(|i| ingredient.hash().is_some() && i.hash() == ingredient.hash())
-        {
-            debug!("Manifest:add_ingredient {:?}", ingredient.title());
-            self.ingredients.push(ingredient);
-        } else {
-            warn!("duplicate ingredient {}", ingredient.title());
-        }
+        self.ingredients.push(ingredient);
         self
     }
 
@@ -718,6 +695,7 @@ impl Manifest {
                         })
                         .collect();
 
+                    dbg!(&needs_ingredient);
                     for (index, action) in needs_ingredient {
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
