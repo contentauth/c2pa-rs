@@ -3615,7 +3615,7 @@ pub mod tests {
     fn test_modify_xmp() {
         // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
         let mut report = patch_and_report(
-            "C.jpg",
+            "cloud.jpg",
             b"W5M0MpCehiHzreSzNTczkc9d",
             b"W5M0MpCehiHzreSzNTczkXXX",
         );

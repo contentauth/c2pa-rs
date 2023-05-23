@@ -200,6 +200,8 @@ impl MakeTestImages {
         }
 
         let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
+
         let mut manifest = Manifest::new(generator);
         manifest.set_vendor("contentauth".to_owned()); // needed for generating error cases below
 
@@ -253,13 +255,14 @@ impl MakeTestImages {
                         *pixel = image::Rgb([r, 100, b]);
                     }
                 }
-                actions = actions
-                    .add_action(Action::new(c2pa_action::CREATED))
-                    .add_action(
-                        Action::new(c2pa_action::DRAWING)
-                            .set_parameter("name".to_owned(), "gradient")?,
-                    );
-
+                actions = actions.add_action(
+                    Action::new(c2pa_action::CREATED)
+                        .set_source_type(
+                            "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        )
+                        .set_software_agent(software_agent)
+                        .set_parameter("name".to_owned(), "gradient")?,
+                );
                 img
             }
         };

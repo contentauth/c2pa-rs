@@ -1559,6 +1559,7 @@ pub mod tests {
     use crate::utils::test::{fixture_path, temp_dir_path};
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_read_mp4() {
         use crate::{
