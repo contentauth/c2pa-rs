@@ -13,6 +13,7 @@
 
 //! Constructs a set of test images using a configuration script
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -209,6 +210,9 @@ impl MakeTestImages {
             manifest.add_assertion(&creative_work)?;
         }
 
+        // keep track of ingredient instances so we don't duplicate them
+        let mut ingredient_table = HashMap::new();
+
         // process parent first
         let mut img = match src {
             Some(src) => {
@@ -216,10 +220,15 @@ impl MakeTestImages {
 
                 let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
 
+                let instance_id = parent.instance_id().to_string();
+
                 actions = actions.add_action(
                     Action::new(c2pa_action::OPENED).set_instance_id(parent.instance_id()),
                 );
                 manifest.set_parent(parent)?;
+
+                // keep track of all ingredients we add via the instance Id
+                ingredient_table.insert(src, instance_id);
 
                 // load the image for editing
                 let mut img =
@@ -274,13 +283,21 @@ impl MakeTestImages {
                 let img_small = img_ingredient.thumbnail(width, height);
                 image::imageops::overlay(&mut img, &img_small, x, 0);
 
-                // create and add the ingredient
-                let ingredient =
-                    Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
-                actions = actions.add_action(
-                    Action::new(c2pa_action::PLACED).set_instance_id(ingredient.instance_id()),
-                );
-                manifest.add_ingredient(ingredient);
+                // if we have already created an ingredient, get the instanceId, otherwise create a new one
+                let instance_id = match ingredient_table.get(ing.as_str()) {
+                    Some(id) => id.to_owned(),
+                    None => {
+                        let ingredient =
+                            Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
+                        let instance_id = ingredient.instance_id().to_string();
+                        ingredient_table.insert(ing, instance_id.clone());
+                        manifest.add_ingredient(ingredient);
+                        instance_id
+                    }
+                };
+
+                actions = actions
+                    .add_action(Action::new(c2pa_action::PLACED).set_instance_id(instance_id));
 
                 x += width as i64;
             }
