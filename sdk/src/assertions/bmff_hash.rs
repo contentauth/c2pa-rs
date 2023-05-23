@@ -715,12 +715,12 @@ impl BmffHash {
                         }
 
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
-                            let hash = leaf_hashes[chunk_bmff_mm.location as usize].clone();
+                            let hash = &leaf_hashes[chunk_bmff_mm.location as usize];
 
                             // check MerkleMap for the hash
                             if !mm.check_merkle_tree(
                                 alg,
-                                &hash,
+                                hash,
                                 chunk_bmff_mm.location,
                                 &chunk_bmff_mm.hashes,
                             ) {

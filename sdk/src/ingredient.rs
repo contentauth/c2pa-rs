@@ -1019,7 +1019,6 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
-        stream.rewind()?;
 
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -1028,7 +1027,6 @@ impl Ingredient {
         let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
             Ok(store) => {
                 // verify the store
-                //todo, change this when we have a stream version of verify
                 stream.rewind()?;
                 Store::verify_store_async(
                     &store,
