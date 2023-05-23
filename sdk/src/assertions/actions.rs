@@ -147,7 +147,10 @@ impl Action {
     }
 
     fn is_v2(&self) -> bool {
-        false
+        matches!(
+            self.software_agent,
+            Some(SoftwareAgent::ClaimGeneratorInfo(_))
+        )
     }
 
     /// Returns the label for this action.
@@ -302,6 +305,7 @@ pub struct Actions {
     pub actions: Vec<Action>,
 
     /// list of templates for the [`Action`]s
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub templates: Option<Vec<ActionTemplate>>,
 
     /// Additional information about the assertion.
@@ -325,10 +329,12 @@ impl Actions {
     }
 
     /// determines if actions is V2
-    // fn is_v2(&self) -> bool {
-    //     if self.templates.is_some() {return true };
-    //     self.actions.iter().any(|a| a.is_v2())
-    // }
+    fn is_v2(&self) -> bool {
+        if self.templates.is_some() {
+            return true;
+        };
+        self.actions.iter().any(|a| a.is_v2())
+    }
 
     /// Returns the list of [`Action`]s.
     pub fn actions(&self) -> &[Action] {
@@ -373,10 +379,7 @@ impl AssertionBase for Actions {
 
     /// if we require v2 fields then use V2
     fn version(&self) -> Option<usize> {
-        if self.templates.is_some() {
-            return Some(1);
-        };
-        if self.actions.iter().any(|a| a.is_v2()) {
+        if self.is_v2() {
             Some(2)
         } else {
             Some(1)
