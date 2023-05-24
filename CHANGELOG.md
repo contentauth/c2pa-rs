@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.22.0
+_18 May 2023_
+
+* (MINOR) Improved Remote Manifest handling ([#250](https://github.com/contentauth/c2pa-rs/pull/250))
+* Riff streaming support ([#248](https://github.com/contentauth/c2pa-rs/pull/248))
+
+## 0.21.0
+_04 May 2023_
+
+* (MINOR) Added ResourceNotFound error ([#244](https://github.com/contentauth/c2pa-rs/pull/244))
+
+## 0.20.3
+_03 May 2023_
+
+* backed out calls to set_memory_thumbnail ([#243](https://github.com/contentauth/c2pa-rs/pull/243))
+* Revert "backed out calls to set_memory_thumbnail"
+* backed out calls to set_memory_thumbnail This was causing thumbnail files to not be generated.
+
+## 0.20.2
+_24 April 2023_
+
+* Fixes bug in Ingredient_from_stream_info ([#241](https://github.com/contentauth/c2pa-rs/pull/241))
+
 ## 0.20.1
 _20 April 2023_
 
