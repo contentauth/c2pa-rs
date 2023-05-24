@@ -250,7 +250,7 @@ pub struct BmffHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     url: Option<UriT>, // deprecated in V2 and not to be used
 
     #[serde(skip)]
@@ -517,7 +517,7 @@ impl BmffHash {
                 }
             }
 
-            // is the fragmented BMFF
+            // is this a fragmented BMFF
             if is_fragmented {
                 for mm in mm_vec {
                     let alg = match &mm.alg {
@@ -730,7 +730,7 @@ impl BmffHash {
                     }
                 }
             } else {
-                // non-timed so use iloc (awaiting use case/example since the iloc varies by format)
+                // non-timed media so use iloc (awaiting use case/example since the iloc varies by format)
                 return Err(Error::HashMismatch(
                     "Merkle iloc not yet supported".to_owned(),
                 ));

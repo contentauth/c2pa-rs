@@ -1155,7 +1155,6 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
 
     // get position ordered list of boxes
     let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(&bmff_tree, &bmff_map);
-    //box_infos.retain(|b| b.path == "uuid" || b.path == "moof");
     box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
 
     Ok(C2PABmffBoxes {

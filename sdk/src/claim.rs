@@ -54,8 +54,8 @@ use HashedUri as C2PAAssertion;
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
 
-// enum to encapsulate the data type of the source asset.  This simplifies
-// having different implementations for code feature as a single entry point can be
+// Enum to encapsulate the data type of the source asset.  This simplifies
+// having different implementations for functions as a single entry point can be
 // used to handle different data types.
 pub enum ClaimAssetData<'a> {
     Path(&'a Path),
