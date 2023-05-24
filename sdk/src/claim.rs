@@ -267,6 +267,19 @@ impl ClaimGeneratorInfo {
         }
     }
 
+    /// Sets the version of the generator.
+    pub fn version<S: Into<String>>(&mut self, version: S) -> &Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    /// Sets the icon of the generator.
+    pub fn icon(&mut self, icon: HashedUri) -> &Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Adds a new key/value pair to the generator info.
     pub fn insert<K, V>(&mut self, key: K, value: V) -> &Self
     where
         K: Into<String>,

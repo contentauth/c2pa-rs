@@ -58,6 +58,7 @@ mod integration_1 {
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
+                .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
         );

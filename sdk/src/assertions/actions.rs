@@ -22,6 +22,7 @@ use crate::{
     claim::ClaimGeneratorInfo,
     error::Result,
     hashed_uri::HashedUri,
+    utils::cbor_types::DateT,
     Error,
 };
 
@@ -90,14 +91,14 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
 
     /// Timestamp of when the action occurred.
     #[serde(skip_serializing_if = "Option::is_none")]
-    when: Option<String>,
+    when: Option<DateT>,
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
@@ -126,6 +127,14 @@ pub struct Action {
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
     source_type: Option<String>,
+
+    /// List of related actions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    related: Option<Vec<Action>>,
+
+    // The reason why this action was performed, required when the action is `c2pa.redacted`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 impl Action {
@@ -136,13 +145,7 @@ impl Action {
     pub fn new(label: &str) -> Self {
         Self {
             action: label.to_owned(),
-            when: None,
-            software_agent: None,
-            changed: None,
-            instance_id: None,
-            parameters: None,
-            actors: None,
-            source_type: None,
+            ..Default::default()
         }
     }
 
@@ -204,11 +207,27 @@ impl Action {
         self.source_type.as_deref()
     }
 
+    /// Returns the list of related actions.
+    ///
+    /// This is only present in C2PA v2.
+    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    pub fn related(&self) -> Option<&[Action]> {
+        self.related.as_deref()
+    }
+
+    /// Returns the reason why this action was performed.
+    ///
+    /// This is only present in C2PA v2.
+    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
     /// Sets the timestamp for when the action occurred.
     ///
     /// This timestamp must be in ISO-8601 date.
     pub fn set_when<S: Into<String>>(mut self, when: S) -> Self {
-        self.when = Some(when.into());
+        self.when = Some(DateT(when.into()));
         self
     }
 
@@ -264,6 +283,24 @@ impl Action {
     /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
     pub fn set_source_type<S: Into<String>>(mut self, uri: S) -> Self {
         self.source_type = Some(uri.into());
+        self
+    }
+
+    /// Sets the list of related actions.
+    ///
+    /// This is only present in C2PA v2.
+    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_related>.
+    pub fn set_related(mut self, related: Option<&Vec<Action>>) -> Self {
+        self.related = related.cloned();
+        self
+    }
+
+    /// Sets the reason why this action was performed.
+    ///
+    /// This is only present in C2PA v2.
+    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_reason>.
+    pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
+        self.reason = Some(reason.into());
         self
     }
 }
@@ -383,6 +420,15 @@ impl AssertionBase for Actions {
             Some(2)
         } else {
             Some(1)
+        }
+    }
+
+    /// if we require v2 fields then use V2
+    fn label(&self) -> &str {
+        if self.is_v2() {
+            "c2pa.actions.v2"
+        } else {
+            labels::ACTIONS
         }
     }
 
@@ -603,11 +649,7 @@ pub mod tests {
                       "description": "import"
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
-                    "softwareAgent": {
-                        "name": "TestApp",
-                        "version": "1.0",
-                        "something": "else"
-                    },
+                    "softwareAgent": "TestApp 1.0",
                   },
                 ],
             "metadata": {
@@ -617,8 +659,67 @@ pub mod tests {
         let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
+        assert_eq!(result.label(), labels::ACTIONS);
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(original.actions, result.actions);
+        assert_eq!(
+            result.actions[0].software_agent().unwrap(),
+            &SoftwareAgent::String("TestApp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_json_v2_round_trip() {
+        let json = serde_json::json!({
+            "actions": [
+                  {
+                    "action": "c2pa.edited",
+                    "parameters": {
+                      "description": "gradient",
+                      "name": "any value"
+                    },
+                    "softwareAgent": "TestApp"
+                  },
+                  {
+                    "action": "c2pa.opened",
+                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                    "parameters": {
+                      "description": "import"
+                    },
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                    "softwareAgent": {
+                        "name": "TestApp",
+                        "version": "1.0",
+                        "something": "else"
+                    },
+                  },
+                  {
+                    "action": "com.joesphoto.filter",
+                  }
+            ],
+            "templates": [
+                {
+                    "action": "com.joesphoto.filter",
+                    "description": "Magic Filter",
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic",
+                    "softwareAgent" : {
+                        "name": "Joe's Photo Editor",
+                        "version": "2.0",
+                        "schema.org.SoftwareApplication.operatingSystem": "Windows 10"
+                    }
+                }
+            ],
+            "metadata": {
+                "mytag": "myvalue"
+            }
+        });
+        let original = Actions::from_json_value(&json).expect("from json");
+        let assertion = original.to_assertion().expect("build_assertion");
+        let result = Actions::from_assertion(&assertion).expect("extract_assertion");
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        assert_eq!(result.label(), "c2pa.actions.v2");
+        assert_eq!(original.actions, result.actions);
+        assert_eq!(original.templates, result.templates);
         assert_eq!(
             result.actions[0].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())

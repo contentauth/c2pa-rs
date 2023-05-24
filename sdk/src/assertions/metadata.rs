@@ -22,6 +22,7 @@ use crate::{
     assertions::labels,
     error::Result,
     hashed_uri::HashedUri,
+    utils::cbor_types::DateT,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -32,7 +33,7 @@ pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    date_time: Option<String>,
+    date_time: Option<DateT>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<HashedUri>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,7 +51,9 @@ impl Metadata {
     pub fn new() -> Self {
         Self {
             reviews: None,
-            date_time: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
+            date_time: Some(DateT(
+                Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            )),
             reference: None,
             data_source: None,
             other: HashMap::new(),
@@ -91,7 +94,7 @@ impl Metadata {
 
     /// Sets the ISO 8601 date-time string when the assertion was created/generated.
     pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
-        self.date_time = Some(date_time);
+        self.date_time = Some(DateT(date_time));
         self
     }
 

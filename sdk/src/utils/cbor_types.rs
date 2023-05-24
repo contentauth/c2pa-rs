@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 use serde::{
     de::{Deserialize, Deserializer},
@@ -48,6 +48,14 @@ impl<'de> Deserialize<'de> for DateT {
 impl AsRef<str> for DateT {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Deref for DateT {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_str()
     }
 }
 

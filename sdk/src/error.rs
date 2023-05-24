@@ -24,6 +24,10 @@ pub enum Error {
     #[error("claim missing: label = {label}")]
     ClaimMissing { label: String },
 
+    /// An assertion has an unsupported version
+    #[error("Unsupported Assertion version")]
+    AssertionUnsupportedVersion,
+
     /// An assertion could not be found at the expected URL.
     #[error("assertion missing: url = {url}")]
     AssertionMissing { url: String },

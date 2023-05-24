@@ -709,8 +709,16 @@ impl Manifest {
         // add any additional assertions
         for manifest_assertion in &self.assertions {
             match manifest_assertion.label() {
-                Actions::LABEL => {
+                l if l.starts_with(Actions::LABEL) => {
+                    let version = labels::version(l);
+
                     let mut actions: Actions = manifest_assertion.to_assertion()?;
+
+                    let ingredients_key = match version {
+                        None | Some(1) => "ingredient",
+                        Some(2) => "ingredients",
+                        _ => return Err(Error::AssertionUnsupportedVersion),
+                    };
 
                     // fixup parameters field from instance_id to ingredient uri
                     let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
@@ -718,7 +726,8 @@ impl Manifest {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, a)| {
-                            if a.instance_id().is_some() && a.get_parameter("ingredient").is_none()
+                            if a.instance_id().is_some()
+                                && a.get_parameter(ingredients_key).is_none()
                             {
                                 Some((i, a.clone()))
                             } else {
@@ -730,8 +739,15 @@ impl Manifest {
                     for (index, action) in needs_ingredient {
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
-                                let update =
-                                    action.set_parameter("ingredient", hash_url.clone())?;
+                                let update = match ingredients_key {
+                                    "ingredient" => {
+                                        action.set_parameter(ingredients_key, hash_url.clone())
+                                    }
+                                    _ => {
+                                        // we only support on instanceId for actions, so only one ingredient on writing
+                                        action.set_parameter(ingredients_key, [hash_url.clone()])
+                                    }
+                                }?;
                                 actions = actions.update_action(index, update);
                             }
                         }
