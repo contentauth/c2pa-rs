@@ -13,7 +13,7 @@
 
 use std::{
     cmp,
-    collections::HashMap,
+    collections::{hash_map::Entry::Vacant, HashMap},
     fmt, fs,
     io::{BufReader, Cursor, SeekFrom},
     ops::Deref,
@@ -40,7 +40,7 @@ use crate::{
             concat_and_hash, hash_asset_by_alg, hash_stream_by_alg, vec_compare,
             verify_stream_by_alg, HashRange, Hasher,
         },
-        merkle::{C2PAMerkleTree, MerkleNode},
+        merkle::C2PAMerkleTree,
     },
     Error,
 };
@@ -641,7 +641,6 @@ impl BmffHash {
 
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
-                        let mut last_chunk_id = 0;
                         let mut chunk_hash_map: HashMap<u32, Hasher> = HashMap::new();
                         let stsc = &track.trak.mdia.minf.stbl.stsc;
                         for sample_id in 1..=sample_cnt {
@@ -656,10 +655,8 @@ impl BmffHash {
                             let chunk_id =
                                 first_chunk + (sample_id - first_sample) / samples_per_chunk;
 
-                            // detect chunk change and add new Hasher
-                            if last_chunk_id != chunk_id {
-                                last_chunk_id = chunk_id;
-
+                            // add chunk Hasher if needed
+                            if let Vacant(e) = chunk_hash_map.entry(chunk_id) {
                                 // get hasher for algorithm
                                 let hasher_enum = match alg.as_str() {
                                     "sha256" => Hasher::SHA256(Sha256::new()),
@@ -672,7 +669,7 @@ impl BmffHash {
                                     }
                                 };
 
-                                chunk_hash_map.insert(chunk_id, hasher_enum);
+                                e.insert(hasher_enum);
                             }
 
                             if let Ok(Some(sample)) = &mp4.read_sample(track_id, sample_id) {
@@ -697,14 +694,12 @@ impl BmffHash {
                         }
 
                         // finalize leaf hashes
-                        let mut chunk_hashes = Vec::new();
                         let mut leaf_hashes = Vec::new();
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
                             match chunk_hash_map.remove(&(chunk_bmff_mm.location + 1)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
                                     leaf_hashes.push(h.clone());
-                                    chunk_hashes.push(MerkleNode(h));
                                 }
                                 None => {
                                     return Err(Error::HashMismatch(
