@@ -24,7 +24,7 @@ use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
-    claim::Claim,
+    claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf,
@@ -740,13 +740,13 @@ impl Ingredient {
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
                         Ok(store) => {
                             // verify the store
-                            //todo, change this when we have a stream version of verify
-                            let mut buf: Vec<u8> = Vec::new();
-                            stream.rewind()?;
-                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                            Store::verify_store_async(&store, &buf, &mut validation_log)
-                                .await
-                                .map(|_| store)
+                            Store::verify_store_async(
+                                &store,
+                                &mut ClaimAssetData::Stream(stream),
+                                &mut validation_log,
+                            )
+                            .await
+                            .map(|_| store)
                         }
                         Err(e) => {
                             validation_log.log_silent(
@@ -1019,7 +1019,6 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
-        stream.rewind()?;
 
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -1028,13 +1027,14 @@ impl Ingredient {
         let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
             Ok(store) => {
                 // verify the store
-                //todo, change this when we have a stream version of verify
-                let mut buf: Vec<u8> = Vec::new();
                 stream.rewind()?;
-                stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                Store::verify_store_async(&store, &buf, &mut validation_log)
-                    .await
-                    .map(|_| store)
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::Stream(stream),
+                    &mut validation_log,
+                )
+                .await
+                .map(|_| store)
             }
             Err(e) => {
                 // add a log entry for the error so we act like verify

@@ -17,7 +17,7 @@ mod actions;
 pub use actions::{c2pa_action, Action, Actions};
 
 mod bmff_hash;
-pub use bmff_hash::{BmffHash, DataMap, ExclusionsMap, SubsetMap};
+pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
 
 #[allow(dead_code)] // will become public later
 mod data_hash;

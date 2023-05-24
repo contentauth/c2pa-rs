@@ -188,10 +188,8 @@ impl ManifestStoreReport {
                     } else {
                         format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
                     };
-                    let new_token = tree.new_node(data);
-                    current_token.append_node(tree, new_token).map_err(|_err| {
-                        crate::Error::InvalidAsset("Bad Manifest graph".to_string())
-                    })?;
+
+                    let new_token = current_token.append(tree, data);
 
                     ManifestStoreReport::populate_node(
                         tree,
