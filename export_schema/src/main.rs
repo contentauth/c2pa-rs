@@ -1,9 +1,8 @@
-use anyhow::Result;
-use schemars::gen::SchemaSettings;
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
+use anyhow::Result;
 use c2pa::ManifestStore;
+use schemars::gen::SchemaSettings;
 
 fn main() -> Result<()> {
     println!("Exporting JSON schema");
