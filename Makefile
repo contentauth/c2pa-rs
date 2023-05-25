@@ -48,6 +48,11 @@ doc:
 images:
 	cargo run --release --bin make_test_images
 
+# Exports JSON schema files so that types can easily be exported to other languages
+# Outputs to release/json-schema
+schema:
+	cargo run --release --bin export_schema
+
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
 	cargo run --example client sdk/tests/fixtures/ca.jpg target/tmp/client.jpg
