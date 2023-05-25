@@ -262,7 +262,7 @@ impl ReviewRating {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct AssetType {
     #[serde(rename = "type")]
     pub asset_type: String,

@@ -43,6 +43,7 @@ use crate::{
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
     validator::ValidationInfo,
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -160,7 +161,7 @@ impl fmt::Debug for ClaimAssertion {
 /// assigned a label (`c2pa.claim.v1`) and being either embedded into the
 /// asset or in the cloud. The claim is cryptographically hashed and
 /// that hash is signed to produce the claim signature.
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Claim {
     // external manifest
     #[serde(skip_deserializing, skip_serializing)]
@@ -192,6 +193,7 @@ pub struct Claim {
 
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
+    #[allow(dead_code)]
     root: String,
 
     // internal scratch objects
@@ -210,7 +212,7 @@ pub struct Claim {
 
     claim_generator: String, // generator of this claim
 
-    claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, // detailed generator info of this claim
+    pub(crate) claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, /* detailed generator info of this claim */
 
     signature: String,              // link to signature box
     assertions: Vec<C2PAAssertion>, // list of assertion hashed URIs
@@ -237,62 +239,6 @@ pub struct Claim {
 
     #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
-}
-
-/// Description of the claim generator, or the software used in generating the claim.
-///
-/// This structure is also used for actions softwareAgent
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ClaimGeneratorInfo {
-    /// A human readable string naming the claim_generator
-    pub name: String,
-    /// A human readable string of the product's version
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// hashed URI to the icon (either embedded or remote)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<HashedUri>,
-    // Any other values that are not part of the standard
-    #[serde(flatten)]
-    other: HashMap<String, Value>,
-}
-
-impl ClaimGeneratorInfo {
-    pub fn new<S: Into<String>>(name: S) -> Self {
-        Self {
-            name: name.into(),
-            version: None,
-            icon: None,
-            other: HashMap::new(),
-        }
-    }
-
-    /// Sets the version of the generator.
-    pub fn version<S: Into<String>>(&mut self, version: S) -> &Self {
-        self.version = Some(version.into());
-        self
-    }
-
-    /// Sets the icon of the generator.
-    pub fn icon(&mut self, icon: HashedUri) -> &Self {
-        self.icon = Some(icon);
-        self
-    }
-
-    /// Adds a new key/value pair to the generator info.
-    pub fn insert<K, V>(&mut self, key: K, value: V) -> &Self
-    where
-        K: Into<String>,
-        V: Into<Value>,
-    {
-        self.other.insert(key.into(), value.into());
-        self
-    }
-
-    /// Gets additional values by key.
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.other.get(key)
-    }
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -567,7 +513,7 @@ impl Claim {
         self
     }
 
-    pub fn get_claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+    pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
         self.claim_generator_info.as_deref()
     }
 
@@ -751,6 +697,13 @@ impl Claim {
 
     pub(crate) fn databoxes(&self) -> &Vec<(HashedUri, DataBox)> {
         &self.data_boxes
+    }
+
+    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
+        self.data_boxes
+            .iter()
+            .find(|(h, _d)| h.url() == uri)
+            .map(|(_sh, data_box)| data_box)
     }
 
     /// Load known VC with optional salt
@@ -1873,7 +1826,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::utils::test::create_test_claim;
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
 
     #[test]
     fn test_build_claim() {
@@ -1939,19 +1892,21 @@ pub mod tests {
 
         let mut info = ClaimGeneratorInfo::new("test app");
         info.version = Some("2.3.4".to_string());
-        info.icon = Some(HashedUri::new(
+        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
             "self#jumbf=c2pa.databoxes.data_box".to_string(),
             None,
             b"hashed",
-        ));
+        )));
         info.insert("something", "else");
 
         claim.add_claim_generator_info(info);
 
-        let cgi = claim.get_claim_generator_info().unwrap();
+        let cgi = claim.claim_generator_info().unwrap();
 
         assert_eq!(&cgi[0].name, "test app");
         assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
-        assert_eq!(cgi[0].icon.as_ref().unwrap().hash(), b"hashed");
+        if let UriOrResource::HashedUri(r) = cgi[0].icon.as_ref().unwrap() {
+            assert_eq!(r.hash(), b"hashed");
+        }
     }
 }

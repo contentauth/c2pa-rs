@@ -243,6 +243,9 @@ pub enum Error {
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
 
+    #[error("missing data box")]
+    MissingDataBox,
+
     #[error("could not generate XML")]
     XmlWriteError,
 

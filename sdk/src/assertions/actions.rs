@@ -19,11 +19,10 @@ use serde_json::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Actor, Metadata},
-    claim::ClaimGeneratorInfo,
     error::Result,
     hashed_uri::HashedUri,
     utils::cbor_types::DateT,
-    Error,
+    ClaimGeneratorInfo, Error,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;

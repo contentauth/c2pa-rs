@@ -125,7 +125,9 @@ pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 /// crate private declarations
 pub(crate) mod claim;
-pub use claim::ClaimGeneratorInfo;
+
+mod claim_generator_info;
+pub use claim_generator_info::ClaimGeneratorInfo;
 
 pub mod cose_sign;
 

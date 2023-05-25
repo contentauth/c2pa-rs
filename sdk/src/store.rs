@@ -67,7 +67,7 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Store {
     claims_map: HashMap<String, usize>,
     manifest_box_hash_cache: HashMap<String, Vec<u8>>,

@@ -26,13 +26,13 @@ use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
     asset_io::CAIRead,
-    claim::{Claim, ClaimGeneratorInfo, RemoteManifest},
+    claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
+    ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -510,7 +510,25 @@ impl Manifest {
 
         // extract vendor from claim label
         let claim_generator = claim.claim_generator().to_owned();
+
         let mut manifest = Manifest::new(claim_generator);
+
+        if let Some(info_vec) = claim.claim_generator_info() {
+            let mut generators = Vec::new();
+            let id_base = manifest.instance_id().to_owned();
+            for claim_info in info_vec {
+                let mut info = claim_info.to_owned();
+                if let Some(icon) = claim_info.icon.as_ref() {
+                    info.set_icon(icon.to_resource_ref(
+                        manifest.resources_mut(),
+                        claim,
+                        &id_base,
+                    )?);
+                }
+                generators.push(info);
+            }
+            manifest.claim_generator_info = Some(generators);
+        }
 
         #[cfg(feature = "file_io")]
         if let Some(base_path) = resource_path {
@@ -663,6 +681,16 @@ impl Manifest {
             Some(label) => Claim::new_with_user_guid(&generator, &label.to_string()),
             None => Claim::new(&generator, self.vendor.as_deref()),
         };
+
+        if let Some(info_vec) = self.claim_generator_info.as_ref() {
+            for info in info_vec {
+                let mut claim_info = info.to_owned();
+                if let Some(icon) = claim_info.icon.as_ref() {
+                    claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
+                }
+                claim.add_claim_generator_info(claim_info);
+            }
+        }
 
         if let Some(remote_op) = &self.remote_manifest {
             match remote_op {
@@ -1042,6 +1070,7 @@ pub struct SignatureInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
 }
+
 #[cfg(test)]
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
@@ -1696,6 +1725,16 @@ pub(crate) mod tests {
     #[cfg(feature = "file_io")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
+        "claim_generator_info": [
+            {
+                "name": "test",
+                "version": "1.0",
+                "icon": {
+                    "format": "image/svg",
+                    "identifier": "sample1.svg"
+                }
+            }
+        ],
         "format" : "image/jpeg",
         "thumbnail": {
             "format": "image/jpeg",
@@ -1739,6 +1778,8 @@ pub(crate) mod tests {
         manifest
             .resources_mut()
             .add("IMG_0003.jpg", *b"my value")
+            .unwrap()
+            .add("sample1.svg", *b"my value")
             .expect("add resource");
         manifest.ingredients_mut()[0]
             .resources_mut()
@@ -1791,7 +1832,6 @@ pub(crate) mod tests {
         let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("tests/fixtures"); // the path we want to read files from
         manifest.with_base_path(path).expect("with_files");
-        println!("{manifest}");
         // convert the manifest to a store
         let store = manifest.to_store().expect("to store");
         let mut resource_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1802,6 +1842,7 @@ pub(crate) mod tests {
             Some(&resource_path),
         )
         .expect("from store");
+        //println!("{m2}");
         assert!(m2.thumbnail().is_some());
         assert!(m2.ingredients()[0].thumbnail().is_some());
     }
