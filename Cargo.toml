@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["sdk", "make_test_images"]
+members = ["sdk", "export_schema", "make_test_images"]

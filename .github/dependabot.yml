@@ -9,6 +9,11 @@ updates:
       interval: "daily"
 
   - package-ecosystem: "cargo"
+    directory: "export_schema"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "cargo"
     directory: "make_test_images"
     schedule:
       interval: "daily"

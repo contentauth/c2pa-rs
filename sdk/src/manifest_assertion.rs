@@ -1,3 +1,5 @@
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
 use serde_json::Value;
 
@@ -8,6 +10,7 @@ use crate::{
 
 /// Assertions in C2PA can be stored in several formats
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ManifestAssertionKind {
     Cbor,
     Json,
@@ -16,6 +19,7 @@ pub enum ManifestAssertionKind {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 enum ManifestData {
     Json(Value),     // { label: String, instance: usize, data: Value },
@@ -23,6 +27,7 @@ enum ManifestData {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A labeled container for an Assertion value in a Manifest
 pub struct ManifestAssertion {
     /// An assertion label in reverse domain format
