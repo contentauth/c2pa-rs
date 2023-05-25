@@ -36,7 +36,10 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
-        labels::{ASSERTIONS, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE},
+        labels::{
+            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
+        },
     },
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
@@ -729,6 +732,31 @@ impl Claim {
         self.data_boxes.push((uri, db));
 
         Ok(())
+    }
+
+    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+        // normalize uri
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+            if manifest != self.label() {
+                return None;
+            }
+            uri.to_owned()
+        } else {
+            // make a full path
+            if let Some(box_name) = box_name_from_uri(uri) {
+                to_databox_uri(self.label(), &box_name)
+            } else {
+                return None;
+            }
+        };
+
+        self.data_boxes.iter().find_map(|x| {
+            if x.0.url() == normalized_uri {
+                Some(&x.1)
+            } else {
+                None
+            }
+        })
     }
 
     pub(crate) fn vc_id(vc_json: &str) -> Result<String> {

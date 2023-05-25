@@ -3092,6 +3092,26 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_get_data_boxes() {
+        // Create a new claim.
+        use crate::jumbf::labels::to_relative_uri;
+        let claim1 = create_test_claim().unwrap();
+
+        for (uri, db) in claim1.databoxes() {
+            // test full path
+            assert!(claim1.get_data_box(&uri.url()).is_some());
+
+            // test with relative path
+            let rel_path = to_relative_uri(&uri.url());
+            assert!(claim1.get_data_box(&rel_path).is_some());
+
+            // test values
+            assert_eq!(db, claim1.get_data_box(&uri.url()).unwrap());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
         let ap = fixture_path("sample1.wav");
         let temp_dir = tempdir().expect("temp dir");
