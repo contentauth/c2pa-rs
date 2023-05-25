@@ -14,7 +14,10 @@
 use asn1_rs::{Any, Class, Header, Tag};
 use ciborium::value::Value;
 use conv::*;
-use coset::{sig_structure_data, Label, TaggedCborSerializable};
+use coset::{
+    iana::{self, EnumI64},
+    sig_structure_data, Label, TaggedCborSerializable,
+};
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
     oid_registry::Oid,
@@ -51,6 +54,8 @@ const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+
+const DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 /********************** Supported Valiators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -91,6 +96,11 @@ fn get_cose_sign1(
         }
     }
 }
+
+fn has_oid(eku: &ExtendedKeyUsage, oid_val: &Oid) -> bool {
+    eku.other.iter().find(|v| *v == oid_val).is_some()
+}
+
 fn check_cert(
     _alg: SigningAlg,
     ca_der_bytes: &[u8],
@@ -370,7 +380,11 @@ fn check_cert(
                 return Err(Error::CoseInvalidCert);
             }
 
-            if !(eku.email_protection || eku.ocsp_signing || eku.time_stamping) {
+            if !(eku.email_protection
+                || eku.ocsp_signing
+                || eku.time_stamping
+                || has_oid(eku, &DOCUMENT_SIGNING_OID))
+            {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
@@ -389,7 +403,8 @@ fn check_cert(
                     && (eku.client_auth
                         | eku.code_signing
                         | eku.email_protection
-                        | eku.server_auth))
+                        | eku.server_auth
+                        | has_oid(eku, &DOCUMENT_SIGNING_OID)))
             {
                 let log_item = log_item!(
                     "Cose_Sign1",
@@ -525,11 +540,8 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     let certs = get_sign_certs(sign1)?;
     Ok(certs[0].clone())
 }
-// get the public key der
-fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
-    let mut certs: Vec<Vec<u8>> = Vec::new();
 
-    // get the public key der
+fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     if let Some(der) = sign1
         .unprotected
         .rest
@@ -542,6 +554,8 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
             }
         })
     {
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
         match der {
             Value::Array(cert_chain) => {
                 // handle array of certs
@@ -550,7 +564,12 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
                         certs.push(der_bytes.clone());
                     }
                 }
-                Ok(certs)
+
+                if certs.is_empty() {
+                    Err(Error::CoseMissingKey)
+                } else {
+                    Ok(certs)
+                }
             }
             Value::Bytes(ref der_bytes) => {
                 // handle single cert case
@@ -562,6 +581,62 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     } else {
         Err(Error::CoseX5ChainMissing)
     }
+}
+// get the public key der
+fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
+    // check for protected header int, then protected header x5chain,
+    // then the legacy unprotected x5chain to get the public key der
+
+    // check the protected header
+    if let Some(der) = sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("x5chain".to_string())
+                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
+            {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        // make sure there are no certs in the legacy unprotected header, certs
+        // are only allowing in protect OR unprotected header
+        if get_unprotected_header_certs(sign1).is_ok() {
+            return Err(Error::CoseVerifier);
+        }
+
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
+        match der {
+            Value::Array(cert_chain) => {
+                // handle array of certs
+                for c in cert_chain {
+                    if let Value::Bytes(der_bytes) = c {
+                        certs.push(der_bytes.clone());
+                    }
+                }
+
+                if certs.is_empty() {
+                    return Err(Error::CoseX5ChainMissing);
+                } else {
+                    return Ok(certs);
+                }
+            }
+            Value::Bytes(ref der_bytes) => {
+                // handle single cert case
+                certs.push(der_bytes.clone());
+                return Ok(certs);
+            }
+            _ => return Err(Error::CoseX5ChainMissing),
+        }
+    }
+
+    // check the unprotected header if necessary
+    get_unprotected_header_certs(sign1)
 }
 
 // internal util function to dump the cert chain in PEM format
