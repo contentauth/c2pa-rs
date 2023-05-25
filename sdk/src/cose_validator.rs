@@ -98,7 +98,7 @@ fn get_cose_sign1(
 }
 
 fn has_oid(eku: &ExtendedKeyUsage, oid_val: &Oid) -> bool {
-    eku.other.iter().find(|v| *v == oid_val).is_some()
+    eku.other.iter().any(|v| v == oid_val)
 }
 
 fn check_cert(
