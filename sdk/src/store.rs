@@ -3787,7 +3787,7 @@ pub mod tests {
     #[test]
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
-        let ap = fixture_path("tp-1.3.jpg");
+        let ap = fixture_path("legacy_ingredient_hash.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
