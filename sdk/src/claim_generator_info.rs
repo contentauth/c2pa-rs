@@ -13,6 +13,8 @@
 // each license.
 use std::collections::HashMap;
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -22,6 +24,7 @@ use crate::resource_store::UriOrResource;
 ///
 /// This structure is also used for actions softwareAgent
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ClaimGeneratorInfo {
     /// A human readable string naming the claim_generator
     pub name: String,

@@ -269,6 +269,7 @@ impl ReviewRating {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct AssetType {
     #[serde(rename = "type")]
     pub asset_type: String,
