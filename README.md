@@ -39,7 +39,7 @@ The SDK has been tested on the following operating systems:
 ## Supported file formats
 
  | Extensions    | MIME type                                           |
- |---------------| --------------------------------------------------- |
+ | ------------- | --------------------------------------------------- |
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
  | `avif`        | `image/avif`                                        |
  | `c2pa`        | `application/x-c2pa-manifest-store`,                |
@@ -80,6 +80,7 @@ The Rust SDK crate provides:
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
+* `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 
 ## License
 
