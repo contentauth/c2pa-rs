@@ -141,6 +141,7 @@ impl ResourceStore {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
+            //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" => ".cp2a",
             _ => "",
         };

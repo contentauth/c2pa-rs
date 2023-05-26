@@ -1831,7 +1831,7 @@ pub(crate) mod tests {
                 "name": "test",
                 "version": "1.0",
                 "icon": {
-                    "format": "image/svg",
+                    "format": "image/svg+xml",
                     "identifier": "sample1.svg"
                 }
             }
@@ -1857,7 +1857,7 @@ pub(crate) mod tests {
                                 "name": "TestApp",
                                 "version": "1.0",
                                 "icon": {
-                                    "format": "image/svg",
+                                    "format": "image/svg+xml",
                                     "identifier": "sample1.svg"
                                 },
                                 "something": "else"
@@ -1871,13 +1871,13 @@ pub(crate) mod tests {
                                 "name": "TestApp",
                                 "version": "1.0",
                                 "icon": {
-                                    "format": "image/svg",
+                                    "format": "image/svg+xml",
                                     "identifier": "sample1.svg"
                                 },
                                 "something": "else"
                             },
                             "icon": {
-                                "format": "image/svg",
+                                "format": "image/svg+xml",
                                 "identifier": "sample1.svg"
                             }
                         }
