@@ -47,7 +47,7 @@ pub struct Ingredient {
     pub format: String,
     #[serde(rename = "documentID", skip_serializing_if = "Option::is_none")]
     pub document_id: Option<String>,
-    #[serde(rename = "instanceID")]
+    #[serde(rename = "instanceID", skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c2pa_manifest: Option<HashedUri>,

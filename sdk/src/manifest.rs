@@ -836,6 +836,31 @@ impl Manifest {
                         }
                     }
 
+                    if let Some(templates) = actions.templates.as_mut() {
+                        for mut template in templates {
+                            // replace icon with hashed_uri
+                            template.icon = match template.icon.take() {
+                                Some(icon) => {
+                                    Some(icon.to_hashed_uri(self.resources(), &mut claim)?)
+                                }
+                                None => None,
+                            };
+
+                            // replace software agent with hashed_uri
+                            template.software_agent = match template.software_agent.take() {
+                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                    if let Some(icon) = info.icon.as_mut() {
+                                        let icon =
+                                            icon.to_hashed_uri(self.resources(), &mut claim)?;
+                                        info.set_icon(icon);
+                                    }
+                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                }
+                                agent => agent,
+                            };
+                        }
+                    }
+
                     // convert icons in software agents to hashed uris
                     let actions_mut = actions.actions_mut();
                     #[allow(clippy::needless_range_loop)]
