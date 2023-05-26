@@ -97,7 +97,7 @@ pub mod tests {
             .set_icon(ResourceRef::new("image/svg", "myicon"));
 
         let json = serde_json::to_string_pretty(&g).expect("Failed to serialize");
-        println!("{}", json);
+        println!("{json}");
 
         let result: ClaimGeneratorInfo =
             serde_json::from_str(&json).expect("Failed to deserialize");
@@ -115,7 +115,7 @@ pub mod tests {
         ));
 
         let json = serde_json::to_string_pretty(&g).expect("Failed to serialize");
-        println!("{}", json);
+        println!("{json}");
 
         let result: ClaimGeneratorInfo =
             serde_json::from_str(&json).expect("Failed to deserialize");
