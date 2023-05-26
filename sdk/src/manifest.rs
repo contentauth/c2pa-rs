@@ -16,6 +16,8 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor};
 use std::{fs::create_dir_all, path::Path};
 
 use log::{debug, error, warn};
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -37,6 +39,7 @@ use crate::{
 
 /// A Manifest represents all the information in a c2pa manifest
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Manifest {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
@@ -71,7 +74,7 @@ pub struct Manifest {
     thumbnail: Option<ResourceRef>,
 
     /// A List of ingredients
-    #[serde(default = "default_vec")]
+    #[serde(default = "default_vec::<Ingredient>")]
     ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
@@ -79,7 +82,7 @@ pub struct Manifest {
     credentials: Option<Vec<Value>>,
 
     /// A list of assertions
-    #[serde(default = "default_vec")]
+    #[serde(default = "default_vec::<ManifestAssertion>")]
     assertions: Vec<ManifestAssertion>,
 
     /// A list of redactions - URIs to a redacted assertions
@@ -1133,6 +1136,7 @@ impl std::fmt::Display for Manifest {
     }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Holds information about a signature
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature

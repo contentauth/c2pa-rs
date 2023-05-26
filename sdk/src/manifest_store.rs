@@ -15,9 +15,12 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
+    claim::ClaimAssetData,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     validation_status::{status_for_store, ValidationStatus},
@@ -25,6 +28,7 @@ use crate::{
 };
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A Container for a set of Manifests and a ValidationStatus list
 pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +222,28 @@ impl ManifestStore {
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
+    /// Loads a ManifestStore from an init segment and fragment.  This
+    /// would be used to load and validate fragmented MP4 files that span
+    /// multiple separate assets.
+    pub async fn from_fragment_bytes_async(
+        format: &str,
+        init_bytes: &[u8],
+        fragment_bytes: &[u8],
+        verify: bool,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        Store::load_fragment_from_memory_async(
+            format,
+            init_bytes,
+            fragment_bytes,
+            verify,
+            &mut validation_log,
+        )
+        .await
+        .map(|store| Self::from_store(&store, &mut validation_log))
+    }
+
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
@@ -246,7 +272,12 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
-        Store::verify_store_async(&store, asset_bytes, &mut validation_log).await?;
+        Store::verify_store_async(
+            &store,
+            &mut ClaimAssetData::Bytes(asset_bytes),
+            &mut validation_log,
+        )
+        .await?;
 
         Ok(Self::from_store(&store, &mut validation_log))
     }

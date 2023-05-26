@@ -15,6 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, collections::HashMap};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
@@ -27,6 +29,7 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum UriOrResource {
     ResourceRef(ResourceRef),
@@ -79,7 +82,9 @@ impl From<HashedUri> for UriOrResource {
 }
 
 /// A reference to a resource to be used in JSON serialization
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+
 pub struct ResourceRef {
     pub format: String,
     pub identifier: String,
@@ -99,9 +104,11 @@ impl ResourceRef {
 
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
 }
 
@@ -178,6 +185,10 @@ impl ResourceStore {
         }
         self.resources.insert(id.into(), value.into());
         Ok(self)
+    }
+
+    pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
+        &self.resources
     }
 
     /// Returns a copy on write reference to the resource if found.

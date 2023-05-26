@@ -28,6 +28,7 @@ use crate::{
         labels::{self, CLAIM},
         AssetType, BmffHash, DataBox, DataHash,
     },
+    asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -57,9 +58,14 @@ use HashedUri as C2PAAssertion;
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
 
+// Enum to encapsulate the data type of the source asset.  This simplifies
+// having different implementations for functions as a single entry point can be
+// used to handle different data types.
 pub enum ClaimAssetData<'a> {
-    PathData(&'a Path),
-    ByteData(&'a [u8]),
+    Path(&'a Path),
+    Bytes(&'a [u8]),
+    Stream(&'a mut dyn CAIRead),
+    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead),
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -997,7 +1003,7 @@ impl Claim {
     /// asset_bytes - reference to bytes of the asset
     pub async fn verify_claim_async<'a>(
         claim: &Claim,
-        asset_bytes: &'a [u8],
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -1035,13 +1041,7 @@ impl Claim {
             validation_log,
         )
         .await;
-        Claim::verify_internal(
-            claim,
-            &ClaimAssetData::ByteData(asset_bytes),
-            is_provenance,
-            verified,
-            validation_log,
-        )
+        Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
     /// Verify claim signature, assertion store and asset hashes
@@ -1049,7 +1049,7 @@ impl Claim {
     /// asset_bytes - reference to bytes of the asset
     pub fn verify_claim(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -1097,7 +1097,7 @@ impl Claim {
 
     fn verify_internal(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
@@ -1178,6 +1178,7 @@ impl Claim {
             .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
             validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
         }
+
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
@@ -1265,12 +1266,16 @@ impl Claim {
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
                         let hash_result = match asset_data {
-                            ClaimAssetData::PathData(asset_path) => {
+                            ClaimAssetData::Path(asset_path) => {
                                 dh.verify_hash(asset_path, Some(claim.alg()))
                             }
-                            ClaimAssetData::ByteData(asset_bytes) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                            ClaimAssetData::Bytes(asset_bytes) => {
+                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                             }
+                            ClaimAssetData::Stream(stream_data) => {
+                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                            }
+                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
                         match hash_result {
@@ -1301,19 +1306,28 @@ impl Claim {
                             }
                         }
                     }
-                } else {
+                } else if dh_assertion.label_root() == BmffHash::LABEL {
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(dh_assertion)?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
                     let hash_result = match asset_data {
-                        ClaimAssetData::PathData(asset_path) => {
+                        ClaimAssetData::Path(asset_path) => {
                             dh.verify_hash(asset_path, Some(claim.alg()))
                         }
-                        ClaimAssetData::ByteData(asset_bytes) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                        ClaimAssetData::Bytes(asset_bytes) => {
+                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                         }
+                        ClaimAssetData::Stream(stream_data) => {
+                            dh.verify_stream(*stream_data, Some(claim.alg()))
+                        }
+                        ClaimAssetData::StreamFragment(initseg_data, fragment_data) => dh
+                            .verify_stream_segment(
+                                *initseg_data,
+                                *fragment_data,
+                                Some(claim.alg()),
+                            ),
                     };
 
                     match hash_result {
@@ -1343,6 +1357,9 @@ impl Claim {
                             )?;
                         }
                     }
+                } else {
+                    // box hash case
+                    return Err(Error::UnsupportedType); // implementation to come
                 }
             }
         }

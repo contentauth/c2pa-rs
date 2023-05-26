@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use log::{debug, error};
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,7 +26,7 @@ use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
-    claim::Claim,
+    claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf,
@@ -35,7 +37,9 @@ use crate::{
     utils::xmp_inmemory_utils::XmpInfo,
     validation_status::{self, status_for_store, ValidationStatus},
 };
+
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// An `Ingredient` is any external asset that has been used in the creation of an image.
 pub struct Ingredient {
     /// A human-readable title, generally source filename.
@@ -604,6 +608,20 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
+            Err(Error::RemoteManifestUrl(url)) => {
+                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
+                    .set_url(url)
+                    .set_explanation("Remote manifest not fetched".to_string());
+                self.validation_status = Some(vec![status]);
+                Ok(())
+            }
+            Err(Error::RemoteManifestFetch(url)) => {
+                let status = ValidationStatus::new(validation_status::MANIFEST_INACCESSIBLE)
+                    .set_url(url)
+                    .set_explanation("Unable to fetch remote manifest".to_string());
+                self.validation_status = Some(vec![status]);
+                Ok(())
+            }
             Err(e) => {
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {:?}", e);
@@ -819,20 +837,20 @@ impl Ingredient {
         let mut validation_log = DetailedStatusTracker::new();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
+        let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
             Ok(manifest_bytes) => {
                 (
                     // generate a store from the buffer and then validate from the asset path
                     match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
                         Ok(store) => {
                             // verify the store
-                            //todo, change this when we have a stream version of verify
-                            let mut buf: Vec<u8> = Vec::new();
-                            stream.rewind()?;
-                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                            Store::verify_store_async(&store, &buf, &mut validation_log)
-                                .await
-                                .map(|_| store)
+                            Store::verify_store_async(
+                                &store,
+                                &mut ClaimAssetData::Stream(stream),
+                                &mut validation_log,
+                            )
+                            .await
+                            .map(|_| store)
                         }
                         Err(e) => {
                             validation_log.log_silent(
@@ -1123,6 +1141,88 @@ impl Ingredient {
         self.resources.set_base_path(base_path.as_ref());
         Ok(self)
     }
+
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes
+    ///
+    /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
+    /// ```
+    /// use c2pa::{Result, Ingredient};
+    ///
+    /// # fn main() -> Result<()> {
+    /// #    async {
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///
+    ///         let ingredient = Ingredient::from_manifest_and_asset_bytes_async(manifest_bytes.to_vec(), "image/jpeg", asset_bytes)
+    ///             .await
+    ///             .unwrap();
+    ///
+    ///         println!("{}", ingredient);
+    /// #    };
+    /// #
+    /// #    Ok(())
+    /// }
+    /// ```
+    pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
+        manifest_bytes: M,
+        format: &str,
+        asset_bytes: &[u8],
+    ) -> Result<Self> {
+        let mut stream = Cursor::new(asset_bytes);
+        Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
+    }
+
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset
+    pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
+        manifest_bytes: M,
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Self> {
+        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let manifest_bytes: Vec<u8> = manifest_bytes.into();
+        // generate a store from the buffer and then validate from the asset path
+        let result = match Store::from_jumbf(&manifest_bytes, &mut validation_log) {
+            Ok(store) => {
+                // verify the store
+                stream.rewind()?;
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::Stream(stream),
+                    &mut validation_log,
+                )
+                .await
+                .map(|_| store)
+            }
+            Err(e) => {
+                // add a log entry for the error so we act like verify
+                validation_log.log_silent(
+                    log_item!("asset", "error loading file", "Ingredient::from_file").set_error(&e),
+                );
+                Err(e)
+            }
+        };
+
+        // set validation status from result and log
+        ingredient.update_validation_status(result, Some(manifest_bytes), &mut validation_log)?;
+
+        // create a thumbnail if we don't already have a manifest with a thumb we can use
+        #[cfg(feature = "add_thumbnails")]
+        if ingredient.thumbnail.is_none() {
+            stream.rewind()?;
+            match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
+                Ok((format, image)) => {
+                    ingredient.set_thumbnail(format, image)?;
+                }
+                Err(err) => {
+                    log::warn!("Could not create thumbnail. {err}");
+                }
+            }
+        }
+        Ok(ingredient)
+    }
 }
 
 impl std::fmt::Display for Ingredient {
@@ -1318,10 +1418,57 @@ mod tests {
         assert_eq!(ingredient.format(), format);
         #[cfg(feature = "add_thumbnails")]
         assert!(ingredient.thumbnail().is_some());
-        //assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
-        //assert!(ingredient.validation_status().is_none());
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::ASSERTION_DATAHASH_MISMATCH
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_jpg_cloud_from_memory() {
+        let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory_async");
+        //println!("ingredient = {ingredient}");
+        assert!(ingredient.validation_status().is_some());
+        assert_eq!(
+            ingredient.validation_status().unwrap()[0].code(),
+            validation_status::MANIFEST_INACCESSIBLE
+        );
+        assert!(ingredient.validation_status().unwrap()[0]
+            .url()
+            .unwrap()
+            .starts_with("http"));
+        assert!(ingredient.manifest_data().is_none());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_jpg_cloud_from_memory_and_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
+            manifest_bytes.to_vec(),
+            format,
+            asset_bytes,
+        )
+        .await
+        .unwrap();
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::debug_2(
+            &"ingredient_from_memory_async:".into(),
+            &ingredient.to_string().into(),
+        );
+        assert!(ingredient.validation_status().is_none());
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.provenance().is_some());
     }
 }
 
@@ -1520,7 +1667,6 @@ mod tests_file_io {
         assert!(ingredient.manifest_data().is_some());
     }
 
-    /*  this test cannot succeed because memory loading path does not support validation status at the moment
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
@@ -1533,7 +1679,6 @@ mod tests_file_io {
             validation_status::MANIFEST_INACCESSIBLE
         );
     }
-    */
 
     #[test]
     #[cfg(feature = "file_io")]
