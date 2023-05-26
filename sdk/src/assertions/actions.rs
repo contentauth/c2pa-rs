@@ -20,7 +20,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Actor, Metadata},
     error::Result,
-    hashed_uri::HashedUri,
+    resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo, Error,
 };
@@ -175,6 +175,11 @@ impl Action {
         self.software_agent.as_ref()
     }
 
+    /// Returns a mutable software agent that performed the action.
+    pub fn software_agent_mut(&mut self) -> Option<&mut SoftwareAgent> {
+        self.software_agent.as_mut()
+    }
+
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
     pub fn instance_id(&self) -> Option<&str> {
@@ -307,24 +312,24 @@ impl Action {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
-    action: String,
+    pub action: String,
 
     /// The software agent that performed the action.
     #[serde(rename = "softwareAgent", skip_serializing_if = "Option::is_none")]
-    software_agent: Option<SoftwareAgent>,
+    pub software_agent: Option<SoftwareAgent>,
 
     /// One of the defined URI values at `<https://cv.iptc.org/newscodes/digitalsourcetype/>`
     #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
-    source_type: Option<String>,
+    pub source_type: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    icon: Option<HashedUri>,
+    pub icon: Option<UriOrResource>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
+    pub description: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    parameters: Option<HashMap<String, Value>>,
+    pub parameters: Option<HashMap<String, Value>>,
 }
 
 /// An `Actions` assertion provides information on edits and other
@@ -375,6 +380,11 @@ impl Actions {
     /// Returns the list of [`Action`]s.
     pub fn actions(&self) -> &[Action] {
         &self.actions
+    }
+
+    /// Returns mutable list of [`Action`]s.
+    pub fn actions_mut(&mut self) -> &mut [Action] {
+        &mut self.actions
     }
 
     /// Returns the assertion's [`Metadata`], if it exists.

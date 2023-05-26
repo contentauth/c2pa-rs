@@ -23,8 +23,8 @@ use uuid::Uuid;
 #[cfg(feature = "file_io")]
 use crate::AsyncSigner;
 use crate::{
-    assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
+    assertion::{AssertionBase, AssertionData, AssertionDecodeError},
+    assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
     asset_io::CAIRead,
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
@@ -558,16 +558,11 @@ impl Manifest {
                 .collect()
         });
 
-        // let title = claim.title().map_or("".to_owned(), |s| s.to_owned());
-        // let format = claim.format().to_owned();
-        // let instance_id = claim.instance_id().to_owned();
         if let Some(title) = claim.title() {
             manifest.set_title(title);
         }
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
-
-        //let mut asset = Ingredient::new(&title, &format, &instance_id);
 
         for claim_assertion in claim.claim_assertion_store().iter() {
             let assertion = claim_assertion.assertion();
@@ -575,6 +570,59 @@ impl Manifest {
             let base_label = assertion.label();
             debug!("assertion = {}", &label);
             match base_label.as_ref() {
+                base if base.starts_with(labels::ACTIONS) => {
+                    let mut actions = Actions::from_assertion(assertion)?;
+                    let id = manifest.instance_id().to_owned();
+
+                    for action in actions.actions_mut() {
+                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
+                            action.software_agent_mut()
+                        {
+                            if let Some(icon) = info.icon.as_mut() {
+                                let icon = icon.to_resource_ref(
+                                    manifest.resources_mut(),
+                                    claim,
+                                    id.as_str(),
+                                )?;
+                                info.set_icon(icon);
+                            }
+                        }
+                    }
+
+                    // convert icons in templates to resource refs
+                    if let Some(templates) = actions.templates.as_mut() {
+                        for mut template in templates {
+                            // replace icon with resource ref
+                            template.icon = match template.icon.take() {
+                                Some(icon) => Some(icon.to_resource_ref(
+                                    manifest.resources_mut(),
+                                    claim,
+                                    id.as_str(),
+                                )?),
+                                None => None,
+                            };
+
+                            // replace software agent with resource ref
+                            template.software_agent = match template.software_agent.take() {
+                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                    if let Some(icon) = info.icon.as_mut() {
+                                        let icon = icon.to_resource_ref(
+                                            manifest.resources_mut(),
+                                            claim,
+                                            id.as_str(),
+                                        )?;
+                                        info.set_icon(icon);
+                                    }
+                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                }
+                                agent => agent,
+                            };
+                        }
+                    }
+                    let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
+                        .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
+                }
                 base if base.starts_with(labels::INGREDIENT) => {
                     // note that we use the original label here, not the base label
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
@@ -597,18 +645,22 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(_x) => {
-                            let value = assertion.as_json_object()?;
+                        AssertionData::Json(x) => {
+                            let value = serde_json::from_str(x).map_err(|e| {
+                                AssertionDecodeError::from_assertion_and_json_err(assertion, e)
+                            })?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
                             manifest.assertions.push(ma);
                         }
-                        AssertionData::Cbor(_x) => {
-                            let value = assertion.as_json_object()?; //todo: should this be cbor?
+                        AssertionData::Cbor(x) => {
+                            let value: Value =
+                                serde_cbor::from_slice(x.as_slice()).map_err(|e| {
+                                    AssertionDecodeError::from_assertion_and_cbor_err(assertion, e)
+                                })?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance());
-
                             manifest.assertions.push(ma);
                         }
                         // todo: support binary forms
@@ -777,6 +829,26 @@ impl Manifest {
                                     }
                                 }?;
                                 actions = actions.update_action(index, update);
+                            }
+                        }
+                    }
+
+                    // convert icons in software agents to hashed uris
+                    let actions_mut = actions.actions_mut();
+                    #[allow(clippy::needless_range_loop)]
+                    // clippy is wrong here, we reference index twice
+                    for index in 0..actions_mut.len() {
+                        let action = &actions_mut[index];
+                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
+                            action.software_agent()
+                        {
+                            if let Some(icon) = info.icon.as_ref() {
+                                let mut info = info.to_owned();
+                                let icon_uri = icon.to_hashed_uri(self.resources(), &mut claim)?;
+                                let update = info.set_icon(icon_uri);
+                                let mut action = action.to_owned();
+                                action = action.set_software_agent(update.to_owned());
+                                actions_mut[index] = action;
                             }
                         }
                     }
@@ -1740,6 +1812,50 @@ pub(crate) mod tests {
             "format": "image/jpeg",
             "identifier": "IMG_0003.jpg"
         },
+        "assertions": [
+            {
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                            "parameters": {
+                                "description": "import"
+                            },
+                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            }
+                        }
+                    ],
+                    "templates": [
+                        {
+                            "action": "c2pa.opened",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            },
+                            "icon": {
+                                "format": "image/svg",
+                                "identifier": "sample1.svg"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
         "ingredients": [{
             "title": "A.jpg",
             "format": "image/jpeg",
@@ -1842,7 +1958,7 @@ pub(crate) mod tests {
             Some(&resource_path),
         )
         .expect("from store");
-        //println!("{m2}");
+        println!("{m2}");
         assert!(m2.thumbnail().is_some());
         assert!(m2.ingredients()[0].thumbnail().is_some());
     }

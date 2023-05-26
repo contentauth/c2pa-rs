@@ -14,7 +14,7 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-pub use actions::{c2pa_action, Action, Actions};
+pub use actions::{c2pa_action, Action, Actions, SoftwareAgent};
 
 mod bmff_hash;
 pub use bmff_hash::{BmffHash, DataMap, ExclusionsMap, SubsetMap};
