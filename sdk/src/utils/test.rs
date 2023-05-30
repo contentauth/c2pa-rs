@@ -60,6 +60,11 @@ pub const TEST_VC: &str = r#"{
 pub fn create_test_claim() -> Result<Claim> {
     let mut claim = Claim::new("adobe unit test", Some("adobe"));
 
+    // add some data boxes
+    let _db_uri = claim.add_databox("text/plain", "this is a test".as_bytes().to_vec(), None)?;
+    let _db_uri_1 =
+        claim.add_databox("text/plain", "this is more text".as_bytes().to_vec(), None)?;
+
     // add VC entry
     let _hu = claim.add_verifiable_credential(TEST_VC)?;
 

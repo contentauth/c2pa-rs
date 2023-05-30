@@ -126,6 +126,9 @@ pub(crate) mod asset_io;
 /// crate private declarations
 pub(crate) mod claim;
 
+mod claim_generator_info;
+pub use claim_generator_info::ClaimGeneratorInfo;
+
 pub mod cose_sign;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
@@ -138,6 +141,7 @@ pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
+pub use utils::cbor_types::DateT;
 pub mod validation_status;
 pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;
