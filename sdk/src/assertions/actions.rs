@@ -309,7 +309,8 @@ impl Action {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ActionTemplate {
     /// The label associated with this action. See ([`c2pa_action`]).
     pub action: String,
@@ -332,6 +333,16 @@ pub struct ActionTemplate {
     pub parameters: Option<HashMap<String, Value>>,
 }
 
+impl ActionTemplate {
+    /// Creates a new ActionTemplate.
+    pub fn new<S: Into<String>>(action: S) -> Self {
+        Self {
+            action: action.into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// An `Actions` assertion provides information on edits and other
 /// actions taken that affect the asset’s content.
 ///
@@ -341,6 +352,7 @@ pub struct ActionTemplate {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Actions {
     /// A list of [`Action`]s.
     pub actions: Vec<Action>,

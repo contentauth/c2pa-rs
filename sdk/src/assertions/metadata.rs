@@ -163,6 +163,7 @@ pub mod c2pa_source {
 /// A description of the source for assertion data
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
 pub struct DataSource {
     /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
@@ -202,6 +203,7 @@ impl DataSource {
 /// Identifies a person responsible for an action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
 pub struct Actor {
     /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
