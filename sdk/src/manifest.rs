@@ -516,6 +516,11 @@ impl Manifest {
 
         let mut manifest = Manifest::new(claim_generator);
 
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = resource_path {
+            manifest.with_base_path(base_path)?;
+        }
+
         if let Some(info_vec) = claim.claim_generator_info() {
             let mut generators = Vec::new();
             let id_base = manifest.instance_id().to_owned();
@@ -531,11 +536,6 @@ impl Manifest {
                 generators.push(info);
             }
             manifest.claim_generator_info = Some(generators);
-        }
-
-        #[cfg(feature = "file_io")]
-        if let Some(base_path) = resource_path {
-            manifest.with_base_path(base_path)?;
         }
 
         manifest.set_label(claim.label());
