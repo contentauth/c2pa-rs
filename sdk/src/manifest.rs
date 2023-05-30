@@ -594,7 +594,7 @@ impl Manifest {
 
                     // convert icons in templates to resource refs
                     if let Some(templates) = actions.templates.as_mut() {
-                        for mut template in templates {
+                        for template in templates {
                             // replace icon with resource ref
                             template.icon = match template.icon.take() {
                                 Some(icon) => Some(icon.to_resource_ref(
@@ -837,7 +837,7 @@ impl Manifest {
                     }
 
                     if let Some(templates) = actions.templates.as_mut() {
-                        for mut template in templates {
+                        for template in templates {
                             // replace icon with hashed_uri
                             template.icon = match template.icon.take() {
                                 Some(icon) => {
