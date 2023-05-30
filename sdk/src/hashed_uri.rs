@@ -17,7 +17,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Hashed Uri stucture as defined by C2PA spec
+/// Hashed Uri structure as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]

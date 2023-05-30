@@ -26,7 +26,7 @@ use crate::{
     },
     assertions::{
         labels::{self, CLAIM},
-        DataHash, Ingredient, Relationship,
+        DataBox, DataHash, Ingredient, Relationship,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -39,7 +39,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
         get_assetio_handler, load_jumbf_from_memory, load_jumbf_from_stream,
@@ -67,7 +67,7 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Store {
     claims_map: HashMap<String, usize>,
     manifest_box_hash_cache: HashMap<String, Vec<u8>>,
@@ -336,6 +336,27 @@ impl Store {
         } else {
             None
         }
+    }
+
+    /// Returns a DataBox referenced by JUMBF URI if it exists.
+    ///
+    /// Relative paths will use the provenance claim to resolve the DataBox.d
+    pub fn get_data_box_from_uri_and_claim(
+        &self,
+        uri: &str,
+        target_claim_label: &str,
+    ) -> Option<&DataBox> {
+        match jumbf::labels::manifest_label_from_uri(uri) {
+            Some(label) => self.get_claim(&label), // use the manifest label from the thumbnail uri
+            None => self.get_claim(target_claim_label), //  relative so use the target claim label
+        }
+        .and_then(|claim| {
+            claim
+                .databoxes()
+                .iter()
+                .find(|(h, _d)| h.url() == uri)
+                .map(|(_sh, data_box)| data_box)
+        })
     }
 
     // Returns placeholder that will be searched for and replaced
@@ -707,6 +728,31 @@ impl Store {
                         cai_store.add_box(Box::new(vc_store)); // add the CAI assertion store to manifest
                     }
                 }
+                DATABOXES => {
+                    // Add the data boxes
+                    if !claim.databoxes().is_empty() {
+                        let mut databoxes = CAIDataboxStore::new();
+
+                        for (uri, db) in claim.databoxes() {
+                            let db_cbor_bytes =
+                                serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
+
+                            let (link, instance) = Claim::assertion_label_from_link(&uri.url());
+                            let label = Claim::label_with_instance(&link, instance);
+
+                            let mut db_cbor = CAICBORAssertionBox::new(&label);
+                            db_cbor.add_cbor(db_cbor_bytes);
+
+                            if let Some(salt) = uri.salt() {
+                                db_cbor.set_salt(salt.clone())?;
+                            }
+
+                            databoxes.add_databox(Box::new(db_cbor));
+                        }
+
+                        cai_store.add_box(Box::new(databoxes)); // add claim to manifest
+                    }
+                }
                 _ => return Err(Error::ClaimInvalidContent),
             }
         }
@@ -849,6 +895,7 @@ impl Store {
                     CLAIM => box_order.push(CLAIM),
                     SIGNATURE => box_order.push(SIGNATURE),
                     CREDENTIALS => box_order.push(CREDENTIALS),
+                    DATABOXES => box_order.push(DATABOXES),
                     _ => {
                         let log_item =
                             log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
@@ -1047,6 +1094,27 @@ impl Store {
                     let salt = vc_desc_box.get_salt();
 
                     claim.put_verifiable_credential(&json_str, salt)?;
+                }
+            }
+
+            // load databox store if available
+            if let Some(mi) = manifest_boxes.get(CAI_DATABOXES_STORE_UUID) {
+                let databox_store = mi.sbox;
+                let num_databoxes = databox_store.data_box_count();
+
+                for idx in 0..num_databoxes {
+                    let db_box = databox_store
+                        .data_box_as_superbox(idx)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_cbor = db_box
+                        .data_box_as_cbor_box(0)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_desc_box = db_box.desc_box();
+                    let label = db_desc_box.label();
+
+                    let salt = db_desc_box.get_salt();
+
+                    claim.put_data_box(&label, db_cbor.cbor(), salt)?;
                 }
             }
 
@@ -3125,6 +3193,26 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_get_data_boxes() {
+        // Create a new claim.
+        use crate::jumbf::labels::to_relative_uri;
+        let claim1 = create_test_claim().unwrap();
+
+        for (uri, db) in claim1.databoxes() {
+            // test full path
+            assert!(claim1.get_data_box(&uri.url()).is_some());
+
+            // test with relative path
+            let rel_path = to_relative_uri(&uri.url());
+            assert!(claim1.get_data_box(&rel_path).is_some());
+
+            // test values
+            assert_eq!(db, claim1.get_data_box(&uri.url()).unwrap());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
         let ap = fixture_path("sample1.wav");
         let temp_dir = tempdir().expect("temp dir");
@@ -3570,7 +3658,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
         let mut store = create_test_store().unwrap();
@@ -3594,6 +3682,45 @@ pub mod tests {
                 assert!(s.contains("did:nppa:eb1bb9934d9896a374c384521410c7f14"))
             }
             _ => panic!("expected JSON assertion data"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_data_box_creation() {
+        use crate::utils::test::create_test_store;
+
+        let signer = temp_signer();
+
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
+
+        // get default store with default claim
+        let mut store = create_test_store().unwrap();
+
+        // save to output
+        store
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
+            .unwrap();
+
+        // read back in
+        let restored_store =
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+
+        let pc = restored_store.provenance_claim().unwrap();
+
+        let databoxes = pc.databoxes();
+
+        assert!(!databoxes.is_empty());
+
+        for (uri, db) in databoxes {
+            println!(
+                "URI: {}, data: {}",
+                uri.url(),
+                String::from_utf8_lossy(&db.data)
+            );
         }
     }
 

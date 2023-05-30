@@ -26,7 +26,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        BmffHash, DataHash,
+        AssetType, BmffHash, DataBox, DataHash,
     },
     asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
@@ -37,13 +37,17 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+        labels::{
+            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
+        },
     },
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
     validator::ValidationInfo,
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -64,11 +68,11 @@ pub enum ClaimAssetData<'a> {
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead),
 }
 
-#[derive(PartialEq, Eq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
 // save on parsing the cbor assertion each time we need its contents
+#[derive(PartialEq, Eq, Clone)]
 pub struct ClaimAssertion {
     assertion: Assertion,
     instance: usize,
@@ -157,6 +161,7 @@ impl fmt::Debug for ClaimAssertion {
         write!(f, "{:?}, instance: {}", self.assertion, self.instance)
     }
 }
+
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
 /// hashes of the asset itself, and a reference to the previous `Claim`.
@@ -165,7 +170,7 @@ impl fmt::Debug for ClaimAssertion {
 /// assigned a label (`c2pa.claim.v1`) and being either embedded into the
 /// asset or in the cloud. The claim is cryptographically hashed and
 /// that hash is signed to produce the claim signature.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Claim {
     // external manifest
     #[serde(skip_deserializing, skip_serializing)]
@@ -197,6 +202,7 @@ pub struct Claim {
 
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
+    #[allow(dead_code)]
     root: String,
 
     // internal scratch objects
@@ -214,6 +220,8 @@ pub struct Claim {
     vc_store: Vec<(HashedUri, AssertionData)>,
 
     claim_generator: String, // generator of this claim
+
+    pub(crate) claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, /* detailed generator info of this claim */
 
     signature: String,              // link to signature box
     assertions: Vec<C2PAAssertion>, // list of assertion hashed URIs
@@ -237,6 +245,9 @@ pub struct Claim {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
+
+    #[serde(skip_deserializing, skip_serializing)]
+    data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -305,6 +316,7 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
@@ -320,6 +332,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -337,6 +350,7 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
@@ -352,6 +366,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -437,7 +452,8 @@ impl Claim {
 
     /// order to process
     pub fn get_box_order(&self) -> &[&str] {
-        const DEFAULT_MANIFEST_ORDER: [&str; 4] = [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS];
+        const DEFAULT_MANIFEST_ORDER: [&str; 5] =
+            [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
 
         if let Some(bo) = &self.original_box_order {
             bo
@@ -496,6 +512,18 @@ impl Claim {
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
+    }
+
+    pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
+        match self.claim_generator_info.as_mut() {
+            Some(cgi) => cgi.push(info),
+            None => self.claim_generator_info = Some([info].to_vec()),
+        }
+        self
+    }
+
+    pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+        self.claim_generator_info.as_deref()
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -630,6 +658,113 @@ impl Claim {
         Ok(c2pa_assertion)
     }
 
+    // Add a new DataBox and return the HashedURI reference
+    pub fn add_databox(
+        &mut self,
+        format: &str,
+        data: Vec<u8>,
+        data_types: Option<Vec<AssetType>>,
+    ) -> Result<HashedUri> {
+        // create data box
+        let new_db = DataBox {
+            format: format.to_string(),
+            data,
+            data_types,
+        };
+
+        // serialize to cbor
+        let db_cbor = serde_cbor::to_vec(&new_db).map_err(|_err| Error::AssertionEncoding)?;
+
+        // get the index for the new assertion
+        let mut index = 0;
+        for (uri, _db) in &self.data_boxes {
+            let (_l, i) = Claim::assertion_label_from_link(&uri.url());
+            if i >= index {
+                index = i + 1;
+            }
+        }
+
+        let label = Claim::label_with_instance(DATABOX, index);
+        let link = jumbf::labels::to_databox_uri(self.label(), &label);
+
+        // salt box for 1.2 VC redaction support
+        let ds = DefaultSalt::default();
+        let salt = ds.generate_salt();
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(&label, &db_cbor);
+        let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
+
+        let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        databox_uri.add_salt(salt);
+
+        // add credential to vcstore
+        self.data_boxes.push((databox_uri.clone(), new_db));
+
+        Ok(databox_uri)
+    }
+
+    pub(crate) fn databoxes(&self) -> &Vec<(HashedUri, DataBox)> {
+        &self.data_boxes
+    }
+
+    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
+        self.data_boxes
+            .iter()
+            .find(|(h, _d)| h.url() == uri)
+            .map(|(_sh, data_box)| data_box)
+    }
+
+    /// Load known VC with optional salt
+    pub(crate) fn put_data_box(
+        &mut self,
+        label: &str,
+        databox_cbor: &[u8],
+        salt: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let link = jumbf::labels::to_databox_uri(self.label(), label);
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(label, databox_cbor);
+        let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), self.alg())?;
+
+        let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        uri.add_salt(salt);
+
+        let db: DataBox =
+            serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+
+        // add data box  to data box store
+        self.data_boxes.push((uri, db));
+
+        Ok(())
+    }
+
+    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+        // normalize uri
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+            if manifest != self.label() {
+                return None;
+            }
+            uri.to_owned()
+        } else {
+            // make a full path
+            if let Some(box_name) = box_name_from_uri(uri) {
+                to_databox_uri(self.label(), &box_name)
+            } else {
+                return None;
+            }
+        };
+
+        self.data_boxes.iter().find_map(|x| {
+            if x.0.url() == normalized_uri {
+                Some(&x.1)
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn vc_id(vc_json: &str) -> Result<String> {
         let vc: Value =
             serde_json::from_str(vc_json).map_err(|_err| Error::VerifiableCredentialInvalid)?; // check for json validity
@@ -680,7 +815,7 @@ impl Claim {
     }
 
     /// Load known VC with optional salt
-    pub fn put_verifiable_credential(
+    pub(crate) fn put_verifiable_credential(
         &mut self,
         vc_json: &str,
         salt: Option<Vec<u8>>,
@@ -1736,7 +1871,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::utils::test::create_test_claim;
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
 
     #[test]
     fn test_build_claim() {
@@ -1793,5 +1928,30 @@ pub mod tests {
         let value = &cg_map[GH_FULL_VERSION_LIST];
 
         assert_eq!(expected_value, value.as_str().unwrap());
+    }
+
+    #[test]
+    fn test_build_claim_generator_info() {
+        // Create a new claim.
+        let mut claim = create_test_claim().expect("create test claim");
+
+        let mut info = ClaimGeneratorInfo::new("test app");
+        info.version = Some("2.3.4".to_string());
+        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+            "self#jumbf=c2pa.databoxes.data_box".to_string(),
+            None,
+            b"hashed",
+        )));
+        info.insert("something", "else");
+
+        claim.add_claim_generator_info(info);
+
+        let cgi = claim.claim_generator_info().unwrap();
+
+        assert_eq!(&cgi[0].name, "test app");
+        assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
+        if let UriOrResource::HashedUri(r) = cgi[0].icon.as_ref().unwrap() {
+            assert_eq!(r.hash(), b"hashed");
+        }
     }
 }

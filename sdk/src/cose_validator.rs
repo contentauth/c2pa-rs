@@ -953,8 +953,6 @@ pub fn verify_cose(
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
-
-                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }

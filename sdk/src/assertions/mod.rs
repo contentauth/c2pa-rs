@@ -14,7 +14,7 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-pub use actions::{c2pa_action, Action, Actions};
+pub use actions::{c2pa_action, Action, Actions, SoftwareAgent};
 
 mod bmff_hash;
 pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
@@ -36,7 +36,9 @@ pub(crate) use ingredient::{Ingredient, Relationship};
 pub mod labels;
 
 mod metadata;
-pub use metadata::{c2pa_source, Actor, DataSource, Metadata, ReviewCode, ReviewRating};
+pub use metadata::{
+    c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,
+};
 
 mod schema_org;
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
