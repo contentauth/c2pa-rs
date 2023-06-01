@@ -1451,7 +1451,7 @@ impl Store {
 
         if found_jumbf {
             // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg, None);
+            let mut dh = DataHash::new("jumbf manifest", alg);
             if block_end > block_start {
                 dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
             }

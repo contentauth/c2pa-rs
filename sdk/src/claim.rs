@@ -26,7 +26,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        AssetType, BmffHash, DataBox, DataHash,
+        AssetType, BmffHash, BoxHash, DataBox, DataHash,
     },
     asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
@@ -1236,7 +1236,7 @@ impl Claim {
         // verify data hashes for provenance claims
         if is_provenance {
             // must have at least one hard binding for normal manifests
-            if claim.data_hash_assertions().is_empty() && !claim.update_manifest() {
+            if claim.hash_assertions().is_empty() && !claim.update_manifest() {
                 let log_item = log_item!(
                     &claim.uri(),
                     "claim missing data binding",
@@ -1248,7 +1248,7 @@ impl Claim {
             }
 
             // update manifests cannot have data hashes
-            if !claim.data_hash_assertions().is_empty() && claim.update_manifest() {
+            if !claim.hash_assertions().is_empty() && claim.update_manifest() {
                 let log_item = log_item!(
                     &claim.uri(),
                     "update manifests cannot contain data hash assertions",
@@ -1259,9 +1259,9 @@ impl Claim {
                 validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
             }
 
-            for dh_assertion in claim.data_hash_assertions() {
-                if dh_assertion.label_root() == DataHash::LABEL {
-                    let dh = DataHash::from_assertion(dh_assertion)?;
+            for hash_binding_assertion in claim.hash_assertions() {
+                if hash_binding_assertion.label_root() == DataHash::LABEL {
+                    let dh = DataHash::from_assertion(hash_binding_assertion)?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
@@ -1281,7 +1281,7 @@ impl Claim {
                         match hash_result {
                             Ok(_a) => {
                                 let log_item = log_item!(
-                                    claim.assertion_uri(&dh_assertion.label()),
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
                                     "data hash valid",
                                     "verify_internal"
                                 )
@@ -1292,7 +1292,7 @@ impl Claim {
                             }
                             Err(e) => {
                                 let log_item = log_item!(
-                                    claim.assertion_uri(&dh_assertion.label()),
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
                                     format!("asset hash error, name: {name}, error: {e}"),
                                     "verify_internal"
                                 )
@@ -1306,9 +1306,9 @@ impl Claim {
                             }
                         }
                     }
-                } else if dh_assertion.label_root() == BmffHash::LABEL {
+                } else if hash_binding_assertion.label_root() == BmffHash::LABEL {
                     // handle BMFF data hashes
-                    let dh = BmffHash::from_assertion(dh_assertion)?;
+                    let dh = BmffHash::from_assertion(hash_binding_assertion)?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
@@ -1320,7 +1320,7 @@ impl Claim {
                             dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                         }
                         ClaimAssetData::Stream(stream_data) => {
-                            dh.verify_stream(*stream_data, Some(claim.alg()))
+                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                         }
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data) => dh
                             .verify_stream_segment(
@@ -1333,7 +1333,7 @@ impl Claim {
                     match hash_result {
                         Ok(_a) => {
                             let log_item = log_item!(
-                                claim.assertion_uri(&dh_assertion.label()),
+                                claim.assertion_uri(&hash_binding_assertion.label()),
                                 "data hash valid",
                                 "verify_internal"
                             )
@@ -1344,7 +1344,7 @@ impl Claim {
                         }
                         Err(e) => {
                             let log_item = log_item!(
-                                claim.assertion_uri(&dh_assertion.label()),
+                                claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
@@ -1357,9 +1357,51 @@ impl Claim {
                             )?;
                         }
                     }
-                } else {
+                } else if hash_binding_assertion.label_root() == BoxHash::LABEL {
                     // box hash case
-                    return Err(Error::UnsupportedType); // implementation to come
+                    // handle BMFF data hashes
+                    let bh = BoxHash::from_assertion(hash_binding_assertion)?;
+
+                    let hash_result = match asset_data {
+                        ClaimAssetData::Path(asset_path) => {
+                            bh.verify_hash(asset_path, Some(claim.alg()))
+                        }
+                        ClaimAssetData::Bytes(asset_bytes) => {
+                            bh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                        }
+                        ClaimAssetData::Stream(stream_data) => {
+                            bh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                        }
+                        ClaimAssetData::StreamFragment(_, _) => return Err(Error::UnsupportedType),
+                    };
+
+                    match hash_result {
+                        Ok(_a) => {
+                            let log_item = log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "data hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            validation_log.log_silent(log_item);
+
+                            continue;
+                        }
+                        Err(e) => {
+                            let log_item = log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("asset hash error: {e}"),
+                                "verify_internal"
+                            )
+                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
+                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+
+                            validation_log.log(
+                                log_item,
+                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
+                            )?;
+                        }
+                    }
                 }
             }
         }
@@ -1380,7 +1422,7 @@ impl Claim {
     }
 
     /// Return list of data hash assertions
-    pub fn data_hash_assertions(&self) -> Vec<&Assertion> {
+    pub fn hash_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
         let mut data_hashes = self.assertions_by_type(&dummy_hash);
@@ -1390,6 +1432,11 @@ impl Claim {
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash));
 
+        // add in an box hashes
+        let dummy_box_data = AssertionData::Cbor(Vec::new());
+        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
+        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash));
+
         data_hashes
     }
 
@@ -1398,6 +1445,13 @@ impl Claim {
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash)
+    }
+
+    pub fn box_hash_assertions(&self) -> Vec<&Assertion> {
+        // add in an BMFF hashes
+        let dummy_box_data = AssertionData::Cbor(Vec::new());
+        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
+        self.assertions_by_type(&dummy_box_hash)
     }
 
     /// Return list of ingredient assertions. This function

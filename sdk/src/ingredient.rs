@@ -918,8 +918,8 @@ impl Ingredient {
         let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
             // This could be a relative or absolute thumbnail reference to another manifest
             let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
-                Some(label) => label,       // use the manifest from the thumbnail uri
-                None => claim_label.to_owned(),     // relative so use the whole url from the thumbnail assertion
+                Some(label) => label,           // use the manifest from the thumbnail uri
+                None => claim_label.to_owned(), // relative so use the whole url from the thumbnail assertion
             };
             match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
                 Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
