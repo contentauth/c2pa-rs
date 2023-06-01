@@ -42,8 +42,8 @@ use crate::{
         labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_memory, load_jumbf_from_stream,
-        object_locations_from_stream, save_jumbf_to_memory, save_jumbf_to_stream,
+        get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
+        save_jumbf_to_memory, save_jumbf_to_stream,
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
@@ -2292,33 +2292,46 @@ impl Store {
         }
     }
 
+    /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
+    #[cfg(feature = "file_io")]
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
+            Store::fetch_remote_manifest(ext_ref)
+        } else {
+            // return an error with the url that should be read
+            if is_remote_url {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+            } else {
+                Err(Error::JumbfNotFound)
+            }
+        }
+    }
+
+    /// Handles remote manifests for Wasm or when the file_io/fetch_remote_manifests feature is disabled
+    #[cfg(not(feature = "file_io"))]
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if is_remote_url {
+            Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+        } else {
+            Err(Error::JumbfNotFound)
+        }
+    }
+
     /// Return Store from in memory asset
-    pub fn load_cai_from_memory(
+    fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        match load_jumbf_from_memory(asset_type, data) {
-            Ok(manifest_bytes) => {
-                // load and validate with CAI toolkit and dump if desired
-                Store::from_jumbf(&manifest_bytes, validation_log)
-            }
-            Err(Error::JumbfNotFound) => {
-                let mut buf_reader = Cursor::new(data);
-                if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
-                    &mut buf_reader,
-                    asset_type,
-                )
-                .provenance
-                {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
-                } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
+        let mut input_stream = Cursor::new(data);
+        Store::load_jumbf_from_stream(asset_type, &mut input_stream)
+            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
     }
 
     /// load jumbf given a stream
@@ -2336,8 +2349,7 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
+                    Store::handle_remote_manifest(&ext_ref)
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -2379,24 +2391,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        // verify provenance path is remote url
-                        let is_remote_url = Store::is_valid_remote_url(&ext_ref);
-
-                        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-                            // not supported in wasm
-                            if cfg!(target_arch = "wasm32") {
-                                Err(Error::JumbfNotFound)
-                            } else {
-                                Store::fetch_remote_manifest(&ext_ref)
-                            }
-                        } else {
-                            // return an error with the url that should be read
-                            if is_remote_url {
-                                Err(Error::RemoteManifestUrl(ext_ref))
-                            } else {
-                                Err(Error::JumbfNotFound)
-                            }
-                        }
+                        Store::handle_remote_manifest(&ext_ref)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -4158,7 +4153,7 @@ pub mod tests {
         let url_string: String = url.into();
 
         // set claim for side car with remote manifest embedding generation
-        claim.set_remote_manifest(url_string.clone()).unwrap();
+        claim.set_remote_manifest(url_string).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -4183,12 +4178,12 @@ pub mod tests {
 
         assert!(result.is_err());
 
-        // verify that we got  RemoteManifestUrl error with the expected url
+        // We should get a `JumbfNotFound` error since the external reference points to a file URL, not a remote URL
         match result {
             Ok(_store) => panic!("did not expect to have a store"),
             Err(e) => match e {
-                Error::RemoteManifestUrl(url) => assert_eq!(url, url_string),
-                _ => panic!("unexepected error"),
+                Error::JumbfNotFound => {}
+                e => panic!("unexpected error: {}", e),
             },
         }
     }
