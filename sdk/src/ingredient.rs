@@ -1428,14 +1428,32 @@ mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(not(target_arch = "wasm32"))]
     async fn test_jpg_cloud_from_memory() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
             .expect("from_memory_async");
-        println!("ingredient = {ingredient}");
+        // println!("ingredient = {ingredient}");
+        assert_eq!(&ingredient.title, "untitled");
+        assert_eq!(ingredient.format(), format);
+        assert!(ingredient.provenance().is_some());
+        assert!(ingredient.provenance().unwrap().starts_with("https:"));
+        assert!(ingredient.manifest_data().is_some());
+        assert!(ingredient.validation_status().is_none());
+    }
+
+    #[allow(dead_code)]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_jpg_cloud_from_memory_wasm() {
+        let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_memory_async(format, image_bytes)
+            .await
+            .expect("from_memory_async");
+        // println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),

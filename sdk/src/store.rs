@@ -2292,17 +2292,14 @@ impl Store {
         }
     }
 
+    /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
+    #[cfg(feature = "file_io")]
     fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         let is_remote_url = Store::is_valid_remote_url(ext_ref);
 
         if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-            // not supported in wasm
-            if cfg!(target_arch = "wasm32") {
-                Err(Error::JumbfNotFound)
-            } else {
-                Store::fetch_remote_manifest(ext_ref)
-            }
+            Store::fetch_remote_manifest(ext_ref)
         } else {
             // return an error with the url that should be read
             if is_remote_url {
@@ -2310,6 +2307,19 @@ impl Store {
             } else {
                 Err(Error::JumbfNotFound)
             }
+        }
+    }
+
+    /// Handles remote manifests for Wasm or when the file_io/fetch_remote_manifests feature is disabled
+    #[cfg(not(feature = "file_io"))]
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if is_remote_url {
+            Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+        } else {
+            Err(Error::JumbfNotFound)
         }
     }
 
@@ -4161,7 +4171,7 @@ pub mod tests {
         let url_string: String = url.into();
 
         // set claim for side car with remote manifest embedding generation
-        claim.set_remote_manifest(url_string.clone()).unwrap();
+        claim.set_remote_manifest(url_string).unwrap();
 
         store.commit_claim(claim).unwrap();
 
