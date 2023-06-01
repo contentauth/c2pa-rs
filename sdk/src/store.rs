@@ -2292,6 +2292,27 @@ impl Store {
         }
     }
 
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
+            // not supported in wasm
+            if cfg!(target_arch = "wasm32") {
+                Err(Error::JumbfNotFound)
+            } else {
+                Store::fetch_remote_manifest(ext_ref)
+            }
+        } else {
+            // return an error with the url that should be read
+            if is_remote_url {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+            } else {
+                Err(Error::JumbfNotFound)
+            }
+        }
+    }
+
     /// Return Store from in memory asset
     pub fn load_cai_from_memory(
         asset_type: &str,
@@ -2311,8 +2332,8 @@ impl Store {
                 )
                 .provenance
                 {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
+                    Store::handle_remote_manifest(&ext_ref)
+                        .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -2336,8 +2357,7 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
+                    Store::handle_remote_manifest(&ext_ref)
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -2379,24 +2399,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        // verify provenance path is remote url
-                        let is_remote_url = Store::is_valid_remote_url(&ext_ref);
-
-                        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-                            // not supported in wasm
-                            if cfg!(target_arch = "wasm32") {
-                                Err(Error::JumbfNotFound)
-                            } else {
-                                Store::fetch_remote_manifest(&ext_ref)
-                            }
-                        } else {
-                            // return an error with the url that should be read
-                            if is_remote_url {
-                                Err(Error::RemoteManifestUrl(ext_ref))
-                            } else {
-                                Err(Error::JumbfNotFound)
-                            }
-                        }
+                        Store::handle_remote_manifest(&ext_ref)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -4183,12 +4186,12 @@ pub mod tests {
 
         assert!(result.is_err());
 
-        // verify that we got  RemoteManifestUrl error with the expected url
+        // We should get a `JumbfNotFound` error since the external reference points to a file URL, not a remote URL
         match result {
             Ok(_store) => panic!("did not expect to have a store"),
             Err(e) => match e {
-                Error::RemoteManifestUrl(url) => assert_eq!(url, url_string),
-                _ => panic!("unexepected error"),
+                Error::JumbfNotFound => {}
+                e => panic!("unexpected error: {}", e),
             },
         }
     }
