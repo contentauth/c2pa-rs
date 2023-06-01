@@ -1427,7 +1427,8 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[allow(dead_code)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_jpg_cloud_from_memory() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
@@ -1445,9 +1446,9 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    #[cfg_attr(not(target_arch = "wasm32"), ignore)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn test_jpg_cloud_from_memory_wasm() {
+    async fn test_jpg_cloud_from_memory_no_file_io() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
