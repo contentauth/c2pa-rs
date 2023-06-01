@@ -2324,7 +2324,7 @@ impl Store {
     }
 
     /// Return Store from in memory asset
-    pub fn load_cai_from_memory(
+    fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
