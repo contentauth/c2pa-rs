@@ -42,8 +42,8 @@ use crate::{
         labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_memory, load_jumbf_from_stream,
-        object_locations_from_stream, save_jumbf_to_memory, save_jumbf_to_stream,
+        get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
+        save_jumbf_to_memory, save_jumbf_to_stream,
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
@@ -2329,27 +2329,9 @@ impl Store {
         data: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        match load_jumbf_from_memory(asset_type, data) {
-            Ok(manifest_bytes) => {
-                // load and validate with CAI toolkit and dump if desired
-                Store::from_jumbf(&manifest_bytes, validation_log)
-            }
-            Err(Error::JumbfNotFound) => {
-                let mut buf_reader = Cursor::new(data);
-                if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
-                    &mut buf_reader,
-                    asset_type,
-                )
-                .provenance
-                {
-                    Store::handle_remote_manifest(&ext_ref)
-                        .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
-                } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
+        let mut input_stream = Cursor::new(data);
+        Store::load_jumbf_from_stream(asset_type, &mut input_stream)
+            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
     }
 
     /// load jumbf given a stream
