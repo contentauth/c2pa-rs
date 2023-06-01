@@ -19,11 +19,9 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    asset_io::CAIRead,
-    error::{Result, Error}, 
-    utils::hash_utils::{
-    HashRange, verify_stream_by_alg,
-    },
+    asset_io::{AssetBoxHash, CAIRead},
+    error::{Error, Result},
+    utils::hash_utils::{verify_stream_by_alg, HashRange},
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -54,21 +52,36 @@ pub struct BoxHash {
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
-    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> Result<()> {
+    pub fn verify_hash(
+        &self,
+        asset_path: &Path,
+        alg: Option<&str>,
+        bhp: &dyn AssetBoxHash,
+    ) -> Result<()> {
         let mut file = File::open(asset_path)?;
 
-        self.verify_stream_hash(&mut file, alg)
+        self.verify_stream_hash(&mut file, alg, bhp)
     }
 
-    pub fn verify_in_memory_hash(&self, data: &[u8], alg: Option<&str>) -> Result<()> {
+    pub fn verify_in_memory_hash(
+        &self,
+        data: &[u8],
+        alg: Option<&str>,
+        bhp: &dyn AssetBoxHash,
+    ) -> Result<()> {
         let mut reader = Cursor::new(data);
 
-        self.verify_stream_hash(&mut reader, alg)
+        self.verify_stream_hash(&mut reader, alg, bhp)
     }
 
-    pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
-        // get source box list 
-        let source_bms = crate::asset_handlers::jpeg_io::get_box_map(reader)?;
+    pub fn verify_stream_hash(
+        &self,
+        reader: &mut dyn CAIRead,
+        alg: Option<&str>,
+        bhp: &dyn AssetBoxHash,
+    ) -> Result<()> {
+        // get source box list
+        let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
         for bm in &self.boxes {
@@ -81,23 +94,28 @@ impl BoxHash {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) => {
                         if name == &next_source_bm.names[0] {
-                            if inclusion.length() == 0 {  // this is a new item
+                            if inclusion.length() == 0 {
+                                // this is a new item
                                 inclusion.set_start(next_source_bm.range_start);
                                 inclusion.set_length(next_source_bm.range_len);
 
                                 if name == "C2PA" {
                                     // there should only be 1 collapsed C2PA range
                                     if bm.names.len() != 1 {
-                                        return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()))
+                                        return Err(Error::HashMismatch(
+                                            "Malformed C2PA box hash".to_owned(),
+                                        ));
                                     }
                                     skip_c2pa = true;
                                 }
-                            } else { // update item
+                            } else {
+                                // update item
                                 inclusion.set_length(inclusion.length() + next_source_bm.range_len);
                             }
-
                         } else {
-                            return Err(Error::HashMismatch("Box hash name not found".to_owned()))
+                            return Err(Error::HashMismatch(
+                                "Box hash name out of order".to_owned(),
+                            ));
                         }
                     }
                     None => return Err(Error::HashMismatch("Box hash name not found".to_owned())),

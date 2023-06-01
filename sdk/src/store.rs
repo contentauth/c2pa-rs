@@ -2228,20 +2228,28 @@ impl Store {
     pub fn verify_from_buffer(
         &mut self,
         buf: &[u8],
-        _asset_type: &str,
+        asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Bytes(buf), validation_log)
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Bytes(buf, asset_type),
+            validation_log,
+        )
     }
 
     // verify from a buffer without file i/o
     pub fn verify_from_stream(
         &mut self,
         reader: &mut dyn CAIRead,
-        _asset_type: &str,
+        asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Stream(reader), validation_log)
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Stream(reader, asset_type),
+            validation_log,
+        )
     }
 
     // fetch remote manifest if possible
@@ -2502,7 +2510,11 @@ impl Store {
             // verify the store
             if verify {
                 // verify store and claims
-                Store::verify_store(&store, &mut ClaimAssetData::Bytes(data), validation_log)?;
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::Bytes(data, asset_type),
+                    validation_log,
+                )?;
             }
 
             Ok(store)
@@ -2525,8 +2537,12 @@ impl Store {
         // verify the store
         if verify {
             // verify store and claims
-            Store::verify_store_async(&store, &mut ClaimAssetData::Bytes(data), validation_log)
-                .await?;
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Bytes(data, asset_type),
+                validation_log,
+            )
+            .await?;
         }
 
         Ok(store)
@@ -2556,6 +2572,7 @@ impl Store {
                     &mut ClaimAssetData::StreamFragment(
                         &mut init_segment_stream,
                         &mut fragment_stream,
+                        asset_type,
                     ),
                     validation_log,
                 )?;
@@ -2588,7 +2605,11 @@ impl Store {
             // verify store and claims
             Store::verify_store_async(
                 &store,
-                &mut ClaimAssetData::StreamFragment(&mut init_segment_stream, &mut fragment_stream),
+                &mut ClaimAssetData::StreamFragment(
+                    &mut init_segment_stream,
+                    &mut fragment_stream,
+                    asset_type,
+                ),
                 validation_log,
             )
             .await?;

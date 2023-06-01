@@ -42,6 +42,7 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
+    jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -63,9 +64,9 @@ const GH_UA: &str = "Sec-CH-UA";
 // used to handle different data types.
 pub enum ClaimAssetData<'a> {
     Path(&'a Path),
-    Bytes(&'a [u8]),
-    Stream(&'a mut dyn CAIRead),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead),
+    Bytes(&'a [u8], &'a str),
+    Stream(&'a mut dyn CAIRead, &'a str),
+    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -1269,10 +1270,10 @@ impl Claim {
                             ClaimAssetData::Path(asset_path) => {
                                 dh.verify_hash(asset_path, Some(claim.alg()))
                             }
-                            ClaimAssetData::Bytes(asset_bytes) => {
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
                                 dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                             }
-                            ClaimAssetData::Stream(stream_data) => {
+                            ClaimAssetData::Stream(stream_data, _) => {
                                 dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                             }
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
@@ -1316,13 +1317,13 @@ impl Claim {
                         ClaimAssetData::Path(asset_path) => {
                             dh.verify_hash(asset_path, Some(claim.alg()))
                         }
-                        ClaimAssetData::Bytes(asset_bytes) => {
+                        ClaimAssetData::Bytes(asset_bytes, _) => {
                             dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                         }
-                        ClaimAssetData::Stream(stream_data) => {
+                        ClaimAssetData::Stream(stream_data, _) => {
                             dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                         }
-                        ClaimAssetData::StreamFragment(initseg_data, fragment_data) => dh
+                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
                             .verify_stream_segment(
                                 *initseg_data,
                                 *fragment_data,
@@ -1364,15 +1365,42 @@ impl Claim {
 
                     let hash_result = match asset_data {
                         ClaimAssetData::Path(asset_path) => {
-                            bh.verify_hash(asset_path, Some(claim.alg()))
+                            let box_hash_processor = get_assetio_handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
+
+                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
                         }
-                        ClaimAssetData::Bytes(asset_bytes) => {
-                            bh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                        ClaimAssetData::Bytes(asset_bytes, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_in_memory_hash(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
                         }
-                        ClaimAssetData::Stream(stream_data) => {
-                            bh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                        ClaimAssetData::Stream(stream_data, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_stream_hash(
+                                *stream_data,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
                         }
-                        ClaimAssetData::StreamFragment(_, _) => return Err(Error::UnsupportedType),
+                        _ => return Err(Error::UnsupportedType),
                     };
 
                     match hash_result {
