@@ -304,10 +304,9 @@ impl AssertionBase for BoxHash {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-
-    use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
-
+    
     use super::*;
+    use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
 
     #[test]
     fn test_hash_verify_jpg() {
