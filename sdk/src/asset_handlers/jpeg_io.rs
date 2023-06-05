@@ -31,7 +31,7 @@ use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::BoxMap,
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
@@ -734,7 +734,7 @@ impl AssetBoxHash for JpegIO {
                                         cai_en = en.clone(); // store the identifier
 
                                         let c2pa_bm = BoxMap {
-                                            names: vec!["C2PA".to_string()],
+                                            names: vec![C2PA_BOXHASH.to_string()],
                                             alg: None,
                                             hash: ByteBuf::from(Vec::new()),
                                             pad: ByteBuf::from(Vec::new()),

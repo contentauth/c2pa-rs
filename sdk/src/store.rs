@@ -2140,21 +2140,24 @@ impl Store {
                 }
             }
         } else {
-            // 2) Get hash ranges if needed, do not generate for update manifests
-            let mut hash_ranges = object_locations(&output_path)?;
-            let hashes: Vec<DataHash> = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
-            };
+            // we will not do automatic hashing if we detect a box hash present
+            if pc.box_hash_assertions().is_empty() {
+                // 2) Get hash ranges if needed, do not generate for update manifests
+                let mut hash_ranges = object_locations(&output_path)?;
+                let hashes: Vec<DataHash> = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
+                };
 
-            // add the placeholder data hashes to provenance claim so that the required space is reserved
-            for mut hash in hashes {
-                // add padding to account for possible cbor expansion of final DataHash
-                let padding: Vec<u8> = vec![0x0; 10];
-                hash.add_padding(padding);
+                // add the placeholder data hashes to provenance claim so that the required space is reserved
+                for mut hash in hashes {
+                    // add padding to account for possible cbor expansion of final DataHash
+                    let padding: Vec<u8> = vec![0x0; 10];
+                    hash.add_padding(padding);
 
-                pc.add_assertion(&hash)?;
+                    pc.add_assertion(&hash)?;
+                }
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -2166,19 +2169,21 @@ impl Store {
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
+            // If box hash is present we don't do any other
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            if pc.box_hash_assertions().is_empty() {
+                // get the final hash ranges, but not for update manifests
+                let mut new_hash_ranges = object_locations(&output_path)?;
+                let updated_hashes = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
+                };
 
-            // get the final hash ranges, but not for update manifests
-            let mut new_hash_ranges = object_locations(&output_path)?;
-            let updated_hashes = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
-            };
-
-            // patch existing claim hash with updated data
-            for hash in updated_hashes {
-                pc.update_data_hash(hash)?;
+                // patch existing claim hash with updated data
+                for hash in updated_hashes {
+                    pc.update_data_hash(hash)?;
+                }
             }
         }
 

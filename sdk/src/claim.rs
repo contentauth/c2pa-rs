@@ -1483,7 +1483,7 @@ impl Claim {
     }
 
     /// Return list of ingredient assertions. This function
-    /// is only useful on commited or loaded claims since ingredients
+    /// is only useful on committed or loaded claims since ingredients
     /// are resolved at commit time.
     pub fn ingredient_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());

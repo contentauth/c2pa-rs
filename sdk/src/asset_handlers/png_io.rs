@@ -22,7 +22,7 @@ use conv::ValueFrom;
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::BoxMap,
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
@@ -627,7 +627,7 @@ impl AssetBoxHash for PngIO {
             // add special C2PA box
             if pc.name == CAI_CHUNK {
                 let c2pa_bm = BoxMap {
-                    names: vec!["C2PA".to_string()],
+                    names: vec![C2PA_BOXHASH.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
