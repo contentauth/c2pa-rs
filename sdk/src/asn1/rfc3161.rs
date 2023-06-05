@@ -467,8 +467,12 @@ impl Accuracy {
     ) -> Result<Self, DecodeError<S::Error>> {
         let seconds =
             cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
-        let millis = cons.take_opt_constructed_if(Tag::CTX_0, |cons| Integer::take_from(cons))?;
-        let micros = cons.take_opt_constructed_if(Tag::CTX_1, |cons| Integer::take_from(cons))?;
+
+        let millis =
+            cons.take_opt_primitive_if(Tag::CTX_0, |prim| Integer::from_primitive(prim))?;
+
+        let micros =
+            cons.take_opt_primitive_if(Tag::CTX_1, |prim| Integer::from_primitive(prim))?;
 
         Ok(Self {
             seconds,
