@@ -97,6 +97,8 @@ impl BoxHash {
             if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
                 source_index += 1;
             }
+        } else {
+            return Err(Error::HashMismatch("No data boxes found".to_string()));
         }
 
         for bm in &self.boxes {
