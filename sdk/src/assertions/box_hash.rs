@@ -21,7 +21,7 @@ use crate::{
     assertions::labels,
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
-    utils::hash_utils::{verify_stream_by_alg, HashRange},
+    utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -145,6 +145,43 @@ impl BoxHash {
 
         Ok(())
     }
+
+    #[allow(dead_code)]
+    pub fn generate_box_hash_from_stream(
+        &mut self,
+        reader: &mut dyn CAIRead,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+    ) -> Result<()> {
+        // get source box list
+        let source_bms = bhp.get_box_map(reader)?;
+
+        for mut bm in source_bms {
+            if bm.names[0] == "C2PA" {
+                // there should only be 1 collapsed C2PA range
+                if bm.names.len() != 1 {
+                    return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()));
+                }
+                bm.hash = ByteBuf::from(vec![0]);
+                bm.pad = ByteBuf::from(vec![]);
+                self.boxes.push(bm);
+                continue;
+            }
+
+            // this is a new item
+            let mut inclusions = Vec::new();
+
+            let inclusion = HashRange::new(bm.range_start, bm.range_len);
+            inclusions.push(inclusion);
+
+            bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
+            bm.pad = ByteBuf::from(vec![]);
+
+            self.boxes.push(bm);
+        }
+
+        Ok(())
+    }
 }
 
 impl AssertionCbor for BoxHash {}
@@ -161,5 +198,58 @@ impl AssertionBase for BoxHash {
 
     fn from_assertion(assertion: &Assertion) -> crate::error::Result<Self> {
         Self::from_cbor_assertion(assertion)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
+
+    use super::*;
+
+    #[test]
+    fn test_hash_verify_jpg() {
+        let ap = fixture_path("CA.jpg");
+
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        let mut input = File::open(&ap).unwrap();
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+
+        // generate box hashes
+        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp)
+            .unwrap();
+
+        // see if they match reading
+        bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_hash_verify_png() {
+        let ap = fixture_path("libpng-test.png");
+
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        let mut input = File::open(&ap).unwrap();
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+
+        // generate box hashes
+        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp)
+            .unwrap();
+
+        // see if they match reading
+        bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
+            .unwrap();
     }
 }

@@ -15,13 +15,16 @@ use std::{
     collections::HashMap,
     convert::{From, TryFrom},
     fs::File,
-    io::Cursor,
+    io::{BufReader, Cursor},
     path::*,
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
 use img_parts::{
-    jpeg::{markers, Jpeg, JpegSegment},
+    jpeg::{
+        markers::{self, P, RST0, RST7, Z},
+        Jpeg, JpegSegment,
+    },
     Bytes, DynImage,
 };
 use serde_bytes::ByteBuf;
@@ -578,6 +581,45 @@ impl RemoteRefEmbed for JpegIO {
     }
 }
 
+fn in_entropy(marker: u8) -> bool {
+    matches!(marker, RST0..=RST7 | Z)
+}
+
+// img-parts does not correctly return the true size of the SOS segment.  This utility
+// finds the correct break point for single image JPEGs.  We will need a new JPEG decoder
+// to handle those.  Also this function can be removed if img-parts ever addresses this issue
+fn get_entropy_size(input_stream: &mut dyn CAIRead, projected_len: usize) -> Result<usize> {
+    // Search the entropy data looking for non entropy segment marker.  The first valid seg marker before we hit
+    // end of the file.
+
+    let mut buf_reader = BufReader::new(input_stream);
+
+    let mut size = 0;
+
+    loop {
+        match buf_reader.read_u8() {
+            Ok(curr_byte) => {
+                if curr_byte == P {
+                    let next_byte = buf_reader.read_u8()?;
+
+                    if !in_entropy(next_byte) {
+                        break;
+                    } else {
+                        size += 1;
+                    }
+                }
+                size += 1;
+            }
+            Err(e) => return Err(Error::IoError(e)),
+        }
+        if size > projected_len {
+            break;
+        }
+    }
+
+    Ok(size)
+}
+
 impl AssetBoxHash for JpegIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let segment_names = HashMap::from([
@@ -723,6 +765,34 @@ impl AssetBoxHash for JpegIO {
                                     }
                                 }
                             }
+                        }
+                        markers::SOS => {
+                            // workaround for img-parts returning wrong segment len when entropy is present
+
+                            // move pointer to beginning of segment
+                            input_stream
+                                .seek(std::io::SeekFrom::Start((curr_offset + seg.len()) as u64))?;
+
+                            let size =
+                                get_entropy_size(input_stream, seg.len_with_entropy() - seg.len())?
+                                    + seg.len();
+
+                            let name = segment_names
+                                .get(&seg.marker())
+                                .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
+
+                            let bm = BoxMap {
+                                names: vec![name.to_string()],
+                                alg: None,
+                                hash: ByteBuf::from(Vec::new()),
+                                pad: ByteBuf::from(Vec::new()),
+                                range_start: curr_offset,
+                                range_len: size,
+                            };
+
+                            box_maps.push(bm);
+                            curr_offset += size;
+                            continue;
                         }
                         _ => {
                             let name = segment_names
