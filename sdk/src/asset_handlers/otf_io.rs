@@ -275,7 +275,7 @@ static SUPPORTED_TYPES: [&str; 10] = [
     "application/x-font-truetype",
     "font/otf",
     "font/sfnt",
-    "font/otf",
+    "font/ttf",
     "otf",
     "sfnt",
     "ttf",
