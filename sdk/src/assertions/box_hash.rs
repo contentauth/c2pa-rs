@@ -177,7 +177,7 @@ impl BoxHash {
         if minimal_form {
             let mut before_c2pa = BoxMap {
                 names: Vec::new(),
-                alg: None,
+                alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
@@ -186,7 +186,7 @@ impl BoxHash {
 
             let mut c2pa_box = BoxMap {
                 names: Vec::new(),
-                alg: None,
+                alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
@@ -195,7 +195,7 @@ impl BoxHash {
 
             let mut after_c2pa = BoxMap {
                 names: Vec::new(),
-                alg: None,
+                alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
@@ -220,7 +220,6 @@ impl BoxHash {
                 if is_before_c2pa {
                     before_c2pa.names.extend(bm.names);
                     if before_c2pa.range_len == 0 {
-                        before_c2pa.alg = bm.alg;
                         before_c2pa.range_start = bm.range_start;
                         before_c2pa.range_len = bm.range_len;
                     } else {
@@ -229,7 +228,6 @@ impl BoxHash {
                 } else {
                     after_c2pa.names.extend(bm.names);
                     if after_c2pa.range_len == 0 {
-                        after_c2pa.alg = bm.alg;
                         after_c2pa.range_start = bm.range_start;
                         after_c2pa.range_len = bm.range_len;
                     } else {
@@ -273,6 +271,7 @@ impl BoxHash {
                 let inclusion = HashRange::new(bm.range_start, bm.range_len);
                 inclusions.push(inclusion);
 
+                bm.alg = Some(alg.to_string());
                 bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
                 bm.pad = ByteBuf::from(vec![]);
 
@@ -414,7 +413,7 @@ mod tests {
         let mut bh = BoxHash { boxes: Vec::new() };
 
         // generate box hashes
-        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp, false)
+        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp, true)
             .unwrap();
 
         // save and reload JSOH
