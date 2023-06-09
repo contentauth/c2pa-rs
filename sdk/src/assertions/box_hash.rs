@@ -290,7 +290,7 @@ impl AssertionJson for BoxHash {}
 impl AssertionBase for BoxHash {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
-    
+
     fn to_assertion(&self) -> crate::error::Result<Assertion> {
         Self::to_cbor_assertion(self)
     }

@@ -697,7 +697,8 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
         })
     {
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
+        let tst_infos =
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
