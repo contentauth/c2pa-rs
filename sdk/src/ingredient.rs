@@ -846,7 +846,7 @@ impl Ingredient {
                             // verify the store
                             Store::verify_store_async(
                                 &store,
-                                &mut ClaimAssetData::Stream(stream),
+                                &mut ClaimAssetData::Stream(stream, format),
                                 &mut validation_log,
                             )
                             .await
@@ -1190,7 +1190,7 @@ impl Ingredient {
                 stream.rewind()?;
                 Store::verify_store_async(
                     &store,
-                    &mut ClaimAssetData::Stream(stream),
+                    &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
                 )
                 .await

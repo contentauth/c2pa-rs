@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::error::Result;
+use crate::{assertions::BoxMap, error::Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
@@ -187,6 +187,11 @@ pub trait AssetIO: Sync + Send {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
+
+    // Returns [`AssetBoxHah`] trait if this I/O handler supports box hashing.
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        None
+    }
 }
 
 // `AssetPatch` optimizes output generation for asset_io handlers that
@@ -198,6 +203,16 @@ pub trait AssetPatch {
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+}
+
+// `AssetBoxHash` provides interfaces needed to support C2PA BoxHash functionality.
+//  This trait is only implemented for supported types
+pub trait AssetBoxHash {
+    // Returns Vec containing all BoxMap level objects in the asset in the order
+    // they occur in the asset.  The hashes do not need to be calculated, only the
+    // name and the positional information.  The list should be flat with each BoxMap
+    // representing a single entry.
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 
 // Type of remote reference to embed.  Some of the listed

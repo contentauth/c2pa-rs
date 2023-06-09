@@ -1451,7 +1451,7 @@ impl Store {
 
         if found_jumbf {
             // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg, None);
+            let mut dh = DataHash::new("jumbf manifest", alg);
             if block_end > block_start {
                 dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
             }
@@ -1617,6 +1617,43 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    /// Returns a manifest suitible for direct embedding by a client.  The
+    /// manfiest are only supported for cases when the client has provided
+    /// a content hash binding.  Note, will not work for cases like BMFF where
+    /// the position of the content is also encoded.  
+    pub fn get_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+
+        // make sure there are data hashes present before generating
+        if pc.hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "Claim must have hash binding assertion".to_string(),
+            ));
+        }
+
+        // don't allow BMFF assertions to be present
+        if !pc.bmff_hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "BMFF assertions not supported in embeddable manifests".to_string(),
+            ));
+        }
+
+        // sign contents
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
     }
 
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
@@ -1922,26 +1959,29 @@ impl Store {
             }
         }
 
-        // 2) Get hash ranges if needed, do not generate for update manifests
-        let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-        let hashes: Vec<DataHash> = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes_for_stream(
-                &mut intermediate_stream,
-                pc.alg(),
-                &mut hash_ranges,
-                false,
-            )?
-        };
+        // we will not do automatic hashing if we detect a box hash present
+        if pc.box_hash_assertions().is_empty() {
+            // 2) Get hash ranges if needed, do not generate for update manifests
+            let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
+            let hashes: Vec<DataHash> = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes_for_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    &mut hash_ranges,
+                    false,
+                )?
+            };
 
-        // add the placeholder data hashes to provenance claim so that the required space is reserved
-        for mut hash in hashes {
-            // add padding to account for possible cbor expansion of final DataHash
-            let padding: Vec<u8> = vec![0x0; 10];
-            hash.add_padding(padding);
+            // add the placeholder data hashes to provenance claim so that the required space is reserved
+            for mut hash in hashes {
+                // add padding to account for possible cbor expansion of final DataHash
+                let padding: Vec<u8> = vec![0x0; 10];
+                hash.add_padding(padding);
 
-            pc.add_assertion(&hash)?;
+                pc.add_assertion(&hash)?;
+            }
         }
 
         // 3) Generate in memory CAI jumbf block
@@ -1957,31 +1997,35 @@ impl Store {
         // replace the source with correct asset hashes so that the claim hash will be correct
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        // get the final hash ranges, but not for update manifests
-        intermediate_stream.rewind()?;
-        output_stream.rewind()?;
-        std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
-        let mut new_hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-        let updated_hashes = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes_for_stream(
-                &mut intermediate_stream,
-                pc.alg(),
-                &mut new_hash_ranges,
-                true,
-            )?
-        };
+        // we will not do automatic hashing if we detect a box hash present
+        if pc.box_hash_assertions().is_empty() {
+            // get the final hash ranges, but not for update manifests
+            intermediate_stream.rewind()?;
+            output_stream.rewind()?;
+            std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+            let mut new_hash_ranges =
+                object_locations_from_stream(format, &mut intermediate_stream)?;
+            let updated_hashes = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes_for_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    &mut new_hash_ranges,
+                    true,
+                )?
+            };
 
-        // patch existing claim hash with updated data
-        for hash in updated_hashes {
-            pc.update_data_hash(hash)?;
-        }
+            // patch existing claim hash with updated data
+            for hash in updated_hashes {
+                pc.update_data_hash(hash)?;
+            }
 
-        // regenerate the jumbf because the cbor changed
-        data = self.to_jumbf_internal(reserve_size)?;
-        if jumbf_size != data.len() {
-            return Err(Error::JumbfCreationError);
+            // regenerate the jumbf because the cbor changed
+            data = self.to_jumbf_internal(reserve_size)?;
+            if jumbf_size != data.len() {
+                return Err(Error::JumbfCreationError);
+            }
         }
 
         Ok(data) // return JUMBF data
@@ -2140,21 +2184,24 @@ impl Store {
                 }
             }
         } else {
-            // 2) Get hash ranges if needed, do not generate for update manifests
-            let mut hash_ranges = object_locations(&output_path)?;
-            let hashes: Vec<DataHash> = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
-            };
+            // we will not do automatic hashing if we detect a box hash present
+            if pc.box_hash_assertions().is_empty() {
+                // 2) Get hash ranges if needed, do not generate for update manifests
+                let mut hash_ranges = object_locations(&output_path)?;
+                let hashes: Vec<DataHash> = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
+                };
 
-            // add the placeholder data hashes to provenance claim so that the required space is reserved
-            for mut hash in hashes {
-                // add padding to account for possible cbor expansion of final DataHash
-                let padding: Vec<u8> = vec![0x0; 10];
-                hash.add_padding(padding);
+                // add the placeholder data hashes to provenance claim so that the required space is reserved
+                for mut hash in hashes {
+                    // add padding to account for possible cbor expansion of final DataHash
+                    let padding: Vec<u8> = vec![0x0; 10];
+                    hash.add_padding(padding);
 
-                pc.add_assertion(&hash)?;
+                    pc.add_assertion(&hash)?;
+                }
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -2166,19 +2213,21 @@ impl Store {
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
+            // If box hash is present we don't do any other
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            if pc.box_hash_assertions().is_empty() {
+                // get the final hash ranges, but not for update manifests
+                let mut new_hash_ranges = object_locations(&output_path)?;
+                let updated_hashes = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
+                };
 
-            // get the final hash ranges, but not for update manifests
-            let mut new_hash_ranges = object_locations(&output_path)?;
-            let updated_hashes = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
-            };
-
-            // patch existing claim hash with updated data
-            for hash in updated_hashes {
-                pc.update_data_hash(hash)?;
+                // patch existing claim hash with updated data
+                for hash in updated_hashes {
+                    pc.update_data_hash(hash)?;
+                }
             }
         }
 
@@ -2228,20 +2277,28 @@ impl Store {
     pub fn verify_from_buffer(
         &mut self,
         buf: &[u8],
-        _asset_type: &str,
+        asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Bytes(buf), validation_log)
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Bytes(buf, asset_type),
+            validation_log,
+        )
     }
 
     // verify from a buffer without file i/o
     pub fn verify_from_stream(
         &mut self,
         reader: &mut dyn CAIRead,
-        _asset_type: &str,
+        asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &mut ClaimAssetData::Stream(reader), validation_log)
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Stream(reader, asset_type),
+            validation_log,
+        )
     }
 
     // fetch remote manifest if possible
@@ -2502,7 +2559,11 @@ impl Store {
             // verify the store
             if verify {
                 // verify store and claims
-                Store::verify_store(&store, &mut ClaimAssetData::Bytes(data), validation_log)?;
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::Bytes(data, asset_type),
+                    validation_log,
+                )?;
             }
 
             Ok(store)
@@ -2525,8 +2586,12 @@ impl Store {
         // verify the store
         if verify {
             // verify store and claims
-            Store::verify_store_async(&store, &mut ClaimAssetData::Bytes(data), validation_log)
-                .await?;
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Bytes(data, asset_type),
+                validation_log,
+            )
+            .await?;
         }
 
         Ok(store)
@@ -2556,6 +2621,7 @@ impl Store {
                     &mut ClaimAssetData::StreamFragment(
                         &mut init_segment_stream,
                         &mut fragment_stream,
+                        asset_type,
                     ),
                     validation_log,
                 )?;
@@ -2588,7 +2654,11 @@ impl Store {
             // verify store and claims
             Store::verify_store_async(
                 &store,
-                &mut ClaimAssetData::StreamFragment(&mut init_segment_stream, &mut fragment_stream),
+                &mut ClaimAssetData::StreamFragment(
+                    &mut init_segment_stream,
+                    &mut fragment_stream,
+                    asset_type,
+                ),
                 validation_log,
             )
             .await?;
@@ -2694,9 +2764,12 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::{Action, Actions, Ingredient, Uuid},
+        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},
-        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
+        jumbf_io::{
+            get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file,
+            update_file_jumbf,
+        },
         status_tracker::*,
         utils::{
             patch::patch_file,
@@ -2704,7 +2777,7 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
             },
         },
-        SigningAlg,
+        AssertionJson, SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -4289,6 +4362,47 @@ pub mod tests {
                     .get_claim_assertion(&label, instance)
                     .expect("Should find assertion");
             }
+        }
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        // test adding to actual image
+        let ap = fixture_path("CA.jpg");
+        let box_hash_path = fixture_path("boxhash.json");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // add box hash for CA.jpg
+        let box_hash_data = std::fs::read(box_hash_path).unwrap();
+        let assertion = Assertion::from_data_json(BOX_HASH, &box_hash_data).unwrap();
+        let box_hash = BoxHash::from_json_assertion(&assertion).unwrap();
+        claim.add_assertion(&box_hash).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // get the embeddable manifest
+        let em = store.get_embeddable_manifest(signer.as_ref()).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let new_store = Store::from_jumbf(&em, &mut report).unwrap();
+
+        let pc = new_store.provenance_claim().unwrap();
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        for h in pc.box_hash_assertions() {
+            let bh = BoxHash::from_assertion(h).unwrap();
+            bh.verify_hash(&ap, None, bhp).unwrap();
         }
     }
 }

@@ -261,9 +261,6 @@ pub struct BmffHash {
 }
 
 impl BmffHash {
-    /// Label prefix for a BMFF hash assertion.
-    ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
     pub const LABEL: &'static str = labels::BMFF_HASH;
 
     pub fn new(name: &str, alg: &str, url: Option<UriT>) -> Self {
@@ -379,7 +376,7 @@ impl BmffHash {
     ) -> crate::error::Result<()> {
         let mut reader = Cursor::new(data);
 
-        self.verify_stream(&mut reader, alg)
+        self.verify_stream_hash(&mut reader, alg)
     }
 
     // The BMFFMerklMaps are stored contiguous in the file.  Break this Vec into groups based on
@@ -429,7 +426,7 @@ impl BmffHash {
 
     pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> crate::error::Result<()> {
         let mut data = fs::File::open(asset_path)?;
-        self.verify_stream(&mut data, alg)
+        self.verify_stream_hash(&mut data, alg)
     }
 
     /* Verifies BMFF hashes from a single file asset.  The following variants are handled
@@ -439,7 +436,7 @@ impl BmffHash {
             Untimed media (Merkle hashes over iloc locations)
         A single BMFF asset containing all fragments (Merkle hashes over moof ranges).
     */
-    pub fn verify_stream(
+    pub fn verify_stream_hash(
         &self,
         reader: &mut dyn CAIRead,
         alg: Option<&str>,
@@ -922,7 +919,7 @@ pub mod tests {
 
         // get the bmff hashes
         let claim = store.provenance_claim().unwrap();
-        for dh_assertion in claim.data_hash_assertions() {
+        for dh_assertion in claim.hash_assertions() {
             if dh_assertion.label_root() == BmffHash::LABEL {
                 let bmff_hash = BmffHash::from_assertion(dh_assertion).unwrap();
 

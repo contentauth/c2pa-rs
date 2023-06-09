@@ -19,6 +19,9 @@ pub use actions::{c2pa_action, Action, Actions, SoftwareAgent};
 mod bmff_hash;
 pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
 
+mod box_hash;
+pub(crate) use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
+
 #[allow(dead_code)] // will become public later
 mod data_hash;
 pub(crate) use data_hash::DataHash;

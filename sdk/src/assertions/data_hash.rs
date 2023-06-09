@@ -61,13 +61,10 @@ pub struct DataHash {
 }
 
 impl DataHash {
-    /// Label prefix for a data hash assertion.
-    ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_data_hash>.
     pub const LABEL: &'static str = labels::DATA_HASH;
 
     /// Create new DataHash instance
-    pub fn new(name: &str, alg: &str, url: Option<UriT>) -> Self {
+    pub fn new(name: &str, alg: &str) -> Self {
         DataHash {
             exclusions: None,
             name: Some(name.to_string()),
@@ -75,7 +72,7 @@ impl DataHash {
             hash: Vec::new(),
             pad: Vec::new(),
             pad2: None,
-            url,
+            url: None, //deprecated
             path: PathBuf::new(),
         }
     }
@@ -297,7 +294,7 @@ pub mod tests {
     #[test]
     fn test_build_assertion() {
         // try json based assertion
-        let mut data_hash = DataHash::new("Some data", "sha256", None);
+        let mut data_hash = DataHash::new("Some data", "sha256");
         data_hash.add_exclusion(HashRange::new(0, 1234));
         data_hash.hash = vec![1, 2, 3];
 
@@ -338,7 +335,7 @@ pub mod tests {
 
     #[test]
     fn test_binary_round_trip() {
-        let mut data_hash = DataHash::new("Some data", "sha256", None);
+        let mut data_hash = DataHash::new("Some data", "sha256");
         data_hash.add_exclusion(HashRange::new(0x2000, 0x1000));
         data_hash.add_exclusion(HashRange::new(0x4000, 0x1000));
 

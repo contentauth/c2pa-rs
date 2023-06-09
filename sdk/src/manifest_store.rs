@@ -255,7 +255,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
     ///             .await
     ///             .unwrap();
     ///
@@ -267,6 +267,7 @@ impl ManifestStore {
     /// ```
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
+        format: &str,
         asset_bytes: &[u8],
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
@@ -274,7 +275,7 @@ impl ManifestStore {
 
         Store::verify_store_async(
             &store,
-            &mut ClaimAssetData::Bytes(asset_bytes),
+            &mut ClaimAssetData::Bytes(asset_bytes, format),
             &mut validation_log,
         )
         .await?;
@@ -431,10 +432,13 @@ mod tests {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
-        let manifest_store =
-            ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
-                .await
-                .unwrap();
+        let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
+            manifest_bytes,
+            "image/jpg",
+            asset_bytes,
+        )
+        .await
+        .unwrap();
         assert!(!manifest_store.manifests().is_empty());
         assert!(manifest_store.validation_status().is_none());
         println!("{manifest_store}");

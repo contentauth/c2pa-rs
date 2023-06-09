@@ -66,6 +66,10 @@ impl HashRange {
         self.length
     }
 
+    pub fn set_length(&mut self, length: usize) {
+        self.length = length;
+    }
+
     // set offset for BMFF_V2 to be hashed in addition to data
     pub fn set_bmff_offset(&mut self, offset: u64) {
         self.bmff_offset = Some(offset);
