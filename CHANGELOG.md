@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.23.0
+_09 June 2023_
+
+* Box hash support ([#261](https://github.com/contentauth/c2pa-rs/pull/261))
+* Fix timestamp Accuracy decoding ([#262](https://github.com/contentauth/c2pa-rs/pull/262))
+* Make remote manifest handling consistent across input types ([#260](https://github.com/contentauth/c2pa-rs/pull/260))
+* (MINOR) Support for Ingredients V2 and Actions V2 ([#258](https://github.com/contentauth/c2pa-rs/pull/258))
+* Generate and validate 1.3 Cose signatures ([#256](https://github.com/contentauth/c2pa-rs/pull/256))
+* Add type exports via JSON Schema ([#255](https://github.com/contentauth/c2pa-rs/pull/255))
+* Bmff v2 ([#251](https://github.com/contentauth/c2pa-rs/pull/251))
+
 ## 0.22.0
 _18 May 2023_
 
