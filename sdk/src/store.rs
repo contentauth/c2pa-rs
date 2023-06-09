@@ -1621,7 +1621,7 @@ impl Store {
 
     /// Returns a manifest suitible for direct embedding by a client.  The
     /// manfiest are only supported for cases when the client has provided
-    /// a content hash binding.  Note, will not work for cases like BMFF where 
+    /// a content hash binding.  Note, will not work for cases like BMFF where
     /// the position of the content is also encoded.  
     pub fn get_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;

@@ -83,14 +83,14 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        // get source box list
-        let source_bms = bhp.get_box_map(reader)?;
-        let mut source_index = 0;
-
         // it is a failure if no hashes are listed
         if self.boxes.is_empty() {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
+
+        // get source box list
+        let source_bms = bhp.get_box_map(reader)?;
+        let mut source_index = 0;
 
         // check to see we source index starts at PNGh and skip if not included in the hash list
         if let Some(first_expected_bms) = source_bms.get(source_index) {
