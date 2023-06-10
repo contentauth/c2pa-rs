@@ -8,6 +8,8 @@ Use the tool to:
 - Read a low-level report of C2PA manifest data in [supported file formats](#supported-file-formats).
 - Add a C2PA manifest to [supported file formats](#supported-file-formats).
 
+For a simple example of calling c2patool from a server-based application, see the [c2pa-service-example](https://github.com/contentauth/c2pa-service-example) repository.
+
 ## Installation
 
 Prebuilt versions of the tool are available for [download](https://github.com/contentauth/c2patool/tags).
