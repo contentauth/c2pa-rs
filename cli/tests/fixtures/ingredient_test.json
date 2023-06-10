@@ -2,7 +2,34 @@
     "ta_url": "http://timestamp.digicert.com",
     
     "claim_generator": "TestApp",
+    "claim_generator_info": [{
+        "name": "Test App",
+        "version": "0.0.1",
+        "icon": {
+            "format": "image/png",
+            "identifier": "libpng-test.png"
+        }
+    }],
+    "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "earth_apollo17.jpg"
+    },
     "assertions": [
+        {
+            "label": "c2pa.actions",
+            "data": {
+                "actions": [{
+                    "action": "c2pa.created",
+                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                    "softwareAgent": {
+                        "name": "TestApp",
+                        "version": "1.0",
+                        "something": "else"
+                    }
+                }]
+            }
+        },
         {
             "label": "stds.schema-org.CreativeWork",
             "data": {
