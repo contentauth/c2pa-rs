@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -263,7 +263,9 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value = serde_json::to_value(value).map_err(|_| Error::AssertionEncoding)?;
+        let value_bytes = serde_cbor::ser::to_vec(&value).expect("should serialize");
+
+        let value = serde_cbor::from_slice(&value_bytes).map_err(|_| Error::AssertionEncoding)?;
         self.parameters = Some(match self.parameters {
             Some(mut parameters) => {
                 parameters.insert(key.into(), value);
@@ -422,9 +424,17 @@ impl Actions {
         self
     }
 
-    /// Creates an [`Actions`] assertion from a compatible JSON value.
+    /// Creates a CBOR [`Actions`] assertion from a compatible JSON value.
     pub fn from_json_value(json: &serde_json::Value) -> Result<Self> {
-        let actions: Actions = serde_json::from_value(json.clone())?;
+        let buf: Vec<u8> = Vec::new();
+        let json_str = json.to_string();
+        let mut from = serde_json::Deserializer::from_str(&json_str);
+        let mut to = serde_cbor::Serializer::new(buf);
+
+        serde_transcode::transcode(&mut from, &mut to)?;
+        let buf2 = to.into_inner();
+
+        let actions: Actions = serde_cbor::from_slice(&buf2)?;
         Ok(actions)
     }
 }

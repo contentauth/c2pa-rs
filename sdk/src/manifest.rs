@@ -638,7 +638,7 @@ impl Manifest {
                     )?;
                     manifest.add_ingredient(ingredient);
                 }
-                labels::DATA_HASH | labels::BMFF_HASH => {
+                labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
