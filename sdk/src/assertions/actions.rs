@@ -22,7 +22,7 @@ use crate::{
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
-    ClaimGeneratorInfo, Error,
+    ClaimGeneratorInfo,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
@@ -263,9 +263,9 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value_bytes = serde_cbor::ser::to_vec(&value).expect("should serialize");
+        let value_bytes = serde_cbor::ser::to_vec(&value)?;
+        let value = serde_cbor::from_slice(&value_bytes)?;
 
-        let value = serde_cbor::from_slice(&value_bytes).map_err(|_| Error::AssertionEncoding)?;
         self.parameters = Some(match self.parameters {
             Some(mut parameters) => {
                 parameters.insert(key.into(), value);
