@@ -4366,6 +4366,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_embeddable_manifest() {
         // test adding to actual image
         let ap = fixture_path("CA.jpg");
