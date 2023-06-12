@@ -15,7 +15,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
-use log::{debug, error, warn};
+use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
