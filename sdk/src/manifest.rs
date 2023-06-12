@@ -25,7 +25,7 @@ use uuid::Uuid;
 #[cfg(feature = "file_io")]
 use crate::AsyncSigner;
 use crate::{
-    assertion::{AssertionBase, AssertionData, AssertionDecodeError},
+    assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
     asset_io::CAIRead,
     claim::{Claim, RemoteManifest},
@@ -644,7 +644,7 @@ impl Manifest {
                     )?;
                     manifest.add_ingredient(ingredient);
                 }
-                labels::DATA_HASH | labels::BMFF_HASH => {
+                labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
@@ -654,24 +654,15 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(x) => {
-                            let value = serde_json::from_str(x).map_err(|e| {
-                                AssertionDecodeError::from_assertion_and_json_err(assertion, e)
-                            })?;
+                        AssertionData::Json(_) | AssertionData::Cbor(_) => {
+                            let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
+
                             manifest.assertions.push(ma);
                         }
-                        AssertionData::Cbor(x) => {
-                            let value: Value =
-                                serde_cbor::from_slice(x.as_slice()).map_err(|e| {
-                                    AssertionDecodeError::from_assertion_and_cbor_err(assertion, e)
-                                })?;
-                            let ma = ManifestAssertion::new(base_label, value)
-                                .set_instance(claim_assertion.instance());
-                            manifest.assertions.push(ma);
-                        }
+
                         // todo: support binary forms
                         AssertionData::Binary(_x) => {}
                         AssertionData::Uuid(_, _) => {}
