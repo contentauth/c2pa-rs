@@ -20,6 +20,7 @@ use coset::{
 };
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
+    num_bigint::BigUint,
     oid_registry::Oid,
     prelude::*,
 };
@@ -708,6 +709,14 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
+/// A wrapper containing information of the signing cert.
+pub(crate) struct CertInfo {
+    /// The name of the identity the certificate is issued to.
+    pub subject: String,
+    /// The serial number of the cert. Will be unique to the CA.
+    pub serial_number: BigUint,
+}
+
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
     cert.subject()
         .iter_organization()
@@ -716,6 +725,11 @@ fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
         .ok_or(Error::CoseX5ChainMissing)?
         .map(|attr| attr.to_string())
         .map_err(|_e| Error::CoseX5ChainMissing)
+}
+
+/// Returns the unique serial number from the provided cert.
+fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
+    cert.serial.clone()
 }
 
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
@@ -808,8 +822,13 @@ pub async fn verify_cose_async(
         sign1.payload.as_ref().unwrap_or(&vec![]),
     ); // get "to be signed" bytes
 
-    if let Ok(issuer) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await {
-        result.issuer_org = Some(issuer);
+    if let Ok(CertInfo {
+        subject,
+        serial_number,
+    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await
+    {
+        result.issuer_org = Some(subject);
+        result.cert_serial_number = Some(serial_number);
         result.validated = true;
         result.alg = Some(alg);
 
@@ -832,6 +851,7 @@ pub fn get_signing_info(
     let mut date = None;
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
+    let mut cert_serial_number = None;
 
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
@@ -840,6 +860,7 @@ pub fn get_signing_info(
         let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
             date = get_signing_time(&sign1, data);
             issuer_org = extract_subject_from_cert(&signcert).ok();
+            cert_serial_number = Some(extract_serial_from_cert(&signcert));
             if let Ok(a) = get_signing_alg(&sign1) {
                 alg = Some(a);
             }
@@ -858,6 +879,7 @@ pub fn get_signing_info(
             alg,
             validated: false,
             cert_chain: Vec::new(),
+            cert_serial_number,
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -876,6 +898,7 @@ pub fn get_signing_info(
             alg,
             validated: false,
             cert_chain: certs,
+            cert_serial_number,
         }
     }
 }
@@ -962,8 +985,13 @@ pub fn verify_cose(
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
-        if let Ok(issuer) = validate_with_cert(validator, sig, verify_data, der_bytes) {
-            result.issuer_org = Some(issuer);
+        if let Ok(CertInfo {
+            subject,
+            serial_number,
+        }) = validate_with_cert(validator, sig, verify_data, der_bytes)
+        {
+            result.issuer_org = Some(subject);
+            result.cert_serial_number = Some(serial_number);
             result.validated = true;
             result.alg = Some(alg);
 
@@ -997,7 +1025,7 @@ fn validate_with_cert(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -1005,7 +1033,10 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -1017,14 +1048,17 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseMissingKey)?;
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
     if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -1036,7 +1070,7 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -1046,7 +1080,10 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
