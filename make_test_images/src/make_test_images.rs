@@ -260,7 +260,7 @@ impl MakeTestImages {
                         .set_source_type(
                             "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                         )
-                        .set_software_agent(software_agent)
+                        .set_software_agent(software_agent.as_str())
                         .set_parameter("name".to_owned(), "gradient")?,
                 );
                 img
