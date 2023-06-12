@@ -1,0 +1,87 @@
+{
+    "claim_generator": "test",
+    "claim_generator_info": [
+        {
+            "name": "test",
+            "version": "1.0",
+            "icon": {
+                "format": "image/svg+xml",
+                "identifier": "sample1.svg"
+            }
+        }
+    ],
+    "format" : "image/jpeg",
+    "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "IMG_0003.jpg"
+    },
+    "assertions": [
+        {
+            "label": "c2pa.actions.v2",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.opened",
+                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "parameters": {
+                            "description": "import"
+                        },
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            },
+                            "something": "else"
+                        }
+                    }
+                ],
+                "templates": [
+                    {
+                        "action": "c2pa.opened",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            },
+                            "something": "else"
+                        },
+                        "icon": {
+                            "format": "image/svg+xml",
+                            "identifier": "sample1.svg"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "ingredients": [{
+        "title": "A.jpg",
+        "format": "image/jpeg",
+        "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+        "relationship": "parentOf",
+        "thumbnail": {
+            "format": "image/png",
+            "identifier": "exp-test1.png"
+        }
+    },
+    {
+        "title": "prompt",
+        "format": "text/plain",
+        "relationship": "inputTo",
+        "data": {
+          "format": "text/plain",
+          "identifier": "prompt.txt",
+          "data_types": [
+            {
+              "type": "c2pa.types.generator.prompt"
+            }
+          ]
+        }
+      }
+    ]
+}
