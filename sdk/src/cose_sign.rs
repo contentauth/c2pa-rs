@@ -18,7 +18,8 @@
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
-    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, TaggedCborSerializable,
+    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
+    TaggedCborSerializable,
 };
 
 use crate::{
@@ -222,9 +223,17 @@ fn build_headers(
         iana::HeaderParameter::X5Chain.to_i64(),
         sc_der_array_or_bytes,
     );
+    let protected_header = protected_h.build();
 
     let mut unprotected_h = if let Some(url) = ta_url {
-        let cts = cose_timestamp_countersign(data, alg, &url)?;
+        let cts = cose_timestamp_countersign(
+            data,
+            &ProtectedHeader {
+                original_data: None,
+                header: protected_header.clone(),
+            },
+            &url,
+        )?;
         let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
         let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
 
@@ -245,7 +254,6 @@ fn build_headers(
     }
 
     // build complete header
-    let protected_header = protected_h.build();
     let unprotected_header = unprotected_h.build();
 
     Ok((protected_header, unprotected_header))
