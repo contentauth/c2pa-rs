@@ -451,10 +451,16 @@ impl Manifest {
     }
 
     /// Sets the signature information for the report
-    fn set_signature(&mut self, issuer: Option<&String>, time: Option<&String>) -> &mut Self {
+    fn set_signature(
+        &mut self,
+        issuer: Option<&String>,
+        time: Option<&String>,
+        cert_serial: Option<&String>,
+    ) -> &mut Self {
         self.signature_info = Some(SignatureInfo {
             issuer: issuer.cloned(),
             time: time.cloned(),
+            cert_serial_number: cert_serial.cloned(),
         });
         self
     }
@@ -675,7 +681,11 @@ impl Manifest {
                 "added signature issuer={:?} time={:?}",
                 issuer, signing_time
             );
-            manifest.set_signature(issuer.as_ref(), signing_time.as_ref());
+            manifest.set_signature(
+                issuer.as_ref(),
+                signing_time.as_ref(),
+                claim.signing_cert_serial().as_ref(),
+            );
         }
 
         Ok(manifest)
@@ -1158,6 +1168,11 @@ pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
     issuer: Option<String>,
+
+    /// The serial number of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cert_serial_number: Option<String>,
+
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
