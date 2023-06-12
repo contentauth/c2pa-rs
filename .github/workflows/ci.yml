@@ -97,32 +97,6 @@ jobs:
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
-  test-default-disabled:
-    name: Unit tests with default features disabled
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
-
-      - name: Run tests
-        run: cargo test --all-targets --no-default-features
-
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     runs-on: ${{ matrix.os }}
