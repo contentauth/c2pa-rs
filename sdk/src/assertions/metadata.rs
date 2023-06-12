@@ -24,6 +24,7 @@ use crate::{
     assertions::labels,
     error::Result,
     hashed_uri::HashedUri,
+    utils::cbor_types::DateT,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -35,7 +36,7 @@ pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
     reviews: Option<Vec<ReviewRating>>,
     #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    date_time: Option<String>,
+    date_time: Option<DateT>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<HashedUri>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -53,7 +54,9 @@ impl Metadata {
     pub fn new() -> Self {
         Self {
             reviews: None,
-            date_time: Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)),
+            date_time: Some(DateT(
+                Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            )),
             reference: None,
             data_source: None,
             other: HashMap::new(),
@@ -94,7 +97,7 @@ impl Metadata {
 
     /// Sets the ISO 8601 date-time string when the assertion was created/generated.
     pub fn set_date_time(&mut self, date_time: String) -> &mut Self {
-        self.date_time = Some(date_time);
+        self.date_time = Some(DateT(date_time));
         self
     }
 
@@ -160,6 +163,7 @@ pub mod c2pa_source {
 /// A description of the source for assertion data
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
 pub struct DataSource {
     /// A value from among the enumerated list indicating the source of the assertion.
     #[serde(rename = "type")]
@@ -199,6 +203,7 @@ impl DataSource {
 /// Identifies a person responsible for an action.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
 pub struct Actor {
     /// An identifier for a human actor, used when the "type" is `humanEntry.identified`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,6 +268,24 @@ impl ReviewRating {
             code,
         }
     }
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub struct AssetType {
+    #[serde(rename = "type")]
+    pub asset_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub struct DataBox {
+    #[serde(rename = "dc:format")]
+    pub format: String,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 #[cfg(test)]

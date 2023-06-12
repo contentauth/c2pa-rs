@@ -23,7 +23,7 @@ use crate::{
     validation_status::ValidationStatus,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 1;
+const ASSERTION_CREATION_VERSION: usize = 2;
 
 // Used to differentiate a parent from a component
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -34,6 +34,8 @@ pub enum Relationship {
     #[serde(rename = "componentOf")]
     #[default]
     ComponentOf,
+    #[serde(rename = "inputTo")]
+    InputTo,
 }
 
 /// An ingredient assertion
@@ -45,8 +47,8 @@ pub struct Ingredient {
     pub format: String,
     #[serde(rename = "documentID", skip_serializing_if = "Option::is_none")]
     pub document_id: Option<String>,
-    #[serde(rename = "instanceID")]
-    pub instance_id: String,
+    #[serde(rename = "instanceID", skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c2pa_manifest: Option<HashedUri>,
     #[serde(rename = "validationStatus", skip_serializing_if = "Option::is_none")]
@@ -56,6 +58,12 @@ pub struct Ingredient {
     pub thumbnail: Option<HashedUri>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<HashedUri>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "informational_URI", skip_serializing_if = "Option::is_none")]
+    pub informational_uri: Option<String>,
 }
 
 impl Ingredient {
@@ -69,13 +77,29 @@ impl Ingredient {
             title: title.to_owned(),
             format: format.to_owned(),
             document_id: document_id.map(|id| id.to_owned()),
-            instance_id: instance_id.to_owned(),
-            c2pa_manifest: None,
-            validation_status: None,
-            relationship: Relationship::ComponentOf,
-            thumbnail: None,
-            metadata: None,
+            instance_id: Some(instance_id.to_owned()),
+            ..Default::default()
         }
+    }
+
+    pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+    {
+        Self {
+            title: title.into(),
+            format: format.into(),
+            ..Default::default()
+        }
+    }
+
+    /// determines if an ingredient is a v2 ingredient
+    fn is_v2(&self) -> bool {
+        self.instance_id.is_none()
+            || self.data.is_some()
+            || self.description.is_some()
+            || self.informational_uri.is_some()
     }
 
     pub fn set_parent(mut self) -> Self {
@@ -126,6 +150,15 @@ impl AssertionCbor for Ingredient {}
 impl AssertionBase for Ingredient {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
+
+    /// if we require v2 fields then use V2
+    fn version(&self) -> Option<usize> {
+        if self.is_v2() {
+            Some(2)
+        } else {
+            Some(1)
+        }
+    }
 
     fn to_assertion(&self) -> Result<Assertion> {
         Self::to_cbor_assertion(self)

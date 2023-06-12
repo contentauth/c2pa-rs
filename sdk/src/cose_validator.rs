@@ -696,9 +696,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
             }
         })
     {
-        let alg = get_signing_alg(sign1)?;
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, alg)?;
+        let tst_infos =
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -953,8 +953,6 @@ pub fn verify_cose(
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
-
-                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }
