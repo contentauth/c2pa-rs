@@ -17,12 +17,11 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor},
+    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
-    AssertionJson,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -291,8 +290,6 @@ impl AssertionBase for BoxHash {
     const LABEL: &'static str = Self::LABEL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
-    // todo: this mechanism needs to change since a struct could support different versions
-
     fn to_assertion(&self) -> crate::error::Result<Assertion> {
         Self::to_cbor_assertion(self)
     }
@@ -416,11 +413,40 @@ mod tests {
         bh.generate_box_hash_from_stream(&mut input, "sha256", bhp, true)
             .unwrap();
 
-        // save and reload JSOH
+        // save and reload JSON
         let bh_json_assertion = bh.to_json_assertion().unwrap();
         println!("Box hash json: {:?}", bh_json_assertion.decode_data());
 
         let reloaded_bh = BoxHash::from_json_assertion(&bh_json_assertion).unwrap();
+
+        // see if they match reading
+        reloaded_bh
+            .verify_stream_hash(&mut input, Some("sha256"), bhp)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_cbor_round_trop() {
+        let ap = fixture_path("CA.jpg");
+
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        let mut input = File::open(&ap).unwrap();
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+
+        // generate box hashes
+        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp, true)
+            .unwrap();
+
+        // save and reload CBOR
+        let bh_cbor_assertion = bh.to_cbor_assertion().unwrap();
+        println!("Box hash cbor: {:?}", bh_cbor_assertion.decode_data());
+
+        let reloaded_bh = BoxHash::from_cbor_assertion(&bh_cbor_assertion).unwrap();
 
         // see if they match reading
         reloaded_bh

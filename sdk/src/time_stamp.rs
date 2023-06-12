@@ -14,7 +14,7 @@
 use std::convert::TryFrom;
 
 use bcder::decode::Constructed;
-use coset::{iana, sig_structure_data, HeaderBuilder, ProtectedHeader};
+use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
@@ -27,45 +27,16 @@ use crate::{
         rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
     },
     hash_utils::vec_compare,
-    SigningAlg,
 };
 
 #[allow(dead_code)]
-pub(crate) fn cose_countersign_data(data: &[u8], alg: SigningAlg) -> Vec<u8> {
-    let alg_id = match alg {
-        SigningAlg::Ps256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS256)
-            .build(),
-        SigningAlg::Ps384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS384)
-            .build(),
-        SigningAlg::Ps512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS512)
-            .build(),
-        SigningAlg::Es256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES256)
-            .build(),
-        SigningAlg::Es384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES384)
-            .build(),
-        SigningAlg::Es512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES512)
-            .build(),
-        SigningAlg::Ed25519 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::EdDSA)
-            .build(),
-    };
-
-    let p_header = ProtectedHeader {
-        original_data: None,
-        header: alg_id,
-    };
+pub(crate) fn cose_countersign_data(data: &[u8], p_header: &ProtectedHeader) -> Vec<u8> {
     let aad: Vec<u8> = Vec::new();
 
     // create sig_structure_data to be signed
     sig_structure_data(
         coset::SignatureContext::CounterSignature,
-        p_header,
+        p_header.clone(),
         None,
         &aad,
         data,
@@ -75,7 +46,7 @@ pub(crate) fn cose_countersign_data(data: &[u8], alg: SigningAlg) -> Vec<u8> {
 #[allow(dead_code)]
 pub(crate) fn cose_timestamp_countersign(
     data: &[u8],
-    alg: SigningAlg,
+    p_header: &ProtectedHeader,
     tsa_url: &str,
 ) -> Result<Vec<u8>> {
     // create countersignature with TimeStampReq parameters
@@ -85,7 +56,7 @@ pub(crate) fn cose_timestamp_countersign(
     // algorithm sha256
 
     // create sig data structure to be time stamped
-    let sd = cose_countersign_data(data, alg);
+    let sd = cose_countersign_data(data, p_header);
 
     timestamp_data(tsa_url, &sd)
 }
@@ -94,7 +65,7 @@ pub(crate) fn cose_timestamp_countersign(
 pub(crate) fn cose_sigtst_to_tstinfos(
     sigtst_cbor: &[u8],
     data: &[u8],
-    alg: SigningAlg,
+    p_header: &ProtectedHeader,
 ) -> Result<Vec<TstInfo>> {
     let tst_container: TstContainer =
         serde_cbor::from_slice(sigtst_cbor).map_err(|_err| Error::CoseTimeStampGeneration)?;
@@ -102,7 +73,7 @@ pub(crate) fn cose_sigtst_to_tstinfos(
     let mut tstinfos: Vec<TstInfo> = Vec::new();
 
     for token in &tst_container.tst_tokens {
-        let tbs = cose_countersign_data(data, alg);
+        let tbs = cose_countersign_data(data, p_header);
         let tst_info = verify_timestamp(&token.val, &tbs)?;
         tstinfos.push(tst_info);
     }

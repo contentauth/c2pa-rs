@@ -323,6 +323,7 @@ impl Assertion {
 
     /// Return assertion as serde_json Object
     /// this may have loss of cbor structure if unsupported in conversion to json
+    /// It should always do the correct thing when using the correct tagged CBOR types
     pub(crate) fn as_json_object(&self) -> AssertionDecodeResult<Value> {
         match self.decode_data() {
             AssertionData::Json(x) => serde_json::from_str(x)
