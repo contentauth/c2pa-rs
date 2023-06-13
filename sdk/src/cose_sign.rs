@@ -17,7 +17,9 @@
 
 use ciborium::value::Value;
 use coset::{
-    iana, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, TaggedCborSerializable,
+    iana::{self, EnumI64},
+    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
+    TaggedCborSerializable,
 };
 
 use crate::{
@@ -96,7 +98,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     let alg = signer.alg();
 
     // build complete header
-    let (alg_id, unprotected_header) = build_unprotected_header(
+    let (protected_header, unprotected_header) = build_headers(
         data,
         alg,
         signer.certs()?,
@@ -107,7 +109,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     let aad = b""; // no additional data required here
 
     let sign1_builder = CoseSign1Builder::new()
-        .protected(alg_id)
+        .protected(protected_header)
         .unprotected(unprotected_header)
         .payload(data.to_vec())
         .try_create_signature(aad, |bytes| signer.sign(bytes))?;
@@ -153,7 +155,7 @@ pub async fn cose_sign_async(
     let alg = signer.alg();
 
     // build complete header
-    let (alg_id, unprotected_header) = build_unprotected_header(
+    let (protected_header, unprotected_header) = build_headers(
         data,
         alg,
         signer.certs()?,
@@ -164,7 +166,7 @@ pub async fn cose_sign_async(
     let aad = b""; // no additional data required here
 
     let sign1_builder = CoseSign1Builder::new()
-        .protected(alg_id)
+        .protected(protected_header)
         .unprotected(unprotected_header)
         .payload(data.to_vec());
 
@@ -188,35 +190,21 @@ pub async fn cose_sign_async(
     Ok(c2pa_sig_data)
 }
 
-fn build_unprotected_header(
+fn build_headers(
     data: &[u8],
     alg: SigningAlg,
     certs: Vec<Vec<u8>>,
     ta_url: Option<String>,
     ocsp_val: Option<Vec<u8>>,
 ) -> Result<(Header, Header)> {
-    let alg_id = match alg {
-        SigningAlg::Ps256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS256)
-            .build(),
-        SigningAlg::Ps384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS384)
-            .build(),
-        SigningAlg::Ps512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS512)
-            .build(),
-        SigningAlg::Es256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES256)
-            .build(),
-        SigningAlg::Es384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES384)
-            .build(),
-        SigningAlg::Es512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES512)
-            .build(),
-        SigningAlg::Ed25519 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::EdDSA)
-            .build(),
+    let mut protected_h = match alg {
+        SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
+        SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
+        SigningAlg::Ps512 => HeaderBuilder::new().algorithm(iana::Algorithm::PS512),
+        SigningAlg::Es256 => HeaderBuilder::new().algorithm(iana::Algorithm::ES256),
+        SigningAlg::Es384 => HeaderBuilder::new().algorithm(iana::Algorithm::ES384),
+        SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
+        SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
     };
 
     let sc_der_array_or_bytes = match certs.len() {
@@ -230,16 +218,28 @@ fn build_unprotected_header(
         }
     };
 
-    let mut unprotected = if let Some(url) = ta_url {
-        let cts = cose_timestamp_countersign(data, alg, &url)?;
+    // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
+    protected_h = protected_h.value(
+        iana::HeaderParameter::X5Chain.to_i64(),
+        sc_der_array_or_bytes,
+    );
+    let protected_header = protected_h.build();
+
+    let mut unprotected_h = if let Some(url) = ta_url {
+        let cts = cose_timestamp_countersign(
+            data,
+            &ProtectedHeader {
+                original_data: None,
+                header: protected_header.clone(),
+            },
+            &url,
+        )?;
         let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
         let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
 
-        HeaderBuilder::new()
-            .text_value("x5chain".to_string(), sc_der_array_or_bytes)
-            .text_value("sigTst".to_string(), sigtst_cbor)
+        HeaderBuilder::new().text_value("sigTst".to_string(), sigtst_cbor)
     } else {
-        HeaderBuilder::new().text_value("x5chain".to_string(), sc_der_array_or_bytes)
+        HeaderBuilder::new()
     };
 
     // set the ocsp responder response if available
@@ -250,13 +250,13 @@ fn build_unprotected_header(
         ocsp_vec.push(Value::Bytes(ocsp));
         r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
 
-        unprotected = unprotected.text_value("rVals".to_string(), Value::Map(r_vals));
+        unprotected_h = unprotected_h.text_value("rVals".to_string(), Value::Map(r_vals));
     }
 
     // build complete header
-    let unprotected_header = unprotected.build();
+    let unprotected_header = unprotected_h.build();
 
-    Ok((alg_id, unprotected_header))
+    Ok((protected_header, unprotected_header))
 }
 
 const PAD: &str = "pad";

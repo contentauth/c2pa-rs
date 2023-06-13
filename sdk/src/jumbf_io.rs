@@ -136,6 +136,12 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
     Ok(output_stream.into_inner())
 }
 
+pub fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
+    let ext = get_file_extension(asset_path)?;
+
+    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
+}
+
 pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
@@ -358,7 +364,6 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
-            Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
         ];
 

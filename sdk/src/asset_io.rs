@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::error::Result;
+use crate::{assertions::BoxMap, error::Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
@@ -48,12 +48,65 @@ impl CAIRead for std::io::Cursor<&mut [u8]> {}
 impl CAIRead for std::io::Cursor<Vec<u8>> {}
 impl CAIRead for NamedTempFile {}
 
+// Helper struct to create a concrete type for CAIRead when
+// that is required.  For example a function defined like this
+//  pub fn read<T>(&self, reader: &mut T) cannot currently accept
+// a CAIRead trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
+pub(crate) struct CAIReadWrapper<'a> {
+    pub reader: &'a mut dyn CAIRead,
+}
+
+impl Read for CAIReadWrapper<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl Seek for CAIReadWrapper<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
 pub trait CAIReadWrite: CAIRead + Write {}
 
 impl CAIReadWrite for std::fs::File {}
 impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
 impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
 impl CAIReadWrite for NamedTempFile {}
+
+// Helper struct to create a concrete type for CAIReadWrite when
+// that is required. For example a function defined like this
+//  pub fn write<T>(&self, writer: &mut T) cannot currently accept
+// a CAIReadWrite trait because it is not Sized (bound to a object).
+// This will likely change in a future version of Rust.
+// go away in future revisions of Rust.
+pub(crate) struct CAIReadWriteWrapper<'a> {
+    pub reader_writer: &'a mut dyn CAIReadWrite,
+}
+
+impl Read for CAIReadWriteWrapper<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader_writer.read(buf)
+    }
+}
+
+impl Write for CAIReadWriteWrapper<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.reader_writer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.reader_writer.flush()
+    }
+}
+
+impl Seek for CAIReadWriteWrapper<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader_writer.seek(pos)
+    }
+}
 
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {
@@ -134,6 +187,11 @@ pub trait AssetIO: Sync + Send {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
+
+    // Returns [`AssetBoxHah`] trait if this I/O handler supports box hashing.
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        None
+    }
 }
 
 // `AssetPatch` optimizes output generation for asset_io handlers that
@@ -145,6 +203,16 @@ pub trait AssetPatch {
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+}
+
+// `AssetBoxHash` provides interfaces needed to support C2PA BoxHash functionality.
+//  This trait is only implemented for supported types
+pub trait AssetBoxHash {
+    // Returns Vec containing all BoxMap level objects in the asset in the order
+    // they occur in the asset.  The hashes do not need to be calculated, only the
+    // name and the positional information.  The list should be flat with each BoxMap
+    // representing a single entry.
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 
 // Type of remote reference to embed.  Some of the listed

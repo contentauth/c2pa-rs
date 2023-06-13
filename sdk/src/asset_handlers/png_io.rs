@@ -19,10 +19,12 @@ use std::{
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
+use serde_bytes::ByteBuf;
 
 use crate::{
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
@@ -159,11 +161,10 @@ fn add_required_chunks_to_stream(
             let aio = PngIO {};
             aio.write_cai(input_stream, output_stream, &no_bytes)?;
         } else {
-            // just move input to output
-            let mut buf: Vec<u8> = Vec::new();
+            // just clone
             input_stream.rewind()?;
-            input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-            output_stream.write_all(&buf)?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
         }
     } else {
         return Err(Error::UnsupportedType);
@@ -560,6 +561,10 @@ impl AssetIO for PngIO {
         Some(self)
     }
 
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -597,6 +602,55 @@ impl RemoteRefEmbed for PngIO {
         _embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
         Err(Error::UnsupportedType)
+    }
+}
+
+impl AssetBoxHash for PngIO {
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        let ps = get_png_chunk_positions(input_stream)?;
+
+        let mut box_maps = Vec::new();
+
+        // add PNGh header
+        let pngh_bm = BoxMap {
+            names: vec!["PNGh".to_string()],
+            alg: None,
+            hash: ByteBuf::from(Vec::new()),
+            pad: ByteBuf::from(Vec::new()),
+            range_start: 0,
+            range_len: 8,
+        };
+        box_maps.push(pngh_bm);
+
+        // add the other boxes
+        for pc in ps.into_iter() {
+            // add special C2PA box
+            if pc.name == CAI_CHUNK {
+                let c2pa_bm = BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: pc.start as usize,
+                    range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                };
+                box_maps.push(c2pa_bm);
+                continue;
+            }
+
+            // all other chunks
+            let c2pa_bm = BoxMap {
+                names: vec![pc.name_str],
+                alg: None,
+                hash: ByteBuf::from(Vec::new()),
+                pad: ByteBuf::from(Vec::new()),
+                range_start: pc.start as usize,
+                range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+            };
+            box_maps.push(c2pa_bm);
+        }
+
+        Ok(box_maps)
     }
 }
 

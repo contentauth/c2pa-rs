@@ -14,9 +14,13 @@
 use asn1_rs::{Any, Class, Header, Tag};
 use ciborium::value::Value;
 use conv::*;
-use coset::{sig_structure_data, Label, TaggedCborSerializable};
+use coset::{
+    iana::{self, EnumI64},
+    sig_structure_data, Label, TaggedCborSerializable,
+};
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
+    num_bigint::BigUint,
     oid_registry::Oid,
     prelude::*,
 };
@@ -51,6 +55,8 @@ const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+
+const DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 /********************** Supported Valiators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -91,6 +97,11 @@ fn get_cose_sign1(
         }
     }
 }
+
+fn has_oid(eku: &ExtendedKeyUsage, oid_val: &Oid) -> bool {
+    eku.other.iter().any(|v| v == oid_val)
+}
+
 fn check_cert(
     _alg: SigningAlg,
     ca_der_bytes: &[u8],
@@ -370,7 +381,11 @@ fn check_cert(
                 return Err(Error::CoseInvalidCert);
             }
 
-            if !(eku.email_protection || eku.ocsp_signing || eku.time_stamping) {
+            if !(eku.email_protection
+                || eku.ocsp_signing
+                || eku.time_stamping
+                || has_oid(eku, &DOCUMENT_SIGNING_OID))
+            {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
@@ -389,7 +404,8 @@ fn check_cert(
                     && (eku.client_auth
                         | eku.code_signing
                         | eku.email_protection
-                        | eku.server_auth))
+                        | eku.server_auth
+                        | has_oid(eku, &DOCUMENT_SIGNING_OID)))
             {
                 let log_item = log_item!(
                     "Cose_Sign1",
@@ -525,11 +541,8 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     let certs = get_sign_certs(sign1)?;
     Ok(certs[0].clone())
 }
-// get the public key der
-fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
-    let mut certs: Vec<Vec<u8>> = Vec::new();
 
-    // get the public key der
+fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     if let Some(der) = sign1
         .unprotected
         .rest
@@ -542,6 +555,8 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
             }
         })
     {
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
         match der {
             Value::Array(cert_chain) => {
                 // handle array of certs
@@ -550,7 +565,12 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
                         certs.push(der_bytes.clone());
                     }
                 }
-                Ok(certs)
+
+                if certs.is_empty() {
+                    Err(Error::CoseMissingKey)
+                } else {
+                    Ok(certs)
+                }
             }
             Value::Bytes(ref der_bytes) => {
                 // handle single cert case
@@ -562,6 +582,62 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     } else {
         Err(Error::CoseX5ChainMissing)
     }
+}
+// get the public key der
+fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
+    // check for protected header int, then protected header x5chain,
+    // then the legacy unprotected x5chain to get the public key der
+
+    // check the protected header
+    if let Some(der) = sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("x5chain".to_string())
+                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
+            {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        // make sure there are no certs in the legacy unprotected header, certs
+        // are only allowing in protect OR unprotected header
+        if get_unprotected_header_certs(sign1).is_ok() {
+            return Err(Error::CoseVerifier);
+        }
+
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
+        match der {
+            Value::Array(cert_chain) => {
+                // handle array of certs
+                for c in cert_chain {
+                    if let Value::Bytes(der_bytes) = c {
+                        certs.push(der_bytes.clone());
+                    }
+                }
+
+                if certs.is_empty() {
+                    return Err(Error::CoseX5ChainMissing);
+                } else {
+                    return Ok(certs);
+                }
+            }
+            Value::Bytes(ref der_bytes) => {
+                // handle single cert case
+                certs.push(der_bytes.clone());
+                return Ok(certs);
+            }
+            _ => return Err(Error::CoseX5ChainMissing),
+        }
+    }
+
+    // check the unprotected header if necessary
+    get_unprotected_header_certs(sign1)
 }
 
 // internal util function to dump the cert chain in PEM format
@@ -621,9 +697,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
             }
         })
     {
-        let alg = get_signing_alg(sign1)?;
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, alg)?;
+        let tst_infos =
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -631,6 +707,14 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
         }
     }
     Err(Error::NotFound)
+}
+
+/// A wrapper containing information of the signing cert.
+pub(crate) struct CertInfo {
+    /// The name of the identity the certificate is issued to.
+    pub subject: String,
+    /// The serial number of the cert. Will be unique to the CA.
+    pub serial_number: BigUint,
 }
 
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
@@ -641,6 +725,11 @@ fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
         .ok_or(Error::CoseX5ChainMissing)?
         .map(|attr| attr.to_string())
         .map_err(|_e| Error::CoseX5ChainMissing)
+}
+
+/// Returns the unique serial number from the provided cert.
+fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
+    cert.serial.clone()
 }
 
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
@@ -733,8 +822,13 @@ pub async fn verify_cose_async(
         sign1.payload.as_ref().unwrap_or(&vec![]),
     ); // get "to be signed" bytes
 
-    if let Ok(issuer) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await {
-        result.issuer_org = Some(issuer);
+    if let Ok(CertInfo {
+        subject,
+        serial_number,
+    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await
+    {
+        result.issuer_org = Some(subject);
+        result.cert_serial_number = Some(serial_number);
         result.validated = true;
         result.alg = Some(alg);
 
@@ -757,6 +851,7 @@ pub fn get_signing_info(
     let mut date = None;
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
+    let mut cert_serial_number = None;
 
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
@@ -765,6 +860,7 @@ pub fn get_signing_info(
         let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
             date = get_signing_time(&sign1, data);
             issuer_org = extract_subject_from_cert(&signcert).ok();
+            cert_serial_number = Some(extract_serial_from_cert(&signcert));
             if let Ok(a) = get_signing_alg(&sign1) {
                 alg = Some(a);
             }
@@ -783,6 +879,7 @@ pub fn get_signing_info(
             alg,
             validated: false,
             cert_chain: Vec::new(),
+            cert_serial_number,
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -801,6 +898,7 @@ pub fn get_signing_info(
             alg,
             validated: false,
             cert_chain: certs,
+            cert_serial_number,
         }
     }
 }
@@ -878,8 +976,6 @@ pub fn verify_cose(
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
-
-                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }
@@ -889,8 +985,13 @@ pub fn verify_cose(
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
-        if let Ok(issuer) = validate_with_cert(validator, sig, verify_data, der_bytes) {
-            result.issuer_org = Some(issuer);
+        if let Ok(CertInfo {
+            subject,
+            serial_number,
+        }) = validate_with_cert(validator, sig, verify_data, der_bytes)
+        {
+            result.issuer_org = Some(subject);
+            result.cert_serial_number = Some(serial_number);
             result.validated = true;
             result.alg = Some(alg);
 
@@ -924,7 +1025,7 @@ fn validate_with_cert(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -932,7 +1033,10 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -944,14 +1048,17 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseMissingKey)?;
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
     if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -963,7 +1070,7 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -973,7 +1080,10 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
