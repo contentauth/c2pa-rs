@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.5.4
+_13 June 2023_
+
+* integrate c2pa 23.0 bump version ([contentauth/c2patool#126](https://github.com/contentauth/c2patool/pull/126))
+* Merge branch 'main' of https://github.com/contentauth/c2patool
+* c2pa-rs 23.0 + updated test
+* Update README.md ([contentauth/c2patool#124](https://github.com/contentauth/c2patool/pull/124))
+
 ## 0.5.3
 _04 May 2023_
 
