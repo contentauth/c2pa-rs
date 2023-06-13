@@ -4368,7 +4368,7 @@ pub mod tests {
     #[test]
     fn test_embeddable_manifest() {
         // test adding to actual image
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
