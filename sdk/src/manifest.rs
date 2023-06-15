@@ -26,7 +26,9 @@ use uuid::Uuid;
 use crate::AsyncSigner;
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
+    assertions::{
+        labels, Actions, BoxHash, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+    },
     asset_io::CAIRead,
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
@@ -909,6 +911,10 @@ impl Manifest {
                     let exif: Exif = manifest_assertion.to_assertion()?;
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
+                BoxHash::LABEL => {
+                    let box_hash: BoxHash = manifest_assertion.to_assertion()?;
+                    claim.add_assertion_with_salt(&box_hash, &salt)
+                }
                 _ => match manifest_assertion.kind() {
                     ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
                         &UserCbor::new(
@@ -1146,6 +1152,18 @@ impl Manifest {
         store
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await
+    }
+
+    /// Sign and return embeddable manifest without writing to a file.
+    ///
+    /// The caller is responsible for writing the manifest data to a file
+    /// a box hash assertion must be supplied which may or may not include the hashes
+    /// Not that there will be no thumbnail generation, or reading of XMP data
+    /// The caller is responsible to providing all fields before calling this function
+    pub fn embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+        store.get_embeddable_manifest(signer)
     }
 
     #[cfg(feature = "file_io")]
@@ -2048,5 +2066,37 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
+    }
+ 
+    #[actix::test]
+    async fn test_embedable_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
+        let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
+
+        let mut manifest = Manifest::new("test_app".to_owned());
+        manifest.set_title("BoxHashTest").set_format("image/jpeg");
+
+        manifest
+            .add_labeled_assertion(crate::assertions::labels::BOX_HASH, &box_hash)
+            .unwrap();
+
+        let signer = temp_signer();
+
+        let embeddable = manifest
+            .embeddable_manifest(signer.as_ref())
+            .expect("embeddable_manifest");
+
+        // Validate the embeddable manifest against the asset bytes
+        let manifest_store = crate::ManifestStore::from_manifest_and_asset_bytes_async(
+            &embeddable,
+            "image/jpeg",
+            asset_bytes,
+        )
+        .await
+        .unwrap();
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        println!("{manifest_store}");
     }
 }
