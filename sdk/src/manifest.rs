@@ -2067,8 +2067,9 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
     }
- 
+
     #[actix::test]
+    #[cfg(feature = "file_io")]
     async fn test_embedable_manifest() {
         let asset_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
