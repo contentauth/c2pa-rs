@@ -25,6 +25,7 @@ use crate::{
     claim::Claim,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
+    utils::base64,
     validation_status::ValidationStatus,
     Result,
 };
@@ -363,7 +364,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
                 "{}\"{}\": \"{}\"{}",
                 &json[..index],
                 tag,
-                base64::encode(bytes),
+                base64::encode(&bytes),
                 &json[index + idx2 + 1..]
             );
         }

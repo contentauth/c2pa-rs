@@ -23,6 +23,7 @@ use crate::{
     claim::ClaimAssetData,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
+    utils::base64,
     validation_status::{status_for_store, ValidationStatus},
     Manifest, Result,
 };
@@ -322,7 +323,7 @@ impl std::fmt::Display for ManifestStore {
                         "{}\"{}\": \"{}\"{}",
                         &json[..index],
                         tag,
-                        base64::encode(bytes),
+                        base64::encode(&bytes),
                         &json[index + idx2 + 1..]
                     );
                 }

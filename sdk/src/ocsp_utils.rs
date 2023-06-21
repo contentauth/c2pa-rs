@@ -21,6 +21,7 @@ use crate::{
     error::{Error, Result},
     openssl::check_chain_order_der,
     status_tracker::{log_item, StatusTracker},
+    utils::base64,
     validation_status,
 };
 
@@ -91,7 +92,7 @@ pub fn get_ocsp_response(certs: &[Vec<u8>]) -> Option<OcspData> {
 
             let mut ocsp_req = ocsp::OcspRequest::new().ok()?;
             ocsp_req.add_id(cert_id).ok()?;
-            let request_str = base64::encode(ocsp_req.to_der().ok()?);
+            let request_str = base64::encode(&ocsp_req.to_der().ok()?);
 
             let req_url = url.join(&request_str).ok()?;
 
