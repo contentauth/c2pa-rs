@@ -1,8 +1,14 @@
 [package]
 name = "c2pa"
-version = "0.18.1"
+version = "0.23.3"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
-authors = ["Maurice Fisher <mfisher@adobe.com>", "Gavin Peacock <gpeacock@adobe.com>", "Eric Scouten <scouten@adobe.com>", "Leonard Rosenthol <lrosenth@adobe.com>", "Dave Kozma <dkozma@adobe.com>"]
+authors = [
+	"Maurice Fisher <mfisher@adobe.com>",
+	"Gavin Peacock <gpeacock@adobe.com>",
+	"Eric Scouten <scouten@adobe.com>",
+	"Leonard Rosenthol <lrosenth@adobe.com>",
+	"Dave Kozma <dkozma@adobe.com>",
+]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa"
 homepage = "https://contentauthenticity.org"
@@ -10,8 +16,8 @@ repository = "https://github.com/contentauth/c2pa-rs"
 readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
-edition = "2018"
-rust-version = "1.63.0"
+edition = "2021"
+rust-version = "1.65.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -27,6 +33,7 @@ xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl"]
+json_schema = ["dep:schemars"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -48,51 +55,57 @@ name = "custom_assertion"
 crate-type = ["lib"]
 
 [dependencies]
-async-trait = { version = "0.1.48"}
+asn1-rs = "0.5.2"
+async-trait = { version = "0.1.48" }
 atree = "0.5.2"
-base64 = "0.13.0"
-bcder = "0.6.0" 
+base64 = "0.21.2"
+bcder = "0.7.1"
 blake3 = "1.0.0"
-bytes = "1.1.0"
+bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-chrono = { version = "0.4.19", features = ["wasmbind"] }
+chrono = { version = "0.4.24", default-features = false, features = [
+	"serde",
+	"wasmbind",
+] }
 ciborium = "0.2.0"
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
+fast-xml = "0.23.1"
 hex = "0.4.3"
 img-parts = "0.3.0"
 log = "0.4.8"
 lazy_static = "1.4.0"
 multibase = "0.9.0"
 multihash = "0.11.4"
+mp4 = "0.13.0"
 png_pong = "0.8.2"
-quick-xml = "0.20.0"
 range-set = "0.0.9"
 ring = "0.16.20"
 riff = "1.0.1"
-serde = { version = "1.0", features = ["derive"] }
+schemars = { version = "0.8.12", optional = true }
+serde = { version = "1.0.137", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
-serde_derive = "1.0.127"
-serde_json = "1.0.66"
+serde_derive = "1.0.137"
+serde_json = "1.0.81"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
-thiserror = ">= 1.0.20, < 1.0.38"
+thiserror = "1.0.40"
 treeline = "0.1.0"
-twoway = "0.2.1"
+twoway = "0.2.2"
 url = "2.2.2"
-uuid = { version = "0.8.1", features = ["serde", "v4", "wasm-bindgen"] }
-x509-parser = "0.11.0"
-x509-certificate = "0.12.0"
+uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
+x509-parser = "0.15.0"
+x509-certificate = "0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.24.2", optional = true }
-instant = "0.1.0"
-openssl = { version = "0.10.31", features = ["vendored"], optional = true }
+image = { version = "0.24.5", optional = true }
+instant = "0.1.12"
+openssl = { version = "0.10.48", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "1.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -104,11 +117,17 @@ instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand = "0.8.5"
 rsa = "0.6.1"
-serde-wasm-bindgen = "0.4.3"
+serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"
-wasm-bindgen = "0.2.81"
+wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
-web-sys = { version = "0.3.58", features = ["Crypto", "SubtleCrypto", "CryptoKey", "Window", "WorkerGlobalScope"] }
+web-sys = { version = "0.3.58", features = [
+	"Crypto",
+	"SubtleCrypto",
+	"CryptoKey",
+	"Window",
+	"WorkerGlobalScope",
+] }
 
 [dev-dependencies]
 anyhow = "1.0.40"
@@ -117,4 +136,4 @@ anyhow = "1.0.40"
 wasm-bindgen-test = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-actix = "0.11.0"
+actix = "0.13.0"

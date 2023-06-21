@@ -16,18 +16,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [1.63.0, stable]
+        rust_version: [stable, 1.65.0]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
-          override: true
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
@@ -45,8 +44,41 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-  wasm_tests:
-    name: Wasm tests
+  tests-cross:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust_version: [stable, 1.65.0]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation toolset
+        run: cargo install cross
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      # Note that we do not run code coverage because
+      # it isn't readily accessible from cross-compilation
+      # environment. (A PR to fix this would be welcomed!)
+
+      - name: Run unit tests (cross build)
+        run: cross test --all-targets --all-features --target ${{ matrix.target }}
+
+  tests-wasm:
+    name: Unit tests (WASM)
     runs-on: ubuntu-latest
 
     steps:
@@ -54,10 +86,9 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          override: true
           
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -65,6 +96,31 @@ jobs:
       - name: Run Wasm tests
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
+
+  test-direct-minimal-versions:
+    name: Unit tests with minimum versions of direct dependencies
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v1
+
+      - name: Run tests
+        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
 
   publish-preflight:
     name: Preflight crate publish
@@ -81,11 +137,10 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
-          override: true
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v1
@@ -101,10 +156,9 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          override: true
 
       - name: Install clippy
         run: rustup component add clippy
@@ -128,10 +182,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          override: true
           components: rustfmt
 
       - name: Check format
@@ -151,17 +204,16 @@ jobs:
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
         # not in stable Rust as of this writing (Rust 1.62).
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          override: true
 
       - name: Run cargo docs
         # This is intended to mimic the docs.rs build
         # environment. The goal is to fail PR validation
         # if the subsequent release would result in a failed
         # documentation build on docs.rs.
-        run: cargo +nightly doc --all-features
+        run: cargo +nightly doc --all-features --no-deps
         env:
           RUSTDOCFLAGS: --cfg docsrs
           DOCS_RS: 1
@@ -197,16 +249,32 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          override: true
 
       - name: Run cargo-udeps
         uses: aig787/cargo-udeps-action@v1
         with:
           version: latest
           args: --all-targets --all-features
+
+  unknown-features-cfg:
+    name: Check for unknown features in cfg attributes and macros
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Check for unknown features
+        env:
+          RUSTFLAGS: "-D unexpected-cfgs"
+        run: cargo +nightly check -Z unstable-options -Z check-cfg=features --tests
 
   version_bump:
     name: Ensure (MINOR) tag is used when making an API breaking change
@@ -217,10 +285,9 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          override: true
 
       - name: Get latest existing tag
         uses: actions-ecosystem/action-get-latest-tag@v1

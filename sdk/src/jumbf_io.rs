@@ -23,7 +23,7 @@ use lazy_static::lazy_static;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        tiff_io::TiffIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -33,11 +33,12 @@ use crate::{
 lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
         ];
         let mut handler_map = HashMap::new();
@@ -58,11 +59,12 @@ lazy_static! {
 lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
         ];
         let mut handler_map = HashMap::new();
@@ -132,6 +134,12 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
         store_bytes,
     )?;
     Ok(output_stream.into_inner())
+}
+
+pub fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
+    let ext = get_file_extension(asset_path)?;
+
+    ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
@@ -304,6 +312,7 @@ pub mod tests {
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(SvgIO::new("")),
         ];
 
         // build handler map
@@ -324,6 +333,7 @@ pub mod tests {
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(SvgIO::new("")),
         ];
 
         // build handler map
@@ -354,7 +364,6 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
-            Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
         ];
 
@@ -384,5 +393,6 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tif"));
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
+        assert!(supported.iter().any(|s| s == "svg"));
     }
 }

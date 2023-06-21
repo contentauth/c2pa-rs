@@ -18,6 +18,8 @@
 #![deny(missing_docs)]
 
 use log::debug;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -34,6 +36,7 @@ use crate::{
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
     code: String,
 
@@ -109,7 +112,7 @@ impl ValidationStatus {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
-            Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, //todo detect json/cbor errors
+            Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, /* todo detect json/cbor errors */
             Error::HashMismatch(_) => ASSERTION_DATAHASH_MATCH,
             Error::RemoteManifestFetch(_) => MANIFEST_INACCESSIBLE,
             Error::PrereleaseError => STATUS_PRERELEASE,

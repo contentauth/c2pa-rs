@@ -68,13 +68,14 @@ jobs:
         CHANGELOG: ${{ steps.changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: stable
 
     - name: Bump crate versions
       run: |
         sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
+        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" export_schema/Cargo.toml
         sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" make_test_images/Cargo.toml
         sed -i "s/^c2pa = \"[^\"]*\"$/c2pa = \"$VERSION\"/;" README.md
       env:
