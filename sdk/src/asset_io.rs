@@ -40,7 +40,7 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 /// CAIReader trait to insure CAILoader method support both Read & Seek
-pub trait CAIRead: Read + Seek {}
+pub trait CAIRead: Read + Seek + Send {}
 
 impl CAIRead for std::fs::File {}
 impl CAIRead for std::io::Cursor<&[u8]> {}
