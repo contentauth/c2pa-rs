@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.23.3
+_21 June 2023_
+
+* Bump minor version and update README.md ([#272](https://github.com/contentauth/c2pa-rs/pull/272))
+* Updates ([#270](https://github.com/contentauth/c2pa-rs/pull/270))
+* Add `Send` to `CAIRead` trait so that it can be used across threads ([#271](https://github.com/contentauth/c2pa-rs/pull/271))
+* Generate old COSE headers for temporary backwards support ([#269](https://github.com/contentauth/c2pa-rs/pull/269))
+
 ## 0.23.2
 _19 June 2023_
 
