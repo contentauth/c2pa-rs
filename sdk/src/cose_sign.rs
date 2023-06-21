@@ -218,11 +218,14 @@ fn build_headers(
         }
     };
 
-    // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
-    protected_h = protected_h.value(
-        iana::HeaderParameter::X5Chain.to_i64(),
-        sc_der_array_or_bytes,
-    );
+    // unexposed feature that protects code we are not ready to expose
+    if cfg!(feature = "spec_1.3") {
+        // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
+        protected_h = protected_h.value(
+            iana::HeaderParameter::X5Chain.to_i64(),
+            sc_der_array_or_bytes.clone(),
+        );
+    }
     let protected_header = protected_h.build();
 
     let mut unprotected_h = if let Some(url) = ta_url {
@@ -241,6 +244,11 @@ fn build_headers(
     } else {
         HeaderBuilder::new()
     };
+
+    // generate old Cose header when spec_1.3 is not defined
+    if !cfg!(feature = "spec_1.3") {
+        unprotected_h = unprotected_h.text_value("x5chain".to_string(), sc_der_array_or_bytes)
+    }
 
     // set the ocsp responder response if available
     if let Some(ocsp) = ocsp_val {
