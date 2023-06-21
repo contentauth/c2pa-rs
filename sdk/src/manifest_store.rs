@@ -15,16 +15,21 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
+    claim::ClaimAssetData,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
+    utils::base64,
     validation_status::{status_for_store, ValidationStatus},
     Manifest, Result,
 };
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A Container for a set of Manifests and a ValidationStatus list
 pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +223,28 @@ impl ManifestStore {
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
+    /// Loads a ManifestStore from an init segment and fragment.  This
+    /// would be used to load and validate fragmented MP4 files that span
+    /// multiple separate assets.
+    pub async fn from_fragment_bytes_async(
+        format: &str,
+        init_bytes: &[u8],
+        fragment_bytes: &[u8],
+        verify: bool,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        Store::load_fragment_from_memory_async(
+            format,
+            init_bytes,
+            fragment_bytes,
+            verify,
+            &mut validation_log,
+        )
+        .await
+        .map(|store| Self::from_store(&store, &mut validation_log))
+    }
+
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
@@ -229,7 +256,7 @@ impl ManifestStore {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
     ///             .await
     ///             .unwrap();
     ///
@@ -241,12 +268,18 @@ impl ManifestStore {
     /// ```
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
+        format: &str,
         asset_bytes: &[u8],
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
-        Store::verify_store_async(&store, asset_bytes, &mut validation_log).await?;
+        Store::verify_store_async(
+            &store,
+            &mut ClaimAssetData::Bytes(asset_bytes, format),
+            &mut validation_log,
+        )
+        .await?;
 
         Ok(Self::from_store(&store, &mut validation_log))
     }
@@ -290,7 +323,7 @@ impl std::fmt::Display for ManifestStore {
                         "{}\"{}\": \"{}\"{}",
                         &json[..index],
                         tag,
-                        base64::encode(bytes),
+                        base64::encode(&bytes),
                         &json[index + idx2 + 1..]
                     );
                 }
@@ -400,10 +433,13 @@ mod tests {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
-        let manifest_store =
-            ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, asset_bytes)
-                .await
-                .unwrap();
+        let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
+            manifest_bytes,
+            "image/jpg",
+            asset_bytes,
+        )
+        .await
+        .unwrap();
         assert!(!manifest_store.manifests().is_empty());
         assert!(manifest_store.validation_status().is_none());
         println!("{manifest_store}");

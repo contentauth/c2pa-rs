@@ -33,7 +33,7 @@ use crate::{Error, Result};
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct Exclusion {
+pub struct HashRange {
     start: usize,
     length: usize,
 
@@ -41,9 +41,9 @@ pub struct Exclusion {
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
-impl Exclusion {
+impl HashRange {
     pub fn new(start: usize, length: usize) -> Self {
-        Exclusion {
+        HashRange {
             start,
             length,
             bmff_offset: None,
@@ -64,6 +64,10 @@ impl Exclusion {
     /// return length as usize
     pub fn length(&self) -> usize {
         self.length
+    }
+
+    pub fn set_length(&mut self, length: usize) {
+        self.length = length;
     }
 
     // set offset for BMFF_V2 to be hashed in addition to data
@@ -101,7 +105,7 @@ pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
 }
 
 #[derive(Clone)]
-enum Hasher {
+pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
@@ -109,7 +113,7 @@ enum Hasher {
 
 impl Hasher {
     // update hash value with new data
-    fn update(&mut self, data: &[u8]) {
+    pub fn update(&mut self, data: &[u8]) {
         use Hasher::*;
         // update the hash
         match self {
@@ -120,7 +124,7 @@ impl Hasher {
     }
 
     // comsume hasher and return the final digest
-    fn finalize(hasher_enum: Hasher) -> Vec<u8> {
+    pub fn finalize(hasher_enum: Hasher) -> Vec<u8> {
         use Hasher::*;
         // return the hash
         match hasher_enum {
@@ -132,27 +136,82 @@ impl Hasher {
 }
 
 // Return hash bytes for desired hashing algorithm.
-pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<Exclusion>>) -> Vec<u8> {
+pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, exclusions).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or(Vec::new())
+}
+
+// Return hash inclusive bytes for desired hashing algorithm.
+pub fn hash_by_alg_with_inclusions(alg: &str, data: &[u8], inclusions: Vec<HashRange>) -> Vec<u8> {
+    let mut reader = Cursor::new(data);
+
+    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or(Vec::new())
 }
 
 // Return hash bytes for asset using desired hashing algorithm.
 pub fn hash_asset_by_alg(
     alg: &str,
     asset_path: &Path,
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> Result<Vec<u8>> {
     let mut file = File::open(asset_path)?;
-    hash_stream_by_alg(alg, &mut file, exclusions)
+    hash_stream_by_alg(alg, &mut file, exclusions, true)
 }
 
-// Return hash bytes for stream using desired hashing algorithm.
+// Return hash inclusive bytes for asset using desired hashing algorithm.
+pub fn hash_asset_by_alg_with_inclusions(
+    alg: &str,
+    asset_path: &Path,
+    inclusions: Vec<HashRange>,
+) -> Result<Vec<u8>> {
+    let mut file = File::open(asset_path)?;
+    hash_stream_by_alg(alg, &mut file, Some(inclusions), false)
+}
+
+/*  Returns hash bytes for a stream using desired hashing algorithm.  The function handles the many
+    possible hash requirements of C2PA.  The function accepts a source stream 'data', an optional
+    set of hash ranges 'hash_range' and a boolean to indicate whether the hash range is an exclusion
+    or inclusion set of hash ranges.
+
+    The basic case is to hash a stream without hash ranges:
+    The data represents a single contiguous stream of bytes to be hash where D are data bytes
+
+    to_be_hashed: [DDDDDDDDD...DDDDDDDDDD]
+
+    The data is then chunked and hashed in groups to reduce memory
+    footprint and increase performance.
+
+    The most common case for C2PA is the use of an exclusion hash.  In this case the 'hash_range' indicate
+    which byte ranges should be excluded shown here depicted with I for included bytes and  X for excluded bytes
+
+    to_be_hashed: [IIIIXXXIIIIXXXXXIIIXXIII...IIII]
+
+    In this case the data is split into a set of ranges covering the included bytes.  The set of ranged bytes
+    are then chunked and hashed just like the default case.
+
+    The opposite of this is when 'is_exclusion' is set to false indicating the 'hash_ranges' represent the bytes
+    to include in the hash. Here are the bytes in 'data' are excluded except those explicitly referenced.
+
+    to_be_hashed: [XXXXXXIIIIXXXXXIIXXXX...XXXX]
+
+    Again a set of ranged bytes are created and hashed as described above.
+
+    The last case is a special requirement for BMFF based assets (exclusion hashes only).  For this case we not
+    only hash the data but also the location where the data was found in the asset.  To do this we add a special
+    HashRange object to the hash ranges to indicate which locations in the stream require this special offset
+    hash.  To make processing efficient we again split the data into ranges at not just the exclusion
+    points but also for these markers.  The hashing loop knows to pause at these special marker ranges to insert
+    the hash of the offset.  The stream sent to the hashing loop logically looks like this where M is the marker.
+    to_be_hashed: [IIIIIXXXXXMIIIIIMXXXXXMXXXXIII...III]
+
+    The data is again split into range sets breaking at the exclusion points and now also the markers.
+*/
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,
-    exclusions: Option<Vec<Exclusion>>,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
@@ -176,58 +235,85 @@ where
     let data_len = data.seek(SeekFrom::End(0))?;
     data.rewind()?;
 
-    let ranges = match exclusions {
-        Some(mut e) if !e.is_empty() => {
+    let ranges = match hash_range {
+        Some(mut hr) if !hr.is_empty() => {
             // hash data skipping excluded regions
             // sort the exclusions
-            e.sort_by_key(|a| a.start());
+            hr.sort_by_key(|a| a.start());
 
             // verify structure of blocks
-            let num_blocks = e.len();
-            let exclusion_end = e[num_blocks - 1].start() + e[num_blocks - 1].length();
+            let num_blocks = hr.len();
+            let range_end = hr[num_blocks - 1].start() + hr[num_blocks - 1].length();
             let data_end = data_len - 1;
 
-            // if not enough range we will just calc to the end
-            if data_len < exclusion_end as u64 {
+            // range extends past end of file so fail
+            if data_len < range_end as u64 {
                 return Err(Error::BadParam(
                     "The exclusion range exceed the data length".to_string(),
                 ));
             }
 
-            //build final ranges
-            let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
-            let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
-            for exclusion in e {
-                let end = (exclusion.start() + exclusion.length() - 1) as u64;
-                let exclusion_start = exclusion.start() as u64;
-                ranges.remove_range(exclusion_start..=end);
+            if is_exclusion {
+                //build final ranges
+                let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
+                let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
+                for exclusion in hr {
+                    let end = (exclusion.start() + exclusion.length() - 1) as u64;
+                    let exclusion_start = exclusion.start() as u64;
+                    ranges.remove_range(exclusion_start..=end);
 
-                // add new BMFF V2 offset as a new range to be included so that we can
-                // pause to add the offset hash
-                if let Some(offset) = exclusion.bmff_offset() {
-                    ranges_vec.push(RangeInclusive::new(offset, offset));
-                    bmff_v2_starts.push(offset);
-                }
-            }
-
-            // merge standard ranges and BMFF V2 ranges into single list
-            if !bmff_v2_starts.is_empty() {
-                // add regularly included ranges
-                for r in ranges.into_smallvec() {
-                    ranges_vec.push(r);
+                    // add new BMFF V2 offset as a new range to be included so that we can
+                    // pause to add the offset hash
+                    if let Some(offset) = exclusion.bmff_offset() {
+                        bmff_v2_starts.push(offset);
+                    }
                 }
 
-                // sort by start position
-                ranges_vec.sort_by(|a, b| {
-                    let a_start = a.start();
-                    let b_start = b.start();
-                    a_start.cmp(b_start)
-                });
+                // merge standard ranges and BMFF V2 ranges into single list
+                if !bmff_v2_starts.is_empty() {
+                    // remove any offset hashes that would be excluded
+                    bmff_v2_starts.retain(|o| ranges.iter().any(|r| *o + 1 == r));
 
-                ranges_vec
+                    // add in remaining BMFF V2 offsets
+                    for os in bmff_v2_starts.iter() {
+                        ranges_vec.push(RangeInclusive::new(*os, *os));
+                    }
+
+                    // add regularly included ranges
+                    for r in ranges.into_smallvec() {
+                        ranges_vec.push(r);
+                    }
+
+                    // sort by start position
+                    ranges_vec.sort_by(|a, b| {
+                        let a_start = a.start();
+                        let b_start = b.start();
+                        a_start.cmp(b_start)
+                    });
+
+                    ranges_vec
+                } else {
+                    for r in ranges.into_smallvec() {
+                        ranges_vec.push(r);
+                    }
+                    ranges_vec
+                }
             } else {
-                for r in ranges.into_smallvec() {
-                    ranges_vec.push(r);
+                //build final ranges
+                let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
+                for inclusion in hr {
+                    let end = (inclusion.start() + inclusion.length() - 1) as u64;
+                    let inclusion_start = inclusion.start() as u64;
+
+                    // add new BMFF V2 offset as a new range to be included so that we can
+                    // pause to add the offset hash
+                    if let Some(offset) = inclusion.bmff_offset() {
+                        ranges_vec.push(RangeInclusive::new(offset, offset));
+                        bmff_v2_starts.push(offset);
+                    }
+
+                    // add inclusion
+                    ranges_vec.push(RangeInclusive::new(inclusion_start, end));
                 }
                 ranges_vec
             }
@@ -329,7 +415,7 @@ pub fn verify_by_alg(
     alg: &str,
     hash: &[u8],
     data: &[u8],
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> bool {
     // hash with the same algorithm as target
     let data_hash = hash_by_alg(alg, data, exclusions);
@@ -341,7 +427,7 @@ pub fn verify_asset_by_alg(
     alg: &str,
     hash: &[u8],
     asset_path: &Path,
-    exclusions: Option<Vec<Exclusion>>,
+    exclusions: Option<Vec<HashRange>>,
 ) -> bool {
     // hash with the same algorithm as target
     if let Ok(data_hash) = hash_asset_by_alg(alg, asset_path, exclusions) {
@@ -350,6 +436,24 @@ pub fn verify_asset_by_alg(
         false
     }
 }
+
+pub fn verify_stream_by_alg<R>(
+    alg: &str,
+    hash: &[u8],
+    reader: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+) -> bool
+where
+    R: Read + Seek + ?Sized,
+{
+    if let Ok(data_hash) = hash_stream_by_alg(alg, reader, hash_range, is_exclusion) {
+        vec_compare(hash, &data_hash)
+    } else {
+        false
+    }
+}
+
 /// Return a multihash (Sha256) of array of bytes
 #[allow(dead_code)]
 pub fn hash256(data: &[u8]) -> String {
@@ -484,4 +588,15 @@ pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
         }
         Err(_) => None,
     }
+}
+
+// Used by Merkle tree calculations to generate the pair wise hash
+pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> {
+    let mut temp = left.to_vec();
+
+    if let Some(r) = right {
+        temp.append(&mut r.to_vec())
+    }
+
+    hash_by_alg(alg, &temp, None)
 }

@@ -26,7 +26,7 @@ use crate::{
     },
     assertions::{
         labels::{self, CLAIM},
-        DataHash, Ingredient, Relationship,
+        DataBox, DataHash, Ingredient, Relationship,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -39,15 +39,15 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, SIGNATURE},
+        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_memory, load_jumbf_from_stream,
-        object_locations_from_stream, save_jumbf_to_memory, save_jumbf_to_stream,
+        get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
+        save_jumbf_to_memory, save_jumbf_to_stream,
     },
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
-        hash_utils::{hash256, Exclusion},
+        hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, Signer,
@@ -67,7 +67,7 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Store {
     claims_map: HashMap<String, usize>,
     manifest_box_hash_cache: HashMap<String, Vec<u8>>,
@@ -336,6 +336,27 @@ impl Store {
         } else {
             None
         }
+    }
+
+    /// Returns a DataBox referenced by JUMBF URI if it exists.
+    ///
+    /// Relative paths will use the provenance claim to resolve the DataBox.d
+    pub fn get_data_box_from_uri_and_claim(
+        &self,
+        uri: &str,
+        target_claim_label: &str,
+    ) -> Option<&DataBox> {
+        match jumbf::labels::manifest_label_from_uri(uri) {
+            Some(label) => self.get_claim(&label), // use the manifest label from the thumbnail uri
+            None => self.get_claim(target_claim_label), //  relative so use the target claim label
+        }
+        .and_then(|claim| {
+            claim
+                .databoxes()
+                .iter()
+                .find(|(h, _d)| h.url() == uri)
+                .map(|(_sh, data_box)| data_box)
+        })
     }
 
     // Returns placeholder that will be searched for and replaced
@@ -707,6 +728,31 @@ impl Store {
                         cai_store.add_box(Box::new(vc_store)); // add the CAI assertion store to manifest
                     }
                 }
+                DATABOXES => {
+                    // Add the data boxes
+                    if !claim.databoxes().is_empty() {
+                        let mut databoxes = CAIDataboxStore::new();
+
+                        for (uri, db) in claim.databoxes() {
+                            let db_cbor_bytes =
+                                serde_cbor::to_vec(db).map_err(|_err| Error::AssertionEncoding)?;
+
+                            let (link, instance) = Claim::assertion_label_from_link(&uri.url());
+                            let label = Claim::label_with_instance(&link, instance);
+
+                            let mut db_cbor = CAICBORAssertionBox::new(&label);
+                            db_cbor.add_cbor(db_cbor_bytes);
+
+                            if let Some(salt) = uri.salt() {
+                                db_cbor.set_salt(salt.clone())?;
+                            }
+
+                            databoxes.add_databox(Box::new(db_cbor));
+                        }
+
+                        cai_store.add_box(Box::new(databoxes)); // add claim to manifest
+                    }
+                }
                 _ => return Err(Error::ClaimInvalidContent),
             }
         }
@@ -849,6 +895,7 @@ impl Store {
                     CLAIM => box_order.push(CLAIM),
                     SIGNATURE => box_order.push(SIGNATURE),
                     CREDENTIALS => box_order.push(CREDENTIALS),
+                    DATABOXES => box_order.push(DATABOXES),
                     _ => {
                         let log_item =
                             log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
@@ -1050,6 +1097,27 @@ impl Store {
                 }
             }
 
+            // load databox store if available
+            if let Some(mi) = manifest_boxes.get(CAI_DATABOXES_STORE_UUID) {
+                let databox_store = mi.sbox;
+                let num_databoxes = databox_store.data_box_count();
+
+                for idx in 0..num_databoxes {
+                    let db_box = databox_store
+                        .data_box_as_superbox(idx)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_cbor = db_box
+                        .data_box_as_cbor_box(0)
+                        .ok_or(Error::JumbfBoxNotFound)?;
+                    let db_desc_box = db_box.desc_box();
+                    let label = db_desc_box.label();
+
+                    let salt = db_desc_box.get_salt();
+
+                    claim.put_data_box(&label, db_cbor.cbor(), salt)?;
+                }
+            }
+
             // save the hash of the loaded manifest for ingredient validation
             store.manifest_box_hash_cache.insert(
                 claim.label().to_owned(),
@@ -1076,7 +1144,7 @@ impl Store {
     fn ingredient_checks(
         store: &Store,
         claim: &Claim,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let mut num_parent_ofs = 0;
@@ -1195,7 +1263,7 @@ impl Store {
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
-        asset_bytes: &[u8],
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // walk the ingredients
@@ -1240,7 +1308,7 @@ impl Store {
                         )?;
                     }
                     // verify the ingredient claim
-                    Claim::verify_claim_async(ingredient, asset_bytes, false, validation_log)
+                    Claim::verify_claim_async(ingredient, asset_data, false, validation_log)
                         .await?;
                 } else {
                     let log_item = log_item!(
@@ -1272,7 +1340,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub async fn verify_store_async(
         store: &Store,
-        asset_bytes: &[u8],
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -1289,9 +1357,9 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_bytes, true, validation_log).await?;
+        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
 
-        Store::ingredient_checks_async(store, claim, asset_bytes, validation_log).await?;
+        Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
         Ok(())
     }
@@ -1303,7 +1371,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub fn verify_store(
         store: &Store,
-        asset_data: &ClaimAssetData<'_>,
+        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
@@ -1383,9 +1451,9 @@ impl Store {
 
         if found_jumbf {
             // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg, None);
+            let mut dh = DataHash::new("jumbf manifest", alg);
             if block_end > block_start {
-                dh.add_exclusion(Exclusion::new(block_start, block_end - block_start));
+                dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
             }
 
             if calc_hashes {
@@ -1549,6 +1617,43 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    /// Returns a manifest suitible for direct embedding by a client.  The
+    /// manfiest are only supported for cases when the client has provided
+    /// a content hash binding.  Note, will not work for cases like BMFF where
+    /// the position of the content is also encoded.  
+    pub fn get_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+
+        // make sure there are data hashes present before generating
+        if pc.hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "Claim must have hash binding assertion".to_string(),
+            ));
+        }
+
+        // don't allow BMFF assertions to be present
+        if !pc.bmff_hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "BMFF assertions not supported in embeddable manifests".to_string(),
+            ));
+        }
+
+        // sign contents
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
     }
 
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
@@ -1854,26 +1959,29 @@ impl Store {
             }
         }
 
-        // 2) Get hash ranges if needed, do not generate for update manifests
-        let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-        let hashes: Vec<DataHash> = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes_for_stream(
-                &mut intermediate_stream,
-                pc.alg(),
-                &mut hash_ranges,
-                false,
-            )?
-        };
+        // we will not do automatic hashing if we detect a box hash present
+        if pc.box_hash_assertions().is_empty() {
+            // 2) Get hash ranges if needed, do not generate for update manifests
+            let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
+            let hashes: Vec<DataHash> = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes_for_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    &mut hash_ranges,
+                    false,
+                )?
+            };
 
-        // add the placeholder data hashes to provenance claim so that the required space is reserved
-        for mut hash in hashes {
-            // add padding to account for possible cbor expansion of final DataHash
-            let padding: Vec<u8> = vec![0x0; 10];
-            hash.add_padding(padding);
+            // add the placeholder data hashes to provenance claim so that the required space is reserved
+            for mut hash in hashes {
+                // add padding to account for possible cbor expansion of final DataHash
+                let padding: Vec<u8> = vec![0x0; 10];
+                hash.add_padding(padding);
 
-            pc.add_assertion(&hash)?;
+                pc.add_assertion(&hash)?;
+            }
         }
 
         // 3) Generate in memory CAI jumbf block
@@ -1889,31 +1997,35 @@ impl Store {
         // replace the source with correct asset hashes so that the claim hash will be correct
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        // get the final hash ranges, but not for update manifests
-        intermediate_stream.rewind()?;
-        output_stream.rewind()?;
-        std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
-        let mut new_hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-        let updated_hashes = if pc.update_manifest() {
-            Vec::new()
-        } else {
-            Store::generate_data_hashes_for_stream(
-                &mut intermediate_stream,
-                pc.alg(),
-                &mut new_hash_ranges,
-                true,
-            )?
-        };
+        // we will not do automatic hashing if we detect a box hash present
+        if pc.box_hash_assertions().is_empty() {
+            // get the final hash ranges, but not for update manifests
+            intermediate_stream.rewind()?;
+            output_stream.rewind()?;
+            std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+            let mut new_hash_ranges =
+                object_locations_from_stream(format, &mut intermediate_stream)?;
+            let updated_hashes = if pc.update_manifest() {
+                Vec::new()
+            } else {
+                Store::generate_data_hashes_for_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    &mut new_hash_ranges,
+                    true,
+                )?
+            };
 
-        // patch existing claim hash with updated data
-        for hash in updated_hashes {
-            pc.update_data_hash(hash)?;
-        }
+            // patch existing claim hash with updated data
+            for hash in updated_hashes {
+                pc.update_data_hash(hash)?;
+            }
 
-        // regenerate the jumbf because the cbor changed
-        data = self.to_jumbf_internal(reserve_size)?;
-        if jumbf_size != data.len() {
-            return Err(Error::JumbfCreationError);
+            // regenerate the jumbf because the cbor changed
+            data = self.to_jumbf_internal(reserve_size)?;
+            if jumbf_size != data.len() {
+                return Err(Error::JumbfCreationError);
+            }
         }
 
         Ok(data) // return JUMBF data
@@ -2072,21 +2184,24 @@ impl Store {
                 }
             }
         } else {
-            // 2) Get hash ranges if needed, do not generate for update manifests
-            let mut hash_ranges = object_locations(&output_path)?;
-            let hashes: Vec<DataHash> = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
-            };
+            // we will not do automatic hashing if we detect a box hash present
+            if pc.box_hash_assertions().is_empty() {
+                // 2) Get hash ranges if needed, do not generate for update manifests
+                let mut hash_ranges = object_locations(&output_path)?;
+                let hashes: Vec<DataHash> = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut hash_ranges, false)?
+                };
 
-            // add the placeholder data hashes to provenance claim so that the required space is reserved
-            for mut hash in hashes {
-                // add padding to account for possible cbor expansion of final DataHash
-                let padding: Vec<u8> = vec![0x0; 10];
-                hash.add_padding(padding);
+                // add the placeholder data hashes to provenance claim so that the required space is reserved
+                for mut hash in hashes {
+                    // add padding to account for possible cbor expansion of final DataHash
+                    let padding: Vec<u8> = vec![0x0; 10];
+                    hash.add_padding(padding);
 
-                pc.add_assertion(&hash)?;
+                    pc.add_assertion(&hash)?;
+                }
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -2098,19 +2213,21 @@ impl Store {
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
+            // If box hash is present we don't do any other
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            if pc.box_hash_assertions().is_empty() {
+                // get the final hash ranges, but not for update manifests
+                let mut new_hash_ranges = object_locations(&output_path)?;
+                let updated_hashes = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
+                };
 
-            // get the final hash ranges, but not for update manifests
-            let mut new_hash_ranges = object_locations(&output_path)?;
-            let updated_hashes = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes(dest_path, pc.alg(), &mut new_hash_ranges, true)?
-            };
-
-            // patch existing claim hash with updated data
-            for hash in updated_hashes {
-                pc.update_data_hash(hash)?;
+                // patch existing claim hash with updated data
+                for hash in updated_hashes {
+                    pc.update_data_hash(hash)?;
+                }
             }
         }
 
@@ -2153,17 +2270,35 @@ impl Store {
         asset_path: &'_ Path,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &ClaimAssetData::PathData(asset_path), validation_log)
+        Store::verify_store(self, &mut ClaimAssetData::Path(asset_path), validation_log)
     }
 
     // verify from a buffer without file i/o
     pub fn verify_from_buffer(
         &mut self,
         buf: &[u8],
-        _asset_type: &str,
+        asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(self, &ClaimAssetData::ByteData(buf), validation_log)
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Bytes(buf, asset_type),
+            validation_log,
+        )
+    }
+
+    // verify from a buffer without file i/o
+    pub fn verify_from_stream(
+        &mut self,
+        reader: &mut dyn CAIRead,
+        asset_type: &str,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<()> {
+        Store::verify_store(
+            self,
+            &mut ClaimAssetData::Stream(reader, asset_type),
+            validation_log,
+        )
     }
 
     // fetch remote manifest if possible
@@ -2214,33 +2349,46 @@ impl Store {
         }
     }
 
+    /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
+    #[cfg(feature = "file_io")]
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
+            Store::fetch_remote_manifest(ext_ref)
+        } else {
+            // return an error with the url that should be read
+            if is_remote_url {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+            } else {
+                Err(Error::JumbfNotFound)
+            }
+        }
+    }
+
+    /// Handles remote manifests for Wasm or when the file_io/fetch_remote_manifests feature is disabled
+    #[cfg(not(feature = "file_io"))]
+    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
+        // verify provenance path is remote url
+        let is_remote_url = Store::is_valid_remote_url(ext_ref);
+
+        if is_remote_url {
+            Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+        } else {
+            Err(Error::JumbfNotFound)
+        }
+    }
+
     /// Return Store from in memory asset
-    pub fn load_cai_from_memory(
+    fn load_cai_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
-        match load_jumbf_from_memory(asset_type, data) {
-            Ok(manifest_bytes) => {
-                // load and validate with CAI toolkit and dump if desired
-                Store::from_jumbf(&manifest_bytes, validation_log)
-            }
-            Err(Error::JumbfNotFound) => {
-                let mut buf_reader = Cursor::new(data);
-                if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
-                    &mut buf_reader,
-                    asset_type,
-                )
-                .provenance
-                {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
-                } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
+        let mut input_stream = Cursor::new(data);
+        Store::load_jumbf_from_stream(asset_type, &mut input_stream)
+            .map(|manifest_bytes| Store::from_jumbf(&manifest_bytes, validation_log))?
     }
 
     /// load jumbf given a stream
@@ -2258,8 +2406,7 @@ impl Store {
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
                         .provenance
                 {
-                    // return an error with the url that should be read
-                    Err(Error::RemoteManifestUrl(ext_ref))
+                    Store::handle_remote_manifest(&ext_ref)
                 } else {
                     Err(Error::JumbfNotFound)
                 }
@@ -2301,24 +2448,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        // verify provenance path is remote url
-                        let is_remote_url = Store::is_valid_remote_url(&ext_ref);
-
-                        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-                            // not supported in wasm
-                            if cfg!(target_arch = "wasm32") {
-                                Err(Error::JumbfNotFound)
-                            } else {
-                                Store::fetch_remote_manifest(&ext_ref)
-                            }
-                        } else {
-                            // return an error with the url that should be read
-                            if is_remote_url {
-                                Err(Error::RemoteManifestUrl(ext_ref))
-                            } else {
-                                Err(Error::JumbfNotFound)
-                            }
-                        }
+                        Store::handle_remote_manifest(&ext_ref)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -2421,7 +2551,7 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     pub fn load_from_memory(
         asset_type: &str,
-        data: &'_ [u8],
+        data: &[u8],
         verify: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
@@ -2429,7 +2559,11 @@ impl Store {
             // verify the store
             if verify {
                 // verify store and claims
-                Store::verify_store(&store, &ClaimAssetData::ByteData(data), validation_log)?;
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::Bytes(data, asset_type),
+                    validation_log,
+                )?;
             }
 
             Ok(store)
@@ -2438,7 +2572,7 @@ impl Store {
 
     /// Load Store from a in-memory asset asychronously validating
     /// asset_type: asset extension or mime type
-    /// data: reference to bytes of the the file
+    /// data: reference to bytes of the file
     /// verify: if true will run verification checks when loading
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     pub async fn load_from_memory_async(
@@ -2452,7 +2586,82 @@ impl Store {
         // verify the store
         if verify {
             // verify store and claims
-            Store::verify_store_async(&store, data, validation_log).await?;
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Bytes(data, asset_type),
+                validation_log,
+            )
+            .await?;
+        }
+
+        Ok(store)
+    }
+
+    /// Load Store from a in-memory asset
+    /// asset_type: asset extension or mime type
+    /// data: reference to bytes of the the file
+    /// verify: if true will run verification checks when loading
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    pub fn load_fragment_from_memory(
+        asset_type: &str,
+        init_segment: &[u8],
+        fragment: &[u8],
+        verify: bool,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        Store::get_store_from_memory(asset_type, init_segment, validation_log).and_then(|store| {
+            // verify the store
+            if verify {
+                let mut init_segment_stream = Cursor::new(init_segment);
+                let mut fragment_stream = Cursor::new(fragment);
+
+                // verify store and claims
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::StreamFragment(
+                        &mut init_segment_stream,
+                        &mut fragment_stream,
+                        asset_type,
+                    ),
+                    validation_log,
+                )?;
+            }
+
+            Ok(store)
+        })
+    }
+
+    /// Load Store from a in-memory asset asychronously validating
+    /// asset_type: asset extension or mime type
+    /// init_segment: reference to bytes of the init segment
+    /// fragment: reference to bytes of the fragment to validate
+    /// verify: if true will run verification checks when loading
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    pub async fn load_fragment_from_memory_async(
+        asset_type: &str,
+        init_segment: &[u8],
+        fragment: &[u8],
+        verify: bool,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        let store = Store::get_store_from_memory(asset_type, init_segment, validation_log)?;
+
+        // verify the store
+        if verify {
+            let mut init_segment_stream = Cursor::new(init_segment);
+            let mut fragment_stream = Cursor::new(fragment);
+
+            // verify store and claims
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::StreamFragment(
+                    &mut init_segment_stream,
+                    &mut fragment_stream,
+                    asset_type,
+                ),
+                validation_log,
+            )
+            .await?;
         }
 
         Ok(store)
@@ -2555,9 +2764,12 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::{Action, Actions, Ingredient, Uuid},
+        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Ingredient, Uuid},
         claim::{AssertionStoreJsonFormat, Claim},
-        jumbf_io::{load_jumbf_from_file, save_jumbf_to_file, update_file_jumbf},
+        jumbf_io::{
+            get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file,
+            update_file_jumbf,
+        },
         status_tracker::*,
         utils::{
             patch::patch_file,
@@ -2565,7 +2777,7 @@ pub mod tests {
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
             },
         },
-        SigningAlg,
+        AssertionJson, SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -3049,6 +3261,26 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_get_data_boxes() {
+        // Create a new claim.
+        use crate::jumbf::labels::to_relative_uri;
+        let claim1 = create_test_claim().unwrap();
+
+        for (uri, db) in claim1.databoxes() {
+            // test full path
+            assert!(claim1.get_data_box(&uri.url()).is_some());
+
+            // test with relative path
+            let rel_path = to_relative_uri(&uri.url());
+            assert!(claim1.get_data_box(&rel_path).is_some());
+
+            // test values
+            assert_eq!(db, claim1.get_data_box(&uri.url()).unwrap());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
         let ap = fixture_path("sample1.wav");
         let temp_dir = tempdir().expect("temp dir");
@@ -3494,7 +3726,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
         // get default store with default claim
         let mut store = create_test_store().unwrap();
@@ -3518,6 +3750,45 @@ pub mod tests {
                 assert!(s.contains("did:nppa:eb1bb9934d9896a374c384521410c7f14"))
             }
             _ => panic!("expected JSON assertion data"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_data_box_creation() {
+        use crate::utils::test::create_test_store;
+
+        let signer = temp_signer();
+
+        // test adding to actual image
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
+
+        // get default store with default claim
+        let mut store = create_test_store().unwrap();
+
+        // save to output
+        store
+            .save_to_asset(ap.as_path(), signer.as_ref(), op.as_path())
+            .unwrap();
+
+        // read back in
+        let restored_store =
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+
+        let pc = restored_store.provenance_claim().unwrap();
+
+        let databoxes = pc.databoxes();
+
+        assert!(!databoxes.is_empty());
+
+        for (uri, db) in databoxes {
+            println!(
+                "URI: {}, data: {}",
+                uri.url(),
+                String::from_utf8_lossy(&db.data)
+            );
         }
     }
 
@@ -3725,6 +3996,29 @@ pub mod tests {
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
+
+    /*
+    #[test]
+    fn test_bmff_fragments() {
+        let init_stream_path = fixture_path("dashinit.mp4");
+        let segment_stream_path = fixture_path("dash1.m4s");
+
+        let init_stream = std::fs::read(init_stream_path).unwrap();
+        let segment_stream = std::fs::read(segment_stream_path).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let store = Store::load_fragment_from_memory(
+            "mp4",
+            &init_stream,
+            &segment_stream,
+            true,
+            &mut report,
+        )
+        .expect("load_from_asset");
+        println!("store = {store}");
+    }
+    */
+
     #[test]
     fn test_bmff_jumbf_generation() {
         // test adding to actual image
@@ -3932,7 +4226,7 @@ pub mod tests {
         let url_string: String = url.into();
 
         // set claim for side car with remote manifest embedding generation
-        claim.set_remote_manifest(url_string.clone()).unwrap();
+        claim.set_remote_manifest(url_string).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -3957,12 +4251,12 @@ pub mod tests {
 
         assert!(result.is_err());
 
-        // verify that we got  RemoteManifestUrl error with the expected url
+        // We should get a `JumbfNotFound` error since the external reference points to a file URL, not a remote URL
         match result {
             Ok(_store) => panic!("did not expect to have a store"),
             Err(e) => match e {
-                Error::RemoteManifestUrl(url) => assert_eq!(url, url_string),
-                _ => panic!("unexepected error"),
+                Error::JumbfNotFound => {}
+                e => panic!("unexpected error: {}", e),
             },
         }
     }
@@ -4068,6 +4362,47 @@ pub mod tests {
                     .get_claim_assertion(&label, instance)
                     .expect("Should find assertion");
             }
+        }
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        // test adding to actual image
+        let ap = fixture_path("CA.jpg");
+        let box_hash_path = fixture_path("boxhash.json");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // add box hash for CA.jpg
+        let box_hash_data = std::fs::read(box_hash_path).unwrap();
+        let assertion = Assertion::from_data_json(BOX_HASH, &box_hash_data).unwrap();
+        let box_hash = BoxHash::from_json_assertion(&assertion).unwrap();
+        claim.add_assertion(&box_hash).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // get the embeddable manifest
+        let em = store.get_embeddable_manifest(signer.as_ref()).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let new_store = Store::from_jumbf(&em, &mut report).unwrap();
+
+        let pc = new_store.provenance_claim().unwrap();
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        for h in pc.box_hash_assertions() {
+            let bh = BoxHash::from_assertion(h).unwrap();
+            bh.verify_hash(&ap, None, bhp).unwrap();
         }
     }
 }
