@@ -117,7 +117,7 @@ instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand = "0.8.5"
 rsa = "0.6.1"
-serde-wasm-bindgen = "0.4.3"
+serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"
 wasm-bindgen = "0.2.81"
 wasm-bindgen-futures = "0.4.31"
