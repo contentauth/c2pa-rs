@@ -95,7 +95,7 @@ This section gives a highlight of noteworthy changes
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed Git changes
 ## 0.24.0
 _21 June 2023_
-* Bump minor version to signify change in signature (back to the compatible one)
+* Bump minor version to 0.24.0 to signify change in signature (back to the compatible one)
 * Reverts to 1.2 Cose signatures when signing while still validating 1.3 Cose signatures
 * We want to allow some time for clients to upgrade to validating 1.3 before writing this breaking change.
 * Fix embed_from_memory to correctly return the updated image
