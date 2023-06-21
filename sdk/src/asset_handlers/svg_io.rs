@@ -38,6 +38,7 @@ use crate::{
         RemoteRefEmbed,
     },
     error::{Error, Result},
+    utils::base64,
 };
 
 static SUPPORTED_TYPES: [&str; 7] = [
@@ -245,7 +246,8 @@ fn detect_manifest_location(
                             Error::InvalidAsset("XML manifest tag invalid content".to_string())
                         })?;
 
-                    output = Some(base64::decode(s.into_bytes()).map_err(|_e| {
+                    output = Some(base64::decode(&s).map_err(|_e| {
+                        dbg!(_e);
                         Error::InvalidAsset("XML bad base64 encoding".to_string())
                     })?);
                 }
@@ -455,7 +457,7 @@ impl CAIWriter for SvgIO {
             detect_manifest_location(&mut output_stream)?;
 
         let decoded_manifest = decoded_manifest_opt.ok_or(Error::JumbfNotFound)?;
-        let encoded_manifest_len = base64::encode(decoded_manifest).len();
+        let encoded_manifest_len = base64::encode(&decoded_manifest).len();
 
         positions.push(HashObjectPositions {
             offset: manifest_pos,
@@ -572,7 +574,7 @@ impl AssetPatch for SvgIO {
 
         if let Some(manifest_bytes) = asset_manifest_opt {
             // base 64 encode
-            let encoded_manifest_bytes = base64::encode(manifest_bytes);
+            let encoded_manifest_bytes = base64::encode(&manifest_bytes);
             // can patch if encoded lengths are ==
             if encoded_store_bytes.len() == encoded_manifest_bytes.len() {
                 input_file.seek(SeekFrom::Start(insertion_point as u64))?;
@@ -747,8 +749,8 @@ pub mod tests {
                                 let mut manifests_buf: Vec<u8> = vec![0u8; op.length];
                                 of.seek(SeekFrom::Start(op.offset as u64)).unwrap();
                                 of.read_exact(manifests_buf.as_mut_slice()).unwrap();
-
-                                let decoded_data = base64::decode(&manifests_buf).unwrap();
+                                let buf_str = std::str::from_utf8(&manifests_buf).unwrap();
+                                let decoded_data = base64::decode(buf_str).unwrap();
                                 if vec_compare(more_data, &decoded_data) {
                                     success = true;
                                 }
