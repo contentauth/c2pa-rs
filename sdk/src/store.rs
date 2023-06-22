@@ -1667,7 +1667,7 @@ impl Store {
     /// actual hash values not required when using BoxHashes.  
     pub async fn get_data_hashed_embeddable_manifest(
         &mut self,
-        exclusions: &[HashRange],
+        dh: &DataHash,
         signer: &dyn AsyncSigner,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
@@ -1688,20 +1688,17 @@ impl Store {
             ));
         }
 
+        let mut adusted_dh = DataHash::new("jumbf manifest", pc.alg());
+        adusted_dh.exclusions = dh.exclusions.clone();
+        adusted_dh.hash = dh.hash.clone();
+
         if let Some(reader) = asset_reader {
-            let mut dh = DataHash::new("jumbf manifest", pc.alg());
-
-            // add exclusions
-            for e in exclusions {
-                dh.add_exclusion(e.clone());
-            }
-
             // calc hashes
-            dh.gen_hash_from_stream(reader)?;
-
-            // update the placeholder hash
-            pc.update_data_hash(dh)?;
+            adusted_dh.gen_hash_from_stream(reader)?;
         }
+
+        // update the placeholder hash
+        pc.update_data_hash(adusted_dh)?;
 
         // reborrow immuttable
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -2882,6 +2879,7 @@ pub mod tests {
 
     use std::io::Write;
 
+    use sha2::{Digest, Sha256};
     use tempfile::tempdir;
     use twoway::find_bytes;
 
@@ -2895,6 +2893,7 @@ pub mod tests {
         },
         status_tracker::*,
         utils::{
+            hash_utils::Hasher,
             patch::patch_file,
             test::{
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
@@ -4120,7 +4119,6 @@ pub mod tests {
         println!("store = {store}");
     }
 
-    /*
     #[test]
     fn test_bmff_fragments() {
         let init_stream_path = fixture_path("dashinit.mp4");
@@ -4140,7 +4138,6 @@ pub mod tests {
         .expect("load_from_asset");
         println!("store = {store}");
     }
-    */
 
     #[test]
     fn test_bmff_jumbf_generation() {
@@ -4635,15 +4632,104 @@ pub mod tests {
         let exclusion = HashRange::new(sof.range_start, m_size);
         let exclusions = vec![exclusion];
 
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
         // get the embeddable manifest, letting API do the hashing
         output_file.rewind().unwrap();
         let cm = store
-            .get_data_hashed_embeddable_manifest(
-                &exclusions,
-                &signer,
-                "jpeg",
-                Some(&mut output_file),
-            )
+            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", Some(&mut output_file))
+            .await
+            .unwrap();
+
+        // path in new composed manifest
+        output_file
+            .seek(SeekFrom::Start(sof.range_start as u64))
+            .unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
+    #[actix::test]
+    async fn test_datahash_embeddable_manifest_user_hashed() {
+        // test adding to actual image
+        let ap = fixture_path("cloud.jpg");
+
+        let mut hasher = Hasher::SHA256(Sha256::new());
+
+        // Do we generate JUMBF?
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get where we will put the data
+        let mut f = std::fs::File::open(&ap).unwrap();
+        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
+        let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
+        let boxes = box_mapper.get_box_map(&mut f).unwrap();
+        let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
+
+        // get the size of the hole for the manifest
+        let m_size = store
+            .get_data_hashed_embeddable_manifest_size(&signer, "jpeg")
+            .unwrap();
+
+        // build new asset with hole for new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+
+        // write before
+        let mut before = vec![0u8; sof.range_start];
+        input_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+        hasher.update(&before);
+
+        // write hole and fill with zeros
+        let zeros = vec![0u8; m_size];
+        out_stream.write_all(&zeros).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+        hasher.update(&after_buf);
+
+        // save to output file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        // create target data hash
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(sof.range_start, m_size);
+        let exclusions = vec![exclusion];
+
+        input_file.rewind().unwrap();
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.hash = Hasher::finalize(hasher);
+        dh.exclusions = Some(exclusions);
+
+        // get the embeddable manifest, using user hashing
+        let cm = store
+            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", None)
             .await
             .unwrap();
 
