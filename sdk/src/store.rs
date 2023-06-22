@@ -45,6 +45,7 @@ use crate::{
         get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
+    salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
         hash_utils::{hash256, HashRange},
@@ -1632,11 +1633,19 @@ impl Store {
     ) -> Result<usize> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        // create placholder DataHash large enough for 10 Exclusions
-        let mut ph = DataHash::new("jumbf manifest", pc.alg());
-        ph.add_padding(vec![0u8; 100 + 64 + 96]); // hash ranges + name + max hash bytes
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            // create placholder DataHash large enough for 10 Exclusions
+            let mut ph = DataHash::new("jumbf manifest", pc.alg());
+            for _ in 0..10 {
+                ph.add_exclusion(HashRange::new(0, 2));
+            }
+            let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+            let mut stream = Cursor::new(data);
+            ph.gen_hash_from_stream(&mut stream)?;
 
-        pc.add_assertion(&ph)?;
+            pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
+        }
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
@@ -1679,8 +1688,7 @@ impl Store {
             ));
         }
 
-        let updated_hashes = if let Some(reader) = asset_reader {
-            let mut hashes = Vec::new();
+        if let Some(reader) = asset_reader {
             let mut dh = DataHash::new("jumbf manifest", pc.alg());
 
             // add exclusions
@@ -1691,15 +1699,8 @@ impl Store {
             // calc hashes
             dh.gen_hash_from_stream(reader)?;
 
-            hashes.push(dh);
-            hashes
-        } else {
-            Vec::new()
-        };
-
-        // patch existing claim hash with updated data
-        for hash in updated_hashes {
-            pc.update_data_hash(hash)?;
+            // update the placeholder hash
+            pc.update_data_hash(dh)?;
         }
 
         // reborrow immuttable
@@ -2871,6 +2872,8 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Write;
 
     use tempfile::tempdir;
     use twoway::find_bytes;
@@ -4509,18 +4512,140 @@ pub mod tests {
             .get_box_hashed_embeddable_manifest(signer.as_ref())
             .unwrap();
 
-        let mut report = DetailedStatusTracker::new();
-        let new_store = Store::from_jumbf(&em, &mut report).unwrap();
+        // get composed version for embedding to JPEG
+        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
 
-        let pc = new_store.provenance_claim().unwrap();
-        let bhp = get_assetio_handler_from_path(&ap)
-            .unwrap()
-            .asset_box_hash_ref()
+        // insert manifest into ouput asset
+        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
+        let ol = jpeg_io.get_object_locations(&ap).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
             .unwrap();
 
-        for h in pc.box_hash_assertions() {
-            let bh = BoxHash::from_assertion(h).unwrap();
-            bh.verify_hash(&ap, None, bhp).unwrap();
-        }
+        // remove any existing manifest
+        jpeg_io.read_cai_store(&ap).unwrap();
+
+        // build new asset in memory inserting new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+
+        // write before
+        let mut before = vec![0u8; cai_loc.offset];
+        input_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&cm).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // save to output file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_datahash_embeddable_manifest() {
+        // test adding to actual image
+        let ap = fixture_path("cloud.jpg");
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+
+        // get where we will put the data
+        let mut f = std::fs::File::open(&ap).unwrap();
+        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
+        let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
+        let boxes = box_mapper.get_box_map(&mut f).unwrap();
+        let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get the size of the whole
+        let m_size = store
+            .get_data_hashed_embeddable_manifest_size(signer.as_ref(), "jpeg")
+            .unwrap();
+
+        // build new asset with hole for new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+
+        // write before
+        let mut before = vec![0u8; sof.range_start];
+        input_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        let zeros = vec![0u8; m_size];
+        out_stream.write_all(&zeros).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // save to output file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(sof.range_start, m_size);
+        let exclusions = vec![exclusion];
+
+        // get the embeddable manifest, letting API do the hashing
+        output_file.rewind().unwrap();
+        let cm = store
+            .get_data_hashed_embeddable_manifest(
+                &&exclusions,
+                signer.as_ref(),
+                "jpeg",
+                Some(&mut output_file),
+            )
+            .unwrap();
+
+        // path in new composed manifest
+        output_file
+            .seek(SeekFrom::Start(sof.range_start as u64))
+            .unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
     }
 }

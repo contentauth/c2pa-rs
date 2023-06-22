@@ -273,8 +273,7 @@ where
                 if !bmff_v2_starts.is_empty() {
                     // remove any offset hashes that would be excluded
                     let test_ranges = ranges.clone().into_smallvec();
-                    bmff_v2_starts
-                        .retain(|o| test_ranges.iter().any(|r| r.contains(&(*o + 1))));
+                    bmff_v2_starts.retain(|o| test_ranges.iter().any(|r| r.contains(&(*o + 1))));
 
                     // add in remaining BMFF V2 offsets
                     for os in bmff_v2_starts.iter() {
