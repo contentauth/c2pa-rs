@@ -281,6 +281,17 @@ This section gives a highlight of noteworthy changes
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes
 
+# 0.6.0
+* Validates 1.3 signatures but will not generate them.
+* Supports other 1.3 features such as actions v2 and ingredients v2
+* Supports adding claim_generator_info to a manifest.
+* icons for claim_generator_info can be added as resource references
+* the sdk will create v2 actions or ingredients if required, but defaults to v1
+# 0.5.4
+* This introduced a 1.3 required change in signature format that is not compatible with previous verify code.
+* We want to give some time for developers to integrate 1.3 validation before using 1.3 signatures
+* Please avoid using 0.5.4 and update to 0.6.0 which can validate the new format but does not create it.
+
 # 0.5.3
 * fix bug where ingredient thumbnails were not generated
 * an ingredient.json file or folder can now be passed on the command line --parent option.
