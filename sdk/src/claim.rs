@@ -45,7 +45,10 @@ use crate::{
     jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    utils::{
+        base64,
+        hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    },
     validation_status,
     validator::ValidationInfo,
     ClaimGeneratorInfo,
