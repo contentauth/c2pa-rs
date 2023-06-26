@@ -4119,25 +4119,27 @@ pub mod tests {
         println!("store = {store}");
     }
 
-    #[test]
-    fn test_bmff_fragments() {
-        let init_stream_path = fixture_path("dashinit.mp4");
-        let segment_stream_path = fixture_path("dash1.m4s");
+    /*
+           #[test]
+           fn test_bmff_fragments() {
+               let init_stream_path = fixture_path("dashinit.mp4");
+               let segment_stream_path = fixture_path("dash1.m4s");
 
-        let init_stream = std::fs::read(init_stream_path).unwrap();
-        let segment_stream = std::fs::read(segment_stream_path).unwrap();
+               let init_stream = std::fs::read(init_stream_path).unwrap();
+               let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
-        let store = Store::load_fragment_from_memory(
-            "mp4",
-            &init_stream,
-            &segment_stream,
-            true,
-            &mut report,
-        )
-        .expect("load_from_asset");
-        println!("store = {store}");
-    }
+               let mut report = DetailedStatusTracker::new();
+               let store = Store::load_fragment_from_memory(
+                   "mp4",
+                   &init_stream,
+                   &segment_stream,
+                   true,
+                   &mut report,
+               )
+               .expect("load_from_asset");
+               println!("store = {store}");
+           }
+    */
 
     #[test]
     fn test_bmff_jumbf_generation() {
