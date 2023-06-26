@@ -246,7 +246,7 @@ pub trait RemoteRefEmbed {
 }
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
-/// returned Vec<u8> contains data preformatted to be directly compatible
+/// returned `Vec<u8>` contains data preformatted to be directly compatible
 /// with the type specified in `format`.  
 pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
