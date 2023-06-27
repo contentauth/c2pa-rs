@@ -39,7 +39,11 @@ pub struct HashObjectPositions {
     pub length: usize, // length of object
     pub htype: HashBlockObjectType, // type of hash block object
 }
-/// CAIReader trait to insure CAILoader method support both Read & Seek
+
+// Disable `Send` for wasm32 since we are not sending data across threads
+#[cfg(target_arch = "wasm32")]
+pub trait CAIRead: Read + Seek {}
+#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
 
 impl CAIRead for std::fs::File {}
@@ -108,6 +112,7 @@ impl Seek for CAIReadWriteWrapper<'_> {
     }
 }
 
+/// CAIReader trait to insure CAILoader method support both Read & Seek
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {
     // Return entire CAI block as Vec<u8>
