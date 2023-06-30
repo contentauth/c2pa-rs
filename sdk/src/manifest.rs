@@ -1039,8 +1039,8 @@ impl Manifest {
         // todo:: see if we can pass a trait with to_vec support like we to for Strings
         let asset = asset.to_vec();
         let mut stream = std::io::Cursor::new(asset);
-        self.embed_stream(format, &mut stream, signer)?;
-        Ok(stream.into_inner())
+
+        self.embed_stream(format, &mut stream, signer)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -1938,8 +1938,8 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "openssl_sign")]
-    /// tests and illustrates how to add assets to a non-file based manifest
-    fn from_json_with_memory() {
+    /// tests and illustrates how to add assets to a non-file based manifest by using a stream
+    fn from_json_with_stream() {
         use crate::assertions::Relationship;
 
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
@@ -1977,6 +1977,60 @@ pub(crate) mod tests {
         let m = manifest_store.get_active().unwrap();
 
         //println!("after = {m}");
+
+        assert!(m.thumbnail().is_some());
+        let (format, image) = m.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+        assert_eq!(image.to_vec(), b"my value");
+        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
+        assert!(m.ingredients()[1].data_ref().is_some());
+        assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
+        let id = m.ingredients()[1].data_ref().unwrap().identifier.as_str();
+        assert_eq!(
+            m.ingredients()[1].resources().get(id).unwrap().into_owned(),
+            b"pirate with bird on shoulder"
+        );
+        // println!("{manifest_store}");
+    }
+
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    /// tests and illustrates how to add assets to a non-file based manifest by using a memory buffer
+    fn from_json_with_memory() {
+        use crate::assertions::Relationship;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
+        manifest
+            .resources_mut()
+            .add("IMG_0003.jpg", *b"my value")
+            .unwrap()
+            .add("sample1.svg", *b"my value")
+            .expect("add resource");
+        manifest.ingredients_mut()[0]
+            .resources_mut()
+            .add("exp-test1.png", *b"my value")
+            .expect("add_resource");
+        manifest.ingredients_mut()[1]
+            .resources_mut()
+            .add("prompt.txt", *b"pirate with bird on shoulder")
+            .expect("add_resource");
+
+        println!("{manifest}");
+
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        let output_image = manifest
+            .embed_from_memory("jpeg", image, signer.as_ref())
+            .expect("embed_stream");
+
+        let manifest_store =
+            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        println!("manifest_store = {manifest_store}");
+        let m = manifest_store.get_active().unwrap();
 
         assert!(m.thumbnail().is_some());
         let (format, image) = m.thumbnail().unwrap();
