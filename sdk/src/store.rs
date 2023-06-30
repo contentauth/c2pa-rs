@@ -1626,11 +1626,11 @@ impl Store {
     /// the Signer.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `get_data_hashed_embeddable_manifest`.  The manifest returned
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
-    pub fn get_data_hashed_embeddable_manifest_size(
+    pub fn get_data_hashed_manifest_placeholder(
         &mut self,
         signer: &dyn AsyncSigner,
         format: &str,
-    ) -> Result<usize> {
+    ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -1651,7 +1651,7 @@ impl Store {
 
         let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
 
-        Ok(composed.len())
+        Ok(composed)
     }
 
     /// Returns a finalized, signed manifest.  The manfiest are only supported
@@ -1661,8 +1661,8 @@ impl Store {
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulagtions, otherwise the function uses the caller supplied values.  
-    /// It is an error if `get_data_hashed_embeddable_manifest_size` was not called first
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
     pub async fn get_data_hashed_embeddable_manifest(
@@ -2897,6 +2897,7 @@ pub mod tests {
             patch::patch_file,
             test::{
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+                write_jpeg_placeholder_file,
             },
         },
         AssertionJson, SigningAlg,
@@ -4584,40 +4585,13 @@ pub mod tests {
         // Create a new claim.
         let claim = create_test_claim().unwrap();
 
-        // get where we will put the data
-        let mut f = std::fs::File::open(&ap).unwrap();
-        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-        let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
-        let boxes = box_mapper.get_box_map(&mut f).unwrap();
-        let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
-
         store.commit_claim(claim).unwrap();
 
-        // get the size of the hole for the manifest
-        let m_size = store
-            .get_data_hashed_embeddable_manifest_size(&signer, "jpeg")
+        // get a placeholder the manifest
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
             .unwrap();
 
-        // build new asset with hole for new manifest
-        let outbuf = Vec::new();
-        let mut out_stream = Cursor::new(outbuf);
-        let mut input_file = std::fs::File::open(&ap).unwrap();
-
-        // write before
-        let mut before = vec![0u8; sof.range_start];
-        input_file.read_exact(before.as_mut_slice()).unwrap();
-        out_stream.write_all(&before).unwrap();
-
-        // write hole and fill with zeros
-        let zeros = vec![0u8; m_size];
-        out_stream.write_all(&zeros).unwrap();
-
-        // write bytes after
-        let mut after_buf = Vec::new();
-        input_file.read_to_end(&mut after_buf).unwrap();
-        out_stream.write_all(&after_buf).unwrap();
-
-        // save to output file
         let temp_dir = tempfile::tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
@@ -4626,12 +4600,15 @@ pub mod tests {
             .create(true)
             .open(&output)
             .unwrap();
-        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
 
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(sof.range_start, m_size);
+        let exclusion = HashRange::new(offset, placeholder.len());
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -4645,9 +4622,7 @@ pub mod tests {
             .unwrap();
 
         // path in new composed manifest
-        output_file
-            .seek(SeekFrom::Start(sof.range_start as u64))
-            .unwrap();
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
         let mut report = DetailedStatusTracker::new();
@@ -4675,40 +4650,11 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        // get where we will put the data
-        let mut f = std::fs::File::open(&ap).unwrap();
-        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-        let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
-        let boxes = box_mapper.get_box_map(&mut f).unwrap();
-        let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
-
-        // get the size of the hole for the manifest
-        let m_size = store
-            .get_data_hashed_embeddable_manifest_size(&signer, "jpeg")
+        // get a placeholder for the manifest
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
             .unwrap();
 
-        // build new asset with hole for new manifest
-        let outbuf = Vec::new();
-        let mut out_stream = Cursor::new(outbuf);
-        let mut input_file = std::fs::File::open(&ap).unwrap();
-
-        // write before
-        let mut before = vec![0u8; sof.range_start];
-        input_file.read_exact(before.as_mut_slice()).unwrap();
-        out_stream.write_all(&before).unwrap();
-        hasher.update(&before);
-
-        // write hole and fill with zeros
-        let zeros = vec![0u8; m_size];
-        out_stream.write_all(&zeros).unwrap();
-
-        // write bytes after
-        let mut after_buf = Vec::new();
-        input_file.read_to_end(&mut after_buf).unwrap();
-        out_stream.write_all(&after_buf).unwrap();
-        hasher.update(&after_buf);
-
-        // save to output file
         let temp_dir = tempfile::tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
         let mut output_file = std::fs::OpenOptions::new()
@@ -4717,14 +4663,18 @@ pub mod tests {
             .create(true)
             .open(&output)
             .unwrap();
-        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, Some(&mut hasher))
+                .unwrap();
 
         // create target data hash
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(sof.range_start, m_size);
+        let exclusion = HashRange::new(offset, placeholder.len());
         let exclusions = vec![exclusion];
 
-        input_file.rewind().unwrap();
+        //input_file.rewind().unwrap();
         let mut dh = DataHash::new("source_hash", "sha256");
         dh.hash = Hasher::finalize(hasher);
         dh.exclusions = Some(exclusions);
@@ -4736,9 +4686,7 @@ pub mod tests {
             .unwrap();
 
         // path in new composed manifest
-        output_file
-            .seek(SeekFrom::Start(sof.range_start as u64))
-            .unwrap();
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
         let mut report = DetailedStatusTracker::new();
