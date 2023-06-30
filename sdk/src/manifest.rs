@@ -2182,7 +2182,7 @@ pub(crate) mod tests {
 
     #[actix::test]
     #[cfg(feature = "file_io")]
-    async fn test_datahash_embeddable_manifest() {
+    async fn test_data_hash_embeddable_manifest() {
         let ap = fixture_path("cloud.jpg");
 
         let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
@@ -2228,5 +2228,39 @@ pub(crate) mod tests {
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         assert!(manifest_store.validation_status().is_none());
+    }
+
+    #[actix::test]
+    #[cfg(feature = "file_io")]
+    async fn test_box_hash_embedable_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
+        let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
+
+        let mut manifest = Manifest::new("test_app".to_owned());
+        manifest.set_title("BoxHashTest").set_format("image/jpeg");
+
+        manifest
+            .add_labeled_assertion(crate::assertions::labels::BOX_HASH, &box_hash)
+            .unwrap();
+
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        let embeddable = manifest
+            .box_hash_embeddable_manifest(&signer, None)
+            .await
+            .expect("embeddable_manifest");
+
+        // Validate the embeddable manifest against the asset bytes
+        let manifest_store = crate::ManifestStore::from_manifest_and_asset_bytes_async(
+            &embeddable,
+            "image/jpeg",
+            asset_bytes,
+        )
+        .await
+        .unwrap();
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        println!("{manifest_store}");
     }
 }
