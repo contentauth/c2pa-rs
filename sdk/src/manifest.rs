@@ -22,6 +22,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::AsyncSigner;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{
@@ -35,8 +37,7 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind,
-    RemoteSigner, Signer,
+    ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -1215,7 +1216,7 @@ impl Manifest {
     /// The manifest must include a box hash assertion with correct hashes
     pub async fn box_hash_embeddable_manifest(
         &mut self,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
         format: Option<&str>,
     ) -> Result<Vec<u8>> {
         let mut store = self.to_store()?;
@@ -1280,7 +1281,7 @@ pub(crate) mod tests {
             fixture_path, temp_dir_path, temp_fixture_path, write_jpeg_placeholder_file,
             TEST_SMALL_JPEG,
         },
-        validation_status, SigningAlg,
+        validation_status,
     };
 
     // example of random data structure as an assertion
@@ -2145,7 +2146,6 @@ pub(crate) mod tests {
     async fn test_data_hash_embeddable_manifest() {
         let ap = fixture_path("cloud.jpg");
 
-        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
         let signer = temp_remote_signer();
 
         let mut manifest = Manifest::new("claim_generator");
@@ -2212,10 +2212,10 @@ pub(crate) mod tests {
             .add_labeled_assertion(crate::assertions::labels::BOX_HASH, &box_hash)
             .unwrap();
 
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = temp_remote_signer();
 
         let embeddable = manifest
-            .box_hash_embeddable_manifest(&signer, None)
+            .box_hash_embeddable_manifest(signer.as_ref(), None)
             .await
             .expect("embeddable_manifest");
 

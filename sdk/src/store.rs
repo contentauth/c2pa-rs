@@ -1707,9 +1707,7 @@ impl Store {
         // sign contents
         let claim_bytes = pc.data()?;
         let sig = signer.sign_remote(&claim_bytes).await?;
-        // let sig = self
-        //     .sign_claim_async(pc, signer, signer.reserve_size())
-        //     .await?;
+
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -1726,7 +1724,7 @@ impl Store {
     /// included the necessary box hash assertion with the pregenerated hashes.
     pub async fn get_box_hashed_embeddable_manifest(
         &mut self,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
@@ -1745,9 +1743,8 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size())
-            .await?;
+        let claim_bytes = pc.data()?;
+        let sig = signer.sign_remote(&claim_bytes).await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -3123,23 +3120,6 @@ pub mod tests {
         }
     }
 
-    // struct MyRemoteSigner {}
-
-    // #[async_trait::async_trait]
-    // impl crate::signer::RemoteSigner for MyRemoteSigner {
-    //     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-    //         let signer =
-    //             crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
-
-    //         // this would happen on some remote server
-    //         crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
-    //     }
-
-    //     fn reserve_size(&self) -> usize {
-    //         10000
-    //     }
-    // }
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
@@ -4514,11 +4494,11 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = temp_remote_signer();
 
         // get the embeddable manifest
         let em = store
-            .get_box_hashed_embeddable_manifest(&signer)
+            .get_box_hashed_embeddable_manifest(signer.as_ref())
             .await
             .unwrap();
 
@@ -4579,7 +4559,6 @@ pub mod tests {
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
         let signer = temp_remote_signer();
 
         // Create claims store.
@@ -4648,7 +4627,6 @@ pub mod tests {
         let mut hasher = Hasher::SHA256(Sha256::new());
 
         // Do we generate JUMBF?
-        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
         let signer = temp_remote_signer();
 
         // Create claims store.
