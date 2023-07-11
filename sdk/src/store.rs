@@ -45,6 +45,7 @@ use crate::{
         get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
+    salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
         hash_utils::{hash256, HashRange},
@@ -1619,14 +1620,59 @@ impl Store {
         Ok(())
     }
 
-    /// Returns a manifest suitible for direct embedding by a client.  The
-    /// manfiest are only supported for cases when the client has provided
-    /// a content hash binding.  Note, will not work for cases like BMFF where
-    /// the position of the content is also encoded.  
-    pub fn get_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+    /// This function is used to pre-generate a manifest with place holders for the final
+    /// DataHash and Manifest Signature.  The DataHash will reserve space for at least 10
+    /// Exclusion ranges.  The Signature box reserved size is based on the size returned by
+    /// the Signer.  This function is not needed when using Box Hash. This function is used
+    /// in conjunction with `get_data_hashed_embeddable_manifest`.  The manifest returned
+    /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
+    pub fn get_data_hashed_manifest_placeholder(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        format: &str,
+    ) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            // create placholder DataHash large enough for 10 Exclusions
+            let mut ph = DataHash::new("jumbf manifest", pc.alg());
+            for _ in 0..10 {
+                ph.add_exclusion(HashRange::new(0, 2));
+            }
+            let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+            let mut stream = Cursor::new(data);
+            ph.gen_hash_from_stream(&mut stream)?;
+
+            pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
+        }
+
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
+
+        Ok(composed)
+    }
+
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub async fn get_data_hashed_embeddable_manifest(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn AsyncSigner,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // make sure there are data hashes present before generating
         if pc.hash_assertions().is_empty() {
@@ -1642,8 +1688,64 @@ impl Store {
             ));
         }
 
+        let mut adusted_dh = DataHash::new("jumbf manifest", pc.alg());
+        adusted_dh.exclusions = dh.exclusions.clone();
+        adusted_dh.hash = dh.hash.clone();
+
+        if let Some(reader) = asset_reader {
+            // calc hashes
+            adusted_dh.gen_hash_from_stream(reader)?;
+        }
+
+        // update the placeholder hash
+        pc.update_data_hash(adusted_dh)?;
+
+        // reborrow immuttable
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        self.get_composed_manifest(&jumbf_bytes, format)
+    }
+
+    /// Returns a finalized, signed manifest.  The client is required to have
+    /// included the necessary box hash assertion with the pregenerated hashes.
+    pub async fn get_box_hashed_embeddable_manifest(
+        &mut self,
+        signer: &dyn AsyncSigner,
+    ) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+
+        // make sure there is only one
+        if pc.hash_assertions().len() != 1 {
+            return Err(Error::BadParam(
+                "Claim must have exactly one hash binding assertion".to_string(),
+            ));
+        }
+
+        // only allow box hash assertions to be present
+        if pc.box_hash_assertions().is_empty() {
+            return Err(Error::BadParam("Missing box hash assertion".to_string()));
+        }
+
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        // sign contents
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -1654,6 +1756,18 @@ impl Store {
             .map_err(|_| Error::JumbfCreationError)?;
 
         Ok(jumbf_bytes)
+    }
+
+    /// Returns the supplied manifest composed to be directly compatibile with the desired format.
+    /// For example, if format is JPEG funtion will return the set of APP11 segments that contains
+    /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.   
+    pub fn get_composed_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        if let Some(h) = get_assetio_handler(format) {
+            if let Some(composed_data_handler) = h.composed_data_ref() {
+                return composed_data_handler.compose_manifest(manifest_bytes, format);
+            }
+        }
+        Err(Error::UnsupportedType)
     }
 
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
@@ -1960,7 +2074,8 @@ impl Store {
         }
 
         // we will not do automatic hashing if we detect a box hash present
-        if pc.box_hash_assertions().is_empty() {
+        let mut needs_hashing = false;
+        if pc.hash_assertions().is_empty() {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
             let hashes: Vec<DataHash> = if pc.update_manifest() {
@@ -1970,7 +2085,7 @@ impl Store {
                     &mut intermediate_stream,
                     pc.alg(),
                     &mut hash_ranges,
-                    false,
+                    true,
                 )?
             };
 
@@ -1982,6 +2097,7 @@ impl Store {
 
                 pc.add_assertion(&hash)?;
             }
+            needs_hashing = true;
         }
 
         // 3) Generate in memory CAI jumbf block
@@ -1995,10 +2111,9 @@ impl Store {
 
         // 4)  determine final object locations and patch the asset hashes with correct offset
         // replace the source with correct asset hashes so that the claim hash will be correct
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        if needs_hashing {
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-        // we will not do automatic hashing if we detect a box hash present
-        if pc.box_hash_assertions().is_empty() {
             // get the final hash ranges, but not for update manifests
             intermediate_stream.rewind()?;
             output_stream.rewind()?;
@@ -2185,6 +2300,7 @@ impl Store {
             }
         } else {
             // we will not do automatic hashing if we detect a box hash present
+            let mut needs_hashing = false;
             if pc.box_hash_assertions().is_empty() {
                 // 2) Get hash ranges if needed, do not generate for update manifests
                 let mut hash_ranges = object_locations(&output_path)?;
@@ -2202,6 +2318,7 @@ impl Store {
 
                     pc.add_assertion(&hash)?;
                 }
+                needs_hashing = true;
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -2214,8 +2331,9 @@ impl Store {
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             // If box hash is present we don't do any other
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            if pc.box_hash_assertions().is_empty() {
+            if needs_hashing {
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
                 // get the final hash ranges, but not for update manifests
                 let mut new_hash_ranges = object_locations(&output_path)?;
                 let updated_hashes = if pc.update_manifest() {
@@ -2759,6 +2877,9 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Write;
+
+    use sha2::{Digest, Sha256};
     use tempfile::tempdir;
     use twoway::find_bytes;
 
@@ -2772,9 +2893,11 @@ pub mod tests {
         },
         status_tracker::*,
         utils::{
+            hash_utils::Hasher,
             patch::patch_file,
             test::{
                 create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+                write_jpeg_placeholder_file,
             },
         },
         AssertionJson, SigningAlg,
@@ -3998,25 +4121,25 @@ pub mod tests {
     }
 
     /*
-    #[test]
-    fn test_bmff_fragments() {
-        let init_stream_path = fixture_path("dashinit.mp4");
-        let segment_stream_path = fixture_path("dash1.m4s");
+           #[test]
+           fn test_bmff_fragments() {
+               let init_stream_path = fixture_path("dashinit.mp4");
+               let segment_stream_path = fixture_path("dash1.m4s");
 
-        let init_stream = std::fs::read(init_stream_path).unwrap();
-        let segment_stream = std::fs::read(segment_stream_path).unwrap();
+               let init_stream = std::fs::read(init_stream_path).unwrap();
+               let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
-        let store = Store::load_fragment_from_memory(
-            "mp4",
-            &init_stream,
-            &segment_stream,
-            true,
-            &mut report,
-        )
-        .expect("load_from_asset");
-        println!("store = {store}");
-    }
+               let mut report = DetailedStatusTracker::new();
+               let store = Store::load_fragment_from_memory(
+                   "mp4",
+                   &init_stream,
+                   &segment_stream,
+                   true,
+                   &mut report,
+               )
+               .expect("load_from_asset");
+               println!("store = {store}");
+           }
     */
 
     #[test]
@@ -4256,7 +4379,7 @@ pub mod tests {
             Ok(_store) => panic!("did not expect to have a store"),
             Err(e) => match e {
                 Error::JumbfNotFound => {}
-                e => panic!("unexpected error: {}", e),
+                e => panic!("unexpected error: {e}"),
             },
         }
     }
@@ -4337,6 +4460,9 @@ pub mod tests {
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+
         // dump store and compare to original
         for claim in new_store.claims() {
             let _restored_json = claim
@@ -4365,10 +4491,10 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_embeddable_manifest() {
+    #[actix::test]
+    async fn test_boxhash_embeddable_manifest() {
         // test adding to actual image
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
@@ -4386,23 +4512,187 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
         // get the embeddable manifest
-        let em = store.get_embeddable_manifest(signer.as_ref()).unwrap();
-
-        let mut report = DetailedStatusTracker::new();
-        let new_store = Store::from_jumbf(&em, &mut report).unwrap();
-
-        let pc = new_store.provenance_claim().unwrap();
-        let bhp = get_assetio_handler_from_path(&ap)
-            .unwrap()
-            .asset_box_hash_ref()
+        let em = store
+            .get_box_hashed_embeddable_manifest(&signer)
+            .await
             .unwrap();
 
-        for h in pc.box_hash_assertions() {
-            let bh = BoxHash::from_assertion(h).unwrap();
-            bh.verify_hash(&ap, None, bhp).unwrap();
-        }
+        // get composed version for embedding to JPEG
+        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+
+        // insert manifest into ouput asset
+        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
+        let ol = jpeg_io.get_object_locations(&ap).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+
+        // remove any existing manifest
+        jpeg_io.read_cai_store(&ap).unwrap();
+
+        // build new asset in memory inserting new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+
+        // write before
+        let mut before = vec![0u8; cai_loc.offset];
+        input_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&cm).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // save to output file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
+    #[actix::test]
+    async fn test_datahash_embeddable_manifest() {
+        // test adding to actual image
+        let ap = fixture_path("cloud.jpg");
+
+        // Do we generate JUMBF?
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get a placeholder the manifest
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        // get the embeddable manifest, letting API do the hashing
+        output_file.rewind().unwrap();
+        let cm = store
+            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", Some(&mut output_file))
+            .await
+            .unwrap();
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
+    #[actix::test]
+    async fn test_datahash_embeddable_manifest_user_hashed() {
+        // test adding to actual image
+        let ap = fixture_path("cloud.jpg");
+
+        let mut hasher = Hasher::SHA256(Sha256::new());
+
+        // Do we generate JUMBF?
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get a placeholder for the manifest
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, Some(&mut hasher))
+                .unwrap();
+
+        // create target data hash
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        //input_file.rewind().unwrap();
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.hash = Hasher::finalize(hasher);
+        dh.exclusions = Some(exclusions);
+
+        // get the embeddable manifest, using user hashing
+        let cm = store
+            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", None)
+            .await
+            .unwrap();
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
     }
 }
