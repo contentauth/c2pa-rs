@@ -27,7 +27,7 @@ use crate::{
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result, Signer, SigningAlg,
+    RemoteSigner, Result, Signer, SigningAlg,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -284,6 +284,11 @@ impl crate::Signer for TestGoodSigner {
     }
 }
 
+/// Create a [`Signer`] instance that can be used for testing purposes using ps256 alg.
+///
+/// # Returns
+///
+/// Returns a boxed [`Signer`] instance.
 pub fn temp_signer() -> Box<dyn Signer> {
     #[cfg(feature = "openssl_sign")]
     {
@@ -329,6 +334,48 @@ pub fn temp_signer_with_alg(alg: SigningAlg) -> Box<dyn Signer> {
 
     create_signer::from_files(sign_cert_path.clone(), pem_key_path, alg, None)
         .expect("get_temp_signer_with_alg")
+}
+
+struct TempRemoteSigner {}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::signer::RemoteSigner for TempRemoteSigner {
+    async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+        #[cfg(feature = "openssl_sign")]
+        {
+            let signer =
+                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+            // this would happen on some remote server
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+        }
+        #[cfg(not(feature = "openssl_sign"))]
+        {
+            use std::io::{Seek, Write};
+
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+
+            sign_bytes.rewind()?;
+            sign_bytes.write_all(claim_bytes)?;
+
+            // fake sig
+            Ok(sign_bytes.into_inner())
+        }
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
+}
+
+/// Create a [`RemoteSigner`] instance that can be used for testing purposes.
+///
+/// # Returns
+///
+/// Returns a boxed [`RemoteSigner`] instance.
+pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
+    Box::new(TempRemoteSigner {})
 }
 
 #[test]
