@@ -15,11 +15,11 @@ use std::{
     collections::HashMap,
     convert::{From, TryFrom},
     fs::File,
-    io::{BufReader, Cursor},
+    io::{BufReader, Cursor, Write},
     path::*,
 };
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use img_parts::{
     jpeg::{
         markers::{self, P, RST0, RST7, Z},
@@ -33,8 +33,8 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -541,6 +541,10 @@ impl AssetIO for JpegIO {
         Some(self)
     }
 
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -832,9 +836,81 @@ impl AssetBoxHash for JpegIO {
     }
 }
 
+impl ComposedManifestRef for JpegIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let jumbf_len = manifest_data.len();
+        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
+        let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
+
+        let mut segments = Vec::new();
+
+        for seg in 1..num_segments + 1 {
+            /*
+                If the size of the box payload is less than 2^32-8 bytes,
+                then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
+                shall be present in all JPEG XT marker segment representing this box,
+                regardless of whether the marker segments starts this box,
+                or continues a box started by a former JPEG XT Marker segment.
+            */
+            // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
+            // CI: JPEG extensions marker - JP
+            // En: Box Instance Number  - 0x0001
+            //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
+            // Z: Packet sequence number - 0x00000001...
+            let ci = vec![0x4a, 0x50];
+            let en = vec![0x02, 0x11];
+            let z: u32 = u32::try_from(seg)
+                .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
+
+            let mut seg_data = Vec::new();
+            seg_data.extend(ci);
+            seg_data.extend(en);
+            seg_data.extend(z.to_be_bytes());
+            if seg > 1 {
+                // the LBox and TBox are already in the JUMBF
+                // but we need to duplicate them in all other segments
+                let lbox_tbox = &manifest_data[..8];
+                seg_data.extend(lbox_tbox);
+            }
+            if seg_chucks.len() > 0 {
+                // make sure we have some...
+                if let Some(next_seg) = seg_chucks.next() {
+                    seg_data.extend(next_seg);
+                }
+            } else {
+                seg_data.extend(manifest_data);
+            }
+
+            let seg_bytes = Bytes::from(seg_data);
+            let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
+            segments.push(app11_segment);
+        }
+
+        let output = Vec::with_capacity(manifest_data.len() * 2);
+        let mut out_stream = Cursor::new(output);
+
+        // right out segments
+        for s in segments {
+            // maker
+            out_stream.write_u8(markers::P)?;
+            out_stream.write_u8(s.marker())?;
+
+            //len
+            out_stream.write_u16::<BigEndian>(s.contents().len() as u16 + 2)?;
+
+            // data
+            out_stream.write_all(s.contents())?;
+        }
+
+        Ok(out_stream.into_inner())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use std::io::{Read, Seek};
 
     use img_parts::Bytes;
 
@@ -932,5 +1008,60 @@ pub mod tests {
             .unwrap();
 
         assert!(read_xmp.contains(test_msg));
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        let jpeg_io = JpegIO {};
+
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let ol = jpeg_io.get_object_locations(&source).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+        let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+        std::fs::copy(source, &output).unwrap();
+
+        // remove existing
+        jpeg_io.remove_cai_store(&output).unwrap();
+
+        // generate new manifest data
+        let em = jpeg_io
+            .composed_data_ref()
+            .unwrap()
+            .compose_manifest(&curr_manifest, "jpeg")
+            .unwrap();
+
+        // insert new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        let mut before = vec![0u8; cai_loc.offset];
+        let mut in_file = std::fs::File::open(&output).unwrap();
+
+        // write before
+        in_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&em).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        in_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // read manifest back in from new in-memory JPEG
+        out_stream.rewind().unwrap();
+        let restored_manifest = jpeg_io.read_cai(&mut out_stream).unwrap();
+
+        assert_eq!(&curr_manifest, &restored_manifest);
     }
 }

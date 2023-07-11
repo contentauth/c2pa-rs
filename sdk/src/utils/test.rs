@@ -7,24 +7,32 @@
 // Unless required by applicable law or agreed to in writing,
 // this software is distributed on an "AS IS" BASIS, WITHOUT
 // WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
-// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for thema
 // specific language governing permissions and limitations under
 // each license.
 
 #![allow(clippy::unwrap_used)]
 
 use std::path::PathBuf;
+#[cfg(feature = "file_io")]
+use std::{
+    io::{Cursor, Read, Write},
+    path::Path,
+};
 
 use tempfile::TempDir;
 
-#[cfg(feature = "file_io")]
-use crate::create_signer;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
     Result, Signer, SigningAlg,
+};
+#[cfg(feature = "file_io")]
+use crate::{
+    asset_io::CAIReadWrite, create_signer, hash_utils::Hasher,
+    jumbf_io::get_assetio_handler_from_path,
 };
 #[cfg(feature = "openssl_sign")]
 use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
@@ -210,6 +218,51 @@ pub fn temp_signer_file() -> RsaSigner {
 
     RsaSigner::from_files(&sign_cert_path, &pem_key_path, SigningAlg::Ps256, None)
         .expect("get_temp_signer")
+}
+
+/// Utility to create a test file with a placeholder for a manifest
+#[cfg(feature = "file_io")]
+pub fn write_jpeg_placeholder_file(
+    placeholder: &[u8],
+    input: &Path,
+    output_file: &mut dyn CAIReadWrite,
+    mut hasher: Option<&mut Hasher>,
+) -> Result<usize> {
+    // get where we will put the data
+    let mut f = std::fs::File::open(input).unwrap();
+    let jpeg_io = get_assetio_handler_from_path(input).unwrap();
+    let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
+    let boxes = box_mapper.get_box_map(&mut f).unwrap();
+    let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
+
+    // build new asset with hole for new manifest
+    let outbuf = Vec::new();
+    let mut out_stream = Cursor::new(outbuf);
+    let mut input_file = std::fs::File::open(input).unwrap();
+
+    // write before
+    let mut before = vec![0u8; sof.range_start];
+    input_file.read_exact(before.as_mut_slice()).unwrap();
+    if let Some(hasher) = hasher.as_deref_mut() {
+        hasher.update(&before);
+    }
+    out_stream.write_all(&before).unwrap();
+
+    // write placeholder
+    out_stream.write_all(placeholder).unwrap();
+
+    // write bytes after
+    let mut after_buf = Vec::new();
+    input_file.read_to_end(&mut after_buf).unwrap();
+    if let Some(hasher) = hasher {
+        hasher.update(&after_buf);
+    }
+    out_stream.write_all(&after_buf).unwrap();
+
+    // save to output file
+    output_file.write_all(&out_stream.into_inner()).unwrap();
+
+    Ok(sof.range_start)
 }
 
 pub(crate) struct TestGoodSigner {}

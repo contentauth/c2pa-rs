@@ -26,8 +26,8 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -1486,6 +1486,10 @@ impl AssetIO for TiffIO {
         Some(self)
     }
 
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -1562,6 +1566,13 @@ impl RemoteRefEmbed for TiffIO {
         _embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
         Err(Error::UnsupportedType)
+    }
+}
+
+impl ComposedManifestRef for TiffIO {
+    // Return entire CAI block as Vec<u8>
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        Ok(manifest_data.to_vec())
     }
 }
 

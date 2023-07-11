@@ -24,8 +24,8 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -565,6 +565,10 @@ impl AssetIO for PngIO {
         Some(self)
     }
 
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -654,10 +658,32 @@ impl AssetBoxHash for PngIO {
     }
 }
 
+impl ComposedManifestRef for PngIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut cai_data = Vec::new();
+        let mut cai_encoder = png_pong::Encoder::new(&mut cai_data).into_chunk_enc();
+
+        // create CAI store chunk
+        let cai_unknown = png_pong::chunk::Unknown {
+            name: CAI_CHUNK,
+            data: manifest_data.to_vec(),
+        };
+
+        let mut cai_chunk = png_pong::chunk::Chunk::Unknown(cai_unknown);
+        cai_encoder
+            .encode(&mut cai_chunk)
+            .map_err(|_| Error::EmbeddingError)?;
+
+        Ok(cai_data)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Write;
 
     use twoway::find_bytes;
 
@@ -849,5 +875,60 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        let png_io = PngIO {};
+
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let ol = png_io.get_object_locations(&source).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+        let curr_manifest = png_io.read_cai_store(&source).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");
+
+        std::fs::copy(source, &output).unwrap();
+
+        // remove existing
+        png_io.remove_cai_store(&output).unwrap();
+
+        // generate new manifest data
+        let em = png_io
+            .composed_data_ref()
+            .unwrap()
+            .compose_manifest(&curr_manifest, "png")
+            .unwrap();
+
+        // insert new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        let mut before = vec![0u8; cai_loc.offset];
+        let mut in_file = std::fs::File::open(&output).unwrap();
+
+        // write before
+        in_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&em).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        in_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // read manifest back in from new in-memory PNG
+        out_stream.rewind().unwrap();
+        let restored_manifest = png_io.read_cai(&mut out_stream).unwrap();
+
+        assert_eq!(&curr_manifest, &restored_manifest);
     }
 }
