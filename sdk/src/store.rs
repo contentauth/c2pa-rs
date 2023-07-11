@@ -51,7 +51,7 @@ use crate::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, Signer,
+    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -1628,7 +1628,7 @@ impl Store {
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
     pub fn get_data_hashed_manifest_placeholder(
         &mut self,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
         format: &str,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1668,7 +1668,7 @@ impl Store {
     pub async fn get_data_hashed_embeddable_manifest(
         &mut self,
         dh: &DataHash,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
@@ -1705,9 +1705,11 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size())
-            .await?;
+        let claim_bytes = pc.data()?;
+        let sig = signer.sign_remote(&claim_bytes).await?;
+        // let sig = self
+        //     .sign_claim_async(pc, signer, signer.reserve_size())
+        //     .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2896,8 +2898,8 @@ pub mod tests {
             hash_utils::Hasher,
             patch::patch_file,
             test::{
-                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
-                write_jpeg_placeholder_file,
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
+                temp_remote_signer, temp_signer, write_jpeg_placeholder_file,
             },
         },
         AssertionJson, SigningAlg,
@@ -3121,22 +3123,22 @@ pub mod tests {
         }
     }
 
-    struct MyRemoteSigner {}
+    // struct MyRemoteSigner {}
 
-    #[async_trait::async_trait]
-    impl crate::signer::RemoteSigner for MyRemoteSigner {
-        async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-            let signer =
-                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+    // #[async_trait::async_trait]
+    // impl crate::signer::RemoteSigner for MyRemoteSigner {
+    //     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+    //         let signer =
+    //             crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
-            // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
-        }
+    //         // this would happen on some remote server
+    //         crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+    //     }
 
-        fn reserve_size(&self) -> usize {
-            10000
-        }
-    }
+    //     fn reserve_size(&self) -> usize {
+    //         10000
+    //     }
+    // }
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -3294,11 +3296,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // create my remote signer to map the CoseSign1 data back into the asset
-        let remote_signer = MyRemoteSigner {};
+        let remote_signer = crate::utils::test::temp_remote_signer();
 
         store.commit_claim(claim1).unwrap();
         store
-            .save_to_asset_remote_signed(&ap, &remote_signer, &op)
+            .save_to_asset_remote_signed(&ap, remote_signer.as_ref(), &op)
             .await
             .unwrap();
 
@@ -4577,7 +4579,8 @@ pub mod tests {
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = temp_remote_signer();
 
         // Create claims store.
         let mut store = Store::new();
@@ -4589,7 +4592,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
+            .get_data_hashed_manifest_placeholder(signer.as_ref(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -4617,7 +4620,12 @@ pub mod tests {
         // get the embeddable manifest, letting API do the hashing
         output_file.rewind().unwrap();
         let cm = store
-            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", Some(&mut output_file))
+            .get_data_hashed_embeddable_manifest(
+                &dh,
+                signer.as_ref(),
+                "jpeg",
+                Some(&mut output_file),
+            )
             .await
             .unwrap();
 
@@ -4640,7 +4648,8 @@ pub mod tests {
         let mut hasher = Hasher::SHA256(Sha256::new());
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = temp_remote_signer();
 
         // Create claims store.
         let mut store = Store::new();
@@ -4652,7 +4661,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(&signer, "jpeg")
+            .get_data_hashed_manifest_placeholder(signer.as_ref(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -4681,7 +4690,7 @@ pub mod tests {
 
         // get the embeddable manifest, using user hashing
         let cm = store
-            .get_data_hashed_embeddable_manifest(&dh, &signer, "jpeg", None)
+            .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None)
             .await
             .unwrap();
 

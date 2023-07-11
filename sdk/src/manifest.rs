@@ -1167,7 +1167,7 @@ impl Manifest {
     /// This is used to create a properly formatted file ready for signing
     pub fn data_hash_placeholder(
         &mut self,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
         format: &str,
     ) -> Result<Vec<u8>> {
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
@@ -1196,7 +1196,7 @@ impl Manifest {
     pub async fn data_hash_embeddable_manifest(
         &mut self,
         dh: &DataHash,
-        signer: &dyn AsyncSigner,
+        signer: &dyn RemoteSigner,
         format: &str,
         mut asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
@@ -1265,7 +1265,7 @@ pub(crate) mod tests {
 
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        utils::test::{temp_signer, TEST_VC},
+        utils::test::{temp_remote_signer, temp_signer, TEST_VC},
         Ingredient, Manifest, Result,
     };
     #[cfg(feature = "file_io")]
@@ -1601,32 +1601,14 @@ pub(crate) mod tests {
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_embed_remote_sign() {
-        struct MyRemoteSigner {}
-
-        #[async_trait::async_trait]
-        impl crate::signer::RemoteSigner for MyRemoteSigner {
-            async fn sign_remote(&self, claim_bytes: &[u8]) -> Result<Vec<u8>> {
-                let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(
-                    crate::SigningAlg::Ps256,
-                );
-
-                // this would happen on some remote server
-                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
-            }
-
-            fn reserve_size(&self) -> usize {
-                10000
-            }
-        }
-
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let remote_signer = MyRemoteSigner {};
+        let remote_signer = temp_remote_signer();
 
         let mut manifest = test_manifest();
         manifest
-            .embed_remote_signed(&output, &output, &remote_signer)
+            .embed_remote_signed(&output, &output, remote_signer.as_ref())
             .await
             .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -1686,28 +1668,6 @@ pub(crate) mod tests {
         );
     }
 
-    struct MyRemoteSigner {}
-
-    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-    impl crate::signer::RemoteSigner for MyRemoteSigner {
-        async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-            use std::io::{Seek, Write};
-
-            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
-
-            sign_bytes.rewind()?;
-            sign_bytes.write_all(claim_bytes)?;
-
-            // fake sig
-            Ok(sign_bytes.into_inner())
-        }
-
-        fn reserve_size(&self) -> usize {
-            10000
-        }
-    }
-
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_jpeg_stream_wasm() {
@@ -1731,11 +1691,11 @@ pub(crate) mod tests {
         ingredient.set_title("parent.jpg");
         manifest.set_parent(ingredient).expect("set_parent");
 
-        let signer = MyRemoteSigner {};
+        let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
         let (out_vec, _out_manifest) = manifest
-            .embed_from_memory_remote_signed("jpeg", image, &signer)
+            .embed_from_memory_remote_signed("jpeg", image, signer.as_ref())
             .await
             .expect("embed_stream");
 
@@ -1767,11 +1727,11 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let signer = MyRemoteSigner {};
+        let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
         let (out_vec, _out_manifest) = manifest
-            .embed_from_memory_remote_signed("png", image, &signer)
+            .embed_from_memory_remote_signed("png", image, signer.as_ref())
             .await
             .expect("embed_stream");
 
@@ -2185,12 +2145,15 @@ pub(crate) mod tests {
     async fn test_data_hash_embeddable_manifest() {
         let ap = fixture_path("cloud.jpg");
 
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        //let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = temp_remote_signer();
 
         let mut manifest = Manifest::new("claim_generator");
 
         // get a placeholder the manifest
-        let placeholder = manifest.data_hash_placeholder(&signer, "jpeg").unwrap();
+        let placeholder = manifest
+            .data_hash_placeholder(signer.as_ref(), "jpeg")
+            .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
@@ -2215,7 +2178,12 @@ pub(crate) mod tests {
         dh.exclusions = Some(exclusions);
 
         let signed_manifest = manifest
-            .data_hash_embeddable_manifest(&dh, &signer, "image/jpeg", Some(&mut output_file))
+            .data_hash_embeddable_manifest(
+                &dh,
+                signer.as_ref(),
+                "image/jpeg",
+                Some(&mut output_file),
+            )
             .await
             .unwrap();
 
@@ -2232,7 +2200,7 @@ pub(crate) mod tests {
 
     #[actix::test]
     #[cfg(feature = "file_io")]
-    async fn test_box_hash_embedable_manifest() {
+    async fn test_box_hash_embeddable_manifest() {
         let asset_bytes = include_bytes!("../tests/fixtures/CA.jpg");
         let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
         let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
