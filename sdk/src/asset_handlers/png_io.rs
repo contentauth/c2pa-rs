@@ -19,11 +19,13 @@ use std::{
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
+use serde_bytes::ByteBuf;
 
 use crate::{
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -159,11 +161,10 @@ fn add_required_chunks_to_stream(
             let aio = PngIO {};
             aio.write_cai(input_stream, output_stream, &no_bytes)?;
         } else {
-            // just move input to output
-            let mut buf: Vec<u8> = Vec::new();
+            // just clone
             input_stream.rewind()?;
-            input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-            output_stream.write_all(&buf)?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
         }
     } else {
         return Err(Error::UnsupportedType);
@@ -560,6 +561,14 @@ impl AssetIO for PngIO {
         Some(self)
     }
 
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -600,10 +609,81 @@ impl RemoteRefEmbed for PngIO {
     }
 }
 
+impl AssetBoxHash for PngIO {
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        let ps = get_png_chunk_positions(input_stream)?;
+
+        let mut box_maps = Vec::new();
+
+        // add PNGh header
+        let pngh_bm = BoxMap {
+            names: vec!["PNGh".to_string()],
+            alg: None,
+            hash: ByteBuf::from(Vec::new()),
+            pad: ByteBuf::from(Vec::new()),
+            range_start: 0,
+            range_len: 8,
+        };
+        box_maps.push(pngh_bm);
+
+        // add the other boxes
+        for pc in ps.into_iter() {
+            // add special C2PA box
+            if pc.name == CAI_CHUNK {
+                let c2pa_bm = BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: pc.start as usize,
+                    range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                };
+                box_maps.push(c2pa_bm);
+                continue;
+            }
+
+            // all other chunks
+            let c2pa_bm = BoxMap {
+                names: vec![pc.name_str],
+                alg: None,
+                hash: ByteBuf::from(Vec::new()),
+                pad: ByteBuf::from(Vec::new()),
+                range_start: pc.start as usize,
+                range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+            };
+            box_maps.push(c2pa_bm);
+        }
+
+        Ok(box_maps)
+    }
+}
+
+impl ComposedManifestRef for PngIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut cai_data = Vec::new();
+        let mut cai_encoder = png_pong::Encoder::new(&mut cai_data).into_chunk_enc();
+
+        // create CAI store chunk
+        let cai_unknown = png_pong::chunk::Unknown {
+            name: CAI_CHUNK,
+            data: manifest_data.to_vec(),
+        };
+
+        let mut cai_chunk = png_pong::chunk::Chunk::Unknown(cai_unknown);
+        cai_encoder
+            .encode(&mut cai_chunk)
+            .map_err(|_| Error::EmbeddingError)?;
+
+        Ok(cai_data)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Write;
 
     use twoway::find_bytes;
 
@@ -795,5 +875,60 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        let png_io = PngIO {};
+
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+
+        let ol = png_io.get_object_locations(&source).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+        let curr_manifest = png_io.read_cai_store(&source).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");
+
+        std::fs::copy(source, &output).unwrap();
+
+        // remove existing
+        png_io.remove_cai_store(&output).unwrap();
+
+        // generate new manifest data
+        let em = png_io
+            .composed_data_ref()
+            .unwrap()
+            .compose_manifest(&curr_manifest, "png")
+            .unwrap();
+
+        // insert new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        let mut before = vec![0u8; cai_loc.offset];
+        let mut in_file = std::fs::File::open(&output).unwrap();
+
+        // write before
+        in_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&em).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        in_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // read manifest back in from new in-memory PNG
+        out_stream.rewind().unwrap();
+        let restored_manifest = png_io.read_cai(&mut out_stream).unwrap();
+
+        assert_eq!(&curr_manifest, &restored_manifest);
     }
 }
