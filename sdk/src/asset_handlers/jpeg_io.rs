@@ -12,23 +12,29 @@
 // each license.
 
 use std::{
+    collections::HashMap,
     convert::{From, TryFrom},
     fs::File,
-    io::Cursor,
+    io::{BufReader, Cursor, Write},
     path::*,
 };
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use img_parts::{
-    jpeg::{markers, Jpeg, JpegSegment},
+    jpeg::{
+        markers::{self, P, RST0, RST7, Z},
+        Jpeg, JpegSegment,
+    },
     Bytes, DynImage,
 };
+use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -93,11 +99,10 @@ fn add_required_segs_to_stream(
             let aio = JpegIO {};
             aio.write_cai(input_stream, output_stream, &no_bytes)?;
         } else {
-            // just move input to output
-            let mut buf: Vec<u8> = Vec::new();
+            // just clone
             input_stream.rewind()?;
-            input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-            output_stream.write_all(&buf)?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
         }
     } else {
         return Err(Error::UnsupportedType);
@@ -198,7 +203,7 @@ impl CAIReader for JpegIO {
                             if cai_seg_cnt > 0 && is_cai_continuation {
                                 // make sure this is a cai segment for additional segments,
                                 if z <= cai_seg_cnt {
-                                    // this a non contiguous segment with same "en"" so a bad set of data
+                                    // this a non contiguous segment with same "en" so a bad set of data
                                     // reset and continue to search
                                     cai_en = Vec::new();
                                     continue;
@@ -532,6 +537,14 @@ impl AssetIO for JpegIO {
         Some(self)
     }
 
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -572,9 +585,332 @@ impl RemoteRefEmbed for JpegIO {
     }
 }
 
+fn in_entropy(marker: u8) -> bool {
+    matches!(marker, RST0..=RST7 | Z)
+}
+
+// img-parts does not correctly return the true size of the SOS segment.  This utility
+// finds the correct break point for single image JPEGs.  We will need a new JPEG decoder
+// to handle those.  Also this function can be removed if img-parts ever addresses this issue
+fn get_entropy_size(input_stream: &mut dyn CAIRead, projected_len: usize) -> Result<usize> {
+    // Search the entropy data looking for non entropy segment marker.  The first valid seg marker before we hit
+    // end of the file.
+
+    let mut buf_reader = BufReader::new(input_stream);
+
+    let mut size = 0;
+
+    loop {
+        match buf_reader.read_u8() {
+            Ok(curr_byte) => {
+                if curr_byte == P {
+                    let next_byte = buf_reader.read_u8()?;
+
+                    if !in_entropy(next_byte) {
+                        break;
+                    } else {
+                        size += 1;
+                    }
+                }
+                size += 1;
+            }
+            Err(e) => return Err(Error::IoError(e)),
+        }
+        if size > projected_len {
+            break;
+        }
+    }
+
+    Ok(size)
+}
+
+impl AssetBoxHash for JpegIO {
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        let segment_names = HashMap::from([
+            (0xe0u8, "APP0"),
+            (0xe1u8, "APP1"),
+            (0xe2u8, "APP2"),
+            (0xe3u8, "APP3"),
+            (0xe4u8, "APP4"),
+            (0xe5u8, "APP5"),
+            (0xe6u8, "APP6"),
+            (0xe7u8, "APP7"),
+            (0xe8u8, "APP8"),
+            (0xe9u8, "APP9"),
+            (0xeau8, "APP10"),
+            (0xebu8, "APP11"),
+            (0xecu8, "APP12"),
+            (0xedu8, "APP13"),
+            (0xeeu8, "APP14"),
+            (0xefu8, "APP15"),
+            (0xfeu8, "COM"),
+            (0xc4u8, "DHT"),
+            (0xdbu8, "DQT"),
+            (0xddu8, "DRI"),
+            (0xd9u8, "EOI"),
+            (0xd0u8, "RST0"),
+            (0xd1u8, "RST1"),
+            (0xd2u8, "RST2"),
+            (0xd3u8, "RST3"),
+            (0xd4u8, "RST4"),
+            (0xd5u8, "RST5"),
+            (0xd6u8, "RST6"),
+            (0xd7u8, "RST7"),
+            (0xc0u8, "SOF0"),
+            (0xc2u8, "SOF2"),
+            (0xd8u8, "SOI"),
+            (0xdau8, "SOS"),
+            (0xf0u8, "JPG0"),
+            (0xf1u8, "JPG1"),
+            (0xf2u8, "JPG2"),
+            (0xf3u8, "JPG3"),
+            (0xf4u8, "JPG4"),
+            (0xf5u8, "JPG5"),
+            (0xf6u8, "JPG6"),
+            (0xf7u8, "JPG7"),
+            (0xf8u8, "JPG8"),
+            (0xf9u8, "JPG9"),
+            (0xfau8, "JPG10"),
+            (0xfbu8, "JPG11"),
+            (0xfcu8, "JPG12"),
+            (0xfdu8, "JPG13"),
+        ]);
+
+        let mut cai_en: Vec<u8> = Vec::new();
+        let mut cai_seg_cnt: u32 = 0;
+
+        let mut box_maps = Vec::new();
+        let mut curr_offset = 2; // start after JPEG marker
+
+        // load the bytes
+        let mut buf: Vec<u8> = Vec::new();
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+
+        // add first Map object contain SOI
+        let soi_bm = BoxMap {
+            names: vec!["SOI".to_string()],
+            alg: None,
+            hash: ByteBuf::from(Vec::new()),
+            pad: ByteBuf::from(Vec::new()),
+            range_start: 0,
+            range_len: 2,
+        };
+        box_maps.push(soi_bm);
+
+        let mut c2pa_bm_index = 0;
+
+        let dimg = DynImage::from_bytes(buf.into())
+            .map_err(|e| Error::OtherError(Box::new(e)))?
+            .ok_or(Error::UnsupportedType)?;
+
+        match dimg {
+            DynImage::Jpeg(jpeg) => {
+                for seg in jpeg.segments() {
+                    match seg.marker() {
+                        markers::APP11 => {
+                            // JUMBF marker
+                            let raw_bytes = seg.contents();
+
+                            if raw_bytes.len() > 16 {
+                                // we need at least 16 bytes in each segment for CAI
+                                let mut raw_vec = raw_bytes.to_vec();
+                                let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
+                                let en = raw_vec.as_mut_slice()[2..4].to_vec();
+
+                                let is_cai_continuation = vec_compare(&cai_en, &en);
+
+                                if cai_seg_cnt > 0 && is_cai_continuation {
+                                    cai_seg_cnt += 1;
+
+                                    let c2pa_bm = box_maps.get_mut(c2pa_bm_index).ok_or(
+                                        Error::InvalidAsset("Invalid C2PA segment".to_owned()),
+                                    )?;
+
+                                    // update c2pa box map
+                                    c2pa_bm.range_len += seg.len_with_entropy();
+                                } else {
+                                    // check if this is a CAI JUMBF block
+                                    let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
+                                    let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                                    if is_cai {
+                                        cai_seg_cnt = 1;
+                                        cai_en = en.clone(); // store the identifier
+
+                                        let c2pa_bm = BoxMap {
+                                            names: vec![C2PA_BOXHASH.to_string()],
+                                            alg: None,
+                                            hash: ByteBuf::from(Vec::new()),
+                                            pad: ByteBuf::from(Vec::new()),
+                                            range_start: curr_offset,
+                                            range_len: seg.len_with_entropy(),
+                                        };
+
+                                        box_maps.push(c2pa_bm);
+
+                                        c2pa_bm_index = box_maps.len() - 1;
+                                    } else {
+                                        let name = segment_names.get(&seg.marker()).ok_or(
+                                            Error::InvalidAsset(
+                                                "Unknown segment marker".to_owned(),
+                                            ),
+                                        )?;
+
+                                        let bm = BoxMap {
+                                            names: vec![name.to_string()],
+                                            alg: None,
+                                            hash: ByteBuf::from(Vec::new()),
+                                            pad: ByteBuf::from(Vec::new()),
+                                            range_start: curr_offset,
+                                            range_len: seg.len_with_entropy(),
+                                        };
+
+                                        box_maps.push(bm);
+                                    }
+                                }
+                            }
+                        }
+                        markers::SOS => {
+                            // workaround for img-parts returning wrong segment len when entropy is present
+
+                            // move pointer to beginning of segment
+                            input_stream
+                                .seek(std::io::SeekFrom::Start((curr_offset + seg.len()) as u64))?;
+
+                            let size =
+                                get_entropy_size(input_stream, seg.len_with_entropy() - seg.len())?
+                                    + seg.len();
+
+                            let name = segment_names
+                                .get(&seg.marker())
+                                .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
+
+                            let bm = BoxMap {
+                                names: vec![name.to_string()],
+                                alg: None,
+                                hash: ByteBuf::from(Vec::new()),
+                                pad: ByteBuf::from(Vec::new()),
+                                range_start: curr_offset,
+                                range_len: size,
+                            };
+
+                            box_maps.push(bm);
+                            curr_offset += size;
+                            continue;
+                        }
+                        _ => {
+                            let name = segment_names
+                                .get(&seg.marker())
+                                .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
+
+                            let bm = BoxMap {
+                                names: vec![name.to_string()],
+                                alg: None,
+                                hash: ByteBuf::from(Vec::new()),
+                                pad: ByteBuf::from(Vec::new()),
+                                range_start: curr_offset,
+                                range_len: seg.len_with_entropy(),
+                            };
+
+                            box_maps.push(bm);
+                        }
+                    }
+                    curr_offset += seg.len_with_entropy();
+                }
+            }
+            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+        }
+
+        // add last segment
+        let eoi_bm = BoxMap {
+            names: vec!["EOI".to_string()],
+            alg: None,
+            hash: ByteBuf::from(Vec::new()),
+            pad: ByteBuf::from(Vec::new()),
+            range_start: curr_offset,
+            range_len: 2,
+        };
+        box_maps.push(eoi_bm);
+
+        Ok(box_maps)
+    }
+}
+
+impl ComposedManifestRef for JpegIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let jumbf_len = manifest_data.len();
+        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
+        let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
+
+        let mut segments = Vec::new();
+
+        for seg in 1..num_segments + 1 {
+            /*
+                If the size of the box payload is less than 2^32-8 bytes,
+                then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
+                shall be present in all JPEG XT marker segment representing this box,
+                regardless of whether the marker segments starts this box,
+                or continues a box started by a former JPEG XT Marker segment.
+            */
+            // we need to prefix the JUMBF with the JPEG XT markers (ISO 19566-5)
+            // CI: JPEG extensions marker - JP
+            // En: Box Instance Number  - 0x0001
+            //          (NOTE: can be any unique ID, so we pick one that shouldn't conflict)
+            // Z: Packet sequence number - 0x00000001...
+            let ci = vec![0x4a, 0x50];
+            let en = vec![0x02, 0x11];
+            let z: u32 = u32::try_from(seg)
+                .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
+
+            let mut seg_data = Vec::new();
+            seg_data.extend(ci);
+            seg_data.extend(en);
+            seg_data.extend(z.to_be_bytes());
+            if seg > 1 {
+                // the LBox and TBox are already in the JUMBF
+                // but we need to duplicate them in all other segments
+                let lbox_tbox = &manifest_data[..8];
+                seg_data.extend(lbox_tbox);
+            }
+            if seg_chucks.len() > 0 {
+                // make sure we have some...
+                if let Some(next_seg) = seg_chucks.next() {
+                    seg_data.extend(next_seg);
+                }
+            } else {
+                seg_data.extend(manifest_data);
+            }
+
+            let seg_bytes = Bytes::from(seg_data);
+            let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
+            segments.push(app11_segment);
+        }
+
+        let output = Vec::with_capacity(manifest_data.len() * 2);
+        let mut out_stream = Cursor::new(output);
+
+        // right out segments
+        for s in segments {
+            // maker
+            out_stream.write_u8(markers::P)?;
+            out_stream.write_u8(s.marker())?;
+
+            //len
+            out_stream.write_u16::<BigEndian>(s.contents().len() as u16 + 2)?;
+
+            // data
+            out_stream.write_all(s.contents())?;
+        }
+
+        Ok(out_stream.into_inner())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use std::io::{Read, Seek};
 
     use img_parts::Bytes;
 
@@ -672,5 +1008,60 @@ pub mod tests {
             .unwrap();
 
         assert!(read_xmp.contains(test_msg));
+    }
+
+    #[test]
+    fn test_embeddable_manifest() {
+        let jpeg_io = JpegIO {};
+
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let ol = jpeg_io.get_object_locations(&source).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+        let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+        std::fs::copy(source, &output).unwrap();
+
+        // remove existing
+        jpeg_io.remove_cai_store(&output).unwrap();
+
+        // generate new manifest data
+        let em = jpeg_io
+            .composed_data_ref()
+            .unwrap()
+            .compose_manifest(&curr_manifest, "jpeg")
+            .unwrap();
+
+        // insert new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+
+        let mut before = vec![0u8; cai_loc.offset];
+        let mut in_file = std::fs::File::open(&output).unwrap();
+
+        // write before
+        in_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&em).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        in_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // read manifest back in from new in-memory JPEG
+        out_stream.rewind().unwrap();
+        let restored_manifest = jpeg_io.read_cai(&mut out_stream).unwrap();
+
+        assert_eq!(&curr_manifest, &restored_manifest);
     }
 }
