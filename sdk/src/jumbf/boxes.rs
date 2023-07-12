@@ -1925,6 +1925,19 @@ impl BoxReader {
                 }
             }
 
+            // if there is an ID we need to read it
+            let id = if togs[0] & 0x04 == 0x04 {
+                let mut buf = [0u8; 4];
+                reader.read_exact(&mut buf)?;
+           
+                let id = u32::from_be_bytes(buf);
+                bytes_left -= 4;
+
+                Some(id)
+            } else {
+                None
+            };
+
             // if there is a signature, we need to read it...
             let sig = if togs[0] & 0x08 == 0x08 {
                 let mut sigbuf: [u8; 32] = [0; 32];
@@ -1968,7 +1981,7 @@ impl BoxReader {
             }
 
             return Ok(JUMBFDescriptionBox::from(
-                &uuid, togs[0], sbuf, None, sig, private,
+                &uuid, togs[0], sbuf, id, sig, private,
             ));
         }
         Err(JumbfParseError::InvalidDescriptionBox)
