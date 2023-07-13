@@ -211,9 +211,10 @@ impl ResourceStore {
                 None => return Err(Error::ResourceNotFound(id.to_string())),
             }
         }
-        self.resources
-            .get(id)
-            .map_or_else(|| Err(Error::NotFound), |v| Ok(Cow::Borrowed(v)))
+        self.resources.get(id).map_or_else(
+            || Err(Error::ResourceNotFound(id.to_string())),
+            |v| Ok(Cow::Borrowed(v)),
+        )
     }
 
     /// Returns true if the resource has been added or exists as file.
