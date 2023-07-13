@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.23.0"
+version = "0.24.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -16,7 +16,7 @@ repository = "https://github.com/contentauth/c2pa-rs"
 readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
-edition = "2018"
+edition = "2021"
 rust-version = "1.65.0"
 exclude = ["tests/fixtures"]
 
@@ -27,7 +27,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 add_thumbnails = ["image"]
-file_io = ["add_thumbnails", "openssl_sign"]
+file_io = ["openssl_sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
@@ -58,7 +58,7 @@ crate-type = ["lib"]
 asn1-rs = "0.5.2"
 async-trait = { version = "0.1.48" }
 atree = "0.5.2"
-base64 = "0.13.0"
+base64 = "0.21.2"
 bcder = "0.7.1"
 blake3 = "1.0.0"
 bytes = "1.4.0"
@@ -103,13 +103,14 @@ x509-certificate = "0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.24.5", optional = true }
+half = "<2.3.0, < 3" # fix for older versions of rust
+image = { version = "0.24.2", optional = true }
 instant = "0.1.12"
 openssl = { version = "0.10.48", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "1.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_log = { version = "0.2", features = ["color"] }
+console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 # We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
 # to handle certificate timestamp checking correctly.
@@ -117,9 +118,9 @@ instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand = "0.8.5"
 rsa = "0.6.1"
-serde-wasm-bindgen = "0.4.3"
+serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"
-wasm-bindgen = "0.2.81"
+wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
 	"Crypto",

@@ -6,6 +6,32 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.24.0
+_21 June 2023_
+
+* (MINOR) force minor version change ([#273](https://github.com/contentauth/c2pa-rs/pull/273))
+
+## 0.23.3
+_21 June 2023_
+
+* Bump minor version and update README.md ([#272](https://github.com/contentauth/c2pa-rs/pull/272))
+* Updates ([#270](https://github.com/contentauth/c2pa-rs/pull/270))
+* Add `Send` to `CAIRead` trait so that it can be used across threads ([#271](https://github.com/contentauth/c2pa-rs/pull/271))
+* Generate old COSE headers for temporary backwards support ([#269](https://github.com/contentauth/c2pa-rs/pull/269))
+
+## 0.23.2
+_19 June 2023_
+
+* Fix for returning input stream data when using `embed_from_memory` ([#268](https://github.com/contentauth/c2pa-rs/pull/268))
+
+## 0.23.1
+_13 June 2023_
+
+* Remove no-default ci test ([#259](https://github.com/contentauth/c2pa-rs/pull/259))
+* includes the cert serial number in the ValidationInfo output ([#263](https://github.com/contentauth/c2pa-rs/pull/263))
+* adds ManifestStoreReport::cert_chain ([#265](https://github.com/contentauth/c2pa-rs/pull/265))
+* Update Timestamp message imprint to include entire protected header ([#264](https://github.com/contentauth/c2pa-rs/pull/264))
+
 ## 0.23.0
 _09 June 2023_
 
