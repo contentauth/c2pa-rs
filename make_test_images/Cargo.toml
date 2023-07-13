@@ -9,7 +9,11 @@ rust-version = "1.65.0"
 [dependencies]
 anyhow = "1.0.40"
 blake3 = "1.0.0"
-c2pa = { path="../sdk", features = ["file_io", "xmp_write"] }
+c2pa = { path = "../sdk", features = [
+	"add_thumbnails",
+	"file_io",
+	"xmp_write",
+] }
 env_logger = "0.10"
 log = "0.4.8" 
 half = "<2.3.0, < 3" # fix for older versions of rust

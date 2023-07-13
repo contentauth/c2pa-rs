@@ -93,6 +93,14 @@ Note that some components and dependent crates are licensed under different term
 This section gives a highlight of noteworthy changes
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed Git changes
+
+## 0.25.0
+_14 July 2023_
+* (important!) the add_thumbnails feature is no longer tied to file_io, so you will need to specify it or thumbnails will not be generated.
+* DataHash and BoxHash SDK support (generates a signed manifest ready to write into a file without writing to the file)
+* Expose CAIRead and CAIWrite traits required by some SDK calls.
+* Bug fix for certain BMFF formats (AVIF) that causes images to be unreadable
+
 ## 0.24.0
 _21 June 2023_
 * Bump minor version to 0.24.0 to signify change in signature (back to the compatible one)
