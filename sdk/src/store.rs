@@ -4045,7 +4045,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "file_io"))]
+    #[cfg(feature = "file_io")]
     fn test_removed_jumbf() {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
