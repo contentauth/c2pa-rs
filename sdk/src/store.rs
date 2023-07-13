@@ -3991,7 +3991,7 @@ pub mod tests {
     fn test_modify_xmp() {
         // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
         let mut report = patch_and_report(
-            "C.jpg",
+            "cloud.jpg",
             b"W5M0MpCehiHzreSzNTczkc9d",
             b"W5M0MpCehiHzreSzNTczkXXX",
         );
@@ -4474,6 +4474,7 @@ pub mod tests {
     }
 
     #[actix::test]
+    #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest() {
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");

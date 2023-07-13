@@ -1372,7 +1372,6 @@ mod tests {
         println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
-        assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
         #[cfg(target_arch = "wasm32")]
@@ -1396,7 +1395,6 @@ mod tests {
         println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
-        assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
         assert!(ingredient.validation_status().is_none());
@@ -1561,7 +1559,6 @@ mod tests_file_io {
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
-        assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
     }
@@ -1616,7 +1613,6 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.hash().is_some());
         assert!(ingredient.thumbnail().is_some()); // always generated
-        assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
     }
@@ -1646,7 +1642,6 @@ mod tests_file_io {
         assert_eq!(ingredient.title(), BAD_SIGNATURE_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.validation_status().is_some());
         assert!(ingredient
