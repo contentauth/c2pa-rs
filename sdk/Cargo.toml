@@ -27,7 +27,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 add_thumbnails = ["image"]
-file_io = ["add_thumbnails", "openssl_sign"]
+file_io = ["openssl_sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
@@ -103,13 +103,14 @@ x509-certificate = "0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.24.5", optional = true }
+half = "<2.3.0, < 3" # fix for older versions of rust
+image = { version = "0.24.2", optional = true }
 instant = "0.1.12"
 openssl = { version = "0.10.48", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "1.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_log = { version = "0.2", features = ["color"] }
+console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 # We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
 # to handle certificate timestamp checking correctly.

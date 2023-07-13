@@ -123,6 +123,7 @@ pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+pub use asset_io::{CAIRead, CAIReadWrite};
 /// crate private declarations
 pub(crate) mod claim;
 
