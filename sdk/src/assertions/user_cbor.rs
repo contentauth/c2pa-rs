@@ -33,10 +33,6 @@ impl UserCbor {
             cbor_data: data,
         }
     }
-
-    pub fn data(&self) -> &[u8] {
-        &self.cbor_data
-    }
 }
 
 impl AssertionBase for UserCbor {
