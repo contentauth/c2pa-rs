@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.25.0
+_14 July 2023_
+
+* (MINOR) User, UserCbor and Uuid assertions removed from SDK ([#141](https://github.com/contentauth/c2pa-rs/pull/141))
+* Fix for #195 make_test_images missing ingredient references ([#254](https://github.com/contentauth/c2pa-rs/pull/254))
+* Return ResourceNotFound  instead of NotFound for resource get ([#279](https://github.com/contentauth/c2pa-rs/pull/279))
+* (MINOR) Minor improvements for Wasm and Node.js interoperability ([#276](https://github.com/contentauth/c2pa-rs/pull/276))
+* Fix iloc extent_offsets when offset_size is 0 ([#277](https://github.com/contentauth/c2pa-rs/pull/277))
+* (MINOR) Converts DataHash and BoxHash methods to use RemoteSigner instead of AsyncSigner ([#280](https://github.com/contentauth/c2pa-rs/pull/280))
+* (MINOR) Embeddable manifest support ([#266](https://github.com/contentauth/c2pa-rs/pull/266))
+* Repair CI tests ([#278](https://github.com/contentauth/c2pa-rs/pull/278))
+
 ## 0.24.0
 _21 June 2023_
 
