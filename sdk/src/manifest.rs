@@ -800,7 +800,6 @@ impl Manifest {
                         })
                         .collect();
 
-                    dbg!(&needs_ingredient);
                     for (index, action) in needs_ingredient {
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
