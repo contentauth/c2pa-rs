@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.6.1
+_24 July 2023_
+
+* use compress-archive instead of tar ([contentauth/c2patool#130](https://github.com/contentauth/c2patool/pull/130))
+
 ## 0.6.0
 _22 June 2023_
 
