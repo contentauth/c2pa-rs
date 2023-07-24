@@ -64,7 +64,7 @@ release: build-release-mac-universal c2patool-package
 endif
 ifeq ($(PLATFORM), win)
 release: build-release-win c2patool-package
-	cd target && tar.exe -a -c -f c2patool_win_intel.zip c2patool && cd ..
+	cd target && Compress-Archive -Path c2patool/* -Destination c2patool_win_intel.zip && cd ..
 endif
 ifeq ($(PLATFORM), linux)
 release: build-release-linux c2patool-package
