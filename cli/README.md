@@ -22,6 +22,8 @@ Enter this command to install or update the tool:
 cargo install c2patool
 ```
 
+If you are producing a build on a Windows machine, you will need the [7zip](https://www.7-zip.org/) tool to successfully build.
+
 ### Updating 
 
 To ensure you have the latest version, enter this command:
