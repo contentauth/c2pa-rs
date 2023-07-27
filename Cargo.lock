@@ -309,9 +309,9 @@ checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
 name = "c2pa"
-version = "0.24.0"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4301811aebee9a6bb48ce19313cf27fc7cbe21c08370f1a647a52f39d18e50bb"
+checksum = "3a9d8ae5e6eafb65e5e533750bd6cc9e88d06733dc481a3815ae7e544fadfde4"
 dependencies = [
  "asn1-rs",
  "async-trait",
@@ -330,6 +330,7 @@ dependencies = [
  "extfmt",
  "fast-xml",
  "getrandom",
+ "half 2.2.1",
  "hex",
  "image",
  "img-parts",
@@ -490,9 +491,9 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
 name = "console_log"
-version = "0.2.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89f72f65e8501878b8a004d5a1afb780987e2ce2b4532c562e367a72c57499f"
+checksum = "be8aed40e4edbf4d3b4431ab260b63fdc40f5780a4766824329ea0f1eefe3c0f"
 dependencies = [
  "log",
  "wasm-bindgen",
