@@ -4,7 +4,7 @@ version = "0.25.1"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.65.0"
+rust-version = "1.70.0"
 
 [dependencies]
 anyhow = "1.0.40"
@@ -15,11 +15,8 @@ c2pa = { path = "../sdk", features = [
 	"xmp_write",
 ] }
 env_logger = "0.10"
-log = "0.4.8" 
-half = "<2.3.0, < 3" # fix for older versions of rust
 image = "0.24.2"
 nom = "7.1.1"
-regex = "1.5.6"
 serde = "1.0.137"
 serde_json = "1.0.81"
 twoway = "0.2.2"

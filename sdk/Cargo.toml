@@ -88,7 +88,6 @@ schemars = { version = "0.8.12", optional = true }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
-serde_derive = "1.0.137"
 serde_json = "1.0.81"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
