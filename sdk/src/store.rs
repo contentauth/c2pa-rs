@@ -1431,50 +1431,117 @@ impl Store {
         // sort blocks by offset
         block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
 
-        // generate default data hash that excludes jumbf block
-        // find the first jumbf block (ours are always in order)
-        // find the first block after the jumbf blocks
-        let mut block_start: usize = 0;
-        let mut block_end: usize = 0;
-        let mut found_jumbf = false;
-        for item in block_locations {
-            // find start of jumbf
-            if !found_jumbf && item.htype == HashBlockObjectType::Cai {
-                block_start = item.offset;
-                found_jumbf = true;
+        // For font support, we must specialize the exclusions as the C2PA data
+        // is split into two different areas:
+        //
+        // 1. The table directory record item
+        // 2. The table data
+        //
+        // Once true support for TIFF general boxes go in, this should change
+        // quite a bit to allow for a similar structure, so this code is
+        // considered temporary. It is put within a feature flag to allow for
+        // easy removal.
+        #[cfg(feature = "otf")]
+        {
+            // Setup to assume fragmented CAI blocks
+            let mut exclusions = Vec::<(usize, usize)>::new();
+            for item in block_locations {
+                // find start of jumbf
+                if item.htype == HashBlockObjectType::Cai {
+                    // Make sure we have a valid range
+                    if item.offset <= (item.offset + item.length) {
+                        let mut exclusion = (item.offset, item.offset + item.length);
+                        // Setup to defragment sections that are contiguous but may have
+                        // been listed as separate
+                        if let Some(last_exclusion) = exclusions.last() {
+                            // If the last exclusion ends where this one starts,
+                            // merge them
+                            if last_exclusion.1 == exclusion.0 {
+                                exclusion.0 = last_exclusion.0;
+                                exclusions.pop();
+                            }
+                        }
+                        exclusions.push(exclusion);
+                    }
+                }
             }
 
-            // find start of block after jumbf blocks
-            if found_jumbf && item.htype == HashBlockObjectType::Cai {
-                block_end = item.offset + item.length;
+            if !exclusions.is_empty() {
+                // add exclusion hash for bytes before and after jumbf
+                let mut dh = DataHash::new("jumbf manifest", alg);
+                for exclusion in &exclusions {
+                    if exclusion.1 > exclusion.0 {
+                        dh.add_exclusion(HashRange::new(exclusion.0, exclusion.1 - exclusion.0));
+                    }
+                }
+
+                if calc_hashes {
+                    // this check is only valid on the final sized asset
+                    if exclusions.iter().any(|x| x.1 as u64 > stream_len) {
+                        return Err(Error::BadParam(
+                            "data hash exclusions out of range".to_string(),
+                        ));
+                    }
+
+                    dh.gen_hash_from_stream(stream)?;
+                } else {
+                    match alg {
+                        "sha256" => dh.set_hash([0u8; 32].to_vec()),
+                        "sha384" => dh.set_hash([0u8; 48].to_vec()),
+                        "sha512" => dh.set_hash([0u8; 64].to_vec()),
+                        _ => return Err(Error::UnsupportedType),
+                    }
+                }
+                hashes.push(dh);
             }
         }
-
-        if found_jumbf {
-            // add exclusion hash for bytes before and after jumbf
-            let mut dh = DataHash::new("jumbf manifest", alg);
-            if block_end > block_start {
-                dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
-            }
-
-            if calc_hashes {
-                // this check is only valid on the final sized asset
-                if block_end as u64 > stream_len {
-                    return Err(Error::BadParam(
-                        "data hash exclusions out of range".to_string(),
-                    ));
+        #[cfg(not(feature = "otf"))]
+        {
+            // generate default data hash that excludes jumbf block
+            // find the first jumbf block (ours are always in order)
+            // find the first block after the jumbf blocks
+            let mut block_start: usize = 0;
+            let mut block_end: usize = 0;
+            let mut found_jumbf = false;
+            for item in block_locations {
+                // find start of jumbf
+                if !found_jumbf && item.htype == HashBlockObjectType::Cai {
+                    block_start = item.offset;
+                    found_jumbf = true;
                 }
 
-                dh.gen_hash_from_stream(stream)?;
-            } else {
-                match alg {
-                    "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                    "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                    "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                    _ => return Err(Error::UnsupportedType),
+                // find start of block after jumbf blocks
+                if found_jumbf && item.htype == HashBlockObjectType::Cai {
+                    block_end = item.offset + item.length;
                 }
             }
-            hashes.push(dh);
+
+            if found_jumbf {
+                // add exclusion hash for bytes before and after jumbf
+                let mut dh = DataHash::new("jumbf manifest", alg);
+                if block_end > block_start {
+                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
+                }
+
+                if calc_hashes {
+                    // this check is only valid on the final sized asset
+                    if block_end as u64 > stream_len {
+                        return Err(Error::BadParam(
+                            "data hash exclusions out of range".to_string(),
+                        ));
+                    }
+
+                    dh.gen_hash_from_stream(stream)?;
+                } else {
+                    match alg {
+                        "sha256" => dh.set_hash([0u8; 32].to_vec()),
+                        "sha384" => dh.set_hash([0u8; 48].to_vec()),
+                        "sha512" => dh.set_hash([0u8; 64].to_vec()),
+                        _ => return Err(Error::UnsupportedType),
+                    }
+                }
+                hashes.push(dh);
+            }
         }
 
         Ok(hashes)
