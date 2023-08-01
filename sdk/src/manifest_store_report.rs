@@ -106,11 +106,18 @@ impl ManifestStoreReport {
         Ok(())
     }
 
-    /// Returns the certificate chain used to to sign the active manifest.
+    /// Returns the certificate chain used to sign the active manifest.
     #[cfg(feature = "file_io")]
     pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        store.get_provenance_cert_chain()
+    }
+
+    /// Returns the certificate used to sign the active manifest.
+    pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
 
@@ -377,6 +384,8 @@ fn b64_tag(mut json: String, tag: &str) -> String {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use std::fs;
+
     use super::ManifestStoreReport;
     use crate::utils::test::fixture_path;
 
@@ -385,6 +394,21 @@ mod tests {
         let path = fixture_path("CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
         println!("{report}");
+    }
+
+    #[test]
+    fn manifest_get_certchain_from_bytes() {
+        let bytes = fs::read(fixture_path("CA.jpg")).expect("missing test asset");
+        assert!(ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes).is_ok())
+    }
+
+    #[test]
+    fn manifest_get_certchain_from_bytes_no_manifest_err() {
+        let bytes = fs::read(fixture_path("no_manifest.jpg")).expect("missing test asset");
+        assert!(matches!(
+            ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes),
+            Err(crate::Error::JumbfNotFound)
+        ))
     }
 
     #[test]
