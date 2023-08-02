@@ -40,7 +40,7 @@ impl Thumbnail {
             "tiff" => "image/tiff",
             "ico" => "image/x-icon",
             "webp" => "image/webp",
-            _ => "octet-stream",
+            _ => "application/octet-stream",
         }
         .to_string();
 
@@ -116,7 +116,7 @@ pub mod tests {
         thumbnail_test(labels::JPEG_INGREDIENT_THUMBNAIL, "image/jpeg");
         thumbnail_test(labels::PNG_INGREDIENT_THUMBNAIL, "image/png");
         // unrecognized labels will be formatted as octet_streams
-        thumbnail_test("foo", "octet-stream");
+        thumbnail_test("foo", "application/octet-stream");
     }
 
     #[test]
