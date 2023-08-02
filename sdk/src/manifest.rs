@@ -239,7 +239,7 @@ impl Manifest {
     /// Sets the thumbnail from a ResourceRef.
     pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
         // verify the resource referenced exists
-        if !self.resources.exists(&thumbnail.identifier) {
+        if thumbnail.format != "none" && !self.resources.exists(&thumbnail.identifier) {
             return Err(Error::NotFound);
         };
         self.thumbnail = Some(thumbnail);
@@ -744,11 +744,14 @@ impl Manifest {
         claim.instance_id = self.instance_id().to_owned();
 
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            let data = self.resources.get(&thumb_ref.identifier)?;
-            claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
-                data.into_owned(),
-            ))?;
+            // Setting the format to "none" will ensure that no claim thumbnail is added
+            if thumb_ref.format != "none" {
+                let data = self.resources.get(&thumb_ref.identifier)?;
+                claim.add_assertion(&Thumbnail::new(
+                    &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
+                    data.into_owned(),
+                ))?;
+            }
         }
 
         // add any verified credentials - needs to happen early so we can reference them
@@ -2109,7 +2112,7 @@ pub(crate) mod tests {
         assert!(manifest.thumbnail_ref().is_none());
         // verify we can set a references that do exist
         assert!(manifest
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
             .is_ok());
         assert!(manifest.thumbnail_ref().is_some());
 
@@ -2117,6 +2120,38 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
+    }
+
+    #[test]
+    #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
+    fn test_create_no_claim_thumbnail() {
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures");
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // Set format to none to force no claim thumbnail generated
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("none", "none"))
+            .is_ok());
+        // verify there is a thumbnail ref
+        assert!(manifest.thumbnail_ref().is_some());
+        // verify there is no thumbnail
+        assert!(manifest.thumbnail().is_none());
+
+        let signer = temp_signer();
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        assert!(active_manifest.thumbnail_ref().is_none());
+        assert!(active_manifest.thumbnail().is_none());
     }
 
     #[actix::test]
