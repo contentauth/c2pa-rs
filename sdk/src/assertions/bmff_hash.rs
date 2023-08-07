@@ -670,7 +670,7 @@ impl BmffHash {
                             match chunk_hash_map.remove(&(chunk_bmff_mm.location + 1)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
-                                    leaf_hashes.push(h.clone());
+                                    leaf_hashes.push(h);
                                 }
                                 None => {
                                     return Err(Error::HashMismatch(
