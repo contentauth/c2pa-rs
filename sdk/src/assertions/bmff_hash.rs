@@ -609,32 +609,12 @@ impl BmffHash {
                             }
                         };
 
-                        let sample_cnt = mp4.sample_count(mm.local_id).map_err(|_e| {
-                            Error::InvalidAsset("Could not parse BMFF track sample".to_string())
-                        })?;
-
+                        let sample_cnt = track.sample_count();
                         if sample_cnt == 0 {
                             return Err(Error::InvalidAsset("No samples".to_string()));
                         }
 
                         let track_id = track.track_id();
-
-                        // get the chunk count
-                        let stbl_box = &track.trak.mdia.minf.stbl;
-                        let chunk_cnt = match &stbl_box.stco {
-                            Some(stco) => stco.entries.len(),
-                            None => match &stbl_box.co64 {
-                                Some(co64) => co64.entries.len(),
-                                None => 0,
-                            },
-                        };
-
-                        // the Merkle count is the number of chunks for timed media
-                        if mm.count != chunk_cnt as u32 {
-                            return Err(Error::HashMismatch(
-                                "Track count does not match Merkle map count".to_string(),
-                            ));
-                        }
 
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
@@ -684,19 +664,13 @@ impl BmffHash {
                             }
                         }
 
-                        if chunk_cnt != chunk_hash_map.len() {
-                            return Err(Error::HashMismatch(
-                                "Incorrect number of Merkle trees".to_string(),
-                            ));
-                        }
-
                         // finalize leaf hashes
                         let mut leaf_hashes = Vec::new();
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&track_id] {
                             match chunk_hash_map.remove(&(chunk_bmff_mm.location + 1)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
-                                    leaf_hashes.push(h.clone());
+                                    leaf_hashes.push(h);
                                 }
                                 None => {
                                     return Err(Error::HashMismatch(
