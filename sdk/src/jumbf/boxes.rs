@@ -1980,9 +1980,9 @@ impl BoxReader {
             return Err(JumbfParseError::InvalidBoxHeader);
         }
 
-        return Ok(JUMBFDescriptionBox::from(
+        Ok(JUMBFDescriptionBox::from(
             &uuid, togs[0], sbuf, bxid, sig, private,
-        ));
+        ))
     }
 
     pub fn read_json_box<R: Read + Seek>(
