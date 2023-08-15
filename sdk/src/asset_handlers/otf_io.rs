@@ -763,6 +763,9 @@ fn get_object_locations_from_stream<T>(
 where
     T: Read + Seek + ?Sized,
 {
+    // The SDK doesn't necessarily promise the input stream is rewound, so do so
+    // now to make sure we can parse the font.
+    reader.rewind()?;
     // We must take into account a font that may not have a C2PA table in it at
     // this point, adding any required chunks needed for C2PA to work correctly.
     let output_vec: Vec<u8> = Vec::new();
