@@ -15,9 +15,11 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, collections::HashMap};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -26,11 +28,68 @@ pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
     !cfg!(feature = "serialize_thumbnails") || cfg!(test)
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(untagged)]
+pub enum UriOrResource {
+    ResourceRef(ResourceRef),
+    HashedUri(HashedUri),
+}
+impl UriOrResource {
+    pub fn to_hashed_uri(
+        &self,
+        resources: &ResourceStore,
+        claim: &mut Claim,
+    ) -> Result<UriOrResource> {
+        match self {
+            UriOrResource::ResourceRef(r) => {
+                let data = resources.get(&r.identifier)?;
+                let hash_uri = claim.add_databox(&r.format, data.to_vec(), None)?;
+                Ok(UriOrResource::HashedUri(hash_uri))
+            }
+            UriOrResource::HashedUri(h) => Ok(UriOrResource::HashedUri(h.clone())),
+        }
+    }
+
+    pub fn to_resource_ref(
+        &self,
+        resources: &mut ResourceStore,
+        claim: &Claim,
+        id: &str,
+    ) -> Result<UriOrResource> {
+        match self {
+            UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
+            UriOrResource::HashedUri(h) => {
+                let data_box = claim.find_databox(&h.url()).ok_or(Error::MissingDataBox)?;
+                let resource_ref =
+                    resources.add_with(id, &data_box.format, data_box.data.clone())?;
+                Ok(UriOrResource::ResourceRef(resource_ref))
+            }
+        }
+    }
+}
+
+impl From<ResourceRef> for UriOrResource {
+    fn from(r: ResourceRef) -> Self {
+        Self::ResourceRef(r)
+    }
+}
+
+impl From<HashedUri> for UriOrResource {
+    fn from(h: HashedUri) -> Self {
+        Self::HashedUri(h)
+    }
+}
+
 /// A reference to a resource to be used in JSON serialization
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+
 pub struct ResourceRef {
     pub format: String,
     pub identifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 impl ResourceRef {
@@ -38,15 +97,18 @@ impl ResourceRef {
         Self {
             format: format.into(),
             identifier: identifier.into(),
+            data_types: None,
         }
     }
 }
 
 /// Resource store to contain binary objects referenced from JSON serializable structures
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ResourceStore {
     resources: HashMap<String, Vec<u8>>,
     #[cfg(feature = "file_io")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
 }
 
@@ -79,6 +141,7 @@ impl ResourceStore {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
+            //make "svg" | "image/svg+xml" => ".svg",
             "c2pa" | "application/x-c2pa-manifest-store" => ".cp2a",
             _ => "",
         };
@@ -108,7 +171,7 @@ impl ResourceStore {
     }
 
     /// Adds a resource, using a given id value.
-    pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<()>
+    pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
     where
         S: Into<String>,
         R: Into<Vec<u8>>,
@@ -119,10 +182,14 @@ impl ResourceStore {
             std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             #[allow(clippy::expect_used)]
             std::fs::write(path, value.into())?;
-            return Ok(());
+            return Ok(self);
         }
         self.resources.insert(id.into(), value.into());
-        Ok(())
+        Ok(self)
+    }
+
+    pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
+        &self.resources
     }
 
     /// Returns a copy on write reference to the resource if found.
@@ -144,9 +211,10 @@ impl ResourceStore {
                 None => return Err(Error::ResourceNotFound(id.to_string())),
             }
         }
-        self.resources
-            .get(id)
-            .map_or_else(|| Err(Error::NotFound), |v| Ok(Cow::Borrowed(v)))
+        self.resources.get(id).map_or_else(
+            || Err(Error::ResourceNotFound(id.to_string())),
+            |v| Ok(Cow::Borrowed(v)),
+        )
     }
 
     /// Returns true if the resource has been added or exists as file.

@@ -1,18 +1,23 @@
 [package]
 name = "make_test_images"
-version = "0.22.0"
+version = "0.25.2"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
-edition = "2018"
+edition = "2021"
 rust-version = "1.65.0"
 
 [dependencies]
 anyhow = "1.0.40"
 blake3 = "1.0.0"
-c2pa = { path="../sdk", features = ["file_io", "xmp_write"] }
+c2pa = { path = "../sdk", features = [
+	"add_thumbnails",
+	"file_io",
+	"xmp_write",
+] }
 env_logger = "0.10"
 log = "0.4.8" 
-image = "0.24.5"
+half = "<2.3.0, < 3" # fix for older versions of rust
+image = "0.24.2"
 nom = "7.1.1"
 regex = "1.5.6"
 serde = "1.0.137"

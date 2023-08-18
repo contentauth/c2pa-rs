@@ -30,6 +30,7 @@ use std::{
     io::{Read, Result as IoResult, Seek, SeekFrom, Write},
 };
 
+use byteorder::{BigEndian, ReadBytesExt};
 use hex::FromHex;
 use log::debug;
 use thiserror::Error;
@@ -788,8 +789,9 @@ pub const CAI_SIGNATURE_UUID: &str = "6332637300110010800000AA00389B71"; // c2cs
 pub const CAI_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
 pub const CAI_EMBEDDED_FILE_DESCRIPTION_UUID: &str = "6266646200110010800000AA00389B71"; // bfdb
 pub const CAI_EMBEDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"; // bidb
-pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; //c2vc
+pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; // c2vc
 pub const CAI_UUID_ASSERTION_UUID: &str = "7575696400110010800000AA00389B71"; // uuid
+pub const CAI_DATABOXES_STORE_UUID: &str = "6332646200110010800000AA00389B71"; // c2db
 
 // ANCHOR Salt Content Box
 /// Salt Content Box
@@ -1237,6 +1239,58 @@ impl CAIAssertionStore {
 }
 
 impl Default for CAIAssertionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct CAIDataboxStore {
+    store: JUMBFSuperBox,
+}
+
+impl BMFFBox for CAIDataboxStore {
+    fn box_type(&self) -> &'static [u8; 4] {
+        b"    "
+    }
+
+    fn box_uuid(&self) -> &'static str {
+        CAI_DATABOXES_STORE_UUID
+    }
+
+    fn box_payload_size(&self) -> IoResult<u32> {
+        let size = boxio::ByteCounter::calculate(|w| self.write_box_payload(w))?;
+        Ok(size as u32)
+    }
+
+    fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
+        self.store.write_box(writer)
+    }
+
+    // Necessary method to enable conversion between types...
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl CAIDataboxStore {
+    pub fn new() -> Self {
+        CAIDataboxStore {
+            store: JUMBFSuperBox::new(labels::DATABOXES, Some(CAI_DATABOXES_STORE_UUID)),
+        }
+    }
+
+    pub fn from(in_box: JUMBFSuperBox) -> Self {
+        CAIDataboxStore { store: in_box }
+    }
+
+    // add an assertion box (of various types) *WITHOUT* taking ownership of the box
+    pub fn add_databox(&mut self, b: Box<dyn BMFFBox>) {
+        self.store.add_data_box(b)
+    }
+}
+
+impl Default for CAIDataboxStore {
     fn default() -> Self {
         Self::new()
     }
@@ -1857,10 +1911,10 @@ impl BoxReader {
         reader.read_exact(&mut togs)?;
         bytes_left -= 1;
 
+        let mut sbuf = Vec::with_capacity(64);
         if togs[0] & 0x03 == 0x03 {
             // must be requestable and labeled
             // read label
-            let mut sbuf = Vec::with_capacity(64);
             loop {
                 let mut buf = [0; 1];
                 reader.read_exact(&mut buf)?;
@@ -1871,54 +1925,64 @@ impl BoxReader {
                     sbuf.push(buf[0]);
                 }
             }
+        } else {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
 
-            // if there is a signature, we need to read it...
-            let sig = if togs[0] & 0x08 == 0x08 {
-                let mut sigbuf: [u8; 32] = [0; 32];
-                reader.read_exact(&mut sigbuf)?;
-                bytes_left -= 32;
-                Some(sigbuf)
-            } else {
-                None
-            };
+        // box id
+        let bxid = if togs[0] & 0x04 == 0x04 {
+            let idbuf = reader.read_u32::<BigEndian>()?;
+            bytes_left -= 4;
+            Some(idbuf)
+        } else {
+            None
+        };
 
-            // read private box if necessary
-            let private = if togs[0] & 0x10 == 0x10 {
-                let header = BoxReader::read_header(reader)
-                    .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
-                if header.size == 0 {
-                    // bad read,
-                    return Err(JumbfParseError::InvalidBoxHeader);
-                } else if header.size != bytes_left - HEADER_SIZE {
-                    // this means that we started w/o the header...
-                    unread_bytes(reader, HEADER_SIZE)?;
-                }
+        // if there is a signature, we need to read it...
+        let sig = if togs[0] & 0x08 == 0x08 {
+            let mut sigbuf: [u8; 32] = [0; 32];
+            reader.read_exact(&mut sigbuf)?;
+            bytes_left -= 32;
+            Some(sigbuf)
+        } else {
+            None
+        };
 
-                if header.name == BoxType::SaltHash {
-                    let data_len = header.size - HEADER_SIZE;
-                    let mut buf = vec![0u8; data_len as usize];
-                    reader.read_exact(&mut buf)?;
-
-                    bytes_left -= header.size;
-
-                    Some(CAISaltContentBox::new(buf))
-                } else {
-                    return Err(JumbfParseError::InvalidBoxHeader);
-                }
-            } else {
-                None
-            };
-
-            if bytes_left != HEADER_SIZE {
-                // make sure we have consumed the entire box
+        // read private box if necessary
+        let private = if togs[0] & 0x10 == 0x10 {
+            let header =
+                BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+            if header.size == 0 {
+                // bad read,
                 return Err(JumbfParseError::InvalidBoxHeader);
+            } else if header.size != bytes_left - HEADER_SIZE {
+                // this means that we started w/o the header...
+                unread_bytes(reader, HEADER_SIZE)?;
             }
 
-            return Ok(JUMBFDescriptionBox::from(
-                &uuid, togs[0], sbuf, None, sig, private,
-            ));
+            if header.name == BoxType::SaltHash {
+                let data_len = header.size - HEADER_SIZE;
+                let mut buf = vec![0u8; data_len as usize];
+                reader.read_exact(&mut buf)?;
+
+                bytes_left -= header.size;
+
+                Some(CAISaltContentBox::new(buf))
+            } else {
+                return Err(JumbfParseError::InvalidBoxHeader);
+            }
+        } else {
+            None
+        };
+
+        if bytes_left != HEADER_SIZE {
+            // make sure we have consumed the entire box
+            return Err(JumbfParseError::InvalidBoxHeader);
         }
-        Err(JumbfParseError::InvalidDescriptionBox)
+
+        Ok(JUMBFDescriptionBox::from(
+            &uuid, togs[0], sbuf, bxid, sig, private,
+        ))
     }
 
     pub fn read_json_box<R: Read + Seek>(
@@ -2139,6 +2203,7 @@ impl BoxReader {
         // load the description box & create a new superbox from it
         let jdesc = BoxReader::read_desc_box(reader, jumd_header.size)
             .map_err(|_| JumbfParseError::UnexpectedEof)?;
+
         if jdesc.label().is_empty() {
             return Err(JumbfParseError::UnexpectedEof);
         }
@@ -2160,8 +2225,7 @@ impl BoxReader {
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
                     BoxType::Jumb => Box::new(
-                        BoxReader::read_super_box(reader)
-                            .map_err(|_| JumbfParseError::InvalidJumbBox)?,
+                        BoxReader::read_super_box(reader)?, //.map_err(|_| JumbfParseError::InvalidJumbBox)?,
                     ),
                     BoxType::Json => Box::new(
                         BoxReader::read_json_box(reader, box_header.size)

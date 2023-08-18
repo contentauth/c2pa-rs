@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    cmp::min,
     collections::HashMap,
     convert::{From, TryFrom},
     fs::{File, OpenOptions},
@@ -22,18 +23,16 @@ use std::{
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
-use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::ExclusionsMap,
+    assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::hash_utils::{vec_compare, Exclusion},
+    utils::hash_utils::{vec_compare, HashRange},
 };
 
 pub struct BmffIO {
@@ -161,16 +160,6 @@ boxtype! {
     IlocBox => 0x696C6F63
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct BmffMerkleMap {
-    #[serde(rename = "uniqueId")]
-    unique_id: u32,
-    #[serde(rename = "localId")]
-    local_id: u32,
-    location: u32,
-    hashes: Option<Vec<ByteBuf>>,
-}
-
 struct BoxHeaderLite {
     pub name: BoxType,
     pub size: u64,
@@ -244,16 +233,23 @@ fn write_box_uuid_extension<W: Write>(w: &mut W, uuid: &[u8; 16]) -> Result<u64>
     Ok(16)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BoxInfo {
     path: String,
     parent: Option<Token>,
-    offset: u64,
-    size: u64,
+    pub offset: u64,
+    pub size: u64,
     box_type: BoxType,
     user_type: Option<Vec<u8>>,
     version: Option<u8>,
     flags: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BoxInfoLite {
+    pub path: String,
+    pub offset: u64,
+    pub size: u64,
 }
 
 fn read_box_header_ext(reader: &mut dyn CAIRead) -> Result<(u8, u32)> {
@@ -393,14 +389,37 @@ fn get_top_level_box_offsets(
     tl_offsets
 }
 
+fn get_top_level_boxes(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_path_map: &HashMap<String, Vec<Token>>,
+) -> Vec<BoxInfoLite> {
+    let mut tl_boxes = Vec::new();
+
+    for (p, t) in bmff_path_map {
+        // look for top level offsets
+        if p.matches('/').count() == 1 {
+            for token in t {
+                if let Some(box_info) = bmff_tree.get(*token) {
+                    tl_boxes.push(BoxInfoLite {
+                        path: box_info.data.path.clone(),
+                        offset: box_info.data.offset,
+                        size: box_info.data.size,
+                    });
+                }
+            }
+        }
+    }
+
+    tl_boxes
+}
+
 pub fn bmff_to_jumbf_exclusions(
     reader: &mut dyn CAIRead,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
-) -> Result<Vec<Exclusion>> {
-    let start = reader.stream_position()?;
+) -> Result<Vec<HashRange>> {
     let size = reader.seek(SeekFrom::End(0))?;
-    reader.seek(SeekFrom::Start(start))?;
+    reader.rewind()?;
 
     // create root node
     let root_box = BoxInfo {
@@ -511,12 +530,12 @@ pub fn bmff_to_jumbf_exclusions(
                 // reduce range if desired
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
-                        let exclusion = Exclusion::new(
+                        let exclusion = HashRange::new(
                             (exclusion_start + subset.offset as u64) as usize,
                             (if subset.length == 0 {
                                 exclusion_length - subset.offset as u64
                             } else {
-                                subset.length as u64
+                                min(subset.length as u64, exclusion_length)
                             }) as usize,
                         );
 
@@ -525,7 +544,7 @@ pub fn bmff_to_jumbf_exclusions(
                 } else {
                     // exclude box in its entirty
                     let exclusion =
-                        Exclusion::new(exclusion_start as usize, exclusion_length as usize);
+                        HashRange::new(exclusion_start as usize, exclusion_length as usize);
 
                     exclusions.push(exclusion);
 
@@ -543,7 +562,7 @@ pub fn bmff_to_jumbf_exclusions(
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
-            let mut exclusion = Exclusion::new(tl_start as usize, 1);
+            let mut exclusion = HashRange::new(tl_start as usize, 1);
             exclusion.set_bmff_offset(tl_start);
 
             exclusions.push(exclusion);
@@ -807,7 +826,8 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                         None
                     };
 
-                    let _extent_offset = match offset_size {
+                    let extent_offset_file_pos = output.stream_position()?;
+                    let extent_offset = match offset_size {
                         0 => 0_u64,
                         4 => output.read_u32::<BigEndian>()? as u64,
                         8 => output.read_u64::<BigEndian>()?,
@@ -817,6 +837,54 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                             ))
                         }
                     };
+
+                    // no base offset so just adjust the raw extent_offset value
+                    if constuction_method == 0 && base_offset == 0 && extent_offset != 0 {
+                        output.seek(SeekFrom::Start(extent_offset_file_pos))?;
+                        match offset_size {
+                            4 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset as u32
+                                        - u32::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset as u32
+                                        + u32::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u32::<BigEndian>(new_offset)?;
+                            }
+                            8 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset
+                                        - u64::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset
+                                        + u64::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u64::<BigEndian>(new_offset)?;
+                            }
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF: unknown extent_offset format".to_string(),
+                                ))
+                            }
+                        }
+                    }
 
                     let _extent_length = match length_size {
                         0 => 0_u64,
@@ -1018,105 +1086,138 @@ fn get_manifest_token(
     None
 }
 
-impl CAIReader for BmffIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let start = reader.stream_position()?;
-        let size = reader.seek(SeekFrom::End(0))?;
-        reader.seek(SeekFrom::Start(start))?;
+pub(crate) struct C2PABmffBoxes {
+    pub manifest_bytes: Option<Vec<u8>>,
+    pub bmff_merkle: Vec<BmffMerkleMap>,
+    pub box_infos: Vec<BoxInfoLite>,
+}
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+    let size = reader.seek(SeekFrom::End(0))?;
+    reader.rewind()?;
 
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
 
-        // build layout of the BMFF structure
-        build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        let mut output: Option<Vec<u8>> = None;
+    // build layout of the BMFF structure
+    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
-        // grab top level (for now) C2PA box
-        if let Some(uuid_list) = bmff_map.get("/uuid") {
-            let mut manifest_store_cnt = 0;
+    let mut output: Option<Vec<u8>> = None;
+    let mut _first_aux_uuid = 0;
+    let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
 
-            for uuid_token in uuid_list {
-                let box_info = &bmff_tree[*uuid_token];
+    // grab top level (for now) C2PA box
+    if let Some(uuid_list) = bmff_map.get("/uuid") {
+        let mut manifest_store_cnt = 0;
 
-                // make sure it is UUID box
-                if box_info.data.box_type == BoxType::UuidBox {
-                    if let Some(uuid) = &box_info.data.user_type {
-                        // make sure it is a C2PA ContentProvenanceBox box
-                        if vec_compare(&C2PA_UUID, uuid) {
-                            let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+        for uuid_token in uuid_list {
+            let box_info = &bmff_tree[*uuid_token];
 
-                            // set reader to start of box contents
-                            skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+            // make sure it is UUID box
+            if box_info.data.box_type == BoxType::UuidBox {
+                if let Some(uuid) = &box_info.data.user_type {
+                    // make sure it is a C2PA ContentProvenanceBox box
+                    if vec_compare(&C2PA_UUID, uuid) {
+                        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
 
-                            // Fullbox => 8 bits for version 24 bits for flags
-                            let (_version, _flags) = read_box_header_ext(reader)?;
-                            data_len -= 4;
+                        // set reader to start of box contents
+                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
-                            // get the purpose
-                            let mut purpose = Vec::with_capacity(64);
+                        // Fullbox => 8 bits for version 24 bits for flags
+                        let (_version, _flags) = read_box_header_ext(reader)?;
+                        data_len -= 4;
+
+                        // get the purpose
+                        let mut purpose = Vec::with_capacity(64);
+                        loop {
+                            let mut buf = [0; 1];
+                            reader.read_exact(&mut buf)?;
+                            data_len -= 1;
+                            if buf[0] == 0x00 {
+                                break;
+                            } else {
+                                purpose.push(buf[0]);
+                            }
+                        }
+
+                        // is the purpose manifest?
+                        if vec_compare(&purpose, MANIFEST.as_bytes()) {
+                            // offset to first aux uuid with purpose merkle
+                            let mut buf = [0u8; 8];
+                            reader.read_exact(&mut buf)?;
+                            data_len -= 8;
+
+                            // offset to first aux uuid
+                            let offset = u64::from_be_bytes(buf);
+
+                            // read the manifest
+                            if manifest_store_cnt == 0 {
+                                let mut manifest = vec![0u8; data_len as usize];
+                                reader.read_exact(&mut manifest)?;
+                                output = Some(manifest);
+
+                                manifest_store_cnt += 1;
+                            } else {
+                                return Err(Error::TooManyManifestStores);
+                            }
+
+                            // if contains offset this asset contains additional UUID boxes
+                            if offset != 0 {
+                                _first_aux_uuid = offset;
+                            }
+                        } else if vec_compare(&purpose, MERKLE.as_bytes()) {
+                            let mut merkle = vec![0u8; data_len as usize];
+                            reader.read_exact(&mut merkle)?;
+
+                            // strip trailing zeros
                             loop {
-                                let mut buf = [0; 1];
-                                reader.read_exact(&mut buf)?;
-                                data_len -= 1;
-                                if buf[0] == 0x00 {
+                                if !merkle.is_empty() && merkle[merkle.len() - 1] == 0 {
+                                    merkle.pop();
+                                }
+
+                                if merkle.is_empty() || merkle[merkle.len() - 1] != 0 {
                                     break;
-                                } else {
-                                    purpose.push(buf[0]);
                                 }
                             }
 
-                            // is the purpose manifest?
-                            if vec_compare(&purpose, MANIFEST.as_bytes()) {
-                                // offset to first aux uuid with purpose merkle
-                                let mut buf = [0u8; 8];
-                                reader.read_exact(&mut buf)?;
-                                data_len -= 8;
-
-                                // offset to first aux uuid
-                                let offset = u64::from_be_bytes(buf);
-
-                                // if no offset this contains the manifest
-                                if offset == 0 {
-                                    if manifest_store_cnt == 0 {
-                                        let mut manifest = vec![0u8; data_len as usize];
-                                        reader.read_exact(&mut manifest)?;
-                                        output = Some(manifest);
-
-                                        manifest_store_cnt += 1;
-                                    } else {
-                                        return Err(Error::TooManyManifestStores);
-                                    }
-                                } else {
-                                    // handle aux uuids
-                                    let mut buf = vec![0u8; data_len as usize];
-                                    reader.read_exact(&mut buf)?;
-
-                                    let _mm: BmffMerkleMap = serde_cbor::from_slice(&buf)?;
-                                }
-                            } else if vec_compare(&purpose, MERKLE.as_bytes()) {
-                                // handle merkle boxes not yet handled
-                                return Err(Error::UnsupportedType);
-                            }
+                            // find uuid from uuid list
+                            let mm: BmffMerkleMap = serde_cbor::from_slice(&merkle)?;
+                            merkle_boxes.push(mm);
                         }
                     }
                 }
             }
         }
+    }
 
-        output.ok_or(Error::JumbfNotFound)
+    // get position ordered list of boxes
+    let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(&bmff_tree, &bmff_map);
+    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+
+    Ok(C2PABmffBoxes {
+        manifest_bytes: output,
+        bmff_merkle: merkle_boxes,
+        box_infos,
+    })
+}
+
+impl CAIReader for BmffIO {
+    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
+
+        c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
@@ -1559,6 +1660,7 @@ pub mod tests {
     use crate::utils::test::{fixture_path, temp_dir_path};
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_read_mp4() {
         use crate::{

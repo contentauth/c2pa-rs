@@ -54,15 +54,18 @@
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
-//! use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
+//! use c2pa::{create_signer, Manifest, SigningAlg};
+//! use serde::Serialize;
 //! use tempfile::tempdir;
+//!
+//! #[derive(Serialize)]
+//! struct Test {
+//!     my_tag: usize,
+//! }
 //!
 //! # fn main() -> Result<()> {
 //! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new(
-//!     "org.contentauth.mylabel",
-//!     r#"{"my_tag":"Anything I want"}"#,
-//! ))?;
+//! manifest.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;
@@ -123,8 +126,12 @@ pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+pub use asset_io::{CAIRead, CAIReadWrite};
 /// crate private declarations
 pub(crate) mod claim;
+
+mod claim_generator_info;
+pub use claim_generator_info::ClaimGeneratorInfo;
 
 pub mod cose_sign;
 
@@ -138,6 +145,7 @@ pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
+pub use utils::cbor_types::DateT;
 pub mod validation_status;
 pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;

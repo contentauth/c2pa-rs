@@ -11,21 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod base64;
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-pub(crate) mod merkle;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-#[cfg(feature = "pdf")]
-pub(crate) mod pdf_utils;
-#[cfg(feature = "add_thumbnails")]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+use base64::{engine::general_purpose, Engine as _};
+
+pub(crate) fn encode(data: &[u8]) -> String {
+    general_purpose::STANDARD.encode(data)
+}
+
+pub(crate) fn decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    general_purpose::STANDARD.decode(data)
+}

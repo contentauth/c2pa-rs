@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::error::Result;
+use crate::{assertions::BoxMap, error::Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
@@ -39,8 +39,12 @@ pub struct HashObjectPositions {
     pub length: usize, // length of object
     pub htype: HashBlockObjectType, // type of hash block object
 }
-/// CAIReader trait to insure CAILoader method support both Read & Seek
+
+// Disable `Send` for wasm32 since we are not sending data across threads
+#[cfg(target_arch = "wasm32")]
 pub trait CAIRead: Read + Seek {}
+#[cfg(not(target_arch = "wasm32"))]
+pub trait CAIRead: Read + Seek + Send {}
 
 impl CAIRead for std::fs::File {}
 impl CAIRead for std::io::Cursor<&[u8]> {}
@@ -108,6 +112,7 @@ impl Seek for CAIReadWriteWrapper<'_> {
     }
 }
 
+/// CAIReader trait to insure CAILoader method support both Read & Seek
 // Interface for in memory CAI reading
 pub trait CAIReader: Sync + Send {
     // Return entire CAI block as Vec<u8>
@@ -187,6 +192,16 @@ pub trait AssetIO: Sync + Send {
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         None
     }
+
+    // Returns [`AssetBoxHash`] trait if this I/O handler supports box hashing.
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        None
+    }
+
+    // Returns [`ComposedManifestRefEmbed`] trait if this I/O handler supports composed data.
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        None
+    }
 }
 
 // `AssetPatch` optimizes output generation for asset_io handlers that
@@ -198,6 +213,16 @@ pub trait AssetPatch {
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+}
+
+// `AssetBoxHash` provides interfaces needed to support C2PA BoxHash functionality.
+//  This trait is only implemented for supported types
+pub trait AssetBoxHash {
+    // Returns Vec containing all BoxMap level objects in the asset in the order
+    // they occur in the asset.  The hashes do not need to be calculated, only the
+    // name and the positional information.  The list should be flat with each BoxMap
+    // representing a single entry.
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 
 // Type of remote reference to embed.  Some of the listed
@@ -223,4 +248,12 @@ pub trait RemoteRefEmbed {
         output_stream: &mut dyn CAIReadWrite,
         embed_ref: RemoteRefEmbedType,
     ) -> Result<()>;
+}
+
+/// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
+/// returned `Vec<u8>` contains data preformatted to be directly compatible
+/// with the type specified in `format`.  
+pub trait ComposedManifestRef {
+    // Return entire CAI block as Vec<u8>
+    fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }

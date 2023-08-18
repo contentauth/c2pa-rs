@@ -25,6 +25,7 @@ use crate::{
     claim::Claim,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
+    utils::base64,
     validation_status::ValidationStatus,
     Result,
 };
@@ -94,15 +95,30 @@ impl ManifestStoreReport {
         Ok(())
     }
 
-    /// Prints the certificate chain use to sign the active manifest
+    /// Prints the certificate chain used to sign the active manifest.
     #[cfg(feature = "file_io")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
-        let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
         println!("{cert_str}");
         Ok(())
+    }
+
+    /// Returns the certificate chain used to sign the active manifest.
+    #[cfg(feature = "file_io")]
+    pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        store.get_provenance_cert_chain()
+    }
+
+    /// Returns the certificate used to sign the active manifest.
+    pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
+        store.get_provenance_cert_chain()
     }
 
     /// Creates a ManifestStoreReport from an existing Store and a validation log
@@ -188,10 +204,8 @@ impl ManifestStoreReport {
                     } else {
                         format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
                     };
-                    let new_token = tree.new_node(data);
-                    current_token.append_node(tree, new_token).map_err(|_err| {
-                        crate::Error::InvalidAsset("Bad Manifest graph".to_string())
-                    })?;
+
+                    let new_token = current_token.append(tree, data);
 
                     ManifestStoreReport::populate_node(
                         tree,
@@ -357,7 +371,7 @@ fn b64_tag(mut json: String, tag: &str) -> String {
                 "{}\"{}\": \"{}\"{}",
                 &json[..index],
                 tag,
-                base64::encode(bytes),
+                base64::encode(&bytes),
                 &json[index + idx2 + 1..]
             );
         }
@@ -370,6 +384,8 @@ fn b64_tag(mut json: String, tag: &str) -> String {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use std::fs;
+
     use super::ManifestStoreReport;
     use crate::utils::test::fixture_path;
 
@@ -378,6 +394,21 @@ mod tests {
         let path = fixture_path("CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
         println!("{report}");
+    }
+
+    #[test]
+    fn manifest_get_certchain_from_bytes() {
+        let bytes = fs::read(fixture_path("CA.jpg")).expect("missing test asset");
+        assert!(ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes).is_ok())
+    }
+
+    #[test]
+    fn manifest_get_certchain_from_bytes_no_manifest_err() {
+        let bytes = fs::read(fixture_path("no_manifest.jpg")).expect("missing test asset");
+        assert!(matches!(
+            ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes),
+            Err(crate::Error::JumbfNotFound)
+        ))
     }
 
     #[test]
@@ -396,5 +427,24 @@ mod tests {
         let path = fixture_path(asset_name);
 
         ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_get_certchain() {
+        let asset_name = "CA.jpg";
+        let path = fixture_path(asset_name);
+        assert!(ManifestStoreReport::cert_chain(path).is_ok())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_get_certchain_no_manifest_err() {
+        let asset_name = "no_manifest.jpg";
+        let path = fixture_path(asset_name);
+        assert!(matches!(
+            ManifestStoreReport::cert_chain(path),
+            Err(crate::Error::JumbfNotFound)
+        ))
     }
 }
