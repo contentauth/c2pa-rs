@@ -51,6 +51,7 @@ The SDK has been tested on the following operating systems:
  | `mp4`         | `video/mp4`, `application/mp4`                      |
  | `mov`         | `video/quicktime`                                   |
  | `png`         | `image/png`                                         |
+ | `svg`         | `image/svg+xml`                                     | 
  | `tif`,`tiff`  | `image/tiff`                                        |
  | `wav`         | `audio/x-wav`                                       |
  | `webp`        | `image/webp`                                        |
