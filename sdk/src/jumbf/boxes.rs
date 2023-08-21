@@ -30,6 +30,7 @@ use std::{
     io::{Read, Result as IoResult, Seek, SeekFrom, Write},
 };
 
+use byteorder::{BigEndian, ReadBytesExt};
 use hex::FromHex;
 use log::debug;
 use thiserror::Error;
@@ -1910,10 +1911,10 @@ impl BoxReader {
         reader.read_exact(&mut togs)?;
         bytes_left -= 1;
 
+        let mut sbuf = Vec::with_capacity(64);
         if togs[0] & 0x03 == 0x03 {
             // must be requestable and labeled
             // read label
-            let mut sbuf = Vec::with_capacity(64);
             loop {
                 let mut buf = [0; 1];
                 reader.read_exact(&mut buf)?;
@@ -1924,54 +1925,64 @@ impl BoxReader {
                     sbuf.push(buf[0]);
                 }
             }
+        } else {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
 
-            // if there is a signature, we need to read it...
-            let sig = if togs[0] & 0x08 == 0x08 {
-                let mut sigbuf: [u8; 32] = [0; 32];
-                reader.read_exact(&mut sigbuf)?;
-                bytes_left -= 32;
-                Some(sigbuf)
-            } else {
-                None
-            };
+        // box id
+        let bxid = if togs[0] & 0x04 == 0x04 {
+            let idbuf = reader.read_u32::<BigEndian>()?;
+            bytes_left -= 4;
+            Some(idbuf)
+        } else {
+            None
+        };
 
-            // read private box if necessary
-            let private = if togs[0] & 0x10 == 0x10 {
-                let header = BoxReader::read_header(reader)
-                    .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
-                if header.size == 0 {
-                    // bad read,
-                    return Err(JumbfParseError::InvalidBoxHeader);
-                } else if header.size != bytes_left - HEADER_SIZE {
-                    // this means that we started w/o the header...
-                    unread_bytes(reader, HEADER_SIZE)?;
-                }
+        // if there is a signature, we need to read it...
+        let sig = if togs[0] & 0x08 == 0x08 {
+            let mut sigbuf: [u8; 32] = [0; 32];
+            reader.read_exact(&mut sigbuf)?;
+            bytes_left -= 32;
+            Some(sigbuf)
+        } else {
+            None
+        };
 
-                if header.name == BoxType::SaltHash {
-                    let data_len = header.size - HEADER_SIZE;
-                    let mut buf = vec![0u8; data_len as usize];
-                    reader.read_exact(&mut buf)?;
-
-                    bytes_left -= header.size;
-
-                    Some(CAISaltContentBox::new(buf))
-                } else {
-                    return Err(JumbfParseError::InvalidBoxHeader);
-                }
-            } else {
-                None
-            };
-
-            if bytes_left != HEADER_SIZE {
-                // make sure we have consumed the entire box
+        // read private box if necessary
+        let private = if togs[0] & 0x10 == 0x10 {
+            let header =
+                BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+            if header.size == 0 {
+                // bad read,
                 return Err(JumbfParseError::InvalidBoxHeader);
+            } else if header.size != bytes_left - HEADER_SIZE {
+                // this means that we started w/o the header...
+                unread_bytes(reader, HEADER_SIZE)?;
             }
 
-            return Ok(JUMBFDescriptionBox::from(
-                &uuid, togs[0], sbuf, None, sig, private,
-            ));
+            if header.name == BoxType::SaltHash {
+                let data_len = header.size - HEADER_SIZE;
+                let mut buf = vec![0u8; data_len as usize];
+                reader.read_exact(&mut buf)?;
+
+                bytes_left -= header.size;
+
+                Some(CAISaltContentBox::new(buf))
+            } else {
+                return Err(JumbfParseError::InvalidBoxHeader);
+            }
+        } else {
+            None
+        };
+
+        if bytes_left != HEADER_SIZE {
+            // make sure we have consumed the entire box
+            return Err(JumbfParseError::InvalidBoxHeader);
         }
-        Err(JumbfParseError::InvalidDescriptionBox)
+
+        Ok(JUMBFDescriptionBox::from(
+            &uuid, togs[0], sbuf, bxid, sig, private,
+        ))
     }
 
     pub fn read_json_box<R: Read + Seek>(
@@ -2192,6 +2203,7 @@ impl BoxReader {
         // load the description box & create a new superbox from it
         let jdesc = BoxReader::read_desc_box(reader, jumd_header.size)
             .map_err(|_| JumbfParseError::UnexpectedEof)?;
+
         if jdesc.label().is_empty() {
             return Err(JumbfParseError::UnexpectedEof);
         }
@@ -2213,8 +2225,7 @@ impl BoxReader {
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
                     BoxType::Jumb => Box::new(
-                        BoxReader::read_super_box(reader)
-                            .map_err(|_| JumbfParseError::InvalidJumbBox)?,
+                        BoxReader::read_super_box(reader)?, //.map_err(|_| JumbfParseError::InvalidJumbBox)?,
                     ),
                     BoxType::Json => Box::new(
                         BoxReader::read_json_box(reader, box_header.size)
