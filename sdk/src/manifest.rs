@@ -1729,6 +1729,43 @@ pub(crate) mod tests {
         println!("It worked: {manifest_store}\n");
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_webp_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/mars.webp");
+        // convert buffer to cursor with Read/Write/Seek capability
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_remote_signer();
+
+        // Embed a manifest using the signer.
+        let (out_vec, _out_manifest) = manifest
+            .embed_from_memory_remote_signed("image/webp", image, signer.as_ref())
+            .await
+            .expect("embed_stream");
+
+        // try to load the image
+        let manifest_store =
+            crate::ManifestStore::from_bytes("image/webp", &out_vec, true).unwrap();
+
+        /* to be enabled later
+                // try to load the manifest
+                let mut validation_log = DetailedStatusTracker::new();
+                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
+        */
+
+        println!("It worked: {manifest_store}\n");
+    }
+
     #[test]
     fn test_embed_stream() {
         use crate::assertions::User;
@@ -2078,6 +2115,32 @@ pub(crate) mod tests {
 
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+        manifest.with_base_path(fixtures).expect("with_base");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        let (format, _) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_embed_webp_from_json() {
+        use crate::utils::test::TEST_WEBP;
+
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures"); // the path we want to read files from
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_WEBP);
 
         let signer = temp_signer();
 
