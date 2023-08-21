@@ -212,12 +212,7 @@ where
 
         // place at the end for maximum compatibility
         if is_riff_chunk && !data.is_empty() {
-            let mut d = data.to_vec();
-            if d.len() % 2 == 1 {
-                // must be even
-                d.push(0);
-            }
-            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, d));
+            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
@@ -271,14 +266,7 @@ impl CAIReader for RiffIO {
 
         for c in top_level_chunks.iter(&mut chunk_reader) {
             if c.id() == C2PA_CHUNK_ID {
-                let mut output = c.read_contents(&mut chunk_reader)?;
-                // the data may have been padded to account for even boundary requirement
-                if let Some(last_byte) = output.last() {
-                    if *last_byte == 0 {
-                        output.pop();
-                    }
-                }
-                return Ok(output);
+                return Ok(c.read_contents(&mut chunk_reader)?);
             }
         }
 
