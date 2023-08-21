@@ -85,6 +85,7 @@
 pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
 pub mod assertions;
 
+#[cfg(not(feature = "no_validator"))]
 mod cose_validator;
 
 #[cfg(feature = "openssl_sign")]
@@ -111,7 +112,7 @@ mod resource_store;
 pub use resource_store::{ResourceRef, ResourceStore};
 
 mod signing_alg;
-#[cfg(feature = "file_io")]
+#[cfg(any(feature = "file_io", feature = "external_signing"))]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 #[cfg(feature = "openssl_sign")]

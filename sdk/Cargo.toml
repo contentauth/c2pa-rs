@@ -28,11 +28,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 add_thumbnails = ["image"]
 file_io = ["openssl_sign"]
+external_signing = ["no_validation"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl"]
+no_validation = []
 json_schema = ["dep:schemars"]
 
 # The diagnostics feature is unsupported and might be removed.

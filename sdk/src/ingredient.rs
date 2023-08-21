@@ -1402,6 +1402,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(not(feature = "no_validation"))]
     async fn test_stream_ogp() {
         let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
         let title = "XCA.jpg";
@@ -1505,7 +1506,6 @@ mod tests_file_io {
 
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
-    const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
     const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
@@ -1633,7 +1633,10 @@ mod tests_file_io {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(not(feature = "no_validation"))]
     fn test_jpg_bad_signature() {
+        const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
+    
         let ap = fixture_path(BAD_SIGNATURE_JPEG);
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);

@@ -33,9 +33,8 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
-    cose_validator::verify_cose,
     error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{hash_by_alg, vec_compare},
     jumbf::{
         self,
         boxes::*,
@@ -393,18 +392,28 @@ impl Store {
 
         cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
             // Sanity check: Ensure that this signature is valid.
+            #[cfg(not(feature = "external_sign"))]
+            {
+                use crate::cose_validator::verify_cose;
 
-            let mut cose_log = OneShotStatusTracker::new();
-            match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
-                Ok(_) => Ok(sig),
-                Err(err) => {
-                    error!(
-                        "Signature that was just generated does not validate: {:#?}",
-                        err
-                    );
-                    Err(err)
+                let mut cose_log = OneShotStatusTracker::new();
+                match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
+                    Ok(_) => Ok(sig),
+                    Err(err) => {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        Err(err)
+                    }
                 }
             }
+            
+            #[cfg(feature = "external_sign")]
+            {
+                Ok(sig)
+            }
+            
         })
     }
 
@@ -415,31 +424,41 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
+        use crate::cose_sign::cose_sign_async;
 
         let claim_bytes = claim.data()?;
 
         match cose_sign_async(signer, &claim_bytes, box_size).await {
             // Sanity check: Ensure that this signature is valid.
             Ok(sig) => {
-                let mut cose_log = OneShotStatusTracker::new();
-                match verify_cose_async(
-                    sig.clone(),
-                    claim_bytes,
-                    b"".to_vec(),
-                    false,
-                    &mut cose_log,
-                )
-                .await
+                #[cfg(not(feature = "external_sign"))]
                 {
-                    Ok(_) => Ok(sig),
-                    Err(err) => {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        Err(err)
+                    use crate::cose_validator::verify_cose_async;
+
+                    let mut cose_log = OneShotStatusTracker::new();
+                    match verify_cose_async(
+                        sig.clone(),
+                        claim_bytes,
+                        b"".to_vec(),
+                        false,
+                        &mut cose_log,
+                    )
+                    .await
+                    {
+                        Ok(_) => Ok(sig),
+                        Err(err) => {
+                            error!(
+                                "Signature that was just generated does not validate: {:#?}",
+                                err
+                            );
+                            Err(err)
+                        }
                     }
+                }
+
+                #[cfg(feature = "external_sign")]
+                {
+                    Ok(sig)
                 }
             }
             Err(e) => Err(e),
@@ -1142,6 +1161,7 @@ impl Store {
     }
 
     // wake the ingredients and validate
+    #[allow(dead_code)]
     fn ingredient_checks(
         store: &Store,
         claim: &Claim,
@@ -1178,7 +1198,7 @@ impl Store {
 
                     // test for 1.1 hash then 1.0 version
                     if !vec_compare(&c2pa_manifest.hash(), box_hash)
-                        && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                        && !crate::utils::hash_utils::verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
                             &c2pa_manifest.url(),
@@ -1261,6 +1281,7 @@ impl Store {
     }
 
     // wake the ingredients and validate
+    #[allow(dead_code)]
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
@@ -1290,7 +1311,7 @@ impl Store {
 
                     // test for 1.1 hash then 1.0 version
                     if !vec_compare(&c2pa_manifest.hash(), box_hash)
-                        && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
+                        && !crate::utils::hash_utils::verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
                             &c2pa_manifest.url(),
@@ -1340,27 +1361,30 @@ impl Store {
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub async fn verify_store_async(
-        store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        _store: &Store,
+        _asset_data: &mut ClaimAssetData<'_>,
+        _validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let claim = match store.provenance_claim() {
-            Some(c) => c,
-            None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+        #[cfg(not(feature = "no_validation"))] 
+        {
+            let claim = match _store.provenance_claim() {
+                Some(c) => c,
+                None => {
+                    let log_item =
+                        log_item!("Unknown", "could not find active manifest", "verify_store")
+                            .error(Error::ProvenanceMissing)
+                            .validation_status(validation_status::CLAIM_MISSING);
+                    _validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
 
-                return Err(Error::ProvenanceMissing);
-            }
-        };
+                    return Err(Error::ProvenanceMissing);
+                }
+            };
 
-        // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
+            // verify the provenance claim
+            Claim::verify_claim_async(claim, _asset_data, true, _validation_log).await?;
 
-        Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
+            Store::ingredient_checks_async(_store, claim, _asset_data, _validation_log).await?;
+        }
 
         Ok(())
     }
@@ -1371,27 +1395,30 @@ impl Store {
     /// asset_bytes: bytes of the asset to be verified
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned  
     pub fn verify_store(
-        store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut impl StatusTracker,
+        _store: &Store,
+        _asset_data: &mut ClaimAssetData<'_>,
+        _validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        let claim = match store.provenance_claim() {
-            Some(c) => c,
-            None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+        #[cfg(not(feature = "no_validation"))] 
+        {
+            let claim = match _store.provenance_claim() {
+                Some(c) => c,
+                None => {
+                    let log_item =
+                        log_item!("Unknown", "could not find active manifest", "verify_store")
+                            .error(Error::ProvenanceMissing)
+                            .validation_status(validation_status::CLAIM_MISSING);
+                    _validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
 
-                return Err(Error::ProvenanceMissing);
-            }
-        };
+                    return Err(Error::ProvenanceMissing);
+                }
+            };
 
-        // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, validation_log)?;
+            // verify the provenance claim
+            Claim::verify_claim(claim, _asset_data, true, _validation_log)?;
 
-        Store::ingredient_checks(store, claim, asset_data, validation_log)?;
+            Store::ingredient_checks(_store, claim, _asset_data, _validation_log)?;
+        }
 
         Ok(())
     }
@@ -3145,9 +3172,11 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(not(feature = "no_validation"))]
     fn test_sign_with_expired_cert() {
         use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+
+        //assert!(!cfg!(feature = "file_io"));
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -3779,6 +3808,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "no_validation"))]
     fn test_detect_byte_change() {
         // test bad jumbf
         let ap = fixture_path("XCA.jpg");
@@ -3988,6 +4018,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "no_validation", ignore)]
     fn test_modify_xmp() {
         // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
         let mut report = patch_and_report(
@@ -4006,6 +4037,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "no_validation"))]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
         let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
@@ -4026,6 +4058,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "no_validation"))]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
         let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
@@ -4038,6 +4071,7 @@ pub mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "no_validation"))]
     fn test_claim_missing() {
         // patch jumbf url from c2pa_manifest field in an ingredient to cause claim_missing
         // note this includes hex for Jumbf blocks, so may need some manual tweaking

@@ -1251,6 +1251,7 @@ pub(crate) mod tests {
         Ingredient, Manifest, Result,
     };
     #[cfg(feature = "file_io")]
+    #[allow(unused_imports)]
     use crate::{
         assertions::{labels::ACTIONS, DataHash},
         error::Error,
@@ -1416,6 +1417,7 @@ pub(crate) mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(not(feature = "no_validation"))]
     fn test_redaction() {
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
@@ -1765,6 +1767,7 @@ pub(crate) mod tests {
     }
     #[cfg(feature = "file_io")]
     #[actix::test]
+    #[cfg(not(feature = "no_validation"))]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
     async fn test_embed_with_ingredient_error() {
         let temp_dir = tempdir().expect("temp dir");
