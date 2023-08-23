@@ -59,6 +59,9 @@ pub(crate) trait C2paPdf: Sized {
 
     /// Writes provided `bytes` as a PDF `Annotation`.
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
+
+    /// Returns a reference to the C2PA manifest bytes.
+    fn read_c2pa_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -184,6 +187,30 @@ impl C2paPdf for Pdf {
 
         Ok(())
     }
+
+    /// Gets a reference to the `C2PA` manifest bytes of the PDF.
+    ///
+    /// This method will read the bytes of the manifest, whether the manifest was added to the
+    /// PDF via an `Annotation` or an `EmbeddedFile`.
+    ///
+    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(&vec))` when a manifest
+    /// is present.
+    fn read_c2pa_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
+        if !self.has_c2pa_manifest() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            &self
+                .document
+                .catalog()?
+                .get_deref(ASSOCIATED_FILE_KEY, &self.document)?
+                .as_dict()?
+                .get_deref(b"EF", &self.document)?
+                .as_stream()?
+                .content,
+        ))
+    }
 }
 
 impl Pdf {
@@ -223,12 +250,12 @@ impl Pdf {
             .get_object_mut(first_page_ref)?
             .as_dict_mut()?;
 
-        // Ensures the `/Annots` key is present exists on the page.
+        // Ensures the `/Annots` array exists on the page object.
         if !first_page.has(ANNOTATIONS_KEY) {
             first_page.set(ANNOTATIONS_KEY, Array(vec![]))
         }
 
-        // Follow a reference to the indirect annotations array, if it exists.
+        // Follows a reference to the indirect annotations array, if it exists.
         let annotation_object = first_page.get_mut(ANNOTATIONS_KEY)?;
         let annotations = if let Ok(v) = annotation_object.as_reference() {
             self.document.get_object_mut(v)?
@@ -241,7 +268,7 @@ impl Pdf {
         Ok(())
     }
 
-    /// Sets the PDF's Associated File (`/AF`) key to the provided embedded file spec reference.
+    /// Sets the Associated File (`/AF`) key of the PDF to the provided embedded file spec reference.
     fn set_af_relationship(&mut self, embedded_file_spec_ref: ObjectId) -> Result<(), Error> {
         self.document
             .catalog_mut()?
@@ -252,12 +279,12 @@ impl Pdf {
 
     /// Adds the `Embedded File Specification` to the PDF document. Returns the `Object::Reference`
     /// to the added `Embedded File Specification`.
-    fn add_embedded_file_specification(&mut self, file_spec_ref: ObjectId) -> ObjectId {
+    fn add_embedded_file_specification(&mut self, file_stream_ref: ObjectId) -> ObjectId {
         let embedded_file_stream = dictionary! {
             AF_RELATIONSHIP_KEY => Name(C2PA_RELATIONSHIP.into()),
             "Desc" => Object::string_literal(CONTENT_CREDS),
             "F" => Object::string_literal(CONTENT_CREDS),
-            "EF" => Reference(file_spec_ref),
+            "EF" => Reference(file_stream_ref),
             "Type" => Name("FileSpec".into()),
             "UF" => Object::string_literal(CONTENT_CREDS),
         };
@@ -342,7 +369,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn test_adds_embedded_file_spec_to_pdf_stream() {
-        let bytes = include_bytes!("../../tests/fixtures/basic.pdf");
+        let bytes = include_bytes!("../../tests/fixtures/express.pdf");
         let mut pdf = Pdf::from_bytes(bytes).unwrap();
         let object_count_before_add = pdf.document.objects.len();
 
@@ -360,7 +387,8 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn test_write_manifest_as_annotation() {
-        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/express.pdf")).unwrap();
+        assert!(!pdf.has_c2pa_manifest());
         pdf.write_manifest_as_annotation(vec![10u8, 20u8]).unwrap();
         assert!(pdf.has_c2pa_manifest());
     }
@@ -409,5 +437,71 @@ mod tests {
 
         let saved_pdf = Pdf::from_bytes(&saved_bytes).unwrap();
         assert!(saved_pdf.has_c2pa_manifest());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_reads_manifest_bytes_for_embedded_files_manifest() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/express.pdf")).unwrap();
+        assert!(!pdf.has_c2pa_manifest());
+
+        let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
+        pdf.write_manifest_as_embedded_file(manifest_bytes.clone())
+            .unwrap();
+
+        assert!(pdf.has_c2pa_manifest());
+        assert!(matches!(
+            pdf.read_c2pa_manifest_bytes(),
+            Ok(Some(b)) if b == &manifest_bytes
+        ));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_reads_manifest_bytes_for_annotation_manifest() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        assert!(!pdf.has_c2pa_manifest());
+
+        let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
+        pdf.write_manifest_as_annotation(manifest_bytes.clone())
+            .unwrap();
+
+        assert!(pdf.has_c2pa_manifest());
+        assert!(matches!(
+            pdf.read_c2pa_manifest_bytes(),
+            Ok(Some(b)) if b == &manifest_bytes
+        ));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_read_manifest_bytes_from_pdf_without_bytes_returns_none() {
+        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        assert!(!pdf.has_c2pa_manifest());
+        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_read_manifest_bytes_from_pdf_with_other_af_relationship_returns_none() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.document
+            .catalog_mut()
+            .unwrap()
+            .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
+
+        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_read_pdf_with_associated_file_that_is_not_manifest() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.document
+            .catalog_mut()
+            .unwrap()
+            .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
+
+        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
     }
 }
