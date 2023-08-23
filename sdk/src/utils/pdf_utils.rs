@@ -111,54 +111,10 @@ impl C2paPdf for Pdf {
             Reference(file_spec_ref),
         ];
 
-        if let Ok(names) = self.document.catalog_mut()?.get_mut(NAMES_KEY) {
-            // Determine if `/Names` value is direct or indirect.
-            let names = if let Ok(names) = names.as_reference() {
-                self.document.get_object_mut(names)?.as_dict_mut()?
-            } else {
-                names.as_dict_mut()?
-            };
-
-            if let Ok(embedded_files) = names.get_mut(EMBEDDED_FILES_KEY) {
-                // Determine if `/EmbeddedFiles` value is direct or indirect.
-                let embedded_files = if let Ok(embedded_files) = embedded_files.as_reference() {
-                    self.document
-                        .get_object_mut(embedded_files)?
-                        .as_dict_mut()?
-                } else {
-                    embedded_files.as_dict_mut()?
-                };
-
-                if let Ok(names) = embedded_files.get_mut(NAMES_KEY) {
-                    // Determine if `/Names` value is direct or indirect.
-                    let names = if let Ok(names) = names.as_reference() {
-                        self.document.get_object_mut(names)?.as_array_mut()?
-                    } else {
-                        names.as_array_mut()?
-                    };
-
-                    // The PDF has the `/Names` dictionary, which contains the `/EmbeddedFiles`
-                    // dictionary, which contains the `/Names` array. We append the manifest's
-                    // name and its reference.
-                    names.append(&mut manifest_name_file_pair);
-                } else {
-                    // This PDF has the `/Names` dictionary and it has the `EmbeddedFiles`
-                    // dictionary, but it is missing the `/Names` key in `EmbeddedFiles` pointing to
-                    // the array of name / file pairs
-                    embedded_files.set(
-                        NAMES_KEY,
-                        dictionary! { NAMES_KEY => manifest_name_file_pair },
-                    )
-                }
-            } else {
-                // We have a `/Names` dictionary, but are missing the `EmbeddedFiles` dictionary
-                // and its `/Names` array of embedded files.
-                names.set(
-                    EMBEDDED_FILES_KEY,
-                    dictionary! { NAMES_KEY => manifest_name_file_pair },
-                )
-            }
-        } else {
+        let Ok(catalog_names)= self.document.catalog_mut()?.get_mut(NAMES_KEY) else {
+            // No `Names` key exists in the catalog. We can safely add the names key, and construct
+            // the remaining objects.
+            // 
             // Add /EmbeddedFiles dictionary as indirect object
             let embedded_files_ref = self.document.add_object(dictionary! {
                 NAMES_KEY => manifest_name_file_pair
@@ -171,7 +127,52 @@ impl C2paPdf for Pdf {
 
             // Set /Names key in `Catalog` to reference above indirect object names dictionary.
             self.document.catalog_mut()?.set(NAMES_KEY, names_ref);
-        }
+            return Ok(())
+        };
+
+        let names_dictionary = match catalog_names.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
+            _ => catalog_names.as_dict_mut()?,
+        };
+
+        let Ok(embedded_files) = names_dictionary.get_mut(EMBEDDED_FILES_KEY) else {
+            // We have a `/Names` dictionary, but are missing the `EmbeddedFiles` dictionary
+            // and its `/Names` array of embedded files.
+            names_dictionary.set(
+                EMBEDDED_FILES_KEY,
+                dictionary! { NAMES_KEY => manifest_name_file_pair },
+            );
+            return Ok(())
+        };
+
+        // Determine if `/EmbeddedFiles` value is direct or indirect.
+        let embedded_files_dictionary = match embedded_files.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
+            _ => embedded_files.as_dict_mut()?,
+        };
+
+        let Ok(names) = embedded_files_dictionary.get_mut(NAMES_KEY) else {
+            // This PDF has the `/Names` dictionary and it has the `EmbeddedFiles`
+            // dictionary, but it is missing the `/Names` key in `EmbeddedFiles` pointing to
+            // the array of name / file pairs
+            embedded_files_dictionary.set(
+                NAMES_KEY,
+                dictionary! { NAMES_KEY => manifest_name_file_pair },
+            );
+
+            return Ok(());
+        };
+
+        // Determine if `/Names` value is direct or indirect.
+        let names_array = match names.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_array_mut()?,
+            _ => names.as_array_mut()?,
+        };
+
+        // The PDF has the `/Names` dictionary, which contains the `/EmbeddedFiles`
+        // dictionary, which contains the `/Names` array. We append the manifest's
+        // name and its reference.
+        names_array.append(&mut manifest_name_file_pair);
 
         Ok(())
     }
