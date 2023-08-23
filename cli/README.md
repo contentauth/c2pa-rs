@@ -1,20 +1,30 @@
 # c2patool - C2PA command line tool
 
-`c2patool` is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_manifests) and media assets (audio, image or video files). 
+`c2patool` is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_manifests) and media assets (audio, image or video files).
 
-Use the tool to:
+Use the tool on a file in one of the [supported file formats](#supported-file-formats) to:
 
-- Read a JSON report of C2PA manifests in [supported file formats](#supported-file-formats).
-- Read a low-level report of C2PA manifest data in [supported file formats](#supported-file-formats).
-- Add a C2PA manifest to [supported file formats](#supported-file-formats).
+- Read a summary JSON report of C2PA manifests.
+- Read a low-level report of C2PA manifest data.
+- Add a C2PA manifest to the file.
 
 For a simple example of calling c2patool from a server-based application, see the [c2pa-service-example](https://github.com/contentauth/c2pa-service-example) repository.
+
+<div style={{display: 'none';}}>
+
+**Contents**:
+- [Installation](#installation)
+- [Supported file formats](#supported-file-formats)
+- [Usage](#usage)
+- [Additional documentation](#additional-documentation)
+
+</div>
 
 ## Installation
 
 Prebuilt versions of the tool are available for [download](https://github.com/contentauth/c2patool/tags).
 
-PREREQUISITE: Install [Rust](https://www.rust-lang.org/tools/install). 
+PREREQUISITE: Install [Rust](https://www.rust-lang.org/tools/install).
 
 Enter this command to install or update the tool:
 
@@ -22,14 +32,14 @@ Enter this command to install or update the tool:
 cargo install c2patool
 ```
 
-If you are producing a build on a Windows machine, you will need the [7zip](https://www.7-zip.org/) tool to successfully build.
+To build the tool on a Windows machine, you need to install the [7zip](https://www.7-zip.org/) tool.
 
-### Updating 
+### Updating
 
 To ensure you have the latest version, enter this command:
 
 ```
-c2patool -V 
+c2patool -V
 ```
 
 The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page](https://github.com/contentauth/c2patool/releases). To update to the latest version, use the installation command shown above.
@@ -37,24 +47,24 @@ The tool will display the version installed. Compare the version number displaye
 
 ## Supported file formats
 
- | Extensions    | MIME type                                           | 
- |---------------| --------------------------------------------------- | 
+ | Extensions    | MIME type                                           |
+ |---------------| --------------------------------------------------- |
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        | 
+ | `avif`        | `image/avif`                                        |
  | `c2pa`        | `application/x-c2pa-manifest-store`                 |
- | `dng`         | `image/x-adobe-dng`                                 | 
- | `heic`        | `image/heic`                                        | 
- | `heif`        | `image/heif`                                        | 
- | `jpg`, `jpeg` | `image/jpeg`                                        | 
- | `m4a`         | `audio/mp4`                                         | 
- | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         | 
+ | `dng`         | `image/x-adobe-dng`                                 |
+ | `heic`        | `image/heic`                                        |
+ | `heif`        | `image/heif`                                        |
+ | `jpg`, `jpeg` | `image/jpeg`                                        |
+ | `m4a`         | `audio/mp4`                                         |
+ | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         |
  | `mov`         | `video/quicktime`                                   |
- | `png`         | `image/png`                                         | 
- | `svg`         | `image/svg+xml`                                     | 
- | `tif`,`tiff`  | `image/tiff`                                        | 
- | `wav`         | `audio/x-wav`                                       | 
- | `webp`        | `image/webp`                                        | 
- 
+ | `png`         | `image/png`                                         |
+ | `svg`         | `image/svg+xml`                                     |
+ | `tif`,`tiff`  | `image/tiff`                                        |
+ | `wav`         | `audio/x-wav`                                       |
+ | `webp`        | `image/webp`                                        |
+
 <sup>*</sup> Fragmented mp4 is not yet supported.
 
 ## Usage
@@ -114,7 +124,7 @@ The tool displays the detailed report to standard output (stdout) or will add a 
 
 ### Displaying an information report
 
-Use the `--info` option to print a high-level report about the asset file and related C2PA data. 
+Use the `--info` option to print a high-level report about the asset file and related C2PA data.
 For a cloud manifest the tool displays the URL to the manifest.
 Displays the size of the manifest store and number of manifests.
 It will report if the manifest validated or show any errors encountered in validation.
@@ -146,11 +156,11 @@ c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
 
 The tool generates a new manifest using the values given in the file and displays the manifest store to standard output (stdout).
 
-CAUTION: If the output file is the same as the source file, the tool will overwrite the source file. 
+CAUTION: If the output file is the same as the source file, the tool will overwrite the source file.
 
 #### Specifying a parent file
 
-A _parent file_ represents the state of the image before the current edits were made. 
+A _parent file_ represents the state of the image before the current edits were made.
 
 Specify a parent file as the argument to the `--parent` / `-p` option; for example:
 
@@ -176,14 +186,14 @@ c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
 
 ### Generating an external manifest
 
-Use the `--sidecar` / `-s` option to put the manifest in an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a `.c2pa` extension. The tool will copy the output file but the original will be untouched. 
+Use the `--sidecar` / `-s` option to put the manifest in an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a `.c2pa` extension. The tool will copy the output file but the original will be untouched.
 
 ```shell
 c2patool image.jpg -s -m sample/test.json -o signed_image.jpg
 ```
 ### Generating a remote manifest
 
-Use the `--remote` / `-r` option to place an HTTP reference to the manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file with the same filename but with a `.c2pa` extension. Place the manifest at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched. 
+Use the `--remote` / `-r` option to place an HTTP reference to the manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file with the same filename but with a `.c2pa` extension. Place the manifest at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched.
 
 ```shell
 c2patool sample/image.jpg -r http://my_server/myasset.c2pa -m sample/test.json -o signed_image.jpg
@@ -202,124 +212,12 @@ For example, the following command adds a custom assertion called "org.contentau
 ```shell
 c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
 ```
+<div style={{display: 'none';}}>
 
-## Manifest definition file 
+## Additional documentation
 
-The manifest definition file is a JSON formatted file with a `.json` extension. 
-Relative file paths are interpreted as relative to the location of the definition file unless you specify a `base_path` field.
+- [Manifest definition file](./docs/manifest.md)
+- [Creating and using an X.509 certificate](./docs/x_509.md)
+- [Release notes](./docs/release-notes.md)
 
-### Example manifest definition file
-
-Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest. 
-
-It is important to provide a value for the Time Authority URL (the `ta_url` property) to have a valid timestamp on the claim. 
-
-The default certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) are built into the c2patool binary. This example uses the default testing certs. You will see a warning message when using them, since they are meant for development purposes only. 
-
-**NOTE**: Use the default private key and signing certificate only for development.
-For actual use, provide a permanent key and cert in the manifest definition or environment variables (see [Appendix](#appendix-creating-and-using-an-x509-certificate)).
-
-```json
-{
-    "ta_url": "http://timestamp.digicert.com",
-
-    "claim_generator": "TestApp",
-    "assertions": [
-        {
-            "label": "stds.schema-org.CreativeWork",
-            "data": {
-                "@context": "https://schema.org",
-                "@type": "CreativeWork",
-                "author": [
-                    {
-                        "@type": "Person",
-                        "name": "Joe Bloggs"
-                    }
-                ]
-            }
-        }
-    ]
-}
-```
-
-## JSON schemas
-
-* [Schema for the Manifest Definition](https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json)
-
-* [Schema for Ingredient](https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json)
-
-## Appendix: Creating and using an X.509 certificate
-
-You can test creating your own manifests using the pre-built certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample). To use your own generated certificates, specify the path to the cert files in the following manifest fields:
-
-- `private_key`
-- `sign_cert`
-
-If you are using a signing algorithm other than the default `es256`, specify it in the manifest definition field `alg` with one of the following values:
-
-- `ps256`
-- `ps384`
-- `ps512`
-- `es256`
-- `es384`
-- `es512`
-- `ed25519`
-
-The specified algorithm must be compatible with the values of `private_key` and `sign_cert`.
-
-You can put the values of the key and cert chain in two environment variables: `C2PA_PRIVATE_KEY` (for the private key) and `C2PA_SIGN_CERT` (for the public certificates). For example, to sign with ES256 signatures using the content of a private key file and certificate file:
-
-```shell
-set C2PA_PRIVATE_KEY=$(cat my_es256_private_key)
-set C2PA_SIGN_CERT=$(cat my_es256_certs)
-```
-
-Both the `private_key` and `sign_cert` must be in PEM format. The `sign_cert` must contain a PEM certificate chain starting with the end-entity certificate used to sign the claim ending with the intermediate certificate before the root CA certificate. See the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) for example certificates.
-
-
-## Release notes
-
-This section gives a highlight of noteworthy changes 
-
-Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes
-
-### 0.6.0
-
-* Validates 1.3 signatures but will not generate them.
-* Supports other 1.3 features such as actions v2 and ingredients v2.
-* Supports adding `claim_generator_info` to a manifest.
-* Icons for `claim_generator_info` can be added as resource references.
-* The SDK will create v2 actions or ingredients if required, but defaults to v1.
-
-### 0.5.4
-
-NOTE: This release introduced a 1.3 required change in signature format that is not compatible with previous verify code.
-We want to give some time for developers to integrate 1.3 validation before using 1.3 signatures.
-Please avoid using 0.5.4 and update to 0.6.0 which can validate the new format but does not create it.
-
-### 0.5.3
-
-* Fixes a bug where ingredient thumbnails were not generated.
-* You can now pass an `ingredient.json` file or folder using the command line `--parent` option. If a folder is passed as an ingredient, the tool will look for an ingredient.json fle in that folder.
-* Fixes `--parent` is no longer relative to the `--manifest` path
-
-### 0.5.2
-
-* Removes manifest preview feature
-* Tests for similar extensions
-* Adds `.svg` support
-
-### 0.5.1
-
-* Updates the sample certs which had expired
-* Updates to the README for 0.5.0 changes
-
-### 0.5.0
-
-* Adds support for many new file formats, see [supported file formats](#supported-file-formats).
-* Manifests and Ingredients can read and write thumbnail and c2pa resource files.
-* Adds `-i/--ingredient` option to generate an ingredient report or folder.
-* Changes to Manifest Definition:
-    * `ingredients` now requires JSON Ingredient definitions.
-	* `ingredient_paths` accepts file paths, including JSON Ingredient definitions.
-    * `base_path` no longer supported. File paths are relative to the containing JSON file.
+</div>
