@@ -2084,7 +2084,7 @@ impl Store {
                     &mut intermediate_stream,
                     pc.alg(),
                     &mut hash_ranges,
-                    true,
+                    false,
                 )?
             };
 

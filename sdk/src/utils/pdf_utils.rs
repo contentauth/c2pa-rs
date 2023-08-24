@@ -193,7 +193,7 @@ impl C2paPdf for Pdf {
     /// This method will read the bytes of the manifest, whether the manifest was added to the
     /// PDF via an `Annotation` or an `EmbeddedFile`.
     ///
-    /// Returns an [Ok(None)] if no manifest is present. Returns a [Ok(Some(&Vec<u8>))] when a manifest
+    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(&Vec<u8>))` when a manifest
     /// is present.
     fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
         if !self.has_c2pa_manifest() {
