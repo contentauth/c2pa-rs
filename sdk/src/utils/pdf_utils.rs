@@ -111,10 +111,9 @@ impl C2paPdf for Pdf {
             Reference(file_spec_ref),
         ];
 
-        let Ok(catalog_names)= self.document.catalog_mut()?.get_mut(NAMES_KEY) else {
+        let Ok(catalog_names) = self.document.catalog_mut()?.get_mut(NAMES_KEY) else {
             // No `Names` key exists in the catalog. We can safely add the names key, and construct
             // the remaining objects.
-            // 
             // Add /EmbeddedFiles dictionary as indirect object
             let embedded_files_ref = self.document.add_object(dictionary! {
                 NAMES_KEY => manifest_name_file_pair
@@ -127,7 +126,7 @@ impl C2paPdf for Pdf {
 
             // Set /Names key in `Catalog` to reference above indirect object names dictionary.
             self.document.catalog_mut()?.set(NAMES_KEY, names_ref);
-            return Ok(())
+            return Ok(());
         };
 
         let names_dictionary = match catalog_names.as_reference() {
@@ -142,7 +141,7 @@ impl C2paPdf for Pdf {
                 EMBEDDED_FILES_KEY,
                 dictionary! { NAMES_KEY => manifest_name_file_pair },
             );
-            return Ok(())
+            return Ok(());
         };
 
         // Determine if `/EmbeddedFiles` value is direct or indirect.
