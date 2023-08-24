@@ -1943,7 +1943,7 @@ impl Claim {
             .iter()
             .find(|&x| x.assertion.label().starts_with(&label));
 
-        !matches!(found, None)
+        found.is_some()
     }
 
     // Create a JUMBF URI from a claim label.
