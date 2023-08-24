@@ -61,7 +61,7 @@ pub(crate) trait C2paPdf: Sized {
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
 
     /// Returns a reference to the C2PA manifest bytes.
-    fn read_c2pa_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error>;
+    fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -195,7 +195,7 @@ impl C2paPdf for Pdf {
     ///
     /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(&vec))` when a manifest
     /// is present.
-    fn read_c2pa_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
+    fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
         if !self.has_c2pa_manifest() {
             return Ok(None);
         }
@@ -451,7 +451,7 @@ mod tests {
 
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
-            pdf.read_c2pa_manifest_bytes(),
+            pdf.read_manifest_bytes(),
             Ok(Some(b)) if b == &manifest_bytes
         ));
     }
@@ -468,7 +468,7 @@ mod tests {
 
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
-            pdf.read_c2pa_manifest_bytes(),
+            pdf.read_manifest_bytes(),
             Ok(Some(b)) if b == &manifest_bytes
         ));
     }
@@ -478,7 +478,7 @@ mod tests {
     fn test_read_manifest_bytes_from_pdf_without_bytes_returns_none() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(!pdf.has_c2pa_manifest());
-        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
+        assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -490,7 +490,7 @@ mod tests {
             .unwrap()
             .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
 
-        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
+        assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -502,6 +502,6 @@ mod tests {
             .unwrap()
             .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
 
-        assert!(matches!(pdf.read_c2pa_manifest_bytes(), Ok(None)));
+        assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
 }
