@@ -85,8 +85,8 @@ impl C2paPdf for Pdf {
 
     /// Determines if this PDF has a C2PA manifest embedded.
     ///
-    /// This is done by checking if the Associated File key of the catalog points to a `Dictionary`
-    /// with an `AFRelationship` set to `C2PA_Manifest`.
+    /// This is done by checking if the Associated File key of the catalog points to a
+    /// [lopdf::Object::Dictionary] with an `AFRelationship` set to `C2PA_Manifest`.
     fn has_c2pa_manifest(&self) -> bool {
         self.document
             .catalog()
@@ -112,9 +112,9 @@ impl C2paPdf for Pdf {
         ];
 
         let Ok(catalog_names) = self.document.catalog_mut()?.get_mut(NAMES_KEY) else {
-            // No `Names` key exists in the catalog. We can safely add the names key, and construct
+            // No /Names key exists in the Catalog. We can safely add the /Names key and construct
             // the remaining objects.
-            // Add /EmbeddedFiles dictionary as indirect object
+            // Add /EmbeddedFiles dictionary as indirect object.
             let embedded_files_ref = self.document.add_object(dictionary! {
                 NAMES_KEY => manifest_name_file_pair
             });
@@ -129,14 +129,15 @@ impl C2paPdf for Pdf {
             return Ok(());
         };
 
+        // Follows the Reference to the /EmbeddedFiles Dictionary, if the Object is a Reference.
         let names_dictionary = match catalog_names.as_reference() {
             Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
             _ => catalog_names.as_dict_mut()?,
         };
 
         let Ok(embedded_files) = names_dictionary.get_mut(EMBEDDED_FILES_KEY) else {
-            // We have a `/Names` dictionary, but are missing the `EmbeddedFiles` dictionary
-            // and its `/Names` array of embedded files.
+            // We have a /Names dictionary, but are missing the /EmbeddedFiles dictionary
+            // and its /Names array of embedded files.
             names_dictionary.set(
                 EMBEDDED_FILES_KEY,
                 dictionary! { NAMES_KEY => manifest_name_file_pair },
@@ -144,16 +145,15 @@ impl C2paPdf for Pdf {
             return Ok(());
         };
 
-        // Determine if `/EmbeddedFiles` value is direct or indirect.
+        // Follows the reference to the /EmbeddedFiles Dictionary, if the Object is a Reference.
         let embedded_files_dictionary = match embedded_files.as_reference() {
             Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
             _ => embedded_files.as_dict_mut()?,
         };
 
         let Ok(names) = embedded_files_dictionary.get_mut(NAMES_KEY) else {
-            // This PDF has the `/Names` dictionary and it has the `EmbeddedFiles`
-            // dictionary, but it is missing the `/Names` key in `EmbeddedFiles` pointing to
-            // the array of name / file pairs
+            // This PDF has the /Names dictionary, and it has the /EmbeddedFiles
+            // dictionary, but the /EmbeddedFiles Dictionary is missing the /Names Array.
             embedded_files_dictionary.set(
                 NAMES_KEY,
                 dictionary! { NAMES_KEY => manifest_name_file_pair },
@@ -162,15 +162,15 @@ impl C2paPdf for Pdf {
             return Ok(());
         };
 
-        // Determine if `/Names` value is direct or indirect.
+        // Follows the reference to the /Names Array, if the Object is a Reference.
         let names_array = match names.as_reference() {
             Ok(object_id) => self.document.get_object_mut(object_id)?.as_array_mut()?,
             _ => names.as_array_mut()?,
         };
 
-        // The PDF has the `/Names` dictionary, which contains the `/EmbeddedFiles`
-        // dictionary, which contains the `/Names` array. We append the manifest's
-        // name and its reference.
+        // The PDF has the /Names dictionary, which contains the /EmbeddedFiles Dictionary, which
+        // contains the /Names array. Append the manifest's name (Content Credentials)
+        // and its reference.
         names_array.append(&mut manifest_name_file_pair);
 
         Ok(())
@@ -193,7 +193,7 @@ impl C2paPdf for Pdf {
     /// This method will read the bytes of the manifest, whether the manifest was added to the
     /// PDF via an `Annotation` or an `EmbeddedFile`.
     ///
-    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(&vec))` when a manifest
+    /// Returns an [Ok(None)] if no manifest is present. Returns a [Ok(Some(&Vec<u8>))] when a manifest
     /// is present.
     fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
         if !self.has_c2pa_manifest() {
@@ -244,13 +244,13 @@ impl Pdf {
             .next()
             .ok_or_else(|| Error::AddingAnnotation)?;
 
-        // Get a mutable ref to the first page as a `Dictionary` object.
+        // Get a mutable ref to the first page as a Dictionary object.
         let first_page = self
             .document
             .get_object_mut(first_page_ref)?
             .as_dict_mut()?;
 
-        // Ensures the `/Annots` array exists on the page object.
+        // Ensures the /Annots array exists on the page object.
         if !first_page.has(ANNOTATIONS_KEY) {
             first_page.set(ANNOTATIONS_KEY, Array(vec![]))
         }
@@ -268,7 +268,7 @@ impl Pdf {
         Ok(())
     }
 
-    /// Sets the Associated File (`/AF`) key of the PDF to the provided embedded file spec reference.
+    /// Sets the Associated File (/AF) key of the PDF to the provided embedded file spec reference.
     fn set_af_relationship(&mut self, embedded_file_spec_ref: ObjectId) -> Result<(), Error> {
         self.document
             .catalog_mut()?
@@ -277,7 +277,7 @@ impl Pdf {
         Ok(())
     }
 
-    /// Adds the `Embedded File Specification` to the PDF document. Returns the `Object::Reference`
+    /// Adds the `Embedded File Specification` to the PDF document. Returns the [lopdf::Object::Reference]
     /// to the added `Embedded File Specification`.
     fn add_embedded_file_specification(&mut self, file_stream_ref: ObjectId) -> ObjectId {
         let embedded_file_stream = dictionary! {
@@ -293,7 +293,7 @@ impl Pdf {
     }
 
     /// Adds the provided `bytes` as a `StreamDictionary` to the PDF document. Returns the
-    /// `Object::Reference` of the added `Object`.
+    /// [lopdf::Object::Reference] of the added [lopdf::Object].
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
         let stream = Stream::new(
             dictionary! {
