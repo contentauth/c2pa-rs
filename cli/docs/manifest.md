@@ -5,14 +5,14 @@ Relative file paths are interpreted as relative to the location of the definitio
 
 ## Example manifest definition file
 
-Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest. 
+Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest.
 
 It is important to provide a value for the Time Authority URL (the `ta_url` property) to have a valid timestamp on the claim.
 
 The default certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) are built into the c2patool binary. This example uses the default testing certs. You will see a warning message when using them, since they are meant for development purposes only.
 
 **NOTE**: Use the default private key and signing certificate only for development.
-For actual use, provide a permanent key and cert in the manifest definition or environment variables (see [Appendix](#appendix-creating-and-using-an-x509-certificate)).
+For actual use, provide a permanent key and cert in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md).
 
 ```json
 {

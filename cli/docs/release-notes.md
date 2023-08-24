@@ -37,7 +37,7 @@ Please avoid using 0.5.4 and update to 0.6.0 which can validate the new format b
 
 ## 0.5.0
 
-* Adds support for many new file formats, see [supported file formats](#supported-file-formats).
+* Adds support for many new file formats, see [supported file formats](https://opensource.contentauthenticity.org/docs/c2patool/#supported-file-formats).
 * Manifests and Ingredients can read and write thumbnail and c2pa resource files.
 * Adds `-i/--ingredient` option to generate an ingredient report or folder.
 * Changes to Manifest Definition:

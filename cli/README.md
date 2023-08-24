@@ -10,13 +10,18 @@ Use the tool on a file in one of the [supported file formats](#supported-file-fo
 
 For a simple example of calling c2patool from a server-based application, see the [c2pa-service-example](https://github.com/contentauth/c2pa-service-example) repository.
 
-<div style={{display: 'none';}}>
+<div style={{display: 'none'}}>
 
 **Contents**:
 - [Installation](#installation)
 - [Supported file formats](#supported-file-formats)
 - [Usage](#usage)
-- [Additional documentation](#additional-documentation)
+
+**Additional documentation**:
+
+- [Manifest definition file](./docs/manifest.md)
+- [Creating and using an X.509 certificate](./docs/x_509.md)
+- [Release notes](./docs/release-notes.md)
 
 </div>
 
@@ -83,7 +88,7 @@ The following table describes the command-line options.
 |-----|----|----|----|
 | `--certs` | | N/A | Extract a certificate chain to stdout. |
 | `--config` | `-c` | `<config>` | Specifies a manifest definition as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
-| `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#displaying-a-detailed-manifest-report). |
+| `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#detailed-manifest-report). |
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
 | `--help` | `-h` | N/A | Display CLI help information. |
 | `--info` |  | N/A | Display brief information about the file. |
@@ -112,7 +117,7 @@ You may include an `--output` argument to write the contents of the manifest, in
 c2patool sample/C.jpg --output ./report
 ```
 
-### Detailed manifest report
+#### Detailed manifest report
 
 To display a detailed report describing the internal C2PA format of manifests contained in the asset, use the `-d` option; for example, using one of the example images in the `sample` directory:
 
@@ -122,7 +127,7 @@ c2patool -d sample/C.jpg
 
 The tool displays the detailed report to standard output (stdout) or will add a detailed.json if an output folder is supplied.
 
-### Displaying an information report
+#### Displaying an information report
 
 Use the `--info` option to print a high-level report about the asset file and related C2PA data.
 For a cloud manifest the tool displays the URL to the manifest.
@@ -199,25 +204,16 @@ Use the `--remote` / `-r` option to place an HTTP reference to the manifest in t
 c2patool sample/image.jpg -r http://my_server/myasset.c2pa -m sample/test.json -o signed_image.jpg
 ```
 
-In the example above, the tool will embed the URL http://my_server/myasset.c2pa in `signed_image.jpg` then fetch the manifest from that URL and save it to `signed_image.c2pa`.
+In the example above, the tool will embed the URL `http://my_server/myasset.c2pa` in `signed_image.jpg` then fetch the manifest from that URL and save it to `signed_image.c2pa`.
 
 If you use both the `-s` and `-r` options, the tool embeds a manifest in the output file and also adds the remote reference.
 
 ### Providing a manifest definition on the command line
 
-To provide the [manifest definition](#manifest-definition-file) in a command line argument instead of a file, use the `--config` / `-c` option.
+To provide the manifest definition in a command line argument instead of a file, use the `--config` / `-c` option.
 
 For example, the following command adds a custom assertion called "org.contentauth.test".
 
 ```shell
 c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
 ```
-<div style={{display: 'none';}}>
-
-## Additional documentation
-
-- [Manifest definition file](./docs/manifest.md)
-- [Creating and using an X.509 certificate](./docs/x_509.md)
-- [Release notes](./docs/release-notes.md)
-
-</div>
