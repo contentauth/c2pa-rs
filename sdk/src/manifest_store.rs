@@ -44,7 +44,7 @@ pub struct ManifestStore {
 
 impl ManifestStore {
     /// allocates a new empty ManifestStore
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ManifestStore {
             active_manifest: None,
             manifests: HashMap::<String, Manifest>::new(),
