@@ -82,7 +82,7 @@ impl ID3V2Header {
     }
 
     fn decode_tag_size(n: u32) -> u32 {
-        n & 0xFF | (n & 0xFF00) >> 1 | (n & 0xFF0000) >> 2 | (n & 0xFF000000) >> 3
+        n & 0xff | (n & 0xff00) >> 1 | (n & 0xff0000) >> 2 | (n & 0xff000000) >> 3
     }
 }
 
