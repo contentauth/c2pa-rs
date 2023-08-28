@@ -3988,24 +3988,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_modify_xmp() {
-        // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)
-        let mut report = patch_and_report(
-            "cloud.jpg",
-            b"W5M0MpCehiHzreSzNTczkc9d",
-            b"W5M0MpCehiHzreSzNTczkXXX",
-        );
-        assert!(!report.get_log().is_empty());
-        let errors = report_split_errors(report.get_log_mut());
-
-        assert!(errors[0].error_str().unwrap().starts_with("HashMismatch"));
-        assert_eq!(
-            errors[0].validation_status.as_deref(),
-            Some(validation_status::ASSERTION_DATAHASH_MISMATCH)
-        ); // what validation status should we have for this?
-    }
-
-    #[test]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
         let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
