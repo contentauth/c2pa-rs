@@ -61,7 +61,7 @@ pub(crate) trait C2paPdf: Sized {
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
 
     /// Returns a reference to the C2PA manifest bytes.
-    fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error>;
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -193,14 +193,14 @@ impl C2paPdf for Pdf {
     /// This method will read the bytes of the manifest, whether the manifest was added to the
     /// PDF via an `Annotation` or an `EmbeddedFile`.
     ///
-    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(&Vec<u8>))` when a manifest
+    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(Vec<&[u8]>))` when a manifest
     /// is present.
-    fn read_manifest_bytes(&self) -> Result<Option<&Vec<u8>>, Error> {
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
         if !self.has_c2pa_manifest() {
             return Ok(None);
-        }
+        };
 
-        Ok(Some(
+        Ok(Some(vec![
             &self
                 .document
                 .catalog()?
@@ -209,7 +209,7 @@ impl C2paPdf for Pdf {
                 .get_deref(b"EF", &self.document)?
                 .as_stream()?
                 .content,
-        ))
+        ]))
     }
 }
 
@@ -452,7 +452,7 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
             pdf.read_manifest_bytes(),
-            Ok(Some(b)) if b == &manifest_bytes
+            Ok(Some(manifests)) if manifests[0] == &manifest_bytes
         ));
     }
 
@@ -469,7 +469,7 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
             pdf.read_manifest_bytes(),
-            Ok(Some(b)) if b == &manifest_bytes
+            Ok(Some(manifests)) if manifests[0] == &manifest_bytes
         ));
     }
 
