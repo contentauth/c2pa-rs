@@ -37,20 +37,17 @@ const GEOB_FRAME_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
 const GEOB_FRAME_FILE_NAME: &str = "c2pa";
 const GEOB_FRAME_DESCRIPTION: &str = "c2pa manifest store";
 
-#[allow(dead_code)]
 struct ID3V2Header {
-    version_major: u8,
-    version_minor: u8,
-    flags: u8,
+    _version_major: u8,
+    _version_minor: u8,
+    _flags: u8,
     tag_size: u32,
 }
 
 impl ID3V2Header {
     pub fn read_header(reader: &mut dyn CAIRead) -> Result<ID3V2Header> {
         let mut header = [0; 10];
-        reader
-            .read_exact(&mut header)
-            .map_err(Error::IoError)?;
+        reader.read_exact(&mut header).map_err(Error::IoError)?;
 
         if &header[0..3] != b"ID3" {
             return Err(Error::UnsupportedType);
@@ -70,9 +67,9 @@ impl ID3V2Header {
         let tag_size = ID3V2Header::decode_tag_size(encoded_tag_size);
 
         Ok(ID3V2Header {
-            version_major,
-            version_minor,
-            flags,
+            _version_major: version_major,
+            _version_minor: version_minor,
+            _flags: flags,
             tag_size,
         })
     }
@@ -118,8 +115,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
 }
 
 pub struct Mp3IO {
-    #[allow(dead_code)]
-    mp3_format: String,
+    _mp3_format: String,
 }
 
 impl CAIReader for Mp3IO {
@@ -176,7 +172,7 @@ fn add_required_frame(
 impl AssetIO for Mp3IO {
     fn new(mp3_format: &str) -> Self {
         Mp3IO {
-            mp3_format: mp3_format.to_string(),
+            _mp3_format: mp3_format.to_string(),
         }
     }
 
@@ -301,7 +297,7 @@ impl CAIWriter for Mp3IO {
         // write new tag to output stream
         out_tag
             .write_to(writer, Version::Id3v24)
-            .map_err(|_e| Error::BadParam("could not write to output stream".to_string()))?;
+            .map_err(|_e| Error::EmbeddingError)?;
 
         // skip past old ID3V2
         input_stream.seek(SeekFrom::Start(header.get_size() as u64))?;
@@ -319,7 +315,7 @@ impl CAIWriter for Mp3IO {
         let output_buf: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(output_buf);
 
-        add_required_frame(&self.mp3_format, input_stream, &mut output_stream)?;
+        add_required_frame(&self._mp3_format, input_stream, &mut output_stream)?;
 
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
