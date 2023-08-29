@@ -136,7 +136,10 @@ pub fn get_ocsp_response(certs: &[Vec<u8>]) -> Option<OcspData> {
 
                                 let output = OcspData {
                                     ocsp_der: ocsp_rsp,
-                                    next_update: DateTime::<Utc>::from_utc(next_update, chrono::Utc),
+                                    next_update: DateTime::<Utc>::from_utc(
+                                        next_update,
+                                        chrono::Utc,
+                                    ),
                                 };
 
                                 return Some(output);
