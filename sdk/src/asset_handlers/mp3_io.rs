@@ -156,7 +156,7 @@ fn add_required_frame(
     let mp3io = Mp3IO::new(asset_type);
 
     input_stream.rewind()?;
-            
+
     match mp3io.read_cai(input_stream) {
         Ok(_) => {
             // just clone
