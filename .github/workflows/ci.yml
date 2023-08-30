@@ -29,7 +29,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -68,7 +68,7 @@ jobs:
         run: cargo install cross
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
 
       # Note that we do not run code coverage because
       # it isn't readily accessible from cross-compilation
@@ -86,9 +86,7 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
           
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -111,13 +109,12 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
@@ -143,7 +140,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
 
       - name: Dry-run of crate publish
         run: cargo publish -p c2pa --dry-run
@@ -156,15 +153,13 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install clippy
         run: rustup component add clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v1
+        uses: Swatinem/rust-cache@v2
 
       - name: Cargo clippy
         uses: actions-rs/clippy-check@v1
@@ -182,16 +177,12 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - name: Check format
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
   docs_rs:
     name: Preflight docs.rs build
@@ -204,9 +195,7 @@ jobs:
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
         # not in stable Rust as of this writing (Rust 1.62).
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo docs
         # This is intended to mimic the docs.rs build
@@ -249,9 +238,7 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
         uses: aig787/cargo-udeps-action@v1
@@ -267,9 +254,7 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Check for unknown features
         env:
@@ -285,18 +270,14 @@ jobs:
         uses: actions/checkout@v3
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Get latest existing tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
+        uses: WyriHaximus/github-action-get-previous-tag@v1
         id: get-latest-tag
-        with:
-          semver_only: true
 
       - name: Set new version
-        uses: paulhatch/semantic-version@v5.0.2
+        uses: paulhatch/semantic-version@v5
         id: set-version
         with:
           tag_prefix: "v"
@@ -305,12 +286,12 @@ jobs:
           minor_pattern: "(MINOR)"
 
       - name: Generate changelog since last tag
-        uses: mathiasvr/command-output@v1
-          ## NEEDS UPDATE for set-output deprecation.
-          ## See https://github.com/mathiasvr/command-output/issues/4.
-        id: changelog
-        with:
-          run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD
+        run: |
+          {
+            echo 'changelog<<EOF'
+            git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
 
       - name: "Bump crate version (NOTE: Not pushed back to repo!)"
         continue-on-error: true # If no change to crate version, ignore git commit error
