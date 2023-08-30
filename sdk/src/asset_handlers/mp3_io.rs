@@ -84,6 +84,7 @@ impl ID3V2Header {
 }
 
 fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
+    input_stream.rewind().ok()?;
     let header = ID3V2Header::read_header(input_stream).ok()?;
     input_stream.rewind().ok()?;
 
@@ -154,6 +155,8 @@ fn add_required_frame(
 ) -> Result<()> {
     let mp3io = Mp3IO::new(asset_type);
 
+    input_stream.rewind()?;
+            
     match mp3io.read_cai(input_stream) {
         Ok(_) => {
             // just clone
