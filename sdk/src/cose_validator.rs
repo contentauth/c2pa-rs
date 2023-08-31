@@ -45,7 +45,7 @@ use crate::{
     validator::ValidationInfo,
     SigningAlg,
 };
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use crate::{
     wasm::webcrypto_validator::validate_async, wasm::webpki_trust_handler::verify_trust_async,
 };
@@ -1150,9 +1150,39 @@ pub(crate) fn get_signing_info(
                 }
                 Err(e) => Err(e),
             }
+<<<<<<< HEAD
         }
         Err(e) => Err(e),
     };
+=======
+
+            (_rem, signcert)
+        });
+
+        Ok(sign1)
+    });
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    {
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: Vec::new(),
+            cert_serial_number,
+        }
+    }
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+    {
+        let certs = match sign1 {
+            Ok(s) => match get_sign_certs(&s) {
+                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            },
+            Err(_e) => Vec::new(),
+        };
+>>>>>>> 50561fc (Add wasi compatibility.)
 
     let certs = match sign1 {
         Ok(s) => match get_sign_certs(&s) {
@@ -1178,8 +1208,13 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
+<<<<<<< HEAD
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn verify_cose(
+=======
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+pub fn verify_cose(
+>>>>>>> 50561fc (Add wasi compatibility.)
     cose_bytes: &[u8],
     data: &[u8],
     additional_data: &[u8],
@@ -1310,8 +1345,13 @@ pub(crate) fn verify_cose(
     Ok(result)
 }
 
+<<<<<<< HEAD
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn verify_cose(
+=======
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub fn verify_cose(
+>>>>>>> 50561fc (Add wasi compatibility.)
     _cose_bytes: &[u8],
     _data: &[u8],
     _additional_data: &[u8],
@@ -1322,7 +1362,7 @@ pub(crate) fn verify_cose(
     Err(Error::CoseVerifier)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 fn validate_with_cert(
     validator: Box<dyn CoseValidator>,
     sig: &[u8],
@@ -1345,7 +1385,7 @@ fn validate_with_cert(
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 async fn validate_with_cert_async(
     signing_alg: SigningAlg,
     sig: &[u8],
@@ -1367,7 +1407,7 @@ async fn validate_with_cert_async(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 async fn validate_with_cert_async(
     signing_alg: SigningAlg,
     sig: &[u8],

@@ -75,10 +75,6 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-chrono = { version = "0.4.38", default-features = false, features = [
-    "serde",
-    "wasmbind",
-] }
 ciborium = "0.2.0"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
@@ -125,22 +121,34 @@ tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.5.2"
-uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
 zip = { version = "0.6.6", default-features = false }
 
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+chrono = { version = "0.4.24", default-features = false, features = [
+	"serde",
+	"wasmbind",
+] }
+uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
+instant = "0.1.12"
+openssl = { version = "0.10.61", features = ["vendored"], optional = true }
+
+[target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
-instant = "0.1.12"
-openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.wasm32-wasi.dependencies]
+getrandom = "0.2.7"
+instant = { version = "0.1.12", features = ["inaccurate"] }
+uuid = { version = "1.3.1", features = ["serde", "v4"] }
+
+[target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
 # We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
@@ -171,7 +179,7 @@ glob = "0.3.1"
 jumbf = "0.4.0"
 
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
