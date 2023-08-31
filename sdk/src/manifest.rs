@@ -32,7 +32,6 @@ use crate::{
     asset_io::CAIRead,
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
-    hash_utils::HashRange,
     jumbf,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
@@ -1152,17 +1151,6 @@ impl Manifest {
         signer: &dyn RemoteSigner,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
-        if dh.is_err() {
-            let mut ph = DataHash::new("jumbf manifest", "sha256");
-            for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0, 2));
-            }
-            let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-            let mut stream = std::io::Cursor::new(data);
-            ph.gen_hash_from_stream(&mut stream)?;
-            self.add_assertion(&ph)?;
-        }
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(signer, format)?;
         Ok(placeholder)

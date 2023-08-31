@@ -148,6 +148,7 @@ pub(crate) mod utils;
 pub use utils::cbor_types::DateT;
 pub mod validation_status;
 pub(crate) use utils::{cbor_types, hash_utils};
+pub use hash_utils::HashRange as HashRange;
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
