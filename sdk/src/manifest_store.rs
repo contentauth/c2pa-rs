@@ -599,6 +599,7 @@ impl std::fmt::Display for ManifestStore {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![cfg(not(target_os = wasi))]
 
     use c2pa_status_tracker::OneShotStatusTracker;
     #[cfg(target_arch = "wasm32")]

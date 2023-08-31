@@ -1495,6 +1495,7 @@ impl IngredientOptions for DefaultOptions {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![cfg(not(target_os = wasi))]
 
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;

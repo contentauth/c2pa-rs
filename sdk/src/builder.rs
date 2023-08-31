@@ -1108,6 +1108,7 @@ impl Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![cfg(not(target_os = "wasi"))]
     use std::io::Cursor;
 
     use c2pa_crypto::raw_signature::SigningAlg;

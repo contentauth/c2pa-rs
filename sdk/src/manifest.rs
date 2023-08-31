@@ -1546,6 +1546,7 @@ impl SignatureInfo {
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![cfg(not(target_os = wasi))]
 
     use std::io::Cursor;
 

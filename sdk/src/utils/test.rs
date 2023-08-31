@@ -428,7 +428,7 @@ impl WebCryptoSigner {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 #[async_trait::async_trait(?Send)]
 impl AsyncSigner for WebCryptoSigner {
     fn alg(&self) -> SigningAlg {
