@@ -1,0 +1,149 @@
+name: Nightly build
+
+on:  
+  workflow_dispatch:
+  schedule:
+    - cron: "30 5 * * *" # 0530 UTC every day
+
+jobs:
+  # Create snapshot of main branch for nightly build
+  nightly-snapshot:
+    name: Create snapshot
+    runs-on: ubuntu-latest
+
+    outputs:
+      new-tag: ${{ steps.set-nightly-version.outputs.version }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
+
+    - name: Get latest existing tag
+      uses: WyriHaximus/github-action-get-previous-tag@v1
+      id: get-latest-tag
+
+    - name: Set new proposed version
+      uses: paulhatch/semantic-version@v5.2.1
+      id: set-version
+      with:
+        tag_prefix: "v"
+        version_format: "${major}.${minor}.${patch}"
+        major_pattern: "(MAJOR)"
+        minor_pattern: "(MINOR)"
+    
+    - name: Add -nightly+(date)-(commit ID) prefix to version
+      id: set-nightly-version
+      run: |
+        echo version=${{ steps.set-version.outputs.version }}-nightly+`date +%F`-`git rev-parse --short HEAD` >> "$GITHUB_OUTPUT"
+
+    - name: Generate changelog since last tag
+      id: generate-changelog
+      run: |
+        {
+          echo 'changelog<<EOF'
+          git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Log new version & changelog
+      run: |
+        echo "Proposed new version: $VERSION"
+        echo "Nightly version: $NIGHTLY_VERSION"
+        echo "Latest tag detected: $LATEST_TAG"
+        echo "Changelog: $CHANGELOG"
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
+        NIGHTLY_VERSION: ${{ steps.set-nightly-version.outputs.version }}
+        LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
+
+    - name: Bump crate versions
+      run: |
+        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" Cargo.toml
+      env:
+        VERSION: ${{ steps.set-nightly-version.outputs.version }}
+
+    - name: Swap in nightly c2pa-rs build
+      run: |
+        sed -i "s/^c2pa = { version = \"[^\"]*\",/c2pa = { git = \"https:\\/\\/github.com\\/contentauth\\/c2pa-rs.git\", branch = \"nightly\",/;" Cargo.toml
+  
+    - name: Update changelog
+      run: |
+        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%d %B %Y_" && echo "" && (echo "$CHANGELOG" | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
+        mv CHANGELOG.new.md CHANGELOG.md
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
+  
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: cargo
+
+    - name: Create or update Cargo.lock
+      run: |
+        cargo update -w
+        git add -f Cargo.lock
+
+    - name: Report differences for "prepare (release)" commit
+      run: git diff
+
+    - name: Commit Cargo.toml, Cargo.lock, and changelog
+      uses: stefanzweifel/git-auto-commit-action@v4
+      id: commit
+      with:
+        branch: nightly
+        push_options: '--force'
+        commit_message: Prepare ${{ steps.set-nightly-version.outputs.version }} release
+        commit_user_name: Adobe CAI Team
+        commit_user_email: noreply@adobe.com
+        create_branch: true
+
+  publish-nightly-binaries:
+    name: Publish c2patool nightly binaries
+    runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+        - os: macos-latest
+          artifact_name: c2patool_mac_universal.zip
+        - os: ubuntu-latest
+          artifact_name: c2patool_linux_intel.tar.gz
+        - os: windows-latest
+          artifact_name: c2patool_win_intel.zip
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        ref: nightly
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run cargo check
+      run: cargo check
+
+    - name: Run cargo test --all
+      run: cargo test --all
+
+    - name: Build nightly release artifacts
+      run: make release
+
+    - name: Upload build as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        path: target/${{ matrix.artifact_name }}
+        name: ${{ matrix.artifact_name }}
+        retention-days: 15
+        if-no-files-found: error

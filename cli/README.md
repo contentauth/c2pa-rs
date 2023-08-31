@@ -217,3 +217,7 @@ For example, the following command adds a custom assertion called "org.contentau
 ```shell
 c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", "data": {"my_key": "whatever I want"}}]}'
 ```
+
+## Nightly builds
+
+Interim binaries are generated every day around 0530 UTC (i.e. overnight for our US-based team) and are available for roughly two weeks thereafter. These can be helpful for testing purposes. For more information, see the documentation on [nightly builds](/docs/nightly-builds/README.md).
