@@ -127,8 +127,10 @@ impl CAIReader for Mp3IO {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
-                        Some(_) => { return Err(Error::TooManyManifestStores); }
-                        None => { manifest = Some(eo.data.clone()) }
+                        Some(_) => {
+                            return Err(Error::TooManyManifestStores);
+                        }
+                        None => manifest = Some(eo.data.clone()),
                     }
                 }
             }
