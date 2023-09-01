@@ -23,17 +23,11 @@ jobs:
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Get latest existing tag
-      uses: actions-ecosystem/action-get-latest-tag@v1
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/actions-ecosystem/action-get-latest-tag/issues/25.
+      uses: WyriHaximus/github-action-get-previous-tag@v1
       id: get-latest-tag
-      with:
-        semver_only: true
 
     - name: Set new version
-      uses: paulhatch/semantic-version@v4.0.2
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/PaulHatch/semantic-version/issues/66.
+      uses: paulhatch/semantic-version@v5.2.1
       id: set-version
       with:
         tag_prefix: "v"
@@ -42,12 +36,13 @@ jobs:
         minor_pattern: "(MINOR)"
 
     - name: Generate changelog since last tag
-      uses: mathiasvr/command-output@v1
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/mathiasvr/command-output/issues/4.
       id: generate-changelog
-      with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
+      run: |
+        {
+          echo 'changelog<<EOF'
+          git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
 
     - name: Log version & changelog
       run: |
@@ -77,9 +72,7 @@ jobs:
         CHANGELOG: ${{ steps.generate-changelog.outputs.stdout }}
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Bump crate versions
       run: |
@@ -96,8 +89,6 @@ jobs:
 
     - name: Commit Cargo.toml, Cargo.lock, and changelog
       uses: stefanzweifel/git-auto-commit-action@v4
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/stefanzweifel/git-auto-commit-action/issues/250.
       id: commit
       with:
         commit_message: Prepare ${{ steps.set-version.outputs.version }} release
@@ -155,14 +146,13 @@ jobs:
         ref: ${{ needs.repo-prep.outputs.commit-hash }}
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust_version }}
         components: llvm-tools-preview
-        override: true
 
     - name: Cache Rust dependencies
-      uses: Swatinem/rust-cache@v1
+      uses: Swatinem/rust-cache@v2
 
     - name: Run make release
       run: make release
