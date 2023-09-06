@@ -14,22 +14,17 @@
 // Example code (in unit test) for how you might use client DataHash values.  This allows clients
 // to perform the manifest embedding and optionally the hashing
 
-
 use std::{
     io::{Read, Seek, Write},
     path::PathBuf,
 };
 
 use c2pa::{
-    assertions::{
-        c2pa_action, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
-    },
-    create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest,
-    ManifestStore, SigningAlg,
+    assertions::{c2pa_action, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson},
+    create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
 
 const GENERATOR: &str = "test_app/0.1";
-
 
 fn main() {
     println!("DataHash demo");
@@ -43,8 +38,7 @@ fn user_data_hash_with_sdk_hashing() {
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
     let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
     let signer =
-        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)
-            .unwrap();
+        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None).unwrap();
 
     let src = "sdk/tests/fixtures/earth_apollo17.jpg";
     let dst = "target/tmp/output.jpg";
@@ -158,8 +152,7 @@ fn user_data_hash_with_user_hashing() {
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
     let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
     let signer =
-        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)
-            .unwrap();
+        create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None).unwrap();
 
     let src = "sdk/tests/fixtures/earth_apollo17.jpg";
     let dst = "target/tmp/output.jpg";
@@ -264,4 +257,3 @@ fn user_data_hash_with_user_hashing() {
     // example of how to print out the whole manifest as json
     println!("{manifest_store}\n");
 }
-
