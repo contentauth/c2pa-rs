@@ -452,7 +452,7 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
             pdf.read_manifest_bytes(),
-            Ok(Some(manifests)) if manifests[0] == &manifest_bytes
+            Ok(Some(manifests)) if manifests[0] == manifest_bytes
         ));
     }
 
@@ -469,7 +469,7 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
         assert!(matches!(
             pdf.read_manifest_bytes(),
-            Ok(Some(manifests)) if manifests[0] == &manifest_bytes
+            Ok(Some(manifests)) if manifests[0] == manifest_bytes
         ));
     }
 
