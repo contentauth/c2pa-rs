@@ -32,7 +32,7 @@ serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
-openssl_sign = ["openssl"]
+openssl_sign = ["openssl", "openssl-sys"]
 json_schema = ["dep:schemars"]
 
 # The diagnostics feature is unsupported and might be removed.
@@ -107,6 +107,7 @@ half = "<2.3.0, < 3" # fix for older versions of rust
 image = { version = "0.24.2", optional = true }
 instant = "0.1.12"
 openssl = { version = "0.10.48", features = ["vendored"], optional = true }
+openssl-sys = { version = "=0.9.92", optional = true }
 xmp_toolkit = { version = "1.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
