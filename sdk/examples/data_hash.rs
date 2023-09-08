@@ -14,11 +14,13 @@
 // Example code (in unit test) for how you might use client DataHash values.  This allows clients
 // to perform the manifest embedding and optionally the hashing
 
+#[allow(unused_imports)]
 use std::{
     io::{Read, Seek, Write},
     path::PathBuf,
 };
 
+#[allow(unused_imports)]
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson},
     create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest, ManifestStore, SigningAlg,
