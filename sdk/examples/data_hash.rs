@@ -26,6 +26,7 @@ use c2pa::{
 
 const GENERATOR: &str = "test_app/0.1";
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     println!("DataHash demo");
 
