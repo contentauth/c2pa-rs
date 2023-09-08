@@ -34,6 +34,7 @@ fn main() {
     user_data_hash_with_user_hashing();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn user_data_hash_with_sdk_hashing() {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
@@ -148,6 +149,7 @@ fn user_data_hash_with_sdk_hashing() {
     println!("{manifest_store}\n");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn user_data_hash_with_user_hashing() {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
