@@ -283,6 +283,43 @@ impl ManifestStore {
 
         Ok(Self::from_store(&store, &mut validation_log))
     }
+
+    /// Synchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
+    ///
+    /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
+    /// ```
+    /// use c2pa::{Result, ManifestStore};
+    ///
+    /// # fn main() -> Result<()> {
+    /// #    async {
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpg", asset_bytes)
+    ///             .unwrap();
+    ///
+    ///         println!("{}", manifest_store);
+    /// #    };
+    /// #
+    /// #    Ok(())
+    /// }
+    /// ```
+    pub fn from_manifest_and_asset_bytes(
+        manifest_bytes: &[u8],
+        format: &str,
+        asset_bytes: &[u8],
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+
+        Store::verify_store(
+            &store,
+            &mut ClaimAssetData::Bytes(asset_bytes, format),
+            &mut validation_log,
+        )?;
+
+        Ok(Self::from_store(&store, &mut validation_log))
+    }
 }
 
 impl Default for ManifestStore {
