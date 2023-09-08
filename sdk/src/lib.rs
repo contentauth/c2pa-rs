@@ -145,9 +145,10 @@ pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
-pub use utils::cbor_types::DateT;
 pub mod validation_status;
+pub use hash_utils::HashRange;
 pub(crate) use utils::{cbor_types, hash_utils};
+pub use utils::{cbor_types::DateT, hash_utils::hash_stream_by_alg};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
