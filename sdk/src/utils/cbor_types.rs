@@ -30,6 +30,9 @@ use serde_cbor::tags::Tagged;
 // https://tools.ietf.org/html/rfc7049#section-2.4.1
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+/// DateT store date strings in CBOR with datetime Tag(0)
+/// This helper class should be used where the C2PA spec specifies
+/// a tagged CBOR datatime.
 pub struct DateT(pub String);
 
 impl Serialize for DateT {
@@ -67,7 +70,9 @@ impl fmt::Display for DateT {
         write!(f, "{}", self.0)
     }
 }
-
+/// UriT store URI strings in CBOR with URI Tag(32)
+/// This helper class should be used where the C2PA spec specifies
+/// a tagged URI.
 // https://tools.ietf.org/html/rfc7049#section-2.4.4.3
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UriT(pub String);
@@ -100,6 +105,9 @@ impl fmt::Display for UriT {
     }
 }
 
+/// BytesT stores CBOR bytestrings with Tag(64)
+/// This helper class should be used where the C2PA spec specifies
+/// a tagged CBOR bytestring.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytesT(pub Vec<u8>);
 

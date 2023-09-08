@@ -38,12 +38,15 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
+    /// Validation status code.
     code: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Internal JUMBF reference to the entity that was validated.
     url: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Human-readable description of the validation that was performed.
     explanation: Option<String>,
 }
 

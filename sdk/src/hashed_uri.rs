@@ -22,12 +22,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {
-    url: String, // URI stored as tagged cbor
+    /// URI stored as tagged cbor
+    url: String,
+
+    /// hash algorithm used ("sha256", "sha384", "sha512")
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
+
+    /// "alg" hash of stored as cbor byte string
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "json_schema", schemars(with = "Vec<u8>"))]
-    hash: Vec<u8>, // hash stored as cbor byte string
+    hash: Vec<u8>,
 
     // salt used to generate hash
     #[serde(skip_deserializing, skip_serializing)]
