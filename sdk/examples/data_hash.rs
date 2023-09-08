@@ -14,30 +14,32 @@
 // Example code (in unit test) for how you might use client DataHash values.  This allows clients
 // to perform the manifest embedding and optionally the hashing
 
-#[allow(unused_imports)]
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
     io::{Read, Seek, Write},
     path::PathBuf,
 };
 
-#[allow(unused_imports)]
+#[cfg(not(target_arch = "wasm32"))]
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson},
     create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest, ManifestStore, SigningAlg,
 };
 
-const GENERATOR: &str = "test_app/0.1";
-
-#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     println!("DataHash demo");
 
+    #[cfg(not(target_arch = "wasm32"))]
     user_data_hash_with_sdk_hashing();
+
+    #[cfg(not(target_arch = "wasm32"))]
     user_data_hash_with_user_hashing();
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn user_data_hash_with_sdk_hashing() {
+    const GENERATOR: &str = "test_app/0.1";
+
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
     let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
@@ -153,6 +155,8 @@ fn user_data_hash_with_sdk_hashing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn user_data_hash_with_user_hashing() {
+    const GENERATOR: &str = "test_app/0.1";
+
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
     let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
