@@ -69,3 +69,53 @@ jobs:
         commit_user_name: Adobe CAI Team
         commit_user_email: noreply@adobe.com
         create_branch: true
+
+  tests:
+    name: Unit tests
+    runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: nightly
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests (cross build)
+        run: cargo test --all-targets --all-features
+
+  test-direct-minimal-versions:
+    name: Unit tests with minimum versions of direct dependencies
+    runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: nightly
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
