@@ -140,4 +140,4 @@ anyhow = "1.0.40"
 wasm-bindgen-test = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-actix = "0.13.0"
+actix = "0.13.1"
