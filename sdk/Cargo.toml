@@ -34,6 +34,7 @@ no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl", "openssl-sys"]
 json_schema = ["dep:schemars"]
+pdf = ["dep:lopdf"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -76,6 +77,7 @@ fast-xml = "0.23.1"
 hex = "0.4.3"
 img-parts = "0.3.0"
 log = "0.4.8"
+lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
 multibase = "0.9.0"
 multihash = "0.11.4"
