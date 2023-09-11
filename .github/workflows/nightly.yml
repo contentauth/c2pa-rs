@@ -73,6 +73,7 @@ jobs:
   tests:
     name: Unit tests
     runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
 
     strategy:
       fail-fast: false
@@ -82,7 +83,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+        with:
+          ref: nightly
+        
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -95,6 +98,7 @@ jobs:
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
 
     strategy:
       fail-fast: false
@@ -104,7 +108,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+        with:
+          ref: nightly
+        
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
