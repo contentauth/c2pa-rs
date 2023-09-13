@@ -41,13 +41,14 @@ use crate::{
     utils::base64,
 };
 
-static SUPPORTED_TYPES: [&str; 7] = [
+static SUPPORTED_TYPES: [&str; 8] = [
     "svg",
     "application/svg+xml",
     "xhtml",
     "xml",
     "application/xhtml+xml",
     "application/xml",
+    "image/svg+xml",
     "text/xml",
 ];
 
