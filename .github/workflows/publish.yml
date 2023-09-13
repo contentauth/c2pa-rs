@@ -47,10 +47,10 @@ jobs:
         VERSION: ${{ steps.set-version.outputs.version }}
         VERSION_TAG: ${{ steps.set-version.outputs.version_tag }}
         LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
-        CHANGELOG: ${{ steps.generate-changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
 
     - name: Prevent empty release
-      if: ${{ steps.generate-changelog.outputs.stdout == '' }}
+      if: ${{ steps.generate-changelog.outputs.changelog == '' }}
       uses: actions/github-script@v3
       with:
         script: |
@@ -62,7 +62,7 @@ jobs:
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
-        CHANGELOG: ${{ steps.generate-changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -95,7 +95,7 @@ jobs:
     - name: Create release
       uses: ncipollo/release-action@v1
       with:
-        body: ${{ steps.generate-changelog.outputs.stdout }}
+        body: ${{ steps.generate-changelog.outputs.changelog }}
         commit: ${{ steps.commit.outputs.commit_hash }}
         prerelease: true # remove at 1.0
         tag: ${{ steps.set-version.outputs.version_tag }}
