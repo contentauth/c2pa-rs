@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.26.0
+_13 September 2023_
+
+* Add support for default SVG MIME type ([#305](https://github.com/contentauth/c2pa-rs/pull/305))
+* Support for writing and reading manifest data from simple PDFs (without incremental updates or signatures) ([#249](https://github.com/contentauth/c2pa-rs/pull/249))
+* Increase actix requirement to 0.13.1 ([#304](https://github.com/contentauth/c2pa-rs/pull/304))
+* (MINOR) Expose HashRange ([#300](https://github.com/contentauth/c2pa-rs/pull/300))
+* Lock openssl-sys version to 0.9.92 ([#302](https://github.com/contentauth/c2pa-rs/pull/302))
+* Update links to C2PA spec to 1.3 ([#292](https://github.com/contentauth/c2pa-rs/pull/292))
+* Error saving stream writes ([#290](https://github.com/contentauth/c2pa-rs/pull/290))
+* Fix for overly harsh checks when checking Merkle trees. ([#289](https://github.com/contentauth/c2pa-rs/pull/289))
 ## 0.25.2
 _02 August 2023_
 

@@ -62,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.25.2"
+c2pa = "0.26.0"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
