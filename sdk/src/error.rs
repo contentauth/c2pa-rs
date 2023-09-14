@@ -15,8 +15,6 @@
 
 use thiserror::Error;
 
-use crate::utils::pdf_utils;
-
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -52,9 +50,6 @@ pub enum Error {
 
     #[error("required feature missing")]
     MissingFeature(String),
-
-    #[error("feature implementation incomplete")]
-    NotImplemented(String),
 
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
@@ -277,10 +272,6 @@ pub enum Error {
 
     #[error("prerelease content detected")]
     PrereleaseError,
-
-    #[error(transparent)]
-    #[cfg(feature = "pdf")]
-    PdfError(#[from] pdf_utils::Error),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

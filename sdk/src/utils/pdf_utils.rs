@@ -31,7 +31,7 @@ static SUBTYPE_KEY: &[u8] = b"Subtype";
 static NAMES_KEY: &[u8] = b"Names";
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error(transparent)]
     UnableToReadPdf(#[from] lopdf::Error),
 
@@ -41,13 +41,12 @@ pub enum Error {
 
 const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
 
-#[cfg_attr(test, mockall::automock)]
 pub(crate) trait C2paPdf: Sized {
     /// Load a PDF from a slice of bytes.
     fn from_bytes(bytes: &[u8]) -> Result<Self, Error>;
 
     /// Save the `C2paPdf` implementation to the provided `writer`.
-    fn save_to<W: Write + 'static>(&mut self, writer: &mut W) -> Result<(), std::io::Error>;
+    fn save_to<W: Write>(&mut self, writer: &mut W) -> Result<(), std::io::Error>;
 
     /// Returns `true` if the `PDF` is password protected, `false` otherwise.
     fn is_password_protected(&self) -> bool;
@@ -62,9 +61,7 @@ pub(crate) trait C2paPdf: Sized {
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
 
     /// Returns a reference to the C2PA manifest bytes.
-    fn read_manifest_bytes<'a>(&'a self) -> Result<Option<Vec<&'a [u8]>>, Error>;
-
-    fn read_xmp(&self) -> Option<String>;
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -219,31 +216,6 @@ impl C2paPdf for Pdf {
                 .as_stream()?
                 .content,
         ]))
-    }
-
-    /// Reads the `Metadata` field referenced in the PDF document's `Catalog` entry. Will return
-    /// `None` if no Metadata is present.
-    fn read_xmp(&self) -> Option<String> {
-        self.document
-            .catalog()
-            .and_then(|catalog| catalog.get_deref(b"Metadata", &self.document))
-            .and_then(Object::as_stream)
-            .ok()
-            .and_then(|stream_dict| {
-                let Ok(subtype_str) = stream_dict
-                    .dict
-                    .get_deref(SUBTYPE_KEY, &self.document)
-                    .and_then(Object::as_name_str)
-                else {
-                    return None;
-                };
-
-                if subtype_str.to_lowercase() != "xml" {
-                    return None;
-                }
-
-                String::from_utf8(stream_dict.content.clone()).ok()
-            })
     }
 }
 
@@ -537,19 +509,5 @@ mod tests {
             .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
 
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
-    }
-
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    fn test_read_xmp_on_pdf_with_none() {
-        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
-        assert!(pdf.read_xmp().is_none());
-    }
-
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    fn test_read_xmp_on_pdf_with_some_metadata() {
-        let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
-        assert!(pdf.read_xmp().is_some());
     }
 }
