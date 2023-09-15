@@ -30,11 +30,15 @@ static EMBEDDED_FILES_KEY: &[u8] = b"EmbeddedFiles";
 static SUBTYPE_KEY: &[u8] = b"Subtype";
 static NAMES_KEY: &[u8] = b"Names";
 
+/// Error representing failure scenarios while interacting with PDFs.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Error occurred while reading the PDF. Look into the wrapped `lopdf::Error` for more
+    /// information on the cause.
     #[error(transparent)]
     UnableToReadPdf(#[from] lopdf::Error),
 
+    /// Error occurred while adding a C2PA manifest as an `Annotation` to the PDF.
     #[error("Unable to add C2PA manifest as an annotation to the PDF.")]
     AddingAnnotation,
 }
