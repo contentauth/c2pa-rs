@@ -19,7 +19,7 @@ repository = "https://github.com/contentauth/c2patool"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.25.1", features = ["fetch_remote_manifests", "file_io", "add_thumbnails", "xmp_write"]}
+c2pa = { version = "0.26.0", features = ["fetch_remote_manifests", "file_io", "add_thumbnails", "xmp_write"]}
 clap = { version = "3.2", features = ["derive"] }
 env_logger = "0.9"
 log = "0.4" 
@@ -35,4 +35,4 @@ predicates = "2.1"
 [profile.release] 
 strip = true  # Automatically strip symbols from the binary. 
 opt-level = 3
-lto = "thin" # Link time optimization. 
+lto = "thin" # Link time optimization.
