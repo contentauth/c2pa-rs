@@ -281,7 +281,7 @@ fn skip_bytes_to(reader: &mut dyn CAIRead, pos: u64) -> Result<u64> {
     Ok(pos)
 }
 
-fn write_c2pa_box<W: Write>(
+pub(crate) fn write_c2pa_box<W: Write>(
     w: &mut W,
     data: &[u8],
     is_manifest: bool,
@@ -1089,6 +1089,7 @@ fn get_manifest_token(
 pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
     pub bmff_merkle: Vec<BmffMerkleMap>,
+    pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
     pub box_infos: Vec<BoxInfoLite>,
 }
 
@@ -1117,6 +1118,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let mut output: Option<Vec<u8>> = None;
     let mut _first_aux_uuid = 0;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
+    let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
 
     // grab top level (for now) C2PA box
     if let Some(uuid_list) = bmff_map.get("/uuid") {
@@ -1195,6 +1197,11 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
                             // find uuid from uuid list
                             let mm: BmffMerkleMap = serde_cbor::from_slice(&merkle)?;
                             merkle_boxes.push(mm);
+                            merkle_box_infos.push(BoxInfoLite {
+                                path: box_info.data.path.clone(),
+                                offset: box_info.data.offset,
+                                size: box_info.data.size,
+                            });
                         }
                     }
                 }
@@ -1209,6 +1216,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     Ok(C2PABmffBoxes {
         manifest_bytes: output,
         bmff_merkle: merkle_boxes,
+        bmff_merkle_box_infos: merkle_box_infos,
         box_infos,
     })
 }
@@ -1259,12 +1267,16 @@ impl AssetIO for BmffIO {
         // build layout of the BMFF structure
         build_bmff_tree(&mut input, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
 
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
-        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-        let ftyp_offset = ftyp_info.offset;
-        let ftyp_size = ftyp_info.size;
+        // get location to insert C2PA box
+        let c2pa_box_insertion_point = if let Some(moov_token) = bmff_map.get("/moov") {
+            let moov_info = &bmff_tree[moov_token[0]].data;
+            moov_info.offset
+        } else if let Some(ftyp_token) = bmff_map.get("/ftyp") {
+            let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+            ftyp_info.offset + ftyp_info.size
+        } else {
+            return Err(Error::UnsupportedType);
+        };
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) =
@@ -1273,7 +1285,7 @@ impl AssetIO for BmffIO {
 
                 (uuid_info.offset, Some(uuid_info.size))
             } else {
-                ((ftyp_offset + ftyp_size), None)
+                (c2pa_box_insertion_point, None)
             };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);

@@ -240,7 +240,7 @@ fn user_data_hash_with_user_hashing() {
     let hash = hash_stream_by_alg("sha256", &mut input_file, None, true).unwrap();
     dh.set_hash(hash);
 
-    // tell SDK to fill we will provide the hash and sign to complete the manifest
+    // tell SDK caller will provide the hash, SDK will sign to complete the manifest
     let final_manifest = manifest
         .data_hash_embeddable_manifest(&dh, signer.as_ref(), "jpg", None)
         .unwrap();

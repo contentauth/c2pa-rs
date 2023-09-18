@@ -29,7 +29,7 @@ pub struct C2PAMerkleTree {
 
 #[allow(dead_code)]
 impl C2PAMerkleTree {
-    pub fn from_leaves(leaves: Vec<MerkleNode>, alg: &str, hash_leaves: bool) -> C2PAMerkleTree {
+    pub fn from_leaves(leaves: Vec<MerkleNode>, alg: &str, hash_leaves: bool) -> Self {
         let leaves = if hash_leaves {
             leaves
                 .into_iter()
@@ -45,6 +45,19 @@ impl C2PAMerkleTree {
         let layers = C2PAMerkleTree::generate_tree(alg, &leaves);
 
         C2PAMerkleTree { leaves, layers }
+    }
+
+    // create dummy tree to figure out the layout and proof sizes
+    pub fn dummy_tree(num_leaves: usize, alg: &str) -> Self {
+        let mut leaves: Vec<MerkleNode> = Vec::with_capacity(num_leaves);
+
+        for i in 0..num_leaves {
+            let v: u8 = (i % 0xff) as u8;
+            let d = vec![v];
+            leaves.push(MerkleNode(d));
+        }
+
+        C2PAMerkleTree::from_leaves(leaves, alg, true)
     }
 
     // generate layer layout
@@ -107,17 +120,26 @@ impl C2PAMerkleTree {
         layers
     }
 
-    pub fn get_proof_by_index(&self, leaf_indx: usize) -> Result<Vec<Vec<u8>>> {
+    pub fn get_proof_by_index(
+        &self,
+        leaf_indx: usize,
+        max_proof_len: usize,
+    ) -> Result<Vec<Vec<u8>>> {
         if self.leaves.is_empty() || leaf_indx >= self.leaves.len() {
             return Err(Error::BadParam(
                 "Merkle proof index out of range".to_string(),
             ));
         }
 
+        let mut proofs_left = max_proof_len;
         let mut proof: Vec<Vec<u8>> = Vec::new();
         let mut index = leaf_indx;
 
         for i in 0..self.layers.len() {
+            if proofs_left == 0 {
+                break;
+            }
+
             let layer = &self.layers[i];
             let is_right = index % 2 == 1;
 
@@ -129,6 +151,7 @@ impl C2PAMerkleTree {
                 proof.push(layer[index + 1].0.clone());
             }
             index /= 2;
+            proofs_left -= 1;
         }
         Ok(proof)
     }

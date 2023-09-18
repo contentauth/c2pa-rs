@@ -71,6 +71,7 @@ chrono = { version = "0.4.27", default-features = false, features = [
 ciborium = "0.2.0"
 conv = "0.3.3"
 coset = "0.3.1"
+dash-mpd = "0.14.0"
 extfmt = "0.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"

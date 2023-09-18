@@ -69,7 +69,7 @@ pub enum ClaimAssetData<'a> {
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    StreamFragment(&'a mut dyn CAIRead, Option<&'a mut dyn CAIRead>, &'a str),
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -1333,12 +1333,18 @@ impl Claim {
                         ClaimAssetData::Stream(stream_data, _) => {
                             dh.verify_stream_hash(*stream_data, Some(claim.alg()))
                         }
-                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment(
-                                *initseg_data,
-                                *fragment_data,
-                                Some(claim.alg()),
-                            ),
+                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => {
+                            match fragment_data {
+                                Some(s) => dh.verify_stream_segment(
+                                    *initseg_data,
+                                    Some(*s),
+                                    Some(claim.alg()),
+                                ),
+                                None => Err(Error::HashMismatch(
+                                    "could not decode fragment data".to_string(),
+                                )),
+                            }
+                        }
                     };
 
                     match hash_result {

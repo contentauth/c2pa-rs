@@ -1485,13 +1485,12 @@ impl Store {
         asset_path: &Path,
         alg: &str,
         calc_hashes: bool,
-    ) -> Result<Vec<BmffHash>> {
+        flat_fragmented_w_merkle: bool,
+    ) -> Result<BmffHash> {
         use serde_bytes::ByteBuf;
 
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
-
-        let mut hashes: Vec<BmffHash> = Vec::new();
 
         let mut dh = BmffHash::new("jumbf manifest", alg, None);
         let exclusions = dh.exclusions_mut();
@@ -1562,18 +1561,17 @@ impl Store {
         trun.flags = Some(ByteBuf::from([1, 0, 0]));
         exclusions.push(trun);
 
-        // V2 exclusions
-        /*  Enable this when we support Merkle trees and fragmented MP4
-        // /mdat exclusion
-        let mut mdat = ExclusionsMap::new("/mdat".to_owned());
-        let subset_mdat = SubsetMap {
-            offset: 16,
-            length: 0,
-        };
-        let subset_mdat_vec = vec![subset_mdat];
-        mdat.subset = Some(subset_mdat_vec);
-        exclusions.push(mdat);
-        */
+        // enable when flat files with Merkle trees
+        if flat_fragmented_w_merkle {
+            let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+            let subset_mdat = SubsetMap {
+                offset: 16,
+                length: 0,
+            };
+            let subset_mdat_vec = vec![subset_mdat];
+            mdat.subset = Some(subset_mdat_vec);
+            exclusions.push(mdat);
+        }
 
         if calc_hashes {
             dh.gen_hash(asset_path)?;
@@ -1585,9 +1583,8 @@ impl Store {
                 _ => return Err(Error::UnsupportedType),
             }
         }
-        hashes.push(dh);
 
-        Ok(hashes)
+        Ok(dh)
     }
 
     // move or copy data from source to dest
@@ -1849,6 +1846,209 @@ impl Store {
             }
             Err(e) => Err(e),
         }
+    }
+
+    #[cfg(feature = "file_io")]
+    fn start_save_mpd(
+        &mut self,
+        asset_path: &Path,
+        output_dir: &Path,
+        reserve_size: usize,
+    ) -> Result<Vec<u8>> {
+        // get the provenance claim changing mutability
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        let output_filename = asset_path
+            .file_name()
+            .ok_or(Error::NotFound)?
+            .to_string_lossy()
+            .into_owned();
+        let dest_path = output_dir.join(output_filename);
+
+        let mut data;
+
+        // 2) Get hash ranges if needed
+        let mut bmff_hash = Store::generate_bmff_data_hashes(asset_path, pc.alg(), false, false)?;
+        bmff_hash.clear_hash();
+
+        // generate fragments and produce Merkle tree
+        bmff_hash.add_merkle_for_mpd(pc.alg(), asset_path, output_dir, 1, None)?;
+
+        // add in the BMFF assertion
+        pc.add_assertion(&bmff_hash)?;
+
+        // 3) Generate in memory CAI jumbf block
+        // and write preliminary jumbf store to file
+        // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+        data = self.to_jumbf_internal(reserve_size)?;
+        let jumbf_size = data.len();
+        save_jumbf_to_file(&data, &dest_path, Some(&dest_path))?;
+
+        // generate actual hash values
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+
+        let bmff_hashes = pc.bmff_hash_assertions();
+
+        if !bmff_hashes.is_empty() {
+            let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+            bmff_hash.update_mpd_hash(&dest_path)?;
+            pc.update_bmff_hash(bmff_hash)?;
+        }
+
+        // regenerate the jumbf because the cbor changed
+        data = self.to_jumbf_internal(reserve_size)?;
+        if jumbf_size != data.len() {
+            return Err(Error::JumbfCreationError);
+        }
+
+        Ok(data) // return JUMBF data
+    }
+
+    #[cfg(feature = "file_io")]
+    fn save_to_mpd_internal(
+        &mut self,
+        asset_path: &Path,
+        output_path: &Path,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        let jumbf_bytes = self.start_save_mpd(asset_path, output_path, signer.reserve_size())?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        let output_filename = asset_path
+            .file_name()
+            .ok_or(Error::NotFound)?
+            .to_string_lossy()
+            .into_owned();
+        let dest_path = output_path.join(output_filename);
+
+        match self.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
+            Ok((s, m)) => {
+                // save sig so store is up to date
+                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc_mut.set_signature_val(s);
+
+                Ok(m)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Embed the claims store as jumbf into Dash assets.
+    #[cfg(feature = "file_io")]
+    pub fn save_to_mpd(
+        &mut self,
+        asset_path: &Path,
+        output_path: &Path,
+        signer: &dyn Signer,
+    ) -> Result<()> {
+        const REP_ID: &str = "$RepresentationID$";
+        //const SEG_NUMBER: &str = "$Number$";
+        const REP_BANDWIDTH: &str = "$Bandwidth$";
+        //const SEG_TIME: &str = "$Time$";
+
+        // parse the MPD
+        let mpd_xml_bytes = std::fs::read(asset_path)?;
+        let mpd_xml = String::from_utf8(mpd_xml_bytes)
+            .map_err(|_e| Error::InvalidAsset("could not parse MPD".to_string()))?;
+        let mpd = dash_mpd::parse(&mpd_xml)
+            .map_err(|_e| Error::InvalidAsset("could not parse MPD".to_string()))?;
+
+        // must save Store since it will be used multiple time with different BMFFHash values
+        let jumbf = self.to_jumbf(signer)?;
+
+        for (_period_idx, period) in mpd.periods.iter().enumerate() {
+            //let _base_url = &period.BaseURL[period_idx];
+
+            for (_adaptation_idx, adaptation) in period.adaptations.iter().enumerate() {
+                //let _base_url = &adaptation.BaseURL[adaptation_idx];
+
+                let segment_template = &adaptation.SegmentTemplate;
+                let segment_list = &adaptation.SegmentList;
+
+                for (_representation_idx, represenatation) in
+                    adaptation.representations.iter().enumerate()
+                {
+                    // check for overrides
+                    let segment_template = if represenatation.SegmentTemplate.is_some() {
+                        &represenatation.SegmentTemplate
+                    } else {
+                        segment_template
+                    };
+
+                    let segment_list = if represenatation.SegmentList.is_some() {
+                        &represenatation.SegmentList
+                    } else {
+                        segment_list
+                    };
+
+                    // build paths
+                    if let Some(segment_template) = segment_template {
+                        let _media = &segment_template.media;
+                        if let Some(init) = &segment_template.initialization {
+                            // get the current directory for MPD
+                            let dir = asset_path
+                                .parent()
+                                .ok_or(Error::BadParam("path is not a directory".to_string()))?;
+
+                            let mut working_string = init.clone();
+
+                            // fix up replacement vars
+                            if working_string.contains(REP_BANDWIDTH) {
+                                let bandwidth = represenatation.bandwidth.ok_or(
+                                    Error::InvalidAsset("MPD has bad structure".to_string()),
+                                )?;
+                                working_string =
+                                    working_string.replace(REP_BANDWIDTH, &format!("{bandwidth}"));
+                            }
+
+                            if working_string.contains(REP_ID) {
+                                let id = represenatation.id.clone().ok_or(Error::InvalidAsset(
+                                    "MPD has bad structure".to_string(),
+                                ))?;
+
+                                working_string = working_string.replace(REP_ID, &id);
+                            }
+
+                            let sub_asset_path = dir.join(working_string);
+
+                            // make new sub folders
+                            let sub_asset_parent = sub_asset_path
+                                .parent()
+                                .ok_or(Error::BadParam("path is not a directory".to_string()))?;
+                            let output_folder_name = sub_asset_parent
+                                .file_name()
+                                .ok_or(Error::BadParam("path is not a directory".to_string()))?
+                                .to_string_lossy()
+                                .into_owned();
+                            let new_output_folder = output_path.join(output_folder_name);
+
+                            let mut validation_log = OneShotStatusTracker::new();
+                            let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
+
+                            temp_store.save_to_mpd_internal(
+                                &sub_asset_path,
+                                &new_output_folder,
+                                signer,
+                            )?;
+                        }
+                    } else if let Some(segment_list) = segment_list {
+                        for (_segment_idx, segment) in segment_list.segment_urls.iter().enumerate()
+                        {
+                            println!("sl: {:?}", segment);
+                        }
+                    } else {
+                        return Err(Error::InvalidAsset(
+                            "MPD structure not supported".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Embed the claims store as jumbf into an asset. Updates XMP with provenance record.
@@ -2267,10 +2467,10 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let bmff_hashes = Store::generate_bmff_data_hashes(dest_path, pc.alg(), false)?;
-                for hash in bmff_hashes {
-                    pc.add_assertion(&hash)?;
-                }
+                let bmff_hashes =
+                    Store::generate_bmff_data_hashes(dest_path, pc.alg(), false, false)?;
+
+                pc.add_assertion(&bmff_hashes)?;
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -2725,18 +2925,31 @@ impl Store {
             // verify the store
             if verify {
                 let mut init_segment_stream = Cursor::new(init_segment);
-                let mut fragment_stream = Cursor::new(fragment);
 
                 // verify store and claims
-                Store::verify_store(
-                    &store,
-                    &mut ClaimAssetData::StreamFragment(
-                        &mut init_segment_stream,
-                        &mut fragment_stream,
-                        asset_type,
-                    ),
-                    validation_log,
-                )?;
+                if !fragment.is_empty() {
+                    let mut fragment_stream = Cursor::new(fragment);
+
+                    Store::verify_store(
+                        &store,
+                        &mut ClaimAssetData::StreamFragment(
+                            &mut init_segment_stream,
+                            Some(&mut fragment_stream),
+                            asset_type,
+                        ),
+                        validation_log,
+                    )?;
+                } else {
+                    Store::verify_store(
+                        &store,
+                        &mut ClaimAssetData::StreamFragment(
+                            &mut init_segment_stream,
+                            None,
+                            asset_type,
+                        ),
+                        validation_log,
+                    )?;
+                }
             }
 
             Ok(store)
@@ -2768,7 +2981,7 @@ impl Store {
                 &store,
                 &mut ClaimAssetData::StreamFragment(
                     &mut init_segment_stream,
-                    &mut fragment_stream,
+                    Some(&mut fragment_stream),
                     asset_type,
                 ),
                 validation_log,
@@ -4658,4 +4871,31 @@ pub mod tests {
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
     }
+
+    /*
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_mpd_jumbf_generation() {
+        // test adding to actual image
+        let asset_path = fixture_path(
+            "/Users/mfisher/Downloads/bigbuckbunny-2s/BigBuckBunny_2s_simple_2014_05_09.mpd",
+        );
+        let output_path = Path::new("/Users/mfisher/Downloads/bunny_out");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+        store.commit_claim(claim).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // add manifest based on Dash MPD
+        store
+            .save_to_mpd(asset_path.as_path(), output_path, signer.as_ref())
+            .unwrap();
+    }
+    */
 }
