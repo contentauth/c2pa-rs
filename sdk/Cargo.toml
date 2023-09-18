@@ -72,7 +72,6 @@ chrono = { version = "0.4.27", default-features = false, features = [
 ciborium = "0.2.0"
 conv = "0.3.3"
 coset = "0.3.1"
-dash-mpd = "0.14.0"
 extfmt = "0.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"
@@ -105,6 +104,7 @@ x509-parser = "0.15.0"
 x509-certificate = "0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dash-mpd = "0.14.0"
 ureq = "2.4.0"
 half = "<2.3.0, < 3" # fix for older versions of rust
 image = { version = "0.24.2", optional = true }
