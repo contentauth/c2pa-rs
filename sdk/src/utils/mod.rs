@@ -18,8 +18,6 @@ pub(crate) mod hash_utils;
 pub(crate) mod merkle;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
-#[cfg(feature = "pdf")]
-pub(crate) mod pdf_utils;
 #[cfg(feature = "add_thumbnails")]
 pub(crate) mod thumbnail;
 pub(crate) mod time_it;

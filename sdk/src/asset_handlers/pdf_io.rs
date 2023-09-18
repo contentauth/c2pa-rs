@@ -14,8 +14,8 @@
 use std::{fs::File, path::Path};
 
 use crate::{
+    asset_handlers::pdf::{C2paPdf, Pdf},
     asset_io::{AssetIO, CAIReader, CAIWriter, HashObjectPositions},
-    utils::pdf_utils::{C2paPdf, Pdf},
     CAIRead, Error,
     Error::{JumbfNotFound, NotImplemented, PdfReadError},
 };
@@ -130,12 +130,13 @@ pub mod tests {
 
     use std::io::Cursor;
 
-    use pdf_utils::MockC2paPdf;
-
     use crate::{
-        asset_handlers::pdf_io::PdfIO,
+        asset_handlers,
+        asset_handlers::{
+            pdf::{C2paPdf, MockC2paPdf, Pdf},
+            pdf_io::PdfIO,
+        },
         asset_io::{AssetIO, CAIReader},
-        utils::{pdf_utils, pdf_utils::C2paPdf},
     };
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
@@ -144,7 +145,7 @@ pub mod tests {
     fn test_error_reading_manifest_fails() {
         let mut mock_pdf = MockC2paPdf::default();
         mock_pdf.expect_read_manifest_bytes().returning(|| {
-            Err(pdf_utils::Error::UnableToReadPdf(
+            Err(asset_handlers::pdf::Error::UnableToReadPdf(
                 lopdf::Error::ReferenceLimit,
             ))
         });
@@ -239,7 +240,7 @@ pub mod tests {
     fn test_read_cai_returns_cai_bytes() {
         let source = include_bytes!("../../tests/fixtures/basic.pdf");
 
-        let mut pdf = pdf_utils::Pdf::from_bytes(source).unwrap();
+        let mut pdf = Pdf::from_bytes(source).unwrap();
         assert!(pdf.read_manifest_bytes().unwrap().is_none());
 
         let mut pdf_with_manifest = vec![];
