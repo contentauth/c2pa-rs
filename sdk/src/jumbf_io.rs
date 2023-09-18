@@ -20,6 +20,8 @@ use std::{
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
@@ -34,7 +36,7 @@ lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             #[cfg(feature = "pdf")]
-            Box::new(crate::asset_handlers::pdf_io::PdfIO::new("")),
+            Box::new(PdfIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
@@ -334,7 +336,7 @@ pub mod tests {
             Box::new(BmffIO::new("")),
             Box::new(JpegIO::new("")),
             #[cfg(feature = "pdf")]
-            Box::new(crate::asset_handlers::pdf_io::PdfIO::new("")),
+            Box::new(PdfIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
