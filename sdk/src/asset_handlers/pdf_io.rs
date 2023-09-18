@@ -34,7 +34,8 @@ impl CAIReader for PdfIO {
             .read_to_end(&mut buffer)
             .map_err(Error::IoError)?;
 
-        let pdf = Pdf::from_bytes(&buffer)?;
+        let pdf = Pdf::from_bytes(&buffer).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+
         self.read_manifest_bytes(pdf)
     }
 

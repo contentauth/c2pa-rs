@@ -15,9 +15,6 @@
 
 use thiserror::Error;
 
-#[cfg(feature = "pdf")]
-use crate::utils::pdf_utils;
-
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -278,10 +275,6 @@ pub enum Error {
 
     #[error("prerelease content detected")]
     PrereleaseError,
-
-    #[error(transparent)]
-    #[cfg(feature = "pdf")]
-    PdfError(#[from] pdf_utils::Error),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
