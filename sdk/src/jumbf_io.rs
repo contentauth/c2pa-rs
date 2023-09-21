@@ -20,6 +20,8 @@ use std::{
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
@@ -33,6 +35,8 @@ use crate::{
 lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
+            #[cfg(feature = "pdf")]
+            Box::new(PdfIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
@@ -41,6 +45,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
         ];
+
         let mut handler_map = HashMap::new();
 
         // build handler map
@@ -330,6 +335,8 @@ pub mod tests {
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(JpegIO::new("")),
+            #[cfg(feature = "pdf")]
+            Box::new(PdfIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
@@ -380,13 +387,15 @@ pub mod tests {
     fn test_get_supported_list() {
         let supported = get_supported_types();
 
+        let pdf_supported = supported.iter().any(|s| s == "pdf");
+        assert_eq!(pdf_supported, cfg!(feature = "pdf"));
+
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));
         assert!(supported.iter().any(|s| s == "png"));
         assert!(supported.iter().any(|s| s == "mov"));
         assert!(supported.iter().any(|s| s == "mp4"));
         assert!(supported.iter().any(|s| s == "m4a"));
-        assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "avi"));
         assert!(supported.iter().any(|s| s == "webp"));
         assert!(supported.iter().any(|s| s == "wav"));

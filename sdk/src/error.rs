@@ -51,6 +51,9 @@ pub enum Error {
     #[error("required feature missing")]
     MissingFeature(String),
 
+    #[error("feature implementation incomplete")]
+    NotImplemented(String),
+
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
