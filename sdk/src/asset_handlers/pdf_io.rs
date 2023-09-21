@@ -27,30 +27,17 @@ pub struct PdfIO {}
 
 impl CAIReader for PdfIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
-        let mut buffer: Vec<u8> = vec![];
         asset_reader.rewind()?;
-
-        asset_reader
-            .read_to_end(&mut buffer)
-            .map_err(Error::IoError)?;
-
-        let pdf = Pdf::from_bytes(&buffer).map_err(|e| Error::InvalidAsset(e.to_string()))?;
-
+        let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
 
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let mut buffer: Vec<u8> = vec![];
-
         if asset_reader.rewind().is_err() {
             return None;
         }
 
-        if asset_reader.read_to_end(&mut buffer).is_err() {
-            return None;
-        }
-
-        let Ok(pdf) = Pdf::from_bytes(&buffer) else {
+        let Ok(pdf) = Pdf::from_reader(asset_reader) else {
             return None;
         };
 

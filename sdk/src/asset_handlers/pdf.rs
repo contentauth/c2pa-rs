@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Write;
+use std::io::{Read, Write};
 
 use lopdf::{
     dictionary, Document, Object,
@@ -47,9 +47,6 @@ const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
 
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait C2paPdf: Sized {
-    /// Load a PDF from a slice of bytes.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, Error>;
-
     /// Save the `C2paPdf` implementation to the provided `writer`.
     fn save_to<W: Write + 'static>(&mut self, writer: &mut W) -> Result<(), std::io::Error>;
 
@@ -77,11 +74,6 @@ pub(crate) struct Pdf {
 }
 
 impl C2paPdf for Pdf {
-    fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let document = Document::load_mem(bytes)?;
-        Ok(Self { document })
-    }
-
     /// Saves the in-memory PDF to the provided `writer`.
     fn save_to<W: Write>(&mut self, writer: &mut W) -> Result<(), std::io::Error> {
         self.document.save_to(writer)
@@ -253,6 +245,17 @@ impl C2paPdf for Pdf {
 }
 
 impl Pdf {
+    #[allow(dead_code)]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let document = Document::load_mem(bytes)?;
+        Ok(Self { document })
+    }
+
+    pub fn from_reader<R: Read>(source: R) -> Result<Self, Error> {
+        let document = Document::load_from(source)?;
+        Ok(Self { document })
+    }
+
     /// Adds the C2PA `Annotation` to the PDF.
     ///
     /// ### Note:
