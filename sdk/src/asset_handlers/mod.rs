@@ -18,3 +18,8 @@ pub mod png_io;
 pub mod riff_io;
 pub mod svg_io;
 pub mod tiff_io;
+
+#[cfg(feature = "pdf")]
+pub(crate) mod pdf;
+#[cfg(feature = "pdf")]
+pub mod pdf_io;

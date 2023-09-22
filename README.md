@@ -42,7 +42,7 @@ The SDK has been tested on the following operating systems:
  | ------------- | --------------------------------------------------- |
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
  | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`,                |
+ | `c2pa`        | `application/x-c2pa-manifest-store`                 |
  | `dng`         | `image/x-adobe-dng`                                 |
  | `heic`        | `image/heic`                                        |
  | `heif`        | `image/heif`                                        |
@@ -62,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.25.2"
+c2pa = "0.26.0"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
@@ -92,11 +92,31 @@ The `c2pa` crate is distributed under the terms of both the [MIT license](https:
 
 Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
 
-## Release Notes
+## Nightly builds
 
-This section gives a highlight of noteworthy changes
+In most cases, you should depend on this crate as published via [crates.io](https://crates.io/crates/c2pa).
 
-Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed Git changes
+The Adobe team produces nightly snapshots of this crate via a `nightly` branch, which we use for testing the impact of pending changes to upstream dependencies.
+
+You may wish to use these builds for your own testing ahead of our releases, you may include the SDK via the following `Cargo.toml` entry:
+
+```toml
+c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
+```
+
+Commits in this branch have a modified `sdk/Cargo.toml` entry which includes a version number similar to the following:
+
+```toml
+version = "0.25.3-nightly+2023-08-28-2f33ab3"
+```
+
+Please note that there is no formal support for code from a nightly release, but if you become aware of any issues, we would appreciate a bug report including this version number.
+
+## Release notes
+
+This section gives a highlight of noteworthy changes.
+
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
 
 
 ## 0.25.0

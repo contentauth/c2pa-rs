@@ -1938,12 +1938,10 @@ impl Claim {
     // Do any assertions of this type exist?
     pub fn has_assertion_type(&self, in_label: &str) -> bool {
         let (label, _) = Claim::assertion_label_from_link(in_label);
-        let found = self
-            .assertion_store
-            .iter()
-            .find(|&x| x.assertion.label().starts_with(&label));
 
-        found.is_some()
+        self.assertion_store
+            .iter()
+            .any(|x| x.assertion.label().starts_with(&label))
     }
 
     // Create a JUMBF URI from a claim label.
