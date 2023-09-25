@@ -34,6 +34,11 @@ pub trait Signer {
         None
     }
 
+    /// API key for time authority to time stamp the signature
+    fn time_authority_api_key(&self) -> Option<String> {
+        None
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
@@ -96,6 +101,11 @@ pub trait AsyncSigner: Sync {
 
     /// URL for time authority to time stamp the signature
     fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// API key for time authority to time stamp the signature
+    fn time_authority_api_key(&self) -> Option<String> {
         None
     }
 

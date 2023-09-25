@@ -103,6 +103,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
         alg,
         signer.certs()?,
         signer.time_authority_url(),
+        signer.time_authority_api_key(),
         signer.ocsp_val(),
     )?;
 
@@ -160,6 +161,7 @@ pub async fn cose_sign_async(
         alg,
         signer.certs()?,
         signer.time_authority_url(),
+        signer.time_authority_api_key(),
         signer.ocsp_val(),
     )?;
 
@@ -194,7 +196,8 @@ fn build_headers(
     data: &[u8],
     alg: SigningAlg,
     certs: Vec<Vec<u8>>,
-    ta_url: Option<String>,
+    tsa_url: Option<String>,
+    tsa_api_key: Option<String>,
     ocsp_val: Option<Vec<u8>>,
 ) -> Result<(Header, Header)> {
     let protected_h = match alg {
@@ -229,7 +232,7 @@ fn build_headers(
 
     let protected_header = protected_h.build();
 
-    let mut unprotected_h = if let Some(url) = ta_url {
+    let mut unprotected_h = if let Some(url) = tsa_url {
         let cts = cose_timestamp_countersign(
             data,
             &ProtectedHeader {
@@ -237,6 +240,7 @@ fn build_headers(
                 header: protected_header.clone(),
             },
             &url,
+            &tsa_api_key.map(|s| s.as_str()),
         )?;
         let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
         let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;

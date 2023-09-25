@@ -48,6 +48,7 @@ pub(crate) fn cose_timestamp_countersign(
     data: &[u8],
     p_header: &ProtectedHeader,
     tsa_url: &str,
+    api_key: &Option<&str>,
 ) -> Result<Vec<u8>> {
     // create countersignature with TimeStampReq parameters
     // payload: data
@@ -58,7 +59,7 @@ pub(crate) fn cose_timestamp_countersign(
     // create sig data structure to be time stamped
     let sd = cose_countersign_data(data, p_header);
 
-    timestamp_data(tsa_url, &sd)
+    timestamp_data(tsa_url, api_key, &sd)
 }
 
 #[allow(dead_code)]
@@ -101,6 +102,7 @@ pub fn get_ta_url() -> Option<String> {
 #[cfg(feature = "openssl_sign")]
 fn time_stamp_request_http(
     url: &str,
+    api_key: &Option<&str>,
     request: &crate::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -117,8 +119,13 @@ fn time_stamp_request_http(
 
     let body_reader = std::io::Cursor::new(body);
 
-    let response = ureq::post(url)
-        .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
+    let mut req = ureq::post(url).set("Content-Type", HTTP_CONTENT_TYPE_REQUEST);
+
+    if let Some(api_key) = *api_key {
+        req.set("Api-Key", api_key);
+    }
+
+    let response = req
         .send(body_reader)
         .map_err(|_err| Error::CoseTimeStampGeneration)?;
 
@@ -169,6 +176,7 @@ fn time_stamp_request_http(
 #[cfg(feature = "openssl_sign")]
 fn time_stamp_message_http(
     url: &str,
+    api_key: &Option<&str>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>> {
@@ -195,7 +203,7 @@ fn time_stamp_message_http(
         extensions: None,
     };
 
-    time_stamp_request_http(url, &request)
+    time_stamp_request_http(url, api_key, &request)
 }
 
 pub struct TimeStampResponse(TimeStampResp);
@@ -260,10 +268,15 @@ impl TimeStampResponse {
 }
 /// Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
 #[allow(unused_variables)]
-pub fn timestamp_data(url: &str, data: &[u8]) -> Result<Vec<u8>> {
+pub fn timestamp_data(url: &str, api_key: &Option<&str>, data: &[u8]) -> Result<Vec<u8>> {
     #[cfg(feature = "openssl_sign")]
     {
-        let ts = time_stamp_message_http(url, data, x509_certificate::DigestAlgorithm::Sha256)?;
+        let ts = time_stamp_message_http(
+            url,
+            api_key,
+            data,
+            x509_certificate::DigestAlgorithm::Sha256,
+        )?;
 
         // sanity check
         verify_timestamp(&ts, data)?;
