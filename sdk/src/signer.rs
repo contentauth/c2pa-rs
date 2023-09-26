@@ -41,7 +41,7 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    fn send_rfc3161_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         self.time_authority_url()
             .map(|url| crate::time_stamp::default_rfc3161_request(&url, message))
     }
@@ -118,7 +118,7 @@ pub trait AsyncSigner: Sync {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    async fn send_rfc3161_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         // NOTE: This is currently synchronous, but may become
         // async in the future.
         self.time_authority_url()
