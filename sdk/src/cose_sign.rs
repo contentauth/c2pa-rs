@@ -15,6 +15,7 @@
 
 #![deny(missing_docs)]
 
+use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
     iana::{self},
@@ -26,8 +27,10 @@ use crate::{
     claim::Claim,
     cose_validator::verify_cose,
     status_tracker::OneShotStatusTracker,
-    time_stamp::{cose_timestamp_countersign, make_cose_timestamp},
-    Error, Result, Signer, SigningAlg,
+    time_stamp::{
+        cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
+    },
+    AsyncSigner, Error, Result, Signer, SigningAlg,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -72,6 +75,11 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 
 /// Returns signed Cose_Sign1 bytes for `data`.
 /// The Cose_Sign1 will be signed with the algorithm from [`Signer`].
+#[async_generic(async_signature(
+    signer: &dyn AsyncSigner,
+    data: &[u8],
+    box_size: usize
+))]
 pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
     // 13.2.1. X.509 Certificates
     //
@@ -98,88 +106,37 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     let alg = signer.alg();
 
     // build complete header
-    let (protected_header, unprotected_header) = build_headers(
-        data,
-        alg,
-        signer.certs()?,
-        signer.time_authority_url(),
-        signer.ocsp_val(),
-    )?;
+    let (protected_header, unprotected_header) = if _sync {
+        build_headers(signer, data, alg, signer.certs()?, signer.ocsp_val())?
+    } else {
+        build_headers_async(signer, data, alg, signer.certs()?, signer.ocsp_val()).await?
+    };
 
-    let aad = b""; // no additional data required here
-
-    let sign1_builder = CoseSign1Builder::new()
-        .protected(protected_header)
-        .unprotected(unprotected_header)
-        .payload(data.to_vec())
-        .try_create_signature(aad, |bytes| signer.sign(bytes))?;
-
-    let mut sign1 = sign1_builder.build();
-    sign1.payload = None; // clear the payload since it is known
-
-    let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
-
-    // println!("sig: {}", Hexlify(&c2pa_sig_data));
-
-    Ok(c2pa_sig_data)
-}
-
-/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-pub async fn cose_sign_async(
-    signer: &dyn crate::AsyncSigner,
-    data: &[u8],
-    box_size: usize,
-) -> Result<Vec<u8>> {
-    // 13.2.1. X.509 Certificates
-    //
-    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
-    // The value is a CBOR array of byte strings, each of which contains the certificate
-    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
-    // least one element. The first element of the array must be the certificate of
-    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
-    // public key used to validate the signature. The Validity member of the TBSCertificate
-    // sequence provides the time validity period of the certificate.
-
-    /*
-       This header parameter allows for a single X.509 certificate or a
-       chain of X.509 certificates to be carried in the message.
-
-       *  If a single certificate is conveyed, it is placed in a CBOR
-           byte string.
-
-       *  If multiple certificates are conveyed, a CBOR array of byte
-           strings is used, with each certificate being in its own byte
-           string.
-    */
-
-    let alg = signer.alg();
-
-    // build complete header
-    let (protected_header, unprotected_header) = build_headers(
-        data,
-        alg,
-        signer.certs()?,
-        signer.time_authority_url(),
-        signer.ocsp_val(),
-    )?;
-
-    let aad = b""; // no additional data required here
+    let aad: &[u8; 0] = b""; // no additional data required here
 
     let sign1_builder = CoseSign1Builder::new()
         .protected(protected_header)
         .unprotected(unprotected_header)
         .payload(data.to_vec());
 
+    let sign1_builder = if _sync {
+        sign1_builder.try_create_signature(aad, |bytes| signer.sign(bytes))?
+    } else {
+        sign1_builder
+    };
+
     let mut sign1 = sign1_builder.build();
 
-    let tbs = coset::sig_structure_data(
-        coset::SignatureContext::CoseSign1,
-        sign1.protected.clone(),
-        None,
-        aad,
-        sign1.payload.as_ref().unwrap_or(&vec![]),
-    );
-    sign1.signature = signer.sign(tbs).await?;
+    if _async {
+        let tbs = coset::sig_structure_data(
+            coset::SignatureContext::CoseSign1,
+            sign1.protected.clone(),
+            None,
+            aad,
+            sign1.payload.as_ref().unwrap_or(&vec![]),
+        );
+        sign1.signature = signer.sign(tbs).await?;
+    }
 
     sign1.payload = None; // clear the payload since it is known
 
@@ -190,11 +147,18 @@ pub async fn cose_sign_async(
     Ok(c2pa_sig_data)
 }
 
-fn build_headers(
+#[async_generic(async_signature(
+    signer: &dyn AsyncSigner,
     data: &[u8],
     alg: SigningAlg,
     certs: Vec<Vec<u8>>,
-    ta_url: Option<String>,
+    ocsp_val: Option<Vec<u8>>,
+))]
+fn build_headers(
+    signer: &dyn Signer,
+    data: &[u8],
+    alg: SigningAlg,
+    certs: Vec<Vec<u8>>,
     ocsp_val: Option<Vec<u8>>,
 ) -> Result<(Header, Header)> {
     let protected_h = match alg {
@@ -228,16 +192,19 @@ fn build_headers(
     */
 
     let protected_header = protected_h.build();
+    let ph2 = ProtectedHeader {
+        original_data: None,
+        header: protected_header.clone(),
+    };
 
-    let mut unprotected_h = if let Some(url) = ta_url {
-        let cts = cose_timestamp_countersign(
-            data,
-            &ProtectedHeader {
-                original_data: None,
-                header: protected_header.clone(),
-            },
-            &url,
-        )?;
+    let maybe_cts = if _sync {
+        cose_timestamp_countersign(signer, data, &ph2)
+    } else {
+        cose_timestamp_countersign_async(signer, data, &ph2).await
+    };
+
+    let mut unprotected_h = if let Some(cts) = maybe_cts {
+        let cts = cts?;
         let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
         let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
 
