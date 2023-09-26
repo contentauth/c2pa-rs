@@ -107,9 +107,9 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
 
     // build complete header
     let (protected_header, unprotected_header) = if _sync {
-        build_headers(signer, data, alg, signer.certs()?, signer.ocsp_val())?
+        build_headers(signer, data, alg)?
     } else {
-        build_headers_async(signer, data, alg, signer.certs()?, signer.ocsp_val()).await?
+        build_headers_async(signer, data, alg).await?
     };
 
     let aad: &[u8; 0] = b""; // no additional data required here
@@ -151,16 +151,8 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     signer: &dyn AsyncSigner,
     data: &[u8],
     alg: SigningAlg,
-    certs: Vec<Vec<u8>>,
-    ocsp_val: Option<Vec<u8>>,
 ))]
-fn build_headers(
-    signer: &dyn Signer,
-    data: &[u8],
-    alg: SigningAlg,
-    certs: Vec<Vec<u8>>,
-    ocsp_val: Option<Vec<u8>>,
-) -> Result<(Header, Header)> {
+fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
     let protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
         SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
@@ -170,6 +162,9 @@ fn build_headers(
         SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
         SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
     };
+
+    let certs = signer.certs()?;
+    let ocsp_val = signer.ocsp_val();
 
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()), // single cert
