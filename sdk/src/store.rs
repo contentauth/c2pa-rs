@@ -898,8 +898,9 @@ impl Store {
                     CREDENTIALS => box_order.push(CREDENTIALS),
                     DATABOXES => box_order.push(DATABOXES),
                     _ => {
+                        let msg = format!("unrecognized manifest box: {}", &desc_box.label());  
                         let log_item =
-                            log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
+                            log_item!("JUMBF", &msg, "from_jumbf")
                                 .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
                                 .validation_status(validation_status::CLAIM_MULTIPLE);
                         validation_log.log(
