@@ -2982,16 +2982,30 @@ impl Store {
             let mut fragment_stream = Cursor::new(fragment);
 
             // verify store and claims
-            Store::verify_store_async(
-                &store,
-                &mut ClaimAssetData::StreamFragment(
-                    &mut init_segment_stream,
-                    Some(&mut fragment_stream),
-                    asset_type,
-                ),
-                validation_log,
-            )
-            .await?;
+            if fragment.is_empty() {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::StreamFragment(
+                        &mut init_segment_stream,
+                        None,
+                        asset_type,
+                    ),
+                    validation_log,
+                )
+                .await?;
+            } else {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::StreamFragment(
+                        &mut init_segment_stream,
+                        Some(&mut fragment_stream),
+                        asset_type,
+                    ),
+                    validation_log,
+                )
+                .await?;
+            }
+           
         }
 
         Ok(store)
@@ -4877,7 +4891,7 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    /*
+    
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_jumbf_generation() {
@@ -4902,8 +4916,7 @@ pub mod tests {
             .save_to_mpd(asset_path.as_path(), output_path, signer.as_ref())
             .unwrap();
     }
-    
-
+     
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_validation() {
@@ -4930,11 +4943,14 @@ pub mod tests {
                         true, 
                         &mut validation_log).unwrap();
 
-                    println!("manifest: {manifest}");
+       
+                        let errors = report_split_errors(validation_log.get_log_mut());
+                        assert!(errors.is_empty());
+
+                        println!("manifest: {manifest}");
                 }
                 _ => (),
             }
         }
     }
-    */
 }
