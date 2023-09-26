@@ -284,7 +284,7 @@ pub fn default_rfc3161_request(url: &str, data: &[u8]) -> Result<Vec<u8>> {
     }
     #[cfg(not(feature = "openssl_sign"))]
     {
-        Some(Err(Error::WasmNoCrypto))
+        Err(Error::WasmNoCrypto)
     }
 }
 
