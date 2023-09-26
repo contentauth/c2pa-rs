@@ -1059,14 +1059,18 @@ impl Store {
                         if std::mem::discriminant(&e)
                             == std::mem::discriminant(&Error::PrereleaseError)
                         {
+                            let err_label = format!("error loading assertion: {}", &label);
+
                             let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                log_item!("JUMBF", &err_label, "from_jumbf")
                                     .error(e);
                             validation_log.log_silent(log_item);
                             return Err(Error::PrereleaseError);
                         } else {
+                            let err_label = format!("error loading assertion: {}", &label);
+
                             let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                log_item!("JUMBF", &err_label, "from_jumbf")
                                     .error(e);
                             validation_log.log(log_item, None)?;
                         }
@@ -1857,6 +1861,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.clear_original_bytes(); // clear since we are reusing an existing claim
 
         let output_filename = asset_path
             .file_name()
@@ -1900,7 +1905,7 @@ impl Store {
         if jumbf_size != data.len() {
             return Err(Error::JumbfCreationError);
         }
-
+      
         Ok(data) // return JUMBF data
     }
 
@@ -4896,6 +4901,40 @@ pub mod tests {
         store
             .save_to_mpd(asset_path.as_path(), output_path, signer.as_ref())
             .unwrap();
+    }
+    
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_mpd_validation() {
+        // test adding to actual image
+        let init_path = fixture_path(
+            "./bunny/BigBuckBunny_2s_init.mp4",
+        );
+
+        let init_stream = std::fs::read(&init_path).unwrap();
+
+        let parent_path = fixture_path("bunny");
+
+        for entry in (parent_path.read_dir().unwrap()).flatten() {
+            let file_path = entry.path();
+            let mut validation_log = DetailedStatusTracker::new();
+        
+
+            match file_path.extension() {
+                Some(s) if s == "m4s" => {
+                    let fragment_stream = std::fs::read(&file_path).unwrap();
+                    let manifest = Store::load_fragment_from_memory("mp4", 
+                        &init_stream, 
+                        &fragment_stream, 
+                        true, 
+                        &mut validation_log).unwrap();
+
+                    println!("manifest: {manifest}");
+                }
+                _ => (),
+            }
+        }
     }
     */
 }

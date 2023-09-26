@@ -1601,6 +1601,11 @@ impl Claim {
         }
     }
 
+    /// Clear the original bytes cache to allow the Claim to be regenerated
+    pub fn clear_original_bytes(&mut self) {
+        self.original_bytes = None;
+    }
+
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
         let mut claim: Claim = serde_cbor::from_slice(data).map_err(|_err| Error::ClaimDecoding)?;
