@@ -17,7 +17,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.65.0"
+rust-version = "1.70.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -57,6 +57,7 @@ crate-type = ["lib"]
 
 [dependencies]
 asn1-rs = "0.5.2"
+async-generic = "0.1.2"
 async-trait = { version = "0.1.48" }
 atree = "0.5.2"
 base64 = "0.21.2"
