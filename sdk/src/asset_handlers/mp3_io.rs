@@ -121,25 +121,22 @@ pub struct Mp3IO {
 
 impl CAIReader for Mp3IO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        if let Ok(tag) = Tag::read_from(input_stream) {
-            let mut manifests = Vec::new();
+        let mut manifest: Option<Vec<u8>> = None;
 
+        if let Ok(tag) = Tag::read_from(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
-                    manifests.push(eo.data.clone());
+                    match manifest {
+                        Some(_) => {
+                            return Err(Error::TooManyManifestStores);
+                        }
+                        None => manifest = Some(eo.data.clone()),
+                    }
                 }
-            }
-
-            if manifests.len() == 1 {
-                return Ok(manifests.remove(0));
-            }
-
-            if manifests.len() > 1 {
-                return Err(Error::TooManyManifestStores);
             }
         }
 
-        Err(Error::JumbfNotFound)
+        manifest.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
