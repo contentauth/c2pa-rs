@@ -51,7 +51,7 @@ use crate::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
+    validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -1628,7 +1628,7 @@ impl Store {
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
     pub fn get_data_hashed_manifest_placeholder(
         &mut self,
-        signer: &dyn RemoteSigner,
+        signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1665,10 +1665,10 @@ impl Store {
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
-    pub async fn get_data_hashed_embeddable_manifest(
+    pub fn get_data_hashed_embeddable_manifest(
         &mut self,
         dh: &DataHash,
-        signer: &dyn RemoteSigner,
+        signer: &dyn Signer,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
@@ -1705,8 +1705,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let claim_bytes = pc.data()?;
-        let sig = signer.sign_remote(&claim_bytes).await?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -1722,10 +1721,7 @@ impl Store {
 
     /// Returns a finalized, signed manifest.  The client is required to have
     /// included the necessary box hash assertion with the pregenerated hashes.
-    pub async fn get_box_hashed_embeddable_manifest(
-        &mut self,
-        signer: &dyn RemoteSigner,
-    ) -> Result<Vec<u8>> {
+    pub fn get_box_hashed_embeddable_manifest(&mut self, signer: &dyn Signer) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // make sure there is only one
@@ -1743,8 +1739,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let claim_bytes = pc.data()?;
-        let sig = signer.sign_remote(&claim_bytes).await?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2895,8 +2890,8 @@ pub mod tests {
             hash_utils::Hasher,
             patch::patch_file,
             test::{
-                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
-                temp_remote_signer, temp_signer, write_jpeg_placeholder_file,
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+                write_jpeg_placeholder_file,
             },
         },
         AssertionJson, SigningAlg,
@@ -4454,10 +4449,9 @@ pub mod tests {
             }
         }
     }
-
-    #[actix::test]
+    #[test]
     #[cfg(feature = "file_io")]
-    async fn test_boxhash_embeddable_manifest() {
+    fn test_boxhash_embeddable_manifest() {
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
@@ -4477,12 +4471,11 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_remote_signer();
+        let signer = temp_signer();
 
         // get the embeddable manifest
         let em = store
             .get_box_hashed_embeddable_manifest(signer.as_ref())
-            .await
             .unwrap();
 
         // get composed version for embedding to JPEG
@@ -4536,13 +4529,14 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    #[actix::test]
-    async fn test_datahash_embeddable_manifest() {
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_datahash_embeddable_manifest() {
         // test adding to actual image
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = temp_remote_signer();
+        let signer = temp_signer();
 
         // Create claims store.
         let mut store = Store::new();
@@ -4588,7 +4582,6 @@ pub mod tests {
                 "jpeg",
                 Some(&mut output_file),
             )
-            .await
             .unwrap();
 
         // path in new composed manifest
@@ -4602,15 +4595,16 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    #[actix::test]
-    async fn test_datahash_embeddable_manifest_user_hashed() {
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_datahash_embeddable_manifest_user_hashed() {
         // test adding to actual image
         let ap = fixture_path("cloud.jpg");
 
         let mut hasher = Hasher::SHA256(Sha256::new());
 
         // Do we generate JUMBF?
-        let signer = temp_remote_signer();
+        let signer = temp_signer();
 
         // Create claims store.
         let mut store = Store::new();
@@ -4652,7 +4646,6 @@ pub mod tests {
         // get the embeddable manifest, using user hashing
         let cm = store
             .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None)
-            .await
             .unwrap();
 
         // path in new composed manifest
