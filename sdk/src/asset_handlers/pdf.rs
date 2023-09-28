@@ -63,7 +63,7 @@ pub(crate) trait C2paPdf: Sized {
     /// Returns `true` if the `PDF` is password protected, `false` otherwise.
     fn is_password_protected(&self) -> bool;
 
-    /// Returns `true` if this PDF has `c2pa` Manifests, `false` otherwise.
+    /// Returns `true` if this PDF has C2PA Manifests, `false` otherwise.
     fn has_c2pa_manifest(&self) -> bool;
 
     /// Writes provided `bytes` as a PDF `Embedded File`
@@ -439,7 +439,7 @@ impl Pdf {
         };
 
         // Gets the /Names array from the /EmbeddedFiles Dictionary. This will contain the reference
-        // to the c2pa manifest.
+        // to the C2PA manifest.
         let names_vector_object = embedded_files_dictionary.get_mut(NAMES_KEY)?;
         let names_vector = match names_vector_object.as_reference() {
             Ok(object_id) => self.document.get_object_mut(object_id)?.as_array_mut()?,
