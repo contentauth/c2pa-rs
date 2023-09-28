@@ -119,22 +119,19 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
         .unprotected(unprotected_header)
         .payload(data.to_vec());
 
-    let sign1_builder = if _sync {
-        sign1_builder.try_create_signature(aad, |bytes| signer.sign(bytes))?
-    } else {
-        sign1_builder
-    };
-
     let mut sign1 = sign1_builder.build();
 
-    if _async {
-        let tbs = coset::sig_structure_data(
-            coset::SignatureContext::CoseSign1,
-            sign1.protected.clone(),
-            None,
-            aad,
-            sign1.payload.as_ref().unwrap_or(&vec![]),
-        );
+    let tbs = coset::sig_structure_data(
+        coset::SignatureContext::CoseSign1,
+        sign1.protected.clone(),
+        None,
+        aad,
+        sign1.payload.as_ref().unwrap_or(&vec![]),
+    );
+
+    if _sync {
+        sign1.signature = signer.sign(&tbs)?;
+    } else {
         sign1.signature = signer.sign(tbs).await?;
     }
 
@@ -147,11 +144,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     Ok(c2pa_sig_data)
 }
 
-#[async_generic(async_signature(
-    signer: &dyn AsyncSigner,
-    data: &[u8],
-    alg: SigningAlg,
-))]
+#[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8], alg: SigningAlg))]
 fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
     let protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
