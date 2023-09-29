@@ -24,8 +24,8 @@ use lazy_static::lazy_static;
 use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
+        riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -44,6 +44,7 @@ lazy_static! {
             Box::new(RiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
 
         let mut handler_map = HashMap::new();
@@ -71,6 +72,7 @@ lazy_static! {
             Box::new(RiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
         let mut handler_map = HashMap::new();
 
@@ -318,6 +320,7 @@ pub mod tests {
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
 
         // build handler map
@@ -341,6 +344,7 @@ pub mod tests {
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
 
         // build handler map
@@ -354,8 +358,13 @@ pub mod tests {
 
     #[test]
     fn test_get_writer() {
-        let handlers: Vec<Box<dyn AssetIO>> =
-            vec![Box::new(JpegIO::new("")), Box::new(PngIO::new(""))];
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(Mp3IO::new("")),
+            Box::new(SvgIO::new("")),
+            Box::new(RiffIO::new("")),
+        ];
 
         // build handler map
         for h in handlers {
@@ -403,5 +412,6 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
         assert!(supported.iter().any(|s| s == "svg"));
+        assert!(supported.iter().any(|s| s == "mp3"));
     }
 }
