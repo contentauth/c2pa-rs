@@ -28,6 +28,7 @@ static C2PA_RELATIONSHIP: &[u8] = b"C2PA_Manifest";
 static CONTENT_CREDS: &str = "Content Credentials";
 static EMBEDDED_FILES_KEY: &[u8] = b"EmbeddedFiles";
 static SUBTYPE_KEY: &[u8] = b"Subtype";
+static TYPE_KEY: &[u8] = b"Type";
 static NAMES_KEY: &[u8] = b"Names";
 
 /// Error representing failure scenarios while interacting with PDFs.
@@ -38,9 +39,18 @@ pub enum Error {
     #[error(transparent)]
     UnableToReadPdf(#[from] lopdf::Error),
 
+    /// No Manifest is present in the PDF.
+    #[error("No manifest is present in the PDF.")]
+    NoManifest,
+
     /// Error occurred while adding a C2PA manifest as an `Annotation` to the PDF.
     #[error("Unable to add C2PA manifest as an annotation to the PDF.")]
     AddingAnnotation,
+
+    // The PDF has an `AFRelationship` set to C2PA, but we were unable to find
+    // the manifest bytes in the PDF's embedded files.
+    #[error("Unable to find C2PA manifest in the PDF's embedded files.")]
+    UnableToFindEmbeddedFileManifest,
 }
 
 const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
@@ -53,7 +63,7 @@ pub(crate) trait C2paPdf: Sized {
     /// Returns `true` if the `PDF` is password protected, `false` otherwise.
     fn is_password_protected(&self) -> bool;
 
-    /// Returns `true` if this PDF has `c2pa` Manifests, `false` otherwise.
+    /// Returns `true` if this PDF has C2PA Manifests, `false` otherwise.
     fn has_c2pa_manifest(&self) -> bool;
 
     /// Writes provided `bytes` as a PDF `Embedded File`
@@ -65,6 +75,8 @@ pub(crate) trait C2paPdf: Sized {
     /// Returns a reference to the C2PA manifest bytes.
     #[allow(clippy::needless_lifetimes)] // required for automock::mockall
     fn read_manifest_bytes<'a>(&'a self) -> Result<Option<Vec<&'a [u8]>>, Error>;
+
+    fn remove_manifest_bytes(&mut self) -> Result<(), Error>;
 
     fn read_xmp(&self) -> Option<String>;
 }
@@ -218,6 +230,45 @@ impl C2paPdf for Pdf {
         ]))
     }
 
+    fn remove_manifest_bytes(&mut self) -> Result<(), Error> {
+        if !self.has_c2pa_manifest() {
+            return Err(Error::NoManifest);
+        }
+
+        // Find the File Spec, which contains the reference to the manifest.
+        let file_spec_ref = self
+            .document
+            .catalog()?
+            .get(ASSOCIATED_FILE_KEY)?
+            .as_reference()?;
+
+        // Find the manifest's file stream.
+        let file_stream_ref = self
+            .document
+            .get_object(file_spec_ref)?
+            .as_dict()?
+            .get(b"EF")?
+            .as_reference()?;
+
+        // Attempt to remove the manifest from the PDF's `Embedded Files`s. If the manifest
+        // isn't in the PDF's embedded files, remove the manifest from the PDF's annotations.
+        //
+        // We do the operation in this order because a PDF's annotations are attached to a page.
+        // It's possible we'd have to iterate over every page of the PDF before determining the
+        // manifest is referenced from an Embedded File instead.
+        self.remove_manifest_from_embedded_files()
+            .or_else(|_| self.remove_manifest_from_annotations())?;
+
+        // Remove the AF_Relationship from the catalog.
+        self.document.catalog_mut()?.remove(AF_RELATIONSHIP_KEY);
+
+        // Delete the manifest and its descriptor from the PDF
+        self.document.delete_object(file_stream_ref);
+        self.document.delete_object(file_spec_ref);
+
+        Ok(())
+    }
+
     /// Reads the `Metadata` field referenced in the PDF document's `Catalog` entry. Will return
     /// `None` if no Metadata is present.
     fn read_xmp(&self) -> Option<String> {
@@ -327,7 +378,7 @@ impl Pdf {
             "Desc" => Object::string_literal(CONTENT_CREDS),
             "F" => Object::string_literal(CONTENT_CREDS),
             "EF" => Reference(file_stream_ref),
-            "Type" => Name("FileSpec".into()),
+            TYPE_KEY => Name("FileSpec".into()),
             "UF" => Object::string_literal(CONTENT_CREDS),
         };
 
@@ -346,6 +397,76 @@ impl Pdf {
         );
 
         self.document.add_object(stream)
+    }
+
+    /// Remove the C2PA Manifest `Annotation` from the PDF.
+    fn remove_manifest_from_annotations(&mut self) -> Result<(), Error> {
+        for (_, page_id) in self.document.get_pages() {
+            self.document
+                .get_object_mut(page_id)?
+                .as_dict_mut()?
+                .get_mut(ANNOTATIONS_KEY)?
+                .as_array_mut()?
+                .retain(|obj| {
+                    obj.as_dict()
+                        .and_then(|annot| annot.get(TYPE_KEY))
+                        .and_then(Object::as_name_str)
+                        .map(|str| str != CONTENT_CREDS)
+                        .unwrap_or(true)
+                });
+        }
+
+        Ok(())
+    }
+
+    /// Removes the manifest from the PDF's embedded files collection.
+    fn remove_manifest_from_embedded_files(&mut self) -> Result<(), Error> {
+        let Ok(names) = self.document.catalog_mut()?.get_mut(NAMES_KEY) else {
+            return Err(Error::NoManifest);
+        };
+
+        // Follows the reference to the /Names Dictionary.
+        let names_dictionary = match names.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
+            _ => names.as_dict_mut()?,
+        };
+
+        // Follows the reference to the /EmbeddedFiles Dictionary.
+        let embedded_files_object = names_dictionary.get_mut(EMBEDDED_FILES_KEY)?;
+        let embedded_files_dictionary = match embedded_files_object.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_dict_mut()?,
+            _ => embedded_files_object.as_dict_mut()?,
+        };
+
+        // Gets the /Names array from the /EmbeddedFiles Dictionary. This will contain the reference
+        // to the C2PA manifest.
+        let names_vector_object = embedded_files_dictionary.get_mut(NAMES_KEY)?;
+        let names_vector = match names_vector_object.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?.as_array_mut()?,
+            _ => names_vector_object.as_array_mut()?,
+        };
+
+        // Find the "Content Credentials" marker name in the /Names Array.
+        let content_creds_marker_idx = names_vector
+            .iter()
+            .position(|value| {
+                value
+                    .as_string()
+                    .map(|value| value == CONTENT_CREDS)
+                    .unwrap_or_default()
+            })
+            .ok_or_else(|| Error::UnableToFindEmbeddedFileManifest)?;
+
+        let content_creds_reference_idx = content_creds_marker_idx + 1;
+        if content_creds_reference_idx >= names_vector.len() {
+            return Err(Error::UnableToFindEmbeddedFileManifest);
+        }
+
+        // Delete the "Content Credentials" marker object and the reference to the C2PA
+        // manifest in the PDF's embedded files.
+        names_vector.drain(content_creds_marker_idx..=content_creds_reference_idx);
+
+        Ok(())
     }
 }
 
@@ -559,5 +680,43 @@ mod tests {
     fn test_read_xmp_on_pdf_with_some_metadata() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(pdf.read_xmp().is_some());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_remove_manifest_bytes_from_file_without_c2pa_returns_error() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+
+        assert!(matches!(
+            pdf.remove_manifest_bytes(),
+            Err(Error::NoManifest)
+        ));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_remove_manifest_from_file_with_annotation_based_manifest() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
+        pdf.write_manifest_as_annotation(manifest_bytes.clone())
+            .unwrap();
+
+        assert!(pdf.has_c2pa_manifest());
+        assert!(pdf.remove_manifest_bytes().is_ok());
+        assert!(!pdf.has_c2pa_manifest());
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn test_remove_manifest_from_file_with_embedded_file_based_manifest() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
+
+        pdf.write_manifest_as_embedded_file(manifest_bytes.clone())
+            .unwrap();
+
+        assert!(pdf.has_c2pa_manifest());
+        assert!(pdf.remove_manifest_bytes().is_ok());
+        assert!(!pdf.has_c2pa_manifest());
     }
 }
