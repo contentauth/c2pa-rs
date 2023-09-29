@@ -20,6 +20,7 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use riff::*;
+use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -356,13 +357,18 @@ impl AssetIO for RiffIO {
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
 
-        self.write_cai(&mut input_stream, &mut output_stream, store_bytes)
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+
+        // copy temp file to asset
+        std::fs::rename(temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 
     fn get_object_locations(
