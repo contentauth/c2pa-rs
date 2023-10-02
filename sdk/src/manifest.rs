@@ -1005,6 +1005,23 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
+    /// Embed a signed manifest into DASH assets using a supplied signer.
+    #[cfg(feature = "file_io")]
+    pub fn embed_to_mpd<P: AsRef<Path>>(
+        &mut self,
+        asset_path: P,
+        output_path: P,
+        signer: &dyn Signer,
+    ) -> Result<()> {
+        self.set_asset_from_path(asset_path.as_ref())?;
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to DASH content
+        store.save_to_mpd(asset_path.as_ref(), output_path.as_ref(), signer)
+    }
+
     /// Embed a signed manifest into a stream using a supplied signer.
     /// returns the bytes of the  manifest that was embedded
     pub fn embed_from_memory(
