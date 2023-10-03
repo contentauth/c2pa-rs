@@ -118,7 +118,7 @@ fn time_stamp_request_http(
 
     let body_reader = std::io::Cursor::new(body);
 
-    let mut req = ureq::post(url).set("Content-Type", HTTP_CONTENT_TYPE_REQUEST);
+    let mut req = ureq::post(url);
 
     if let Some(headers) = headers {
         for (ref name, ref value) in headers {
@@ -127,6 +127,7 @@ fn time_stamp_request_http(
     }
 
     let response = req
+        .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
         .send(body_reader)
         .map_err(|_err| Error::CoseTimeStampGeneration)?;
 
