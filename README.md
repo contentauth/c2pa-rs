@@ -53,7 +53,7 @@ The SDK has been tested on the following operating systems:
  | `png`         | `image/png`                                         |
  | `svg`         | `image/svg+xml`                                     |
  | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
+ | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
 
 ## Usage

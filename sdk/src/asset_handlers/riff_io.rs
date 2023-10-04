@@ -31,12 +31,15 @@ use crate::{
     utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
-static SUPPORTED_TYPES: [&str; 9] = [
+static SUPPORTED_TYPES: [&str; 12] = [
     "avi",
     "wav",
     "webp",
     "image/webp",
+    "audio/wav",
+    "audio/wave",
     "audio/x-wav",
+    "audio/vnd.wave",
     "application/x-troff-msvideo",
     "video/avi",
     "video/msvideo",
