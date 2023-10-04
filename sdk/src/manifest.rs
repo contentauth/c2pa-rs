@@ -1022,8 +1022,10 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of the new asset
-    /// We plan to deprecate this, please use embed_to_stream instead
+    ///
+    /// Returns the bytes of the new asset.
+    ///
+    /// We plan to deprecate this; please use embed_to_stream instead.
     pub fn embed_stream(
         &mut self,
         format: &str,
