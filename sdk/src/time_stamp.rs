@@ -101,6 +101,7 @@ pub(crate) fn cose_sigtst_to_tstinfos(
 #[cfg(feature = "openssl_sign")]
 fn time_stamp_request_http(
     url: &str,
+    headers: Option<Vec<(String, String)>>,
     request: &crate::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -117,7 +118,15 @@ fn time_stamp_request_http(
 
     let body_reader = std::io::Cursor::new(body);
 
-    let response = ureq::post(url)
+    let mut req = ureq::post(url);
+
+    if let Some(headers) = headers {
+        for (ref name, ref value) in headers {
+            req = req.set(name.as_str(), value.as_str());
+        }
+    }
+
+    let response = req
         .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
         .send(body_reader)
         .map_err(|_err| Error::CoseTimeStampGeneration)?;
@@ -169,6 +178,7 @@ fn time_stamp_request_http(
 #[cfg(feature = "openssl_sign")]
 pub(crate) fn time_stamp_message_http(
     url: &str,
+    headers: Option<Vec<(String, String)>>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>> {
@@ -195,7 +205,7 @@ pub(crate) fn time_stamp_message_http(
         extensions: None,
     };
 
-    time_stamp_request_http(url, &request)
+    time_stamp_request_http(url, headers, &request)
 }
 
 pub struct TimeStampResponse(TimeStampResp);
@@ -272,10 +282,19 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
 }
 
 #[allow(unused_variables)]
-pub fn default_rfc3161_request(url: &str, data: &[u8]) -> Result<Vec<u8>> {
+pub fn default_rfc3161_request(
+    url: &str,
+    headers: Option<Vec<(String, String)>>,
+    data: &[u8],
+) -> Result<Vec<u8>> {
     #[cfg(feature = "openssl_sign")]
     {
-        let ts = time_stamp_message_http(url, data, x509_certificate::DigestAlgorithm::Sha256)?;
+        let ts = time_stamp_message_http(
+            url,
+            headers,
+            data,
+            x509_certificate::DigestAlgorithm::Sha256,
+        )?;
 
         // sanity check
         verify_timestamp(&ts, data)?;
