@@ -1042,7 +1042,8 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of c2pa_manifest that was embedded
+    ///
+    /// Returns the bytes of c2pa_manifest that was embedded.
     pub fn embed_to_stream(
         &mut self,
         format: &str,
