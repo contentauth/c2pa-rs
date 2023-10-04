@@ -34,6 +34,28 @@ pub trait Signer {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
+        self.time_authority_url()
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
@@ -97,6 +119,30 @@ pub trait AsyncSigner: Sync {
     /// URL for time authority to time stamp the signature
     fn time_authority_url(&self) -> Option<String> {
         None
+    }
+
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        // NOTE: This is currently synchronous, but may become
+        // async in the future.
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
+        self.time_authority_url()
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
     }
 
     /// OCSP response for the signing cert if available

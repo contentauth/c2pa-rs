@@ -53,7 +53,7 @@ The SDK has been tested on the following operating systems:
  | `png`         | `image/png`                                         |
  | `svg`         | `image/svg+xml`                                     |
  | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
+ | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
 
 ## Usage
@@ -62,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.26.0"
+c2pa = "0.27.0"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
