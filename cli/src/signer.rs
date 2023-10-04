@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use c2pa::{create_signer, Signer, SigningAlg};

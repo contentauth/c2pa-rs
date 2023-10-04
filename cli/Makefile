@@ -14,7 +14,7 @@ else
 endif
 
 check-format:
-	cargo fmt -- --check
+	cargo +nightly fmt -- --check
 
 clippy:
 	cargo clippy --all-features --all-targets -- -D warnings
