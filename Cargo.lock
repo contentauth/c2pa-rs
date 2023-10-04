@@ -309,9 +309,9 @@ checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
 name = "c2pa"
-version = "0.25.1"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a9d8ae5e6eafb65e5e533750bd6cc9e88d06733dc481a3815ae7e544fadfde4"
+checksum = "7aa352b27c99f142a8fb16466b36c7d5db933ba11c0898bfce1a622a97bf0437"
 dependencies = [
  "asn1-rs",
  "async-trait",
@@ -342,6 +342,7 @@ dependencies = [
  "multibase",
  "multihash",
  "openssl",
+ "openssl-sys",
  "png_pong",
  "rand",
  "range-set",
@@ -1476,9 +1477,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.90"
+version = "0.9.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "374533b0e45f3a7ced10fcaeccca020e66656bc03dac384f852e4e5a7a8104a6"
+checksum = "db7e971c2c2bba161b2d2fdf37080177eff520b3bc044787c7f1f5f9e78d869b"
 dependencies = [
  "cc",
  "libc",

@@ -220,4 +220,4 @@ c2patool sample/image.jpg -c '{"assertions": [{"label": "org.contentauth.test", 
 
 ## Nightly builds
 
-Interim binaries are generated every day around 0530 UTC (i.e. overnight for our US-based team) and are available for roughly two weeks thereafter. These can be helpful for testing purposes. For more information, see the documentation on [nightly builds](/docs/nightly-builds/README.md).
+Interim binaries are generated every day around 05:30 UTC (overnight for our US-based team) and are available for roughly two weeks thereafter. These can be helpful for testing purposes. For more information, see the documentation on [nightly builds](https://github.com/contentauth/c2patool/tree/main/docs/nightly-builds/README.md).

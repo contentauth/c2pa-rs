@@ -11,14 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{error::Error, fs, fs::create_dir_all, path::PathBuf, process::Command};
+
 use assert_cmd::prelude::*; // Add methods on commands
 use predicates::prelude::*;
 use serde_json::Value;
-use std::error::Error;
-use std::fs;
-use std::fs::create_dir_all;
-use std::path::PathBuf;
-use std::process::Command;
 
 const TEST_IMAGE: &str = "earth_apollo17.jpg";
 //const TEST_IMAGE: &str = "libpng-test.png"; // save for png testing
