@@ -160,7 +160,7 @@ impl ManifestStore {
             .map(|store| Self::from_store(&store, &mut validation_log))
     }
 
-    /// generate a Store from a format string and stream
+    /// Generate a Store from a format string and stream.
     pub fn from_stream(
         format: &str,
         stream: &mut dyn CAIRead,
