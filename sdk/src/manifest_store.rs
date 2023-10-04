@@ -152,7 +152,7 @@ impl ManifestStore {
         ))
     }
 
-    /// generate a Store from a format string and bytes
+    /// Generate a Store from a format string and bytes.
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
