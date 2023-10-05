@@ -62,8 +62,10 @@ The tool will display the version installed. Compare the version number displaye
  | `heif`        | `image/heif`                                        |
  | `jpg`, `jpeg` | `image/jpeg`                                        |
  | `m4a`         | `audio/mp4`                                         |
+ | `mp3`         | `"audio/mpeg"`                                      |
  | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         |
  | `mov`         | `video/quicktime`                                   |
+ | `pdf`         | `application/pdf`  <sup>**</sup>                    |
  | `png`         | `image/png`                                         |
  | `svg`         | `image/svg+xml`                                     |
  | `tif`,`tiff`  | `image/tiff`                                        |
@@ -71,6 +73,7 @@ The tool will display the version installed. Compare the version number displaye
  | `webp`        | `image/webp`                                        |
 
 <sup>*</sup> Fragmented mp4 is not yet supported.
+<sup>**</sup> Read only
 
 ## Usage
 
