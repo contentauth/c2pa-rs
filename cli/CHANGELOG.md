@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.6.2
+_05 October 2023_
+
+* update to c2pa 0.27.1 ([contentauth/c2patool#146](https://github.com/contentauth/c2patool/pull/146))
+* Merge branch 'main' of https://github.com/contentauth/c2patool
+* Add Do not train example
+* Upgrade to c2pa-rs 0.26.0 ([contentauth/c2patool#143](https://github.com/contentauth/c2patool/pull/143))
+* Fix issue with docusaurus styling and fix broken links ([contentauth/c2patool#138](https://github.com/contentauth/c2patool/pull/138))
+* Updates to c2pa-rs 0.25.1 ([contentauth/c2patool#128](https://github.com/contentauth/c2patool/pull/128))
+* Fix windows release ([contentauth/c2patool#132](https://github.com/contentauth/c2patool/pull/132))
 ## 0.6.1
 _24 July 2023_
 
