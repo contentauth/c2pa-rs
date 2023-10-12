@@ -36,6 +36,7 @@ openssl_sign = ["openssl", "openssl-sys"]
 otf = ["fonttools"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
+woff = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

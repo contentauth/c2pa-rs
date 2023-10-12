@@ -287,6 +287,9 @@ pub enum Error {
     #[error("Failed to save font")]
     FontSaveError,
 
+    #[error("Font has unknown magic number")]
+    FontUnknownMagic,
+
     /// Failed to parse or de-serialize font data
     #[error("Failed to de-serialize data")]
     DeserializationError,

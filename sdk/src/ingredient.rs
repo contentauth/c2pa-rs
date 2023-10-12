@@ -513,6 +513,7 @@ impl Ingredient {
             "ai" => "application/postscript",
             "otf" => "application/x-font-opentype",
             "ttf" => "application/x-font-truetype",
+            "woff" => "application/x-font-woff",
             _ => "application/octet-stream",
         }
         .to_owned();

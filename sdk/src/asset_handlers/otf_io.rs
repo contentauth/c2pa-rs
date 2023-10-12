@@ -121,7 +121,7 @@ mod font_xmp_support {
     where
         TSource: Read + Seek + ?Sized,
     {
-        match read_reference_to_stream(source)? {
+        match read_reference_from_stream(source)? {
             // For now we pretend the reference read from the stream is really XMP
             // data
             Some(xmp) => {
@@ -647,7 +647,7 @@ fn process_file_with_streams(
 fn read_reference_from_font(font_path: &Path) -> Result<Option<String>> {
     // open the font source
     let mut font_stream = open_bufreader_for_file(font_path)?;
-    read_reference_to_stream(&mut font_stream)
+    read_reference_from_stream(&mut font_stream)
 }
 
 /// Reads the C2PA manifest store reference from the stream.
@@ -659,7 +659,7 @@ fn read_reference_from_font(font_path: &Path) -> Result<Option<String>> {
 /// ## Returns
 /// If a reference is available, it will be returned.
 #[allow(dead_code)]
-fn read_reference_to_stream<TSource>(source: &mut TSource) -> Result<Option<String>>
+fn read_reference_from_stream<TSource>(source: &mut TSource) -> Result<Option<String>>
 where
     TSource: Read + Seek + ?Sized,
 {
@@ -900,7 +900,7 @@ impl CAIReader for OtfIO {
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
         // Fonts have no XMP data.
         // BUT, for now we will pretend it does and read from the reference
-        match read_reference_to_stream(asset_reader) {
+        match read_reference_from_stream(asset_reader) {
             Ok(reference) => reference,
             Err(_) => None,
         }
