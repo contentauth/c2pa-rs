@@ -11,6 +11,7 @@
 // each license.
 
 #![doc = include_str!("../README.md")]
+
 /// Tool to display and create C2PA manifests
 ///
 /// A file path to an asset must be provided
@@ -24,7 +25,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
-use clap::{AppSettings, Parser};
+use clap::{AppSettings, Parser, Subcommand};
 use serde::Deserialize;
 
 mod info;
@@ -145,7 +146,40 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     }
 }
 
+#[derive(Debug, Subcommand)]
+enum SubCommand {
+    AddManifest {},
+}
+
+impl SubCommand {
+    fn has_command(potential_command: Option<String>) -> bool {
+        let Some(potential_command) = potential_command else {
+            return false;
+        };
+
+        let vector = vec!["add-manifest".to_string()];
+        vector.contains(&potential_command)
+    }
+}
+
+#[derive(Debug, Parser)]
+struct SubcommandArguments {
+    #[clap(subcommand)]
+    command: SubCommand,
+}
+
 fn main() -> Result<()> {
+    let first_arg = std::env::args().nth(1);
+    if SubCommand::has_command(first_arg) {
+        let args = SubcommandArguments::parse();
+        match args.command {
+            SubCommand::AddManifest {} => {
+                println!("add-manifest!");
+            }
+        }
+        return Ok(());
+    }
+
     let args = CliArgs::parse();
 
     // set RUST_LOG=debug to get detailed debug logging
