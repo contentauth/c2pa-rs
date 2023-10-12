@@ -226,7 +226,7 @@ impl TimeStampResponse {
                     token
                         .content
                         .clone()
-                        .decode(|cons| SignedData::take_from(cons))
+                        .decode(SignedData::take_from)
                         .map_err(|_err| Error::CoseTimeStampGeneration)?,
                 ))
             } else {
