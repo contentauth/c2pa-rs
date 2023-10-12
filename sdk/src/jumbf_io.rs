@@ -20,10 +20,10 @@ use std::{
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "pdf")]
-use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "otf")]
 use crate::asset_handlers::otf_io::OtfIO;
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
