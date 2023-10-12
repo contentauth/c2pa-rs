@@ -57,6 +57,7 @@ const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 const DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
+const MS_C2PA_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .311 .76 .59 .1 .9);
 
 /********************** Supported Valiators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -384,7 +385,8 @@ fn check_cert(
             if !(eku.email_protection
                 || eku.ocsp_signing
                 || eku.time_stamping
-                || has_oid(eku, &DOCUMENT_SIGNING_OID))
+                || has_oid(eku, &DOCUMENT_SIGNING_OID)
+                || has_oid(eku, &MS_C2PA_SIGNING_OID))
             {
                 let log_item = log_item!(
                     "Cose_Sign1",
