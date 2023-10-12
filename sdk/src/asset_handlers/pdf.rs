@@ -698,8 +698,7 @@ mod tests {
     fn test_remove_manifest_from_file_with_annotation_based_manifest() {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
-        pdf.write_manifest_as_annotation(manifest_bytes.clone())
-            .unwrap();
+        pdf.write_manifest_as_annotation(manifest_bytes).unwrap();
 
         assert!(pdf.has_c2pa_manifest());
         assert!(pdf.remove_manifest_bytes().is_ok());
@@ -712,8 +711,7 @@ mod tests {
         let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         let manifest_bytes = vec![0u8, 1u8, 1u8, 2u8, 3u8];
 
-        pdf.write_manifest_as_embedded_file(manifest_bytes.clone())
-            .unwrap();
+        pdf.write_manifest_as_embedded_file(manifest_bytes).unwrap();
 
         assert!(pdf.has_c2pa_manifest());
         assert!(pdf.remove_manifest_bytes().is_ok());
