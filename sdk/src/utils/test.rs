@@ -39,6 +39,8 @@ use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 
+pub const TEST_WEBP: &str = "mars.webp";
+
 pub const TEST_VC: &str = r#"{
     "@context": [
     "https://www.w3.org/2018/credentials/v1",

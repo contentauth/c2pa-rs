@@ -826,7 +826,8 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                         None
                     };
 
-                    let _extent_offset = match offset_size {
+                    let extent_offset_file_pos = output.stream_position()?;
+                    let extent_offset = match offset_size {
                         0 => 0_u64,
                         4 => output.read_u32::<BigEndian>()? as u64,
                         8 => output.read_u64::<BigEndian>()?,
@@ -836,6 +837,54 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                             ))
                         }
                     };
+
+                    // no base offset so just adjust the raw extent_offset value
+                    if constuction_method == 0 && base_offset == 0 && extent_offset != 0 {
+                        output.seek(SeekFrom::Start(extent_offset_file_pos))?;
+                        match offset_size {
+                            4 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset as u32
+                                        - u32::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset as u32
+                                        + u32::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u32::<BigEndian>(new_offset)?;
+                            }
+                            8 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset
+                                        - u64::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset
+                                        + u64::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u64::<BigEndian>(new_offset)?;
+                            }
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF: unknown extent_offset format".to_string(),
+                                ))
+                            }
+                        }
+                    }
 
                     let _extent_length = match length_size {
                         0 => 0_u64,
@@ -1611,7 +1660,7 @@ pub mod tests {
     use crate::utils::test::{fixture_path, temp_dir_path};
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(file_io)]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_read_mp4() {
         use crate::{

@@ -22,10 +22,12 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "otf")]
 use crate::asset_handlers::otf_io::OtfIO;
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
-        svg_io::SvgIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
+        riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -35,6 +37,8 @@ use crate::{
 lazy_static! {
     static ref ASSET_HANDLERS: HashMap<String, Box<dyn AssetIO>> = {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
+            #[cfg(feature = "pdf")]
+            Box::new(PdfIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(C2paIO::new("")),
             Box::new(JpegIO::new("")),
@@ -42,9 +46,11 @@ lazy_static! {
             Box::new(RiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(Mp3IO::new("")),
             #[cfg(feature = "otf")]
             Box::new(OtfIO::new("")),
         ];
+
         let mut handler_map = HashMap::new();
 
         // build handler map
@@ -70,6 +76,7 @@ lazy_static! {
             Box::new(RiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
+            Box::new(Mp3IO::new("")),
             #[cfg(feature = "otf")]
             Box::new(OtfIO::new("")),
         ];
@@ -319,6 +326,7 @@ pub mod tests {
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
 
         // build handler map
@@ -336,10 +344,13 @@ pub mod tests {
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(JpegIO::new("")),
+            #[cfg(feature = "pdf")]
+            Box::new(PdfIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
+            Box::new(Mp3IO::new("")),
         ];
 
         // build handler map
@@ -353,8 +364,13 @@ pub mod tests {
 
     #[test]
     fn test_get_writer() {
-        let handlers: Vec<Box<dyn AssetIO>> =
-            vec![Box::new(JpegIO::new("")), Box::new(PngIO::new(""))];
+        let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(JpegIO::new("")),
+            Box::new(PngIO::new("")),
+            Box::new(Mp3IO::new("")),
+            Box::new(SvgIO::new("")),
+            Box::new(RiffIO::new("")),
+        ];
 
         // build handler map
         for h in handlers {
@@ -386,13 +402,15 @@ pub mod tests {
     fn test_get_supported_list() {
         let supported = get_supported_types();
 
+        let pdf_supported = supported.iter().any(|s| s == "pdf");
+        assert_eq!(pdf_supported, cfg!(feature = "pdf"));
+
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));
         assert!(supported.iter().any(|s| s == "png"));
         assert!(supported.iter().any(|s| s == "mov"));
         assert!(supported.iter().any(|s| s == "mp4"));
         assert!(supported.iter().any(|s| s == "m4a"));
-        assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "avi"));
         assert!(supported.iter().any(|s| s == "webp"));
         assert!(supported.iter().any(|s| s == "wav"));
@@ -400,5 +418,6 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "tiff"));
         assert!(supported.iter().any(|s| s == "dng"));
         assert!(supported.iter().any(|s| s == "svg"));
+        assert!(supported.iter().any(|s| s == "mp3"));
     }
 }

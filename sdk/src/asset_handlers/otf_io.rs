@@ -436,7 +436,7 @@ impl SfntChunkReader for OtfIO {
             });
         }
 
-        // Do not iterate if the log level is not set to at least trace 
+        // Do not iterate if the log level is not set to at least trace
         if log::max_level().cmp(&log::LevelFilter::Trace).is_ge() {
             for position in positions.iter().as_ref() {
                 trace!("Position for C2PA in font: {:?}", &position);
@@ -803,7 +803,7 @@ where
                         htype: HashBlockObjectType::Other,
                     }]
                 }
-            },
+            }
             // Similarly for the actual table data, we need to specialize C2PA
             // and in this case the `head` table as well, to ignore the checksum
             // adjustment
@@ -847,7 +847,7 @@ where
                     });
                 }
                 table_positions
-            },
+            }
         };
         positions.append(&mut position_objs);
     }
