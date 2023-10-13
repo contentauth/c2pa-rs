@@ -1017,15 +1017,15 @@ impl Manifest {
         // todo:: see if we can pass a trait with to_vec support like we to for Strings
         let asset = asset.to_vec();
         let mut stream = std::io::Cursor::new(asset);
-
-        self.embed_stream(format, &mut stream, signer)
+        let mut output_stream = Cursor::new(Vec::new());
+        self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        Ok(output_stream.into_inner())
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
     ///
-    /// Returns the bytes of the new asset.
-    ///
-    /// We plan to deprecate this; please use embed_to_stream instead.
+    /// Returns the bytes of the new asset
+    #[deprecated(since = "0.27.2", note = "use embed_to_stream instead")]
     pub fn embed_stream(
         &mut self,
         format: &str,
@@ -1245,6 +1245,8 @@ pub struct SignatureInfo {
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
 
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
@@ -1794,13 +1796,14 @@ pub(crate) mod tests {
             .unwrap();
 
         let signer = temp_signer();
+        let mut output = Cursor::new(Vec::new());
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        manifest
+            .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
@@ -2009,16 +2012,17 @@ pub(crate) mod tests {
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
-        let mut stream = std::io::Cursor::new(image.to_vec());
+        let mut input = std::io::Cursor::new(image.to_vec());
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        let mut output = Cursor::new(Vec::new());
+        manifest
+            .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         println!("manifest_store = {manifest_store}");
         let m = manifest_store.get_active().unwrap();
 

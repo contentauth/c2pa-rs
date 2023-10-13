@@ -863,7 +863,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
     fn clone_sub_files<R: Read + Seek>(
         &mut self,
-        tiff_tree: &mut Arena<ImageFileDirectory>,
+        tiff_tree: &Arena<ImageFileDirectory>,
         page: Token,
         asset_reader: &mut R,
     ) -> Result<HashMap<u16, Vec<u64>>> {
