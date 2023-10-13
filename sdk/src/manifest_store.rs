@@ -25,7 +25,7 @@ use crate::{
     store::Store,
     utils::base64,
     validation_status::{status_for_store, ValidationStatus},
-    Manifest, Result,
+    CAIRead, Manifest, Result,
 };
 
 #[derive(Serialize)]
@@ -44,7 +44,7 @@ pub struct ManifestStore {
 
 impl ManifestStore {
     /// allocates a new empty ManifestStore
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ManifestStore {
             active_manifest: None,
             manifests: HashMap::<String, Manifest>::new(),
@@ -149,12 +149,33 @@ impl ManifestStore {
         ))
     }
 
-    /// generate a Store from a format string and bytes
+    /// Generate a Store from a format string and bytes.
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
         Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
             .map(|store| Self::from_store(&store, &validation_log))
+    }
+
+    /// Generate a Store from a format string and stream.
+    pub fn from_stream(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        verify: bool,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let manifest_bytes = Store::load_jumbf_from_stream(format, stream)?;
+        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
+        if verify {
+            // verify store and claims
+            Store::verify_store(
+                &store,
+                &mut ClaimAssetData::Stream(stream, format),
+                &mut validation_log,
+            )?;
+        }
+        Ok(Self::from_store(&store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -487,6 +508,23 @@ mod tests {
             "../target/ms",
         )
         .expect("from_store_with_resources");
+        println!("{manifest_store}");
+
+        assert!(manifest_store.active_label().is_some());
+        assert!(manifest_store.get_active().is_some());
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        let manifest = manifest_store.get_active().unwrap();
+        assert!(!manifest.ingredients().is_empty());
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
+        assert!(manifest.time().is_some());
+    }
+
+    #[test]
+    fn manifest_report_from_stream() {
+        let image_bytes: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+        let mut stream = std::io::Cursor::new(image_bytes);
+        let manifest_store = ManifestStore::from_stream("image/jpeg", &mut stream, true).unwrap();
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());

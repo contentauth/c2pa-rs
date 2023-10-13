@@ -1023,7 +1023,8 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of the new asset
+    ///
+    /// Returns the bytes of the new asset
     #[deprecated(since = "0.27.2", note = "use embed_to_stream instead")]
     pub fn embed_stream(
         &mut self,
@@ -1041,7 +1042,8 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of c2pa_manifest that was embedded
+    ///
+    /// Returns the bytes of c2pa_manifest that was embedded.
     pub fn embed_to_stream(
         &mut self,
         format: &str,
