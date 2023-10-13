@@ -11,9 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use std::path::{Path, PathBuf};
 use std::{borrow::Cow, collections::HashMap};
+#[cfg(feature = "file_io")]
+use std::{
+    fs::{create_dir_all, read, write},
+    path::{Path, PathBuf},
+};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -110,6 +113,8 @@ pub struct ResourceStore {
     #[cfg(feature = "file_io")]
     #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 impl ResourceStore {
@@ -118,7 +123,13 @@ impl ResourceStore {
             resources: HashMap::new(),
             #[cfg(feature = "file_io")]
             base_path: None,
+            label: None,
         }
+    }
+
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
+        self.label = Some(label.into());
+        self
     }
 
     #[cfg(feature = "file_io")]
@@ -142,7 +153,7 @@ impl ResourceStore {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
             //make "svg" | "image/svg+xml" => ".svg",
-            "c2pa" | "application/x-c2pa-manifest-store" => ".cp2a",
+            "c2pa" | "application/x-c2pa-manifest-store" => ".c2pa",
             _ => "",
         };
         // clean string for possible filesystem use
@@ -170,6 +181,43 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
+    /// Adds a resource from a uri, generating a resource ref
+    ///
+    /// The generated identifier may be different from the key
+    pub(crate) fn add_uri<R>(
+        &mut self,
+        uri: &str,
+        format: &str,
+        value: R,
+    ) -> crate::Result<ResourceRef>
+    where
+        R: Into<Vec<u8>>,
+    {
+        #[cfg(feature = "file_io")]
+        let mut id = uri.to_string();
+        #[cfg(not(feature = "file_io"))]
+        let id = uri.to_string();
+
+        // if it isn't jumbf, assume it's an external uri and use it as is
+        if id.starts_with("self#jumbf=") {
+            #[cfg(feature = "file_io")]
+            if self.base_path.is_some() {
+                // convert to a file path always including the manifest label
+                id = id.replace("self#jumbf=", "");
+                if id.starts_with("/c2pa/") {
+                    id = id.replace("/c2pa/", "");
+                } else if let Some(label) = self.label.as_ref() {
+                    id = format!("{}/{id}", label);
+                }
+                id = id.replace([':'], "_");
+            }
+            if !self.exists(&id) {
+                self.add(&id, value)?;
+            }
+        }
+        Ok(ResourceRef::new(format, id))
+    }
+
     /// Adds a resource, using a given id value.
     pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
     where
@@ -179,9 +227,8 @@ impl ResourceStore {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
             let path = base.join(id.into());
-            std::fs::create_dir_all(path.parent().unwrap_or(Path::new("")))?;
-            #[allow(clippy::expect_used)]
-            std::fs::write(path, value.into())?;
+            create_dir_all(path.parent().unwrap_or(Path::new("")))?;
+            write(path, value.into())?;
             return Ok(self);
         }
         self.resources.insert(id.into(), value.into());
@@ -202,7 +249,7 @@ impl ResourceStore {
                 Some(base) => {
                     // read the file, save in Map and then return a reference
                     let path = base.join(id);
-                    let value = std::fs::read(path).map_err(|_| {
+                    let value = read(path).map_err(|_| {
                         let path = base.join(id).to_string_lossy().into_owned();
                         Error::ResourceNotFound(path)
                     })?;
