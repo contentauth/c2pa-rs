@@ -156,7 +156,7 @@ impl Store {
         if let Some(bh) = self.manifest_box_hash_cache.get(claim.label()) {
             bh.clone()
         } else {
-            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or(Vec::new())
+            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or_default()
         }
     }
 
