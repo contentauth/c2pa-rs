@@ -175,7 +175,7 @@ impl ManifestStore {
                 &mut validation_log,
             )?;
         }
-        Ok(Self::from_store(&store, &mut validation_log))
+        Ok(Self::from_store(&store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
