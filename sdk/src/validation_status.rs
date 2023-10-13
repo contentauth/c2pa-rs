@@ -161,7 +161,7 @@ impl PartialEq for ValidationStatus {
 /// be reported as a validation error for any ingredient.
 pub fn status_for_store(
     store: &Store,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &impl StatusTracker,
 ) -> Vec<ValidationStatus> {
     let statuses: Vec<ValidationStatus> = validation_log
         .get_log()

@@ -29,7 +29,7 @@ use crate::{
     assertions::{
         labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
-    asset_io::CAIRead,
+    asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -1017,16 +1017,36 @@ impl Manifest {
         // todo:: see if we can pass a trait with to_vec support like we to for Strings
         let asset = asset.to_vec();
         let mut stream = std::io::Cursor::new(asset);
-
-        self.embed_stream(format, &mut stream, signer)
+        let mut output_stream = Cursor::new(Vec::new());
+        self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        Ok(output_stream.into_inner())
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
     /// returns the bytes of the new asset
+    #[deprecated(since = "0.27.2", note = "use embed_to_stream instead")]
     pub fn embed_stream(
         &mut self,
         format: &str,
         stream: &mut dyn CAIRead,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // sign and write our store to to the output image file
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+
+        self.embed_to_stream(format, stream, &mut output_stream, signer)?;
+
+        Ok(output_stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the bytes of c2pa_manifest that was embedded
+    pub fn embed_to_stream(
+        &mut self,
+        format: &str,
+        source: &mut dyn CAIRead,
+        dest: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
         self.set_format(format);
@@ -1036,9 +1056,9 @@ impl Manifest {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail().is_none() {
+            if self.thumbnail_ref().is_none() {
                 if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
                 {
                     self.set_thumbnail(format, image)?;
                 }
@@ -1049,12 +1069,7 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-
-        store.save_to_stream(format, stream, &mut output_stream, signer)?;
-
-        Ok(output_stream.into_inner())
+        store.save_to_stream(format, source, dest, signer)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -1075,7 +1090,7 @@ impl Manifest {
         let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail().is_none() {
+            if self.thumbnail_ref().is_none() {
                 if let Ok((format, image)) =
                     crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
                 {
@@ -1228,6 +1243,8 @@ pub struct SignatureInfo {
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
 
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
@@ -1777,13 +1794,14 @@ pub(crate) mod tests {
             .unwrap();
 
         let signer = temp_signer();
+        let mut output = Cursor::new(Vec::new());
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        manifest
+            .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
@@ -1992,16 +2010,17 @@ pub(crate) mod tests {
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
-        let mut stream = std::io::Cursor::new(image.to_vec());
+        let mut input = std::io::Cursor::new(image.to_vec());
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        let mut output = Cursor::new(Vec::new());
+        manifest
+            .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         println!("manifest_store = {manifest_store}");
         let m = manifest_store.get_active().unwrap();
 
@@ -2207,6 +2226,33 @@ pub(crate) mod tests {
         let active_manifest = manifest_store.get_active().unwrap();
         assert!(active_manifest.thumbnail_ref().is_none());
         assert!(active_manifest.thumbnail().is_none());
+    }
+
+    #[test]
+    fn test_missing_thumbnail() {
+        const MANIFEST_JSON: &str = r#"
+            {
+                "claim_generator": "test",
+                "format" : "image/jpeg",
+                "thumbnail": {
+                    "format": "image/jpeg",
+                    "identifier": "does_not_exist.jpg"
+                }
+            }
+        "#;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+
+        let mut source = std::io::Cursor::new(vec![1, 2, 3]);
+        let mut dest = std::io::Cursor::new(Vec::new());
+        let signer = temp_signer();
+        let result =
+            manifest.embed_to_stream("image/jpeg", &mut source, &mut dest, signer.as_ref());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("resource not found: does_not_exist.jpg"));
     }
 
     #[test]

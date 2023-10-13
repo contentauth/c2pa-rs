@@ -569,7 +569,7 @@ impl Ingredient {
         &mut self,
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &impl StatusTracker,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -736,7 +736,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
@@ -798,7 +798,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -871,7 +871,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1206,7 +1206,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &mut validation_log)?;
+        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
