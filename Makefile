@@ -20,7 +20,7 @@ check-docs:
 	cargo doc --no-deps --workspace --all-features
 
 clippy:
-	cargo clippy --all-features --all-targets -- -D warnings
+	cargo +nightly clippy --all-features --all-targets -- -D warnings
 
 test-local:
 	cargo test --all-features

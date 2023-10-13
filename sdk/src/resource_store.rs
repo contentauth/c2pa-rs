@@ -303,13 +303,11 @@ mod tests {
         println!("{manifest}");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
-        // convert buffer to cursor with Read/Write/Seek capability
-        let mut stream = std::io::Cursor::new(image.to_vec());
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
         let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+            .embed_from_memory("jpeg", image, signer.as_ref())
             .expect("embed_stream");
 
         let _manifest_store =

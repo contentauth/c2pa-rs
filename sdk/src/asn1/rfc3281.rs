@@ -69,7 +69,7 @@ pub struct AttributeCertificateInfo {
 }
 
 impl AttributeCertificateInfo {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub fn take_from<S: Source>(cons: &Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         Err(cons.content_err("AttributeCertificateInfo parsing not implemented"))
     }
 }
