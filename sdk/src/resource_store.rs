@@ -172,7 +172,7 @@ impl ResourceStore {
         self.base_path.take()
     }
 
-    /// Generates a unique id for a given content type (adds a file extension).
+    /// Generates a unique ID for a given content type (adds a file extension).
     pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
