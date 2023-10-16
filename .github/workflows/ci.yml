@@ -307,6 +307,6 @@ jobs:
           VERSION: ${{ steps.set-version.outputs.version }}
 
       - name: If this step fails, change title of the PR to include (MINOR) tag
-        uses: obi1kenobi/cargo-semver-checks-action@v1
+        uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
-          crate-name: c2pa
+          package: c2pa
