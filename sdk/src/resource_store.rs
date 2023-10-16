@@ -90,6 +90,7 @@ impl From<HashedUri> for UriOrResource {
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
+
     /// A URI that identifies the resource as referenced from the manifest.
     ///
     /// This may be a JUMBF URI, a file path, a URL or any other string.
@@ -97,12 +98,15 @@ pub struct ResourceRef {
     /// Relative file paths will be resolved with the base path if provided.
     pub identifier: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+
     /// More detailed data types as defined in the C2PA spec.
     pub data_types: Option<Vec<AssetType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+
     /// The algorithm used to hash the resource (if applicable).
     pub alg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+
     /// The hash of the resource (if applicable).
     pub hash: Option<String>,
 }
@@ -132,7 +136,7 @@ pub struct ResourceStore {
 }
 
 impl ResourceStore {
-    /// Create a new resource reference
+    /// Create a new resource reference.
     pub fn new() -> Self {
         ResourceStore {
             resources: HashMap::new(),
@@ -142,14 +146,14 @@ impl ResourceStore {
         }
     }
 
-    /// Set a manifest label for this store used to resolve relative JUMBF uris.
+    /// Set a manifest label for this store used to resolve relative JUMBF URIs.
     pub fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
         self.label = Some(label.into());
         self
     }
 
     #[cfg(feature = "file_io")]
-    // returns the base_path for relative file paths if it is set.
+    // Returns the base path for relative file paths if it is set.
     pub fn base_path(&self) -> Option<&Path> {
         self.base_path.as_deref()
     }
@@ -157,14 +161,13 @@ impl ResourceStore {
     #[cfg(feature = "file_io")]
     /// Sets a base path for relative file paths.
     ///
-    /// Identifiers will be interpreted as file paths if this set
-    /// And resources will be written to files
+    /// Identifiers will be interpreted as file paths and resources will be written to files if this is set.
     pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) {
         self.base_path = Some(base_path.into());
     }
 
     #[cfg(feature = "file_io")]
-    /// returns and removes the base path
+    /// Returns and removes the base path.
     pub fn take_base_path(&mut self) -> Option<PathBuf> {
         self.base_path.take()
     }
@@ -191,7 +194,7 @@ impl ResourceStore {
         id
     }
 
-    /// Adds a resource, generating a resource ref from a key and format.
+    /// Adds a resource, generating a [`ResourceRef`] from a key and format.
     ///
     /// The generated identifier may be different from the key.
     pub fn add_with<R>(&mut self, key: &str, format: &str, value: R) -> crate::Result<ResourceRef>
@@ -203,7 +206,7 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
-    /// Adds a resource from a uri, generating a resource ref.
+    /// Adds a resource from a URI, generating a [`ResourceRef`].
     ///
     /// The generated identifier may be different from the key.
     pub(crate) fn add_uri<R>(
@@ -257,14 +260,14 @@ impl ResourceStore {
         Ok(self)
     }
 
-    /// returns a Hashmap of internal resources.
+    /// Returns a [`HashMap`] of internal resources.
     pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
         &self.resources
     }
 
     /// Returns a copy on write reference to the resource if found.
     ///
-    /// returns Error::NotFound if it cannot find a resource matching that id.
+    /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
     pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
@@ -287,7 +290,7 @@ impl ResourceStore {
         )
     }
 
-    /// Returns true if the resource has been added or exists as file.
+    /// Returns `true` if the resource has been added or exists as file.
     pub fn exists(&self, id: &str) -> bool {
         if !self.resources.contains_key(id) {
             #[cfg(feature = "file_io")]
@@ -306,7 +309,7 @@ impl ResourceStore {
     }
 
     #[cfg(feature = "file_io")]
-    // Returns the full path for an id.
+    // Returns the full path for an ID.
     pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
         self.base_path.as_ref().map(|base| base.join(id))
     }
