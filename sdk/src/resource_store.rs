@@ -203,7 +203,7 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
-    /// Adds a resource from a uri, generating a resource ref.
+    /// Adds a resource from a URI, generating a [`ResourceRef`].
     ///
     /// The generated identifier may be different from the key.
     pub(crate) fn add_uri<R>(
@@ -227,7 +227,7 @@ impl ResourceStore {
                 // convert to a file path always including the manifest label
                 id = id.replace("self#jumbf=", "");
                 if id.starts_with("/c2pa/") {
-                    id = id.replace("/c2pa/", "");
+                    id = id.replacen("/c2pa/", "", 1);
                 } else if let Some(label) = self.label.as_ref() {
                     id = format!("{}/{id}", label);
                 }
