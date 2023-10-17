@@ -205,7 +205,7 @@ impl ResourceStore {
                 // convert to a file path always including the manifest label
                 id = id.replace("self#jumbf=", "");
                 if id.starts_with("/c2pa/") {
-                    id = id.replace("/c2pa/", "");
+                    id = id.replacen("/c2pa/", "",1);
                 } else if let Some(label) = self.label.as_ref() {
                     id = format!("{}/{id}", label);
                 }
