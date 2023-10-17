@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+/// Converts a file extension to a MIME type
 pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
     Some(match extension {
         "jpg" | "jpeg" => "image/jpeg",
@@ -41,6 +42,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
     })
 }
 
+/// Converts a format to a file extension
 pub fn format_to_extension(format: &str) -> Option<&'static str> {
     Some(match format {
         "jpg" | "jpeg" | "image/jpeg" => "jpg",
