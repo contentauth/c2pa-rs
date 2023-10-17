@@ -114,27 +114,29 @@ Please note that there is no formal support for code from a nightly release, but
 
 ## Release notes
 
-This section gives a highlight of noteworthy changes.
+This section gives a highlight of noteworthy changes between minor releases.
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
 
 ## 0.28.0
-
+_10 October 2023_
 * Databox thumbnails supported for v2 ingredients.
 * Ingredient thumbnails reference existing claim thumbnails when possible.
 * Manifest store identifiers are now JUMBF URIs.
 * Manifest store file resources are saved in a tree structure per manifest.
-* Adds ManifestStore::from_stream.
-* Adds Manifest embed_to_stream (output stream replacement for embed_stream).
+* Adds `ManifestStore::from_stream`.
+* Adds Manifest `embed_to_stream` (output stream replacement for embed_stream).
 * JPEG with MPF (Multi Picture Format) Validation.
 
 ## 0.27.0
+_29 September 2023_
 * MP3 support
 * PDF read support
 
 ## 0.26.0
-* Datahash and BoxHash support
-* Adds ManifestStoreReport::cert_chain_from_bytes
+_13 September 2023_
+* Adds `DataHash`` and `BoxHash` support.
+* Adds `ManifestStoreReport::cert_chain_from_bytes`
 
 ## 0.25.0
 _14 July 2023_
