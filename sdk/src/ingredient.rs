@@ -387,7 +387,7 @@ impl Ingredient {
     /// This is only used for internally generated thumbnails - when
     /// reading thumbnails from files, we don't want to write these to file
     /// So this ensures they stay in memory unless written out.
-    #[deprecated(note = "Please use set_thumbnail instead")]
+    #[deprecated(note = "Please use set_thumbnail instead", since = "0.28.0")]
     pub fn set_memory_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
         format: S,
@@ -976,7 +976,7 @@ impl Ingredient {
                             .set_url(hashed_uri.url()),
                     );
                 }
-            };
+            }
         };
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
