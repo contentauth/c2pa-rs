@@ -58,14 +58,15 @@ impl UriOrResource {
         &self,
         resources: &mut ResourceStore,
         claim: &Claim,
-        id: &str,
+        _id: &str,
     ) -> Result<UriOrResource> {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let data_box = claim.find_databox(&h.url()).ok_or(Error::MissingDataBox)?;
+                let uri = crate::jumbf::labels::to_absolute_uri(claim.label(), &h.url());
+                let data_box = claim.find_databox(&uri).ok_or(Error::MissingDataBox)?;
                 let resource_ref =
-                    resources.add_with(id, &data_box.format, data_box.data.clone())?;
+                    resources.add_with(&h.url(), &data_box.format, data_box.data.clone())?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
@@ -232,6 +233,12 @@ impl ResourceStore {
                     id = format!("{}/{id}", label);
                 }
                 id = id.replace([':'], "_");
+                // add a file extension if it doesn't have one
+                if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
+                    if let Some(ext) = crate::utils::mime::format_to_extension(format) {
+                        id = format!("{}.{}", id, ext);
+                    }
+                }
             }
             if !self.exists(&id) {
                 self.add(&id, value)?;
