@@ -58,7 +58,6 @@ impl UriOrResource {
         &self,
         resources: &mut ResourceStore,
         claim: &Claim,
-        _id: &str,
     ) -> Result<UriOrResource> {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
