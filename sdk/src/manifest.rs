@@ -525,6 +525,7 @@ impl Manifest {
         }
 
         manifest.set_label(claim.label());
+        manifest.resources.set_label(claim.label()); // default manifest for relative urls
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
@@ -629,7 +630,13 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    manifest.set_thumbnail(thumbnail.content_type, thumbnail.data)?;
+                    let id = jumbf::labels::to_assertion_uri(claim.label(), label);
+                    let id = jumbf::labels::to_relative_uri(&id);
+                    manifest.thumbnail = Some(manifest.resources.add_uri(
+                        &id,
+                        &thumbnail.content_type,
+                        thumbnail.data,
+                    )?);
                 }
                 _ => {
                     // inject assertions for all other assertions
