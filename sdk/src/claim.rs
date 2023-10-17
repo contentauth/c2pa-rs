@@ -702,7 +702,7 @@ impl Claim {
         let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         databox_uri.add_salt(salt);
 
-        // add credential to vcstore
+        // add databox to databox store
         self.data_boxes.push((databox_uri.clone(), new_db));
 
         Ok(databox_uri)

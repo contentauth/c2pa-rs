@@ -39,7 +39,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
+        labels::{to_absolute_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
         get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
@@ -352,6 +352,11 @@ impl Store {
             None => self.get_claim(target_claim_label), //  relative so use the target claim label
         }
         .and_then(|claim| {
+            let uri = if target_claim_label != self.label() {
+                to_absolute_uri(target_claim_label, uri)
+            } else {
+                uri.to_owned()
+            };
             claim
                 .databoxes()
                 .iter()
