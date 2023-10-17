@@ -29,7 +29,12 @@ use crate::{
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     hashed_uri::HashedUri,
-    jumbf,
+    jumbf::{
+        self,
+        labels::{
+            assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri, to_relative_uri,
+        },
+    },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
@@ -379,6 +384,7 @@ impl Ingredient {
     /// This is only used for internally generated thumbnails - when
     /// reading thumbnails from files, we don't want to write these to file
     /// So this ensures they stay in memory unless written out.
+    #[deprecated(note = "Please use set_thumbnail instead", since = "0.28.0")]
     pub fn set_memory_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
         format: S,
@@ -913,26 +919,7 @@ impl Ingredient {
 
         let active_manifest = ingredient_assertion
             .c2pa_manifest
-            .and_then(|hash_url| jumbf::labels::manifest_label_from_uri(&hash_url.url()));
-
-        let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
-            // This could be a relative or absolute thumbnail reference to another manifest
-            let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
-                Some(label) => label,           // use the manifest from the thumbnail uri
-                None => claim_label.to_owned(), // relative so use the whole url from the thumbnail assertion
-            };
-            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
-                Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
-                None => {
-                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new(validation_status::ASSERTION_MISSING.to_string())
-                            .set_url(hashed_uri.url()),
-                    );
-                    None
-                }
-            }
-        });
+            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
 
         debug!(
             "Adding Ingredient {} {:?}",
@@ -948,15 +935,40 @@ impl Ingredient {
                 .unwrap_or_else(default_instance_id),
         );
         ingredient.document_id = ingredient_assertion.document_id;
+        ingredient.resources.set_label(claim_label); // set the label for relative paths
 
         #[cfg(feature = "file_io")]
         if let Some(base_path) = resource_path {
             ingredient.resources_mut().set_base_path(base_path)
         }
 
-        if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail(format, image)?;
-        }
+        if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
+            // This could be a relative or absolute thumbnail reference to another manifest
+            let target_claim_label = match manifest_label_from_uri(&hashed_uri.url()) {
+                Some(label) => label,           // use the manifest from the thumbnail uri
+                None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
+            };
+            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label) {
+                Some(assertion) => {
+                    let (format, image) = Self::thumbnail_from_assertion(assertion);
+                    let assertion_label = assertion_label_from_uri(&hashed_uri.url())
+                        .unwrap_or_else(|| "thumbnail".to_owned());
+                    // construct an id from the manifest and assertion labels
+                    let mut id = to_assertion_uri(&target_claim_label, &assertion_label);
+                    if target_claim_label == claim_label {
+                        id = to_relative_uri(&id);
+                    }
+                    ingredient.thumbnail = Some(ingredient.resources.add_uri(&id, &format, image)?);
+                }
+                None => {
+                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                    validation_status.push(
+                        ValidationStatus::new(validation_status::ASSERTION_MISSING.to_string())
+                            .set_url(hashed_uri.url()),
+                    );
+                }
+            }
+        };
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let data_box = store
@@ -968,9 +980,8 @@ impl Ingredient {
                     }
                 })?;
 
-            let id_base = ingredient.instance_id().to_owned();
-            let mut data_ref = ingredient.resources_mut().add_with(
-                &id_base,
+            let mut data_ref = ingredient.resources_mut().add_uri(
+                &data_uri.url(),
                 &data_box.format,
                 data_box.data.clone(),
             )?;
@@ -1011,7 +1022,7 @@ impl Ingredient {
                     true => redactions.as_ref().map(|redactions| {
                         redactions
                             .iter()
-                            .map(|r| jumbf::labels::to_assertion_uri(&manifest_label, r))
+                            .map(|r| to_assertion_uri(&manifest_label, r))
                             .collect()
                     }),
                     false => None,
@@ -1056,10 +1067,8 @@ impl Ingredient {
                                             let assertion_label =
                                                 jumbf::labels::assertion_label_from_uri(&t.url())
                                                     .unwrap_or_default();
-                                            let url = jumbf::labels::to_assertion_uri(
-                                                &manifest_label,
-                                                &assertion_label,
-                                            );
+                                            let url =
+                                                to_assertion_uri(&manifest_label, &assertion_label);
                                             HashedUri::new(url, t.alg(), &t.hash())
                                         });
                                 }
