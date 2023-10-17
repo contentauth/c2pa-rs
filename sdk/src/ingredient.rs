@@ -31,9 +31,7 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{
-            assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri, to_relative_uri,
-        },
+        labels::{manifest_label_from_uri, to_assertion_uri},
     },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
@@ -189,6 +187,15 @@ impl Ingredient {
             format: format.into(),
             ..Default::default()
         }
+    }
+
+    // try to determine if this is a V2 ingredient
+    pub(crate) fn is_v2(&self) -> bool {
+        self.instance_id.is_none()
+            || self.data.is_some()
+            || self.description.is_some()
+            || self.informational_uri.is_some()
+            || self.relationship == Relationship::InputTo
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -491,34 +498,9 @@ impl Ingredient {
             .unwrap_or_else(|| "".into())
             .to_lowercase();
 
-        let format = match extension.as_ref() {
-            "jpg" | "jpeg" => "image/jpeg",
-            "png" => "image/png",
-            "gif" => "image/gif",
-            "psd" => "image/vnd.adobe.photoshop",
-            "tiff" => "image/tiff",
-            "svg" => "image/svg+xml",
-            "ico" => "image/x-icon",
-            "bmp" => "image/bmp",
-            "webp" => "image/webp",
-            "dng" => "image/dng",
-            "heic" => "image/heic",
-            "heif" => "image/heif",
-            "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
-            "mp4" => "video/mp4",
-            "avif" => "image/avif",
-            "mov" | "qt" => "video/quicktime",
-            "m4a" => "audio/mp4",
-            "mid" | "rmi" => "audio/mid",
-            "mp3" => "audio/mpeg",
-            "wav" => "audio/vnd.wav",
-            "aif" | "aifc" | "aiff" => "audio/aiff",
-            "ogg" => "audio/ogg",
-            "pdf" => "application/pdf",
-            "ai" => "application/postscript",
-            _ => "application/octet-stream",
-        }
-        .to_owned();
+        let format = crate::utils::mime::extension_to_mime(&extension)
+            .unwrap_or("application/binary")
+            .to_owned();
         (title, extension, format)
     }
 
@@ -960,17 +942,32 @@ impl Ingredient {
                 Some(label) => label,           // use the manifest from the thumbnail uri
                 None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
             };
-            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label) {
-                Some(assertion) => {
-                    let (format, image) = Self::thumbnail_from_assertion(assertion);
-                    let assertion_label = assertion_label_from_uri(&hashed_uri.url())
-                        .unwrap_or_else(|| "thumbnail".to_owned());
-                    // construct an id from the manifest and assertion labels
-                    let mut id = to_assertion_uri(&target_claim_label, &assertion_label);
-                    if target_claim_label == claim_label {
-                        id = to_relative_uri(&id);
-                    }
-                    ingredient.thumbnail = Some(ingredient.resources.add_uri(&id, &format, image)?);
+            let maybe_resource_ref = match hashed_uri.url() {
+                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
+                    // if this is a claim thumbnail, then use the label from the thumbnail uri
+                    store
+                        .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                        .map(|assertion| {
+                            let (format, image) = Self::thumbnail_from_assertion(assertion);
+                            ingredient
+                                .resources
+                                .add_uri(&hashed_uri.url(), &format, image)
+                        })
+                }
+                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                    .get_data_box_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                    .map(|data_box| {
+                        ingredient.resources.add_uri(
+                            &hashed_uri.url(),
+                            &data_box.format,
+                            data_box.data.clone(),
+                        )
+                    }),
+                _ => None,
+            };
+            match maybe_resource_ref {
+                Some(data_ref) => {
+                    ingredient.thumbnail = Some(data_ref?);
                 }
                 None => {
                     error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
@@ -1076,11 +1073,10 @@ impl Ingredient {
                                         .map(|t| {
                                             // convert ingredient uris to absolute when adding them
                                             // since this uri references a different manifest
-                                            let assertion_label =
-                                                jumbf::labels::assertion_label_from_uri(&t.url())
-                                                    .unwrap_or_default();
-                                            let url =
-                                                to_assertion_uri(&manifest_label, &assertion_label);
+                                            let url = jumbf::labels::to_absolute_uri(
+                                                &manifest_label,
+                                                &t.url(),
+                                            );
                                             HashedUri::new(url, t.alg(), &t.hash())
                                         });
                                 }
@@ -1115,13 +1111,22 @@ impl Ingredient {
                 }
                 None => {
                     let data = self.thumbnail_bytes()?;
-                    claim.add_assertion(&Thumbnail::new(
-                        &labels::add_thumbnail_format(
-                            labels::INGREDIENT_THUMBNAIL,
+                    if self.is_v2() {
+                        // v2 ingredients use databoxes for thumbnails
+                        claim.add_databox(
                             &thumb_ref.format,
-                        ),
-                        data.into_owned(),
-                    ))?
+                            data.into_owned(),
+                            thumb_ref.data_types.clone(),
+                        )?
+                    } else {
+                        claim.add_assertion(&Thumbnail::new(
+                            &labels::add_thumbnail_format(
+                                labels::INGREDIENT_THUMBNAIL,
+                                &thumb_ref.format,
+                            ),
+                            data.into_owned(),
+                        ))?
+                    }
                 }
             };
             thumbnail = Some(hash_url);
@@ -1816,7 +1821,7 @@ mod tests_file_io {
     fn test_input_to_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        let mut ingredient = Ingredient::new_v2("title", "format");
         ingredient.resources.set_base_path(folder);
         //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];

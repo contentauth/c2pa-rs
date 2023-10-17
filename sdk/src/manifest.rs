@@ -509,15 +509,10 @@ impl Manifest {
 
         if let Some(info_vec) = claim.claim_generator_info() {
             let mut generators = Vec::new();
-            let id_base = manifest.instance_id().to_owned();
             for claim_info in info_vec {
                 let mut info = claim_info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    info.set_icon(icon.to_resource_ref(
-                        manifest.resources_mut(),
-                        claim,
-                        &id_base,
-                    )?);
+                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
                 }
                 generators.push(info);
             }
@@ -565,18 +560,13 @@ impl Manifest {
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
-                    let id = manifest.instance_id().to_owned();
 
                     for action in actions.actions_mut() {
                         if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
                             action.software_agent_mut()
                         {
                             if let Some(icon) = info.icon.as_mut() {
-                                let icon = icon.to_resource_ref(
-                                    manifest.resources_mut(),
-                                    claim,
-                                    id.as_str(),
-                                )?;
+                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                 info.set_icon(icon);
                             }
                         }
@@ -587,11 +577,9 @@ impl Manifest {
                         for template in templates {
                             // replace icon with resource ref
                             template.icon = match template.icon.take() {
-                                Some(icon) => Some(icon.to_resource_ref(
-                                    manifest.resources_mut(),
-                                    claim,
-                                    id.as_str(),
-                                )?),
+                                Some(icon) => {
+                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
+                                }
                                 None => None,
                             };
 
@@ -599,11 +587,8 @@ impl Manifest {
                             template.software_agent = match template.software_agent.take() {
                                 Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
                                     if let Some(icon) = info.icon.as_mut() {
-                                        let icon = icon.to_resource_ref(
-                                            manifest.resources_mut(),
-                                            claim,
-                                            id.as_str(),
-                                        )?;
+                                        let icon =
+                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
                                     Some(SoftwareAgent::ClaimGeneratorInfo(info))
