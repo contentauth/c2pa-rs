@@ -554,7 +554,10 @@ impl Manifest {
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
 
-        for claim_assertion in claim.claim_assertion_store().iter() {
+        for assertion in claim.assertions() {
+            let claim_assertion = store.get_claim_assertion_from_uri(
+                &jumbf::labels::to_absolute_uri(claim.label(), &assertion.url()),
+            )?;
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
@@ -1659,8 +1662,8 @@ pub(crate) mod tests {
             .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
-        let manifest_store =
-            crate::ManifestStore::from_bytes("c2pa", &c2pa_data, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("application/c2pa", &c2pa_data, true)
+            .expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
