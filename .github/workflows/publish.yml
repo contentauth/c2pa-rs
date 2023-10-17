@@ -88,9 +88,9 @@ jobs:
         commit_user_email: noreply@adobe.com
 
     - name: Ensure semantic versioning requirements are met
-      uses: obi1kenobi/cargo-semver-checks-action@v1
+      uses: obi1kenobi/cargo-semver-checks-action@v2
       with:
-        crate-name: c2pa
+        package: c2pa
 
     - name: Create release
       uses: ncipollo/release-action@v1
