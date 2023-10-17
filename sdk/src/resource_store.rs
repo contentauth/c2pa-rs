@@ -181,9 +181,9 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
-    /// Adds a resource from a uri, generating a resource ref
+    /// Adds a resource from a URI, generating a [`ResourceRef`].
     ///
-    /// The generated identifier may be different from the key
+    /// The generated identifier may be different from the key.
     pub(crate) fn add_uri<R>(
         &mut self,
         uri: &str,
