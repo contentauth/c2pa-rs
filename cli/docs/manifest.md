@@ -1,21 +1,26 @@
 # Manifest definition file
 
-The manifest definition file is a JSON formatted file with a `.json` extension.
-Relative file paths are interpreted as relative to the location of the definition file unless you specify a `base_path` field.
+The c2patool reads a manifest definition JSON file with a `.json` extension.  This file defines a single manifest to be added to an asset's manifest store.
+In the manifest definition file, file paths are relative to the location of the file unless you specify a `base_path` field.
 
-## Example manifest definition file
+## Example
 
-Here's an example of a manifest definition that inserts a CreativeWork author assertion. Copy this JSON int a file to use as a test manifest.
+The example below is a snippet of a manifest definition that inserts a CreativeWork author assertion. This example uses the default testing certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) that are also built into the c2patool binary.   Copy this JSON into a file to use as a test manifest. 
 
-It is important to provide a value for the Time Authority URL (the `ta_url` property) to have a valid timestamp on the claim.
+**NOTE**:  When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only. For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
 
-The default certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) are built into the c2patool binary. This example uses the default testing certs. You will see a warning message when using them, since they are meant for development purposes only.
+The following manifest properties are specific to c2patool and used for signing manifests:
 
-**NOTE**: Use the default private key and signing certificate only for development.
-For actual use, provide a permanent key and cert in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md).
+- `alg`: Signing algorithm to use. See [Creating and using an X.509 certificate](x_509.md) for possible values. Default: `es256`.
+- `private_key`: Private key to use. Default: `es256_private.key`
+- `sign_cert`: Signing certificate to use. Default: `es256_certs.pem`
+- `ta_url`:  Time Authority URL for getting a time-stamp (for example, `http://timestamp.digicert.com`). A time-stamp provides a way to confirm that the manifest was signed when the certificate was valid, even if the certificate has since expired. Howver, the Time Authority URL requires a live online connection for confirmation, which may not always be available.
 
 ```json
 {
+    "alg": "es256",
+    "private_key": "es256_private.key",
+    "sign_cert": "es256_certs.pem",
     "ta_url": "http://timestamp.digicert.com",
 
     "claim_generator": "TestApp",
@@ -39,6 +44,8 @@ For actual use, provide a permanent key and cert in the manifest definition or e
 
 ## JSON schemas
 
-* [Schema for the Manifest Definition](https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json)
+* [Manifest store schema](https://opensource.contentauthenticity.org/docs/manifest/manifest-json-schema)
 
-* [Schema for Ingredient](https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json)
+* [Manifest definition schema](https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json)
+
+* [Ingredient schema](https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json)

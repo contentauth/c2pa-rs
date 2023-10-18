@@ -39,6 +39,12 @@ cargo install c2patool
 
 To build the tool on a Windows machine, you need to install the [7zip](https://www.7-zip.org/) tool.
 
+NOTE: If you encounter errors installing, you may need to update your Rust installation by entering this command:
+
+```
+rustup update
+```
+
 ### Updating
 
 To ensure you have the latest version, enter this command:
@@ -72,7 +78,8 @@ The tool will display the version installed. Compare the version number displaye
  | `wav`         | `audio/x-wav`                                       |
  | `webp`        | `image/webp`                                        |
 
-<sup>*</sup> Fragmented mp4 is not yet supported.
+<sup>*</sup> Fragmented MP4 is not yet supported.
+
 <sup>**</sup> Read only
 
 ## Usage
