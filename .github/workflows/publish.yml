@@ -10,21 +10,17 @@ jobs:
     steps:
 
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         fetch-depth: 0
         token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
 
     - name: Get latest existing tag
-      uses: actions-ecosystem/action-get-latest-tag@v1
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/actions-ecosystem/action-get-latest-tag/issues/25.
+      uses: WyriHaximus/github-action-get-previous-tag@v1
       id: get-latest-tag
-      with:
-        semver_only: true
 
     - name: Set new version
-      uses: paulhatch/semantic-version@v5.0.2
+      uses: paulhatch/semantic-version@v5.2.1
       id: set-version
       with:
         tag_prefix: "v"
@@ -33,13 +29,14 @@ jobs:
         minor_pattern: "(MINOR)"
 
     - name: Generate changelog since last tag
-      uses: mathiasvr/command-output@v1
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/mathiasvr/command-output/issues/4.
-      id: changelog
-      with:
-        run: git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
-
+      id: generate-changelog
+      run: |
+        {
+          echo 'changelog<<EOF'
+          git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
+  
     - name: Log version & changelog
       run: |
         echo "Version: $VERSION"
@@ -50,10 +47,10 @@ jobs:
         VERSION: ${{ steps.set-version.outputs.version }}
         VERSION_TAG: ${{ steps.set-version.outputs.version_tag }}
         LATEST_TAG: ${{ steps.get-latest-tag.outputs.tag }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
 
     - name: Prevent empty release
-      if: ${{ steps.changelog.outputs.stdout == '' }}
+      if: ${{ steps.generate-changelog.outputs.changelog == '' }}
       uses: actions/github-script@v3
       with:
         script: |
@@ -65,12 +62,10 @@ jobs:
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
-        CHANGELOG: ${{ steps.changelog.outputs.stdout }}
+        CHANGELOG: ${{ steps.generate-changelog.outputs.changelog }}
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Bump crate versions
       run: |
@@ -86,8 +81,6 @@ jobs:
 
     - name: Commit Cargo.toml and changelog
       uses: stefanzweifel/git-auto-commit-action@v4
-        ## NEEDS UPDATE for set-output deprecation.
-        ## See https://github.com/stefanzweifel/git-auto-commit-action/issues/250.
       id: commit
       with:
         commit_message: Prepare ${{ steps.set-version.outputs.version }} release
@@ -95,14 +88,14 @@ jobs:
         commit_user_email: noreply@adobe.com
 
     - name: Ensure semantic versioning requirements are met
-      uses: obi1kenobi/cargo-semver-checks-action@v1
+      uses: obi1kenobi/cargo-semver-checks-action@v2
       with:
-        crate-name: c2pa
+        package: c2pa
 
     - name: Create release
       uses: ncipollo/release-action@v1
       with:
-        body: ${{ steps.changelog.outputs.stdout }}
+        body: ${{ steps.generate-changelog.outputs.changelog }}
         commit: ${{ steps.commit.outputs.commit_hash }}
         prerelease: true # remove at 1.0
         tag: ${{ steps.set-version.outputs.version_tag }}

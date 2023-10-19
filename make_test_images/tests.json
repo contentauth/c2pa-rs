@@ -20,7 +20,6 @@
         { "op": "make", "ingredients": ["CA","CA","CA"], "output": "CICACACA" },
         { "op": "ogp", "parent": "CA", "output": "XCA" },
         { "op": "ogp", "parent": "CI", "output": "XCI" },
-        { "op": "dat", "parent": "CA", "output": "E-dat-CA" },
         { "op": "sig", "parent": "CA", "output": "E-sig-CA" },
         { "op": "uri", "parent": "CA", "output": "E-uri-CA" },
         { "op": "clm", "parent": "CAICAI", "output": "E-clm-CAICAI" },

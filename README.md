@@ -6,14 +6,14 @@ The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C
 
 ## Key features
 
-The C2PA Rust SDK implements a subset of the [C2PA 1.2 technical specification](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html).
+The C2PA Rust SDK implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html).
 
 The SDK enables a desktop, mobile, or embedded application to:
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_manifests).
+* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_manifests).
 * Embed manifests in certain file formats.
 * Parse and validate manifests found in certain file formats.
 
-The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.2/specs/C2PA_Specification.html#_hard_bindings).
+The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_hard_bindings).
 
 ## State of the project
 
@@ -25,7 +25,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.65.0** or newer.
+The SDK requires **Rust version 1.70.0** or newer.
 
 ### Supported platforms
 
@@ -42,7 +42,7 @@ The SDK has been tested on the following operating systems:
  | ------------- | --------------------------------------------------- |
  | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
  | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`,                |
+ | `c2pa`        | `application/x-c2pa-manifest-store`                 |
  | `dng`         | `image/x-adobe-dng`                                 |
  | `heic`        | `image/heic`                                        |
  | `heif`        | `image/heif`                                        |
@@ -51,8 +51,9 @@ The SDK has been tested on the following operating systems:
  | `mp4`         | `video/mp4`, `application/mp4`                      |
  | `mov`         | `video/quicktime`                                   |
  | `png`         | `image/png`                                         |
+ | `svg`         | `image/svg+xml`                                     |
  | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
+ | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
 
 ## Usage
@@ -61,12 +62,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.24.0"
+c2pa = "0.27.1"
 ```
 
-If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`. For example:
+If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
+The `add_thumbnails` feature will generate thumbnails for JPEG and PNG files.
+ For example:
 ```
-c2pa = { version = "0.19.0", features = ["file_io"] }
+c2pa = { version = "0.25.0", features = ["file_io", "add_thumbnails"] }
 ```
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
@@ -76,6 +79,7 @@ NOTE: If you are building for WASM, omit the `file_io` dependency.
 The Rust SDK crate provides:
 
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
+* `add_thumbnails` will generate thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
@@ -88,11 +92,45 @@ The `c2pa` crate is distributed under the terms of both the [MIT license](https:
 
 Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
 
-## Release Notes
+## Nightly builds
 
-This section gives a highlight of noteworthy changes
+In most cases, you should depend on this crate as published via [crates.io](https://crates.io/crates/c2pa).
 
-Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed Git changes
+The Adobe team produces nightly snapshots of this crate via a `nightly` branch, which we use for testing the impact of pending changes to upstream dependencies.
+
+You may wish to use these builds for your own testing ahead of our releases, you may include the SDK via the following `Cargo.toml` entry:
+
+```toml
+c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
+```
+
+Commits in this branch have a modified `sdk/Cargo.toml` entry which includes a version number similar to the following:
+
+```toml
+version = "0.25.3-nightly+2023-08-28-2f33ab3"
+```
+
+Please note that there is no formal support for code from a nightly release, but if you become aware of any issues, we would appreciate a bug report including this version number.
+
+## Release notes
+
+This section gives a highlight of noteworthy changes.
+
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
+
+
+## 0.25.0
+_14 July 2023_
+* (important!) the `add_thumbnails` feature is no longer tied to `file_io`, so you will need to specify it or thumbnails will not be generated.
+* removed `User` and `UserCbor` assertions from public API. They were not generating correct manifest data.
+* use `manifest_add_labeled_assertion` instead - see docs on `manifest.embed` for an example.
+* `DataHash` and `BoxHash` SDK support (generates a signed manifest ready to write into a file without writing to the file)
+* The SDK will no longer remove duplicate ingredients based on hash
+* `make_test_images` updated to fix issue 195, actions without required ingredients
+* updated the test fixtures generated by make_test_images
+* Expose `CAIRead` and `CAIWrite` traits required by some SDK calls.
+* Bug fix for certain BMFF formats (AVIF) that causes images to be unreadable
+
 ## 0.24.0
 _21 June 2023_
 * Bump minor version to 0.24.0 to signify change in signature (back to the compatible one)

@@ -20,11 +20,10 @@ mod bmff_hash;
 pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
 
 mod box_hash;
-pub(crate) use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
+pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
 
-#[allow(dead_code)] // will become public later
 mod data_hash;
-pub(crate) use data_hash::DataHash;
+pub use data_hash::DataHash;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
@@ -50,10 +49,11 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod user;
-pub use user::User;
+pub(crate) use user::User;
 
 mod user_cbor;
-pub use user_cbor::UserCbor;
+pub(crate) use user_cbor::UserCbor;
 
 mod uuid_assertion;
-pub use uuid_assertion::Uuid;
+#[allow(unused_imports)]
+pub(crate) use uuid_assertion::Uuid;

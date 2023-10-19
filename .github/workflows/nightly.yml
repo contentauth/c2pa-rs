@@ -1,0 +1,121 @@
+name: Nightly build
+
+on:  
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * *" # 0500 UTC every day
+
+jobs:
+  # Create snapshot of main branch for nightly build
+  nightly-snapshot:
+    name: Create snapshot
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
+
+    - name: Set new proposed version
+      uses: paulhatch/semantic-version@v5.2.1
+      id: set-version
+      with:
+        tag_prefix: "v"
+        version_format: "${major}.${minor}.${patch}"
+        major_pattern: "(MAJOR)"
+        minor_pattern: "(MINOR)"
+    
+    - name: Add -nightly+(date)-(commit ID) prefix to version
+      id: set-nightly-version
+      run: |
+        echo version=${{ steps.set-version.outputs.version }}-nightly+`date +%F`-`git rev-parse --short HEAD` >> "$GITHUB_OUTPUT"
+
+    - name: Log new version & changelog
+      run: |
+        echo "Proposed new version: $VERSION"
+        echo "Nightly version: $NIGHTLY_VERSION"
+      env:
+        VERSION: ${{ steps.set-version.outputs.version }}
+        NIGHTLY_VERSION: ${{ steps.set-nightly-version.outputs.version }}
+
+    - name: Bump crate versions
+      run: |
+        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
+      env:
+        VERSION: ${{ steps.set-nightly-version.outputs.version }}
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: cargo
+
+    - name: Create or update Cargo.lock
+      run: |
+        cargo update -w
+        git add -f Cargo.lock
+
+    - name: Report differences for "prepare (release)" commit
+      run: git diff
+
+    - name: Commit Cargo.toml and Cargo.lock
+      uses: stefanzweifel/git-auto-commit-action@v4
+      id: commit
+      with:
+        branch: nightly
+        push_options: '--force'
+        commit_message: Prepare ${{ steps.set-nightly-version.outputs.version }} release
+        commit_user_name: Adobe CAI Team
+        commit_user_email: noreply@adobe.com
+        create_branch: true
+
+  tests:
+    name: Unit tests
+    runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: nightly
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests (cross build)
+        run: cargo test --all-targets --all-features
+
+  test-direct-minimal-versions:
+    name: Unit tests with minimum versions of direct dependencies
+    runs-on: ${{ matrix.os }}
+    needs: nightly-snapshot
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: nightly
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features

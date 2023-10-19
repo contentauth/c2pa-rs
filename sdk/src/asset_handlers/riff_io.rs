@@ -20,6 +20,7 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use riff::*;
+use tempfile::Builder;
 
 use crate::{
     asset_io::{
@@ -30,12 +31,15 @@ use crate::{
     utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
-static SUPPORTED_TYPES: [&str; 9] = [
+static SUPPORTED_TYPES: [&str; 12] = [
     "avi",
     "wav",
     "webp",
     "image/webp",
+    "audio/wav",
+    "audio/wave",
     "audio/x-wav",
+    "audio/vnd.wave",
     "application/x-troff-msvideo",
     "video/avi",
     "video/msvideo",
@@ -212,12 +216,7 @@ where
 
         // place at the end for maximum compatibility
         if is_riff_chunk && !data.is_empty() {
-            let mut d = data.to_vec();
-            if d.len() % 2 == 1 {
-                // must be even
-                d.push(0);
-            }
-            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, d));
+            children_contents.push(ChunkContents::Data(C2PA_CHUNK_ID, data.to_vec()));
         }
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
@@ -271,14 +270,7 @@ impl CAIReader for RiffIO {
 
         for c in top_level_chunks.iter(&mut chunk_reader) {
             if c.id() == C2PA_CHUNK_ID {
-                let mut output = c.read_contents(&mut chunk_reader)?;
-                // the data may have been padded to account for even boundary requirement
-                if let Some(last_byte) = output.last() {
-                    if *last_byte == 0 {
-                        output.pop();
-                    }
-                }
-                return Ok(output);
+                return Ok(c.read_contents(&mut chunk_reader)?);
             }
         }
 
@@ -368,13 +360,18 @@ impl AssetIO for RiffIO {
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
 
-        self.write_cai(&mut input_stream, &mut output_stream, store_bytes)
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+
+        // copy temp file to asset
+        std::fs::rename(temp_file.path(), asset_path)
+            // if rename fails, try to copy in case we are on different volumes
+            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
+            .map_err(Error::IoError)
     }
 
     fn get_object_locations(

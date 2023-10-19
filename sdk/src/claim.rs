@@ -702,7 +702,7 @@ impl Claim {
         let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         databox_uri.add_salt(salt);
 
-        // add credential to vcstore
+        // add databox to databox store
         self.data_boxes.push((databox_uri.clone(), new_db));
 
         Ok(databox_uri)
@@ -1938,12 +1938,10 @@ impl Claim {
     // Do any assertions of this type exist?
     pub fn has_assertion_type(&self, in_label: &str) -> bool {
         let (label, _) = Claim::assertion_label_from_link(in_label);
-        let found = self
-            .assertion_store
-            .iter()
-            .find(|&x| x.assertion.label().starts_with(&label));
 
-        !matches!(found, None)
+        self.assertion_store
+            .iter()
+            .any(|x| x.assertion.label().starts_with(&label))
     }
 
     // Create a JUMBF URI from a claim label.

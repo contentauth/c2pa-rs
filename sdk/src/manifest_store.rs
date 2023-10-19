@@ -25,7 +25,7 @@ use crate::{
     store::Store,
     utils::base64,
     validation_status::{status_for_store, ValidationStatus},
-    Manifest, Result,
+    CAIRead, Manifest, Result,
 };
 
 #[derive(Serialize)]
@@ -44,7 +44,7 @@ pub struct ManifestStore {
 
 impl ManifestStore {
     /// allocates a new empty ManifestStore
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ManifestStore {
             active_manifest: None,
             manifests: HashMap::<String, Manifest>::new(),
@@ -82,10 +82,7 @@ impl ManifestStore {
     }
 
     /// creates a ManifestStore from a Store with validation
-    pub(crate) fn from_store(
-        store: &Store,
-        validation_log: &mut impl StatusTracker,
-    ) -> ManifestStore {
+    pub(crate) fn from_store(store: &Store, validation_log: &impl StatusTracker) -> ManifestStore {
         Self::from_store_impl(
             store,
             validation_log,
@@ -98,7 +95,7 @@ impl ManifestStore {
     #[cfg(feature = "file_io")]
     pub fn from_store_with_resources(
         store: &Store,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &impl StatusTracker,
         resource_path: &Path,
     ) -> ManifestStore {
         Self::from_store_impl(store, validation_log, Some(resource_path))
@@ -107,7 +104,7 @@ impl ManifestStore {
     // internal implementation of from_store
     fn from_store_impl(
         store: &Store,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
         let mut statuses = status_for_store(store, validation_log);
@@ -146,18 +143,39 @@ impl ManifestStore {
         let store = manifest.to_store()?;
         Ok(Self::from_store_impl(
             &store,
-            &mut OneShotStatusTracker::new(),
+            &OneShotStatusTracker::new(),
             #[cfg(feature = "file_io")]
             manifest.resources().base_path(),
         ))
     }
 
-    /// generate a Store from a format string and bytes
+    /// Generate a Store from a format string and bytes.
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
         Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
-            .map(|store| Self::from_store(&store, &mut validation_log))
+            .map(|store| Self::from_store(&store, &validation_log))
+    }
+
+    /// Generate a Store from a format string and stream.
+    pub fn from_stream(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        verify: bool,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let manifest_bytes = Store::load_jumbf_from_stream(format, stream)?;
+        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
+        if verify {
+            // verify store and claims
+            Store::verify_store(
+                &store,
+                &mut ClaimAssetData::Stream(stream, format),
+                &mut validation_log,
+            )?;
+        }
+        Ok(Self::from_store(&store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -177,7 +195,7 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-        Ok(Self::from_store(&store, &mut validation_log))
+        Ok(Self::from_store(&store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -205,7 +223,7 @@ impl ManifestStore {
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store_with_resources(
             &store,
-            &mut validation_log,
+            &validation_log,
             resource_path.as_ref(),
         ))
     }
@@ -220,7 +238,7 @@ impl ManifestStore {
 
         Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
             .await
-            .map(|store| Self::from_store(&store, &mut validation_log))
+            .map(|store| Self::from_store(&store, &validation_log))
     }
 
     /// Loads a ManifestStore from an init segment and fragment.  This
@@ -242,7 +260,7 @@ impl ManifestStore {
             &mut validation_log,
         )
         .await
-        .map(|store| Self::from_store(&store, &mut validation_log))
+        .map(|store| Self::from_store(&store, &validation_log))
     }
 
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
@@ -281,7 +299,44 @@ impl ManifestStore {
         )
         .await?;
 
-        Ok(Self::from_store(&store, &mut validation_log))
+        Ok(Self::from_store(&store, &validation_log))
+    }
+
+    /// Synchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
+    ///
+    /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
+    /// ```
+    /// use c2pa::{Result, ManifestStore};
+    ///
+    /// # fn main() -> Result<()> {
+    /// #    async {
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpg", asset_bytes)
+    ///             .unwrap();
+    ///
+    ///         println!("{}", manifest_store);
+    /// #    };
+    /// #
+    /// #    Ok(())
+    /// }
+    /// ```
+    pub fn from_manifest_and_asset_bytes(
+        manifest_bytes: &[u8],
+        format: &str,
+        asset_bytes: &[u8],
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+
+        Store::verify_store(
+            &store,
+            &mut ClaimAssetData::Bytes(asset_bytes, format),
+            &mut validation_log,
+        )?;
+
+        Ok(Self::from_store(&store, &validation_log))
     }
 }
 
@@ -360,7 +415,7 @@ mod tests {
     fn manifest_report() {
         let store = create_test_store().expect("creating test store");
 
-        let manifest_store = ManifestStore::from_store(&store, &mut OneShotStatusTracker::new());
+        let manifest_store = ManifestStore::from_store(&store, &OneShotStatusTracker::new());
         assert!(manifest_store.active_manifest.is_some());
         assert!(!manifest_store.manifests.is_empty());
         let manifest = manifest_store.get_active().unwrap();
@@ -453,6 +508,23 @@ mod tests {
             "../target/ms",
         )
         .expect("from_store_with_resources");
+        println!("{manifest_store}");
+
+        assert!(manifest_store.active_label().is_some());
+        assert!(manifest_store.get_active().is_some());
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        let manifest = manifest_store.get_active().unwrap();
+        assert!(!manifest.ingredients().is_empty());
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
+        assert!(manifest.time().is_some());
+    }
+
+    #[test]
+    fn manifest_report_from_stream() {
+        let image_bytes: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+        let mut stream = std::io::Cursor::new(image_bytes);
+        let manifest_store = ManifestStore::from_stream("image/jpeg", &mut stream, true).unwrap();
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());
