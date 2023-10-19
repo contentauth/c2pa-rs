@@ -1170,7 +1170,8 @@ impl Manifest {
         }
 
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(signer, format)?;
+        let placeholder =
+            store.get_data_hashed_manifest_placeholder(signer.reserve_size(), format)?;
         Ok(placeholder)
     }
 
