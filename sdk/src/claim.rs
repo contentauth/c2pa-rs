@@ -933,7 +933,7 @@ impl Claim {
         )
     }
 
-    // crate private function to allow for patching a BMFF hash with final contents
+    // Crate private function to allow for patching a BMFF hash with final contents.
     #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
         self.update_assertion(
@@ -1195,8 +1195,6 @@ impl Claim {
                 // get the assertion if label and hash match
                 Some(ca) => {
                     if !vec_compare(ca.hash(), &assertion.hash()) {
-                        dbg!(&ca.assertion);
-
                         let log_item = log_item!(
                             assertion.url(),
                             format!("hash does not match assertion data: {}", assertion.url()),
