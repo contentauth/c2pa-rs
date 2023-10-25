@@ -636,7 +636,14 @@ impl Claim {
     ) -> Result<C2PAAssertion> {
         // make sure the assertion is valid
         let assertion = assertion_builder.to_assertion()?;
+        self.add_raw_assertion(assertion, salt_generator)
+    }
 
+    pub(crate) fn add_raw_assertion(
+        &mut self,
+        assertion: Assertion,
+        salt_generator: &impl SaltGenerator,
+    ) -> Result<C2PAAssertion> {
         // Update label if there are multiple instances of
         // the same claim type.
         let as_label = self.make_assertion_instance_label(assertion.label().as_ref());
