@@ -872,7 +872,7 @@ impl Claim {
         let Some(ref mut target_assertion) = self
             .assertion_store
             .iter_mut()
-            .find(|ca| Assertion::assertions_eq(&replace_with, ca.assertion()) && match_fn(*ca))
+            .find(|ca| Assertion::assertions_eq(&replace_with, ca.assertion()) && match_fn(ca))
         else {
             return Err(Error::NotFound);
         };
@@ -882,7 +882,7 @@ impl Claim {
         let original_hash = target_assertion.hash().to_vec();
 
         // Give caller a chance to patch/replace the assertion.
-        let replace_with = patch_fn(*target_assertion, replace_with)?;
+        let replace_with = patch_fn(target_assertion, replace_with)?;
 
         // Calculate new hash, given new content.
         let replacement_hash = Claim::calc_assertion_box_hash(
