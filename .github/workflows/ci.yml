@@ -259,7 +259,7 @@ jobs:
       - name: Check for unknown features
         env:
           RUSTFLAGS: "-D unexpected-cfgs"
-        run: cargo +nightly check -Z unstable-options -Z check-cfg=features --tests
+        run: cargo +nightly check -Z unstable-options -Z check-cfg --tests
 
   version_bump:
     name: Ensure (MINOR) tag is used when making an API breaking change
