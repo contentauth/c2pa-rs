@@ -39,10 +39,10 @@ pub struct BoxMap {
     pub pad: ByteBuf,
 
     #[serde(skip)]
-    pub range_start: usize,
+    pub range_start: u64,
 
     #[serde(skip)]
-    pub range_len: usize,
+    pub range_len: u64,
 }
 
 /// Helper class to create BoxHash assertion

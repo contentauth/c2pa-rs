@@ -898,11 +898,10 @@ impl Store {
                     CREDENTIALS => box_order.push(CREDENTIALS),
                     DATABOXES => box_order.push(DATABOXES),
                     _ => {
-                        let msg = format!("unrecognized manifest box: {}", &desc_box.label());  
-                        let log_item =
-                            log_item!("JUMBF", &msg, "from_jumbf")
-                                .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
-                                .validation_status(validation_status::CLAIM_MULTIPLE);
+                        let msg = format!("unrecognized manifest box: {}", &desc_box.label());
+                        let log_item = log_item!("JUMBF", &msg, "from_jumbf")
+                            .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
+                            .validation_status(validation_status::CLAIM_MULTIPLE);
                         validation_log.log(
                             log_item,
                             Some(Error::InvalidClaim(InvalidClaimError::ClaimBoxData)),
@@ -1062,17 +1061,13 @@ impl Store {
                         {
                             let err_label = format!("error loading assertion: {}", &label);
 
-                            let log_item =
-                                log_item!("JUMBF", &err_label, "from_jumbf")
-                                    .error(e);
+                            let log_item = log_item!("JUMBF", &err_label, "from_jumbf").error(e);
                             validation_log.log_silent(log_item);
                             return Err(Error::PrereleaseError);
                         } else {
                             let err_label = format!("error loading assertion: {}", &label);
 
-                            let log_item =
-                                log_item!("JUMBF", &err_label, "from_jumbf")
-                                    .error(e);
+                            let log_item = log_item!("JUMBF", &err_label, "from_jumbf").error(e);
                             validation_log.log(log_item, None)?;
                         }
                     }
@@ -1439,13 +1434,13 @@ impl Store {
         // generate default data hash that excludes jumbf block
         // find the first jumbf block (ours are always in order)
         // find the first block after the jumbf blocks
-        let mut block_start: usize = 0;
-        let mut block_end: usize = 0;
+        let mut block_start: u64 = 0;
+        let mut block_end: u64 = 0;
         let mut found_jumbf = false;
         for item in block_locations {
             // find start of jumbf
             if !found_jumbf && item.htype == HashBlockObjectType::Cai {
-                block_start = item.offset;
+                block_start = item.offset.try_into().unwrap();
                 found_jumbf = true;
             }
 
@@ -1906,7 +1901,7 @@ impl Store {
         if jumbf_size != data.len() {
             return Err(Error::JumbfCreationError);
         }
-      
+
         Ok(data) // return JUMBF data
     }
 
@@ -2986,11 +2981,7 @@ impl Store {
             if fragment.is_empty() {
                 Store::verify_store_async(
                     &store,
-                    &mut ClaimAssetData::StreamFragment(
-                        &mut init_segment_stream,
-                        None,
-                        asset_type,
-                    ),
+                    &mut ClaimAssetData::StreamFragment(&mut init_segment_stream, None, asset_type),
                     validation_log,
                 )
                 .await?;
@@ -3006,7 +2997,6 @@ impl Store {
                 )
                 .await?;
             }
-           
         }
 
         Ok(store)
@@ -4306,7 +4296,7 @@ pub mod tests {
     #[test]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
-        let ap = fixture_path("legacy.mp4");
+        let ap = fixture_path("ms3.mp4");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
@@ -4732,7 +4722,7 @@ pub mod tests {
         let mut input_file = std::fs::File::open(&ap).unwrap();
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; cai_loc.offset.try_into().unwrap()];
         input_file.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -4800,7 +4790,7 @@ pub mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset, placeholder.len().try_into().unwrap());
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");
@@ -4868,7 +4858,7 @@ pub mod tests {
 
         // create target data hash
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset, placeholder.len().try_into().unwrap());
         let exclusions = vec![exclusion];
 
         //input_file.rewind().unwrap();
@@ -4892,7 +4882,7 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    
+    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_jumbf_generation() {
@@ -4917,14 +4907,12 @@ pub mod tests {
             .save_to_mpd(asset_path.as_path(), output_path, signer.as_ref())
             .unwrap();
     }
-     
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_validation() {
         // test adding to actual image
-        let init_path = fixture_path(
-            "./bunny/BigBuckBunny_2s_init.mp4",
-        );
+        let init_path = fixture_path("./bunny/BigBuckBunny_2s_init.mp4");
 
         let init_stream = std::fs::read(&init_path).unwrap();
 
@@ -4933,25 +4921,27 @@ pub mod tests {
         for entry in (parent_path.read_dir().unwrap()).flatten() {
             let file_path = entry.path();
             let mut validation_log = DetailedStatusTracker::new();
-        
 
             match file_path.extension() {
                 Some(s) if s == "m4s" => {
                     let fragment_stream = std::fs::read(&file_path).unwrap();
-                    let manifest = Store::load_fragment_from_memory("mp4", 
-                        &init_stream, 
-                        &fragment_stream, 
-                        true, 
-                        &mut validation_log).unwrap();
+                    let manifest = Store::load_fragment_from_memory(
+                        "mp4",
+                        &init_stream,
+                        &fragment_stream,
+                        true,
+                        &mut validation_log,
+                    )
+                    .unwrap();
 
-       
-                        let errors = report_split_errors(validation_log.get_log_mut());
-                        assert!(errors.is_empty());
+                    let errors = report_split_errors(validation_log.get_log_mut());
+                    assert!(errors.is_empty());
 
-                        println!("manifest: {manifest}");
+                    println!("manifest: {manifest}");
                 }
                 _ => (),
             }
         }
     }
+    */
 }

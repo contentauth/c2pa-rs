@@ -129,7 +129,13 @@ fn user_data_hash_with_sdk_hashing() {
 
     // we need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, unfinished_manifest.len());
+    let hr = HashRange::new(
+        2,
+        unfinished_manifest
+            .len()
+            .try_into()
+            .expect("test should be in range"),
+    );
     dh.add_exclusion(hr);
 
     // tell SDK to fill in the hash and sign to complete the manifest
@@ -231,7 +237,13 @@ fn user_data_hash_with_user_hashing() {
     // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
     // we will need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, unfinished_manifest.len());
+    let hr = HashRange::new(
+        2,
+        unfinished_manifest
+            .len()
+            .try_into()
+            .expect("test should be in range"),
+    );
     dh.add_exclusion(hr);
 
     // since the only thing we are excluding in this example is the manifest we can just hash all the bytes

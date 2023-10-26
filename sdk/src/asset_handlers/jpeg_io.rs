@@ -20,6 +20,7 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use conv::ValueFrom;
 use img_parts::{
     jpeg::{
         markers::{self, P, RST0, RST7, Z},
@@ -351,6 +352,8 @@ impl CAIWriter for JpegIO {
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
+                    let seg_len =
+                        u64::value_from(seg.len_with_entropy()).map_err(|_| Error::RangeError)?;
                     match seg.marker() {
                         markers::APP11 => {
                             // JUMBF marker
@@ -369,7 +372,7 @@ impl CAIWriter for JpegIO {
 
                                     let v = HashObjectPositions {
                                         offset: curr_offset,
-                                        length: seg.len_with_entropy(),
+                                        length: seg_len,
                                         htype: HashBlockObjectType::Cai,
                                     };
                                     positions.push(v);
@@ -383,7 +386,7 @@ impl CAIWriter for JpegIO {
 
                                         let v = HashObjectPositions {
                                             offset: curr_offset,
-                                            length: seg.len_with_entropy(),
+                                            length: seg_len,
                                             htype: HashBlockObjectType::Cai,
                                         };
 
@@ -392,7 +395,7 @@ impl CAIWriter for JpegIO {
                                         // save other for completeness sake
                                         let v = HashObjectPositions {
                                             offset: curr_offset,
-                                            length: seg.len_with_entropy(),
+                                            length: seg_len,
                                             htype: HashBlockObjectType::Other,
                                         };
                                         positions.push(v);
@@ -404,7 +407,7 @@ impl CAIWriter for JpegIO {
                             // XMP marker or EXIF or Extra XMP
                             let v = HashObjectPositions {
                                 offset: curr_offset,
-                                length: seg.len_with_entropy(),
+                                length: seg_len,
                                 htype: HashBlockObjectType::Xmp,
                             };
                             // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
@@ -414,14 +417,14 @@ impl CAIWriter for JpegIO {
                             // save other for completeness sake
                             let v = HashObjectPositions {
                                 offset: curr_offset,
-                                length: seg.len_with_entropy(),
+                                length: seg_len,
                                 htype: HashBlockObjectType::Other,
                             };
 
                             positions.push(v);
                         }
                     }
-                    curr_offset += seg.len_with_entropy();
+                    curr_offset += seg_len;
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
@@ -707,6 +710,9 @@ impl AssetBoxHash for JpegIO {
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
+                    let seg_len =
+                        u64::value_from(seg.len_with_entropy()).map_err(|_| Error::RangeError)?;
+
                     match seg.marker() {
                         markers::APP11 => {
                             // JUMBF marker
@@ -728,7 +734,7 @@ impl AssetBoxHash for JpegIO {
                                     )?;
 
                                     // update c2pa box map
-                                    c2pa_bm.range_len += seg.len_with_entropy();
+                                    c2pa_bm.range_len += seg_len;
                                 } else {
                                     // check if this is a CAI JUMBF block
                                     let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
@@ -743,7 +749,7 @@ impl AssetBoxHash for JpegIO {
                                             hash: ByteBuf::from(Vec::new()),
                                             pad: ByteBuf::from(Vec::new()),
                                             range_start: curr_offset,
-                                            range_len: seg.len_with_entropy(),
+                                            range_len: seg_len,
                                         };
 
                                         box_maps.push(c2pa_bm);
@@ -762,7 +768,7 @@ impl AssetBoxHash for JpegIO {
                                             hash: ByteBuf::from(Vec::new()),
                                             pad: ByteBuf::from(Vec::new()),
                                             range_start: curr_offset,
-                                            range_len: seg.len_with_entropy(),
+                                            range_len: seg_len,
                                         };
 
                                         box_maps.push(bm);
@@ -775,11 +781,13 @@ impl AssetBoxHash for JpegIO {
 
                             // move pointer to beginning of segment
                             input_stream
-                                .seek(std::io::SeekFrom::Start((curr_offset + seg.len()) as u64))?;
+                                .seek(std::io::SeekFrom::Start(curr_offset + seg.len() as u64))?;
 
-                            let size =
+                            let size = u64::value_from(
                                 get_entropy_size(input_stream, seg.len_with_entropy() - seg.len())?
-                                    + seg.len();
+                                    + seg.len(),
+                            )
+                            .map_err(|_| Error::RangeError)?;
 
                             let name = segment_names
                                 .get(&seg.marker())
@@ -809,13 +817,13 @@ impl AssetBoxHash for JpegIO {
                                 hash: ByteBuf::from(Vec::new()),
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: curr_offset,
-                                range_len: seg.len_with_entropy(),
+                                range_len: seg_len,
                             };
 
                             box_maps.push(bm);
                         }
                     }
-                    curr_offset += seg.len_with_entropy();
+                    curr_offset += seg_len;
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
@@ -1043,7 +1051,7 @@ pub mod tests {
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; cai_loc.offset.try_into().unwrap()];
         let mut in_file = std::fs::File::open(&output).unwrap();
 
         // write before

@@ -400,24 +400,24 @@ impl CAIWriter for PngIO {
             .ok_or(Error::JumbfNotFound)?;
 
         positions.push(HashObjectPositions {
-            offset: pcp.start as usize,
-            length: pcp.length as usize + PNG_HDR_LEN as usize,
+            offset: pcp.start,
+            length: u64::value_from(pcp.length).map_err(|_| Error::RangeError)? + PNG_HDR_LEN,
             htype: HashBlockObjectType::Cai,
         });
 
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: pcp.start as usize,
+            length: pcp.start,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
-        let end = pcp.end() as usize;
+        let end = pcp.end();
         let file_end = png_buf.len();
         positions.push(HashObjectPositions {
             offset: end, // len of cai
-            length: file_end - end,
+            length: u64::value_from(file_end).map_err(|_| Error::RangeError)? - end,
             htype: HashBlockObjectType::Other,
         });
 
@@ -635,8 +635,8 @@ impl AssetBoxHash for PngIO {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: pc.start as usize,
-                    range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                    range_start: pc.start as u64,
+                    range_len: (pc.length + 12) as u64, // length(4) + name(4) + crc(4)
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -648,8 +648,8 @@ impl AssetBoxHash for PngIO {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: pc.start as usize,
-                range_len: (pc.length + 12) as usize, // length(4) + name(4) + crc(4)
+                range_start: pc.start,
+                range_len: (pc.length + 12) as u64, // length(4) + name(4) + crc(4)
             };
             box_maps.push(c2pa_bm);
         }
@@ -910,7 +910,7 @@ pub mod tests {
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; cai_loc.offset.try_into().unwrap()];
         let mut in_file = std::fs::File::open(&output).unwrap();
 
         // write before

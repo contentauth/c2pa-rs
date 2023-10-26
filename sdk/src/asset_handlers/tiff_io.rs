@@ -1427,15 +1427,12 @@ impl AssetIO for TiffIO {
             ));
         }
 
-        let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-        let manifest_offset = usize::value_from(decoded_offset)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-        let manifest_len = usize::value_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+        let offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+        let length = cai_ifd_entry.value_count;
 
         Ok(vec![HashObjectPositions {
-            offset: manifest_offset,
-            length: manifest_len,
+            offset,
+            length,
             htype: HashBlockObjectType::Cai,
         }])
     }

@@ -35,8 +35,8 @@ impl fmt::Display for HashBlockObjectType {
 }
 #[derive(Debug)]
 pub struct HashObjectPositions {
-    pub offset: usize, // offset from beginning of file to the beginning of object
-    pub length: usize, // length of object
+    pub offset: u64, // offset from beginning of file to the beginning of object
+    pub length: u64, // length of object
     pub htype: HashBlockObjectType, // type of hash block object
 }
 

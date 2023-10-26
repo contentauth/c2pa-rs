@@ -444,32 +444,25 @@ impl CAIWriter for RiffIO {
             get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
 
         positions.push(HashObjectPositions {
-            offset: usize::value_from(manifest_pos)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            length: usize::value_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+            offset: u64::value_from(manifest_pos).map_err(|_| Error::RangeError)?,
+            length: u64::value_from(manifest_len).map_err(|_| Error::RangeError)?,
             htype: HashBlockObjectType::Cai,
         });
 
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: usize::value_from(manifest_pos)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+            length: u64::value_from(manifest_pos).map_err(|_| Error::RangeError)?,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
-        let end = u64::value_from(manifest_pos)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            + u64::value_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+        let end = u64::value_from(manifest_pos).map_err(|_| Error::RangeError)?
+            + u64::value_from(manifest_len).map_err(|_| Error::RangeError)?;
         let file_end = output_stream.seek(SeekFrom::End(0))?;
         positions.push(HashObjectPositions {
-            offset: usize::value_from(end)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
-            length: usize::value_from(file_end - end)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+            offset: u64::value_from(end).map_err(|_| Error::RangeError)?, // len of cai
+            length: u64::value_from(file_end - end).map_err(|_| Error::RangeError)?,
             htype: HashBlockObjectType::Other,
         });
 

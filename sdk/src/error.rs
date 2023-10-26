@@ -227,6 +227,9 @@ pub enum Error {
     #[error("PDF read error")]
     PdfReadError,
 
+    #[error("Value out of range")]
+    RangeError,
+
     #[error(transparent)]
     InvalidClaim(#[from] crate::store::InvalidClaimError),
 

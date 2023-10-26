@@ -461,25 +461,24 @@ impl CAIWriter for SvgIO {
         let encoded_manifest_len = base64::encode(&decoded_manifest).len();
 
         positions.push(HashObjectPositions {
-            offset: manifest_pos,
-            length: encoded_manifest_len,
+            offset: u64::value_from(manifest_pos).map_err(|_| Error::RangeError)?,
+            length: u64::value_from(encoded_manifest_len).map_err(|_| Error::RangeError)?,
             htype: HashBlockObjectType::Cai,
         });
 
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: manifest_pos,
+            length: u64::value_from(manifest_pos).map_err(|_| Error::RangeError)?,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(input_stream.seek(SeekFrom::End(0))?)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            - end;
+        let length =
+            u64::value_from(input_stream.seek(SeekFrom::End(0))?).map_err(|_| Error::RangeError)?;
         positions.push(HashObjectPositions {
-            offset: end,
+            offset: u64::value_from(end).map_err(|_| Error::RangeError)?,
             length,
             htype: HashBlockObjectType::Other,
         });
@@ -747,7 +746,8 @@ pub mod tests {
                             if op.htype == HashBlockObjectType::Cai {
                                 let mut of = File::open(&output).unwrap();
 
-                                let mut manifests_buf: Vec<u8> = vec![0u8; op.length];
+                                let mut manifests_buf: Vec<u8> =
+                                    vec![0u8; op.length.try_into().unwrap()];
                                 of.seek(SeekFrom::Start(op.offset as u64)).unwrap();
                                 of.read_exact(manifests_buf.as_mut_slice()).unwrap();
                                 let buf_str = std::str::from_utf8(&manifests_buf).unwrap();

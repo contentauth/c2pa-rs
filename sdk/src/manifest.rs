@@ -2256,7 +2256,7 @@ pub(crate) mod tests {
         // build manifest to insert in the hole
 
         // create an hash exclusion for the manifest
-        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusion = HashRange::new(offset, placeholder.len().try_into().unwrap());
         let exclusions = vec![exclusion];
 
         let mut dh = DataHash::new("source_hash", "sha256");

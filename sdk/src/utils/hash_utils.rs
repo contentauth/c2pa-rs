@@ -32,17 +32,17 @@ use crate::{Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct HashRange {
-    start: usize,
-    length: usize,
+    start: u64,
+    length: u64,
 
     #[serde(skip)]
     bmff_offset: Option<u64>, /* optional tracking of offset positions to include in BMFF_V2 hashes in BE format */
 }
 
 impl HashRange {
-    pub fn new(start: usize, length: usize) -> Self {
+    pub fn new(start: u64, length: u64) -> Self {
         HashRange {
             start,
             length,
@@ -52,22 +52,26 @@ impl HashRange {
 
     /// update the start value
     #[allow(dead_code)]
-    pub fn set_start(&mut self, start: usize) {
+    pub fn set_start(&mut self, start: u64) {
         self.start = start;
     }
 
     /// return start as usize
-    pub fn start(&self) -> usize {
+    pub fn start(&self) -> u64 {
         self.start
     }
 
     /// return length as usize
-    pub fn length(&self) -> usize {
+    pub fn length(&self) -> u64 {
         self.length
     }
 
-    pub fn set_length(&mut self, length: usize) {
+    pub fn set_length(&mut self, length: u64) {
         self.length = length;
+    }
+
+    pub fn extend_length(&mut self, length: u64) {
+        self.length += length;
     }
 
     // set offset for BMFF_V2 to be hashed in addition to data

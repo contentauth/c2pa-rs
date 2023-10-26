@@ -531,20 +531,19 @@ pub fn bmff_to_jumbf_exclusions(
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
                         let exclusion = HashRange::new(
-                            (exclusion_start + subset.offset as u64) as usize,
-                            (if subset.length == 0 {
-                                exclusion_length - subset.offset as u64
+                            exclusion_start + subset.offset,
+                            if subset.length == 0 {
+                                exclusion_length - subset.offset
                             } else {
-                                min(subset.length as u64, exclusion_length)
-                            }) as usize,
+                                min(subset.length, exclusion_length)
+                            },
                         );
 
                         exclusions.push(exclusion);
                     }
                 } else {
                     // exclude box in its entirty
-                    let exclusion =
-                        HashRange::new(exclusion_start as usize, exclusion_length as usize);
+                    let exclusion = HashRange::new(exclusion_start, exclusion_length);
 
                     exclusions.push(exclusion);
 
@@ -562,7 +561,7 @@ pub fn bmff_to_jumbf_exclusions(
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
-            let mut exclusion = HashRange::new(tl_start as usize, 1);
+            let mut exclusion = HashRange::new(tl_start, 1);
             exclusion.set_bmff_offset(tl_start);
 
             exclusions.push(exclusion);
