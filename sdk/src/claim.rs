@@ -702,7 +702,7 @@ impl Claim {
         let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         databox_uri.add_salt(salt);
 
-        // add credential to vcstore
+        // add databox to databox store
         self.data_boxes.push((databox_uri.clone(), new_db));
 
         Ok(databox_uri)
@@ -855,94 +855,92 @@ impl Claim {
         self.assertion_store.push(assertion);
     }
 
-    // crate private function to allow for patching a data hash with final contents
-    pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
-        let mut replacement_assertion = data_hash.to_assertion()?;
+    // Patch an existing assertion with new contents.
+    //
+    // `replace_with` should match in name and size of an existing assertion.
+    fn update_assertion<MatchFn, PatchFn>(
+        &mut self,
+        replace_with: Assertion,
+        match_fn: MatchFn,
+        patch_fn: PatchFn,
+    ) -> Result<()>
+    where
+        MatchFn: Fn(&ClaimAssertion) -> bool,
+        PatchFn: FnOnce(&ClaimAssertion, Assertion) -> Result<Assertion>,
+    {
+        // Find the assertion that should be replaced.
+        let Some(ref mut target_assertion) = self
+            .assertion_store
+            .iter_mut()
+            .find(|ca| Assertion::assertions_eq(&replace_with, ca.assertion()) && match_fn(ca))
+        else {
+            return Err(Error::NotFound);
+        };
 
-        match self.assertion_store.iter_mut().find(|assertion| {
-            // is this a DataHash Assertion
-            if !Assertion::assertions_eq(&replacement_assertion, assertion.assertion()) {
-                return false;
-            }
+        // Save off copy of original hash to cross-check before
+        // replacing it.
+        let original_hash = target_assertion.hash().to_vec();
 
-            if let Ok(dh) = DataHash::from_assertion(assertion.assertion()) {
-                dh.name == data_hash.name
-            } else {
-                false
-            }
-        }) {
-            Some(ref mut dh_assertion) => {
-                let original_hash = dh_assertion.hash().to_vec();
-                let original_len = dh_assertion.assertion().data().len();
-                data_hash.pad_to_size(original_len)?;
-                replacement_assertion = data_hash.to_assertion()?;
+        // Give caller a chance to patch/replace the assertion.
+        let replace_with = patch_fn(target_assertion, replace_with)?;
 
-                let replacement_hash = Claim::calc_assertion_box_hash(
-                    &dh_assertion.label(),
-                    &replacement_assertion,
-                    dh_assertion.salt().clone(),
-                    dh_assertion.hash_alg(),
-                )?;
-                dh_assertion.update_assertion(replacement_assertion, replacement_hash)?;
+        // Calculate new hash, given new content.
+        let replacement_hash = Claim::calc_assertion_box_hash(
+            &target_assertion.label(),
+            &replace_with,
+            target_assertion.salt().clone(),
+            target_assertion.hash_alg(),
+        )?;
 
-                // fix up hashed uri
-                match self.assertions.iter_mut().find_map(|f| {
-                    if f.url().contains(&dh_assertion.label())
-                        && vec_compare(&f.hash(), &original_hash)
-                    {
-                        // replace with newly updated hash
-                        f.update_hash(dh_assertion.hash().to_vec());
-                        Some(f)
-                    } else {
-                        None
-                    }
-                }) {
-                    Some(_) => Ok(()),
-                    None => Err(Error::NotFound),
-                }
-            }
-            None => Err(Error::NotFound),
-        }
+        target_assertion.update_assertion(replace_with, replacement_hash)?;
+
+        let target_label = target_assertion.label();
+        let target_hash = target_assertion.hash();
+
+        // Replace the existing hash in the hashed URI reference
+        // with the newly-calculated hash.
+        let Some(f) = self
+            .assertions
+            .iter_mut()
+            .find(|f| f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash))
+        else {
+            return Err(Error::NotFound);
+        };
+
+        // Replace existing hash with newly-calculated hash.
+        f.update_hash(target_hash.to_vec());
+        Ok(())
     }
 
-    // crate private function to allow for patching a BMFF hash with final contents
+    // Crate private function to allow for patching a data hash with final contents.
+    pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
+        let dh_name = data_hash.name.clone();
+
+        self.update_assertion(
+            data_hash.to_assertion()?,
+            |ca: &ClaimAssertion| {
+                if let Ok(dh) = DataHash::from_assertion(ca.assertion()) {
+                    dh.name == dh_name
+                } else {
+                    false
+                }
+            },
+            |target_assertion: &ClaimAssertion, _: Assertion| {
+                let original_len = target_assertion.assertion().data().len();
+                data_hash.pad_to_size(original_len)?;
+                data_hash.to_assertion()
+            },
+        )
+    }
+
+    // Crate private function to allow for patching a BMFF hash with final contents.
     #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
-        let replacement_assertion = bmff_hash.to_assertion()?;
-
-        match self.assertion_store.iter_mut().find(|assertion| {
-            // is this a BMFFHash Assertion
-            Assertion::assertions_eq(&replacement_assertion, assertion.assertion())
-        }) {
-            Some(ref mut bmff_assertion) => {
-                let original_hash = bmff_assertion.hash().to_vec();
-
-                let replacement_hash = Claim::calc_assertion_box_hash(
-                    &bmff_assertion.label(),
-                    &replacement_assertion,
-                    bmff_assertion.salt().clone(),
-                    bmff_assertion.hash_alg(),
-                )?;
-                bmff_assertion.update_assertion(replacement_assertion, replacement_hash)?;
-
-                // fix up hashed uri
-                match self.assertions.iter_mut().find_map(|f| {
-                    if f.url().contains(&bmff_assertion.label())
-                        && vec_compare(&f.hash(), &original_hash)
-                    {
-                        // replace with newly updated hash
-                        f.update_hash(bmff_assertion.hash().to_vec());
-                        Some(f)
-                    } else {
-                        None
-                    }
-                }) {
-                    Some(_) => Ok(()),
-                    None => Err(Error::NotFound),
-                }
-            }
-            None => Err(Error::NotFound),
-        }
+        self.update_assertion(
+            bmff_hash.to_assertion()?,
+            |_: &ClaimAssertion| true,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
     }
 
     /// Redact an assertion from a prior claim.

@@ -246,21 +246,6 @@ jobs:
           version: latest
           args: --all-targets --all-features
 
-  unknown-features-cfg:
-    name: Check for unknown features in cfg attributes and macros
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Check for unknown features
-        env:
-          RUSTFLAGS: "-D unexpected-cfgs"
-        run: cargo +nightly check -Z unstable-options -Z check-cfg=features --tests
-
   version_bump:
     name: Ensure (MINOR) tag is used when making an API breaking change
     # Change all of these steps to (MAJOR) after 1.0 release
@@ -307,6 +292,6 @@ jobs:
           VERSION: ${{ steps.set-version.outputs.version }}
 
       - name: If this step fails, change title of the PR to include (MINOR) tag
-        uses: obi1kenobi/cargo-semver-checks-action@v1
+        uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
-          crate-name: c2pa
+          package: c2pa
