@@ -108,6 +108,7 @@ impl AssetIO for PdfIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
@@ -115,7 +116,7 @@ impl AssetIO for PdfIO {
 
 impl ComposedManifestRef for PdfIO {
     // Return entire CAI block as Vec<u8>
-    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>, Error> {
         Ok(manifest_data.to_vec())
     }
 }
