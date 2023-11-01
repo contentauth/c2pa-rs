@@ -51,6 +51,11 @@ pub enum Error {
     // the manifest bytes in the PDF's embedded files.
     #[error("Unable to find C2PA manifest in the PDF's embedded files.")]
     UnableToFindEmbeddedFileManifest,
+
+    /// This error occurs when we an error was encountered trying to find the PDF's C2PA embedded
+    /// file specification in the array of Associated Files defined in the catalog.
+    #[error("Unable to find a C2PA embedded file specification in PDF's associated files array")]
+    FindingC2PAFileSpec,
 }
 
 const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
@@ -98,16 +103,9 @@ impl C2paPdf for Pdf {
     /// Determines if this PDF has a C2PA manifest embedded.
     ///
     /// This is done by checking if the Associated File key of the catalog points to a
-    /// [lopdf::Object::Dictionary] with an `AFRelationship` set to `C2PA_Manifest`.
+    /// [Object::Dictionary] with an `AFRelationship` set to `C2PA_Manifest`.
     fn has_c2pa_manifest(&self) -> bool {
-        self.document
-            .catalog()
-            .and_then(|catalog| catalog.get_deref(ASSOCIATED_FILE_KEY, &self.document))
-            .and_then(Object::as_dict)
-            .and_then(|dict| dict.get_deref(AF_RELATIONSHIP_KEY, &self.document))
-            .and_then(Object::as_name)
-            .map(|name| name == C2PA_RELATIONSHIP)
-            .unwrap_or_default()
+        self.c2pa_file_spec_object_id().is_some()
     }
 
     /// Writes the provided `bytes` to the PDF as an `EmbeddedFile`.
@@ -116,7 +114,7 @@ impl C2paPdf for Pdf {
         let file_stream_ref = self.add_c2pa_embedded_file_stream(bytes);
         let file_spec_ref = self.add_embedded_file_specification(file_stream_ref);
 
-        self.set_af_relationship(file_spec_ref)?;
+        self.push_associated_file(file_spec_ref)?;
 
         let mut manifest_name_file_pair = vec![
             Object::string_literal(CONTENT_CREDS),
@@ -194,7 +192,7 @@ impl C2paPdf for Pdf {
         let file_stream_reference = self.add_c2pa_embedded_file_stream(bytes);
         let file_spec_reference = self.add_embedded_file_specification(file_stream_reference);
 
-        self.set_af_relationship(file_spec_reference)?;
+        self.push_associated_file(file_spec_reference)?;
         self.add_file_attachment_annotation(file_spec_reference)?;
 
         Ok(())
@@ -214,16 +212,15 @@ impl C2paPdf for Pdf {
     /// separately, due to PDF's "Incremental Update" feature. See the spec for more details:
     /// <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs>
     fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
-        if !self.has_c2pa_manifest() {
+        let Some(id) = self.c2pa_file_spec_object_id() else {
             return Ok(None);
         };
 
         Ok(Some(vec![
             &self
                 .document
-                .catalog()?
-                .get_deref(ASSOCIATED_FILE_KEY, &self.document)?
-                .as_dict()?
+                .get_object(id)
+                .and_then(Object::as_dict)?
                 .get_deref(b"EF", &self.document)?
                 .as_stream()?
                 .content,
@@ -237,10 +234,8 @@ impl C2paPdf for Pdf {
 
         // Find the File Spec, which contains the reference to the manifest.
         let file_spec_ref = self
-            .document
-            .catalog()?
-            .get(ASSOCIATED_FILE_KEY)?
-            .as_reference()?;
+            .c2pa_file_spec_object_id()
+            .ok_or_else(|| Error::NoManifest)?;
 
         // Find the manifest's file stream.
         let file_stream_ref = self
@@ -259,8 +254,8 @@ impl C2paPdf for Pdf {
         self.remove_manifest_from_embedded_files()
             .or_else(|_| self.remove_manifest_from_annotations())?;
 
-        // Remove the AF_Relationship from the catalog.
-        self.document.catalog_mut()?.remove(AF_RELATIONSHIP_KEY);
+        // Remove C2PA associated files from the `AF` key in the catalog.
+        self.remove_c2pa_file_spec_reference()?;
 
         // Delete the manifest and its descriptor from the PDF
         self.document.delete_object(file_stream_ref);
@@ -305,6 +300,58 @@ impl Pdf {
     pub fn from_reader<R: Read>(source: R) -> Result<Self, Error> {
         let document = Document::load_from(source)?;
         Ok(Self { document })
+    }
+
+    /// Returns a reference to the Associated Files array from the PDF's Catalog.
+    fn associated_files(&self) -> Result<&Vec<Object>, Error> {
+        Ok(self
+            .document
+            .catalog()?
+            .get_deref(ASSOCIATED_FILE_KEY, &self.document)?
+            .as_array()?)
+    }
+
+    /// Returns the [Object::ObjectId] of the C2PA File Spec Reference, if it is present in the
+    /// PDF's associated files array.
+    fn c2pa_file_spec_object_id(&self) -> Option<ObjectId> {
+        self.associated_files().ok()?.iter().find_map(|value| {
+            let Ok(reference) = value.as_reference() else {
+                return None;
+            };
+
+            let name = self
+                .document
+                .get_object(reference)
+                .and_then(Object::as_dict)
+                .and_then(|dict| dict.get_deref(AF_RELATIONSHIP_KEY, &self.document))
+                .and_then(Object::as_name)
+                .ok()?;
+
+            (name == C2PA_RELATIONSHIP).then_some(reference)
+        })
+    }
+
+    /// Removes the C2PA File Spec Reference if it exists in the Associated Files [Object::Array] of
+    /// PDF's catalog. This will return an [Err] if the PDF doesn't contain a C2PA File Spec
+    /// Reference.
+    fn remove_c2pa_file_spec_reference(&mut self) -> Result<(), Error> {
+        let c2pa_file_spec_reference = self
+            .c2pa_file_spec_object_id()
+            .ok_or_else(|| Error::FindingC2PAFileSpec)?;
+
+        self.document
+            .catalog_mut()?
+            .get_mut(ASSOCIATED_FILE_KEY)?
+            .as_array_mut()?
+            .retain(|v| {
+                let Ok(reference) = v.as_reference() else {
+                    return true;
+                };
+
+                reference != c2pa_file_spec_reference
+            });
+
+        Ok(())
     }
 
     /// Adds the C2PA `Annotation` to the PDF.
@@ -361,16 +408,28 @@ impl Pdf {
         Ok(())
     }
 
-    /// Sets the Associated File (/AF) key of the PDF to the provided embedded file spec reference.
-    fn set_af_relationship(&mut self, embedded_file_spec_ref: ObjectId) -> Result<(), Error> {
-        self.document
-            .catalog_mut()?
-            .set(ASSOCIATED_FILE_KEY, embedded_file_spec_ref);
+    /// Creates, or appends to, the Associated File (`AF`) array the embedded file spec reference of the
+    /// C2PA data.
+    fn push_associated_file(&mut self, embedded_file_spec_ref: ObjectId) -> Result<(), Error> {
+        let catalog = self.document.catalog_mut()?;
+        if catalog.get_mut(ASSOCIATED_FILE_KEY).is_err() {
+            // Add associated files array to catalog if it isn't already present.
+            catalog.set(ASSOCIATED_FILE_KEY, vec![]);
+        }
+
+        let associated_files = catalog.get_mut(ASSOCIATED_FILE_KEY)?;
+        let associated_files = match associated_files.as_reference() {
+            Ok(object_id) => self.document.get_object_mut(object_id)?,
+            _ => associated_files,
+        }
+        .as_array_mut()?;
+
+        associated_files.push(Reference(embedded_file_spec_ref));
 
         Ok(())
     }
 
-    /// Adds the `Embedded File Specification` to the PDF document. Returns the [lopdf::Object::Reference]
+    /// Adds the `Embedded File Specification` to the PDF document. Returns the [Reference]
     /// to the added `Embedded File Specification`.
     fn add_embedded_file_specification(&mut self, file_stream_ref: ObjectId) -> ObjectId {
         let embedded_file_stream = dictionary! {
@@ -386,7 +445,7 @@ impl Pdf {
     }
 
     /// Adds the provided `bytes` as a `StreamDictionary` to the PDF document. Returns the
-    /// [lopdf::Object::Reference] of the added [lopdf::Object].
+    /// [Reference] of the added [Object].
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
         let stream = Stream::new(
             dictionary! {
@@ -651,7 +710,7 @@ mod tests {
         pdf.document
             .catalog_mut()
             .unwrap()
-            .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
+            .set(ASSOCIATED_FILE_KEY, vec![Reference((100, 0))]);
 
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
@@ -663,7 +722,7 @@ mod tests {
         pdf.document
             .catalog_mut()
             .unwrap()
-            .set(ASSOCIATED_FILE_KEY, Object::Reference((100, 0)));
+            .set(ASSOCIATED_FILE_KEY, Reference((100, 0)));
 
         assert!(matches!(pdf.read_manifest_bytes(), Ok(None)));
     }
