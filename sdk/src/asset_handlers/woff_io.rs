@@ -808,17 +808,23 @@ impl Font {
             reader.seek(SeekFrom::Start(wtde.offset as u64))?;
             reader.read_exact(&mut table_data)?;
 
-            let table: Table = {
-                match wtde.tag {
-                    //C2PA_TABLE_TAG => {
-                    //    Table::C2PA({tbl: }) {}
-                    //}
-                    //HEAD_TABLE_TAG => {
-                    //    Table::Head(TableHead) {}
-                    //}
-                    _ => Table::Unspecified(TableUnspecified { data: table_data }),
-                }
-            };
+            // For now, just make an Unspecified table
+            let table: Table = Table::Unspecified(TableUnspecified { data: table_data });
+
+            // But someday, key off the tag & create specialized instances for
+            // certain tables, like so:
+            //
+            //     let table: Table = {
+            //         match wtde.tag {
+            //             C2PA_TABLE_TAG => {
+            //                 Table::C2PA({tbl: }) {}
+            //             }
+            //             HEAD_TABLE_TAG => {
+            //                 Table::Head(TableHead) {}
+            //             }
+            //             _ => Table::Unspecified(...);
+            //         }
+            //     };
 
             // Store it in the bucket
             the_font.tables.insert(wtde.tag, table);
