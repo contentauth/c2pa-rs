@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.0
+_01 November 2023_
+
+* (PATCH) switches af relationship for a reference to the c2pa data to an array of references, one of which is the c2pa spec ([#333](https://github.com/contentauth/c2pa-rs/pull/333))
+* Restore async versions of embedd functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
+* (MINOR) Support databox thumbnails CAI-4142 ([#325](https://github.com/contentauth/c2pa-rs/pull/325))
+* (MINOR) Reuse claim thumbnail as ingredient thumbnail if the store is valid ([#322](https://github.com/contentauth/c2pa-rs/pull/322))
+* (MINOR) Use JUMBF URIs for ManifestStore identifiers ([#323](https://github.com/contentauth/c2pa-rs/pull/323))
+* Add ManifestStore::from_stream ([#319](https://github.com/contentauth/c2pa-rs/pull/319))
+* Adds embed_to_stream ([#313](https://github.com/contentauth/c2pa-rs/pull/313))
 ## 0.27.1
 _04 October 2023_
 
