@@ -286,10 +286,10 @@ fn check_cert(
 
     // check curves for SPKI EC algorithms
     let pk = signcert.public_key();
-    let skpi_alg = &pk.algorithm;
+    let spki_alg = &pk.algorithm;
 
-    if skpi_alg.algorithm == EC_PUBLICKEY_OID {
-        if let Some(parameters) = &skpi_alg.parameters {
+    if spki_alg.algorithm == EC_PUBLICKEY_OID {
+        if let Some(parameters) = &spki_alg.parameters {
             let named_curve_oid = parameters.as_oid().map_err(|_err| Error::CoseInvalidCert)?;
 
             // must be one of these named curves
@@ -314,7 +314,7 @@ fn check_cert(
     }
 
     // check modulus minimum length (for RSA & PSS algorithms)
-    if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
+    if spki_alg.algorithm == RSA_OID || spki_alg.algorithm == RSASSA_PSS_OID {
         let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
 
@@ -670,6 +670,63 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
     }
 }
 
+fn get_cert_chain_details(certs: &[Vec<u8>]) -> Result<Vec<String>> {
+    let mut details = Vec::new();
+
+    for cert_der in certs {
+        // get the cert from der format
+        let (_rem, x509) =
+            X509Certificate::from_der(cert_der).map_err(|_err| Error::CoseInvalidCert)?;
+
+        let subject = x509.subject();
+        let issuer = x509.issuer();
+        let serial_num = x509.tbs_certificate.raw_serial_as_string();
+        let validity = match x509.validity().time_to_expiration() {
+            Some(d) => {
+                let weeks = d.whole_weeks();
+                format!("{weeks} weeks")
+            }
+            None => "expired".to_string(),
+        };
+
+        let pk = x509.public_key();
+        let spki_alg = &pk.algorithm;
+
+        let supported_sigs =
+            if spki_alg.algorithm == RSA_OID || spki_alg.algorithm == RSASSA_PSS_OID {
+                "PS256, PS384, PS512".to_string()
+            } else if spki_alg.algorithm == EC_PUBLICKEY_OID {
+                let mut output = "EC signatures".to_string();
+
+                if spki_alg.algorithm == EC_PUBLICKEY_OID {
+                    if let Some(parameters) = &spki_alg.parameters {
+                        let named_curve_oid =
+                            parameters.as_oid().map_err(|_err| Error::CoseInvalidCert)?;
+
+                        // must be one of these named curves
+                        if named_curve_oid == PRIME256V1_OID {
+                            output = "ES256".to_string();
+                        } else if named_curve_oid == SECP384R1_OID {
+                            output = "ES384".to_string();
+                        } else if named_curve_oid == SECP521R1_OID {
+                            output = "ES512".to_string();
+                        }
+                    } else {
+                        return Err(Error::CoseInvalidCert);
+                    }
+                }
+                output
+            } else {
+                "undetermined".to_string()
+            };
+
+        let detail = format!("Subject: {subject}\nIssuer: {issuer}\nSerial Number: {serial_num}\nExpires in: {validity}\nSupported signature types: {supported_sigs}\n");
+
+        details.push(detail);
+    }
+    Ok(details)
+}
+
 // Note: this function is only used to get the display string and not for cert validation.
 fn get_signing_time(
     sign1: &coset::CoseSign1,
@@ -854,12 +911,15 @@ pub fn get_signing_info(
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
+    let mut cert_details = Vec::new();
 
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
-        // get the public key der
-        let der_bytes = get_sign_cert(&sign1)?;
+        let sig_ders = get_sign_certs(&sign1)?;
 
-        let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
+        // get the public key der
+        let der_bytes = &sig_ders[0];
+
+        let _ = X509Certificate::from_der(der_bytes).map(|(_rem, signcert)| {
             date = get_signing_time(&sign1, data);
             issuer_org = extract_subject_from_cert(&signcert).ok();
             cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -869,6 +929,10 @@ pub fn get_signing_info(
 
             (_rem, signcert)
         });
+
+        if let Ok(v) = get_cert_chain_details(&sig_ders) {
+            cert_details = v;
+        }
 
         Ok(sign1)
     });
@@ -882,12 +946,13 @@ pub fn get_signing_info(
             validated: false,
             cert_chain: Vec::new(),
             cert_serial_number,
+            cert_details,
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let certs = match sign1 {
-            Ok(s) => match get_sign_certs(&s) {
+        let certs = match &sign1 {
+            Ok(s) => match get_sign_certs(s) {
                 Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
                 Err(_) => Vec::new(),
             },
@@ -901,6 +966,7 @@ pub fn get_signing_info(
             validated: false,
             cert_chain: certs,
             cert_serial_number,
+            cert_details,
         }
     }
 }

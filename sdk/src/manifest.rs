@@ -441,7 +441,22 @@ impl Manifest {
             issuer: issuer.cloned(),
             time: time.cloned(),
             cert_serial_number: cert_serial.cloned(),
+            cert_details: Vec::new(),
         });
+        self
+    }
+
+    fn set_cert_details(&mut self, cert_details: Vec<String>) -> &mut Self {
+        if let Some(si) = &mut self.signature_info {
+            si.cert_details = cert_details;
+        } else {
+            self.signature_info = Some(SignatureInfo {
+                issuer: None,
+                time: None,
+                cert_serial_number: None,
+                cert_details,
+            });
+        }
         self
     }
 
@@ -453,6 +468,15 @@ impl Manifest {
     /// Returns the time that the manifest was signed
     pub fn time(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.time)
+    }
+
+    /// Returns details of each certificate in the active manifest certificate chain
+    pub fn cert_chain_details(&self) -> Vec<String> {
+        if let Some(si) = &self.signature_info {
+            si.cert_details.clone()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Return an immutable reference to the manifest resources
@@ -666,6 +690,11 @@ impl Manifest {
                 signing_time.as_ref(),
                 claim.signing_cert_serial().as_ref(),
             );
+        }
+
+        // set cert chain details
+        if let Some(vi) = claim.signature_info() {
+            manifest.set_cert_details(vi.cert_details);
         }
 
         Ok(manifest)
@@ -1222,6 +1251,9 @@ pub struct SignatureInfo {
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
+
+    #[serde(skip)]
+    cert_details: Vec<String>,
 }
 
 #[cfg(test)]

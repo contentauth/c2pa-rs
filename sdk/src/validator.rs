@@ -24,8 +24,9 @@ pub struct ValidationInfo {
     pub date: Option<DateTime<Utc>>,
     pub cert_serial_number: Option<BigUint>,
     pub issuer_org: Option<String>,
-    pub validated: bool,     // claim signature is valid
-    pub cert_chain: Vec<u8>, // certificate chain used to validate signature
+    pub validated: bool,           // claim signature is valid
+    pub cert_chain: Vec<u8>,       // certificate chain used to validate signature
+    pub cert_details: Vec<String>, // human readable details about each cert
 }
 
 /// Trait to support validating a signature against the provided data
