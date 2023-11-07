@@ -34,6 +34,14 @@ pub trait Signer {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -42,8 +50,10 @@ pub trait Signer {
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
         self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, message))
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
     }
 
     /// OCSP response for the signing cert if available
@@ -111,6 +121,14 @@ pub trait AsyncSigner: Sync {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -121,8 +139,10 @@ pub trait AsyncSigner: Sync {
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         // NOTE: This is currently synchronous, but may become
         // async in the future.
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
         self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, message))
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
     }
 
     /// OCSP response for the signing cert if available

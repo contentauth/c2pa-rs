@@ -125,8 +125,11 @@ impl BoxHash {
                                     skip_c2pa = true;
                                 }
                             } else {
+                                // count any unknown data between named segments
+                                let len_to_this_seg =
+                                    next_source_bm.range_start - inclusion.start();
                                 // update item
-                                inclusion.set_length(inclusion.length() + next_source_bm.range_len);
+                                inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                             }
                         } else {
                             return Err(Error::HashMismatch(

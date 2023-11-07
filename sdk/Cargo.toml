@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.27.0"
+version = "0.28.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -78,6 +78,7 @@ fast-xml = "0.23.1"
 hex = "0.4.3"
 id3 = "1.7.0"
 img-parts = "0.3.0"
+jfifdump = "0.4.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
@@ -88,7 +89,7 @@ png_pong = "0.8.2"
 range-set = "0.0.9"
 ring = "0.16.20"
 riff = "1.0.1"
-schemars = { version = "0.8.12", optional = true }
+schemars = { version = "0.8.13", optional = true }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
