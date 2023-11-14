@@ -1174,15 +1174,18 @@ pub mod tests {
     fn get_chunk_positions_without_any_tables() {
         let font_data = vec![
             0x4f, 0x54, 0x54, 0x4f, // OTTO
-            0x00, 0x00, // 0 tables
+            0x00,
+            0x00,
+            // 0 tables / missing searchRange!
+            // missing entrySelector! / missing rangeShift!
         ];
         let mut font_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&font_data);
         let otf_io = OtfIO {};
         let positions = otf_io.get_chunk_positions(&mut font_stream).unwrap();
         // Should have one position reported for the table directory itself
         assert_eq!(1, positions.len());
-        assert_eq!(0, positions.get(0).unwrap().offset);
-        assert_eq!(12, positions.get(0).unwrap().length);
+        assert_eq!(0, positions.first().unwrap().offset);
+        assert_eq!(12, positions.first().unwrap().length);
     }
 
     /// Verify when reading the object locations for hashing, we get zero
@@ -1208,7 +1211,7 @@ pub mod tests {
         // record, and the table data
         assert_eq!(3, positions.len());
 
-        let table_directory = positions.get(0).unwrap();
+        let table_directory = positions.first().unwrap();
         assert_eq!(ChunkType::TableDirectory, table_directory.chunk_type);
         assert_eq!(0, table_directory.offset);
         assert_eq!(12, table_directory.length);
