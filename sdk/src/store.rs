@@ -1709,7 +1709,7 @@ impl Store {
 
         patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(&jumbf_bytes, format)
+        self.get_composed_manifest(jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The manfiest are only supported
