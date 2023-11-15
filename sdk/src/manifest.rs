@@ -1158,8 +1158,10 @@ impl Manifest {
     ///
     /// The return value is pre-formatted for insertion into a file of the given format
     /// For JPEG it is a series of App11 JPEG segments containing space for a manifest
-    /// This is used to create a properly formatted file ready for signing
-    pub fn data_hash_placeholder(&mut self, signer: &dyn Signer, format: &str) -> Result<Vec<u8>> {
+    /// This is used to create a properly formatted file ready for signing.
+    /// The reserve_size is the amount of space to reserve for the signature box.  This
+    /// value is fixed once set and must be sufficient to hold the completed signature
+    pub fn data_hash_placeholder(&mut self, reserve_size: usize, format: &str) -> Result<Vec<u8>> {
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1170,8 +1172,7 @@ impl Manifest {
         }
 
         let mut store = self.to_store()?;
-        let placeholder =
-            store.get_data_hashed_manifest_placeholder(signer.reserve_size(), format)?;
+        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
 
@@ -1195,6 +1196,29 @@ impl Manifest {
         }
         let cm = store.get_data_hashed_embeddable_manifest(dh, signer, format, asset_reader)?;
         Ok(cm)
+    }
+
+    /// Generates an data hashed embeddable manifest for a file
+    ///
+    /// The return value is pre-formatted for insertion into a file of the given format
+    /// For JPEG it is a series of App11 JPEG segments containing a signed manifest
+    /// This can directly replace a placeholder manifest to create a properly signed asset
+    /// The data hash must contain exclusions and may contain pre-calculated hashes
+    /// if an asset reader is provided, it will be used to calculate the data hash
+    pub async fn data_hash_embeddable_manifest_remote(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn RemoteSigner,
+        format: &str,
+        mut asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        if let Some(asset_reader) = asset_reader.as_deref_mut() {
+            asset_reader.rewind()?;
+        }
+        store
+            .get_data_hashed_embeddable_manifest_remote(dh, signer, format, asset_reader)
+            .await
     }
 
     /// Generates a signed box hashed manifest, optionally preformatted for embedding
@@ -2264,7 +2288,7 @@ pub(crate) mod tests {
 
         // get a placeholder the manifest
         let placeholder = manifest
-            .data_hash_placeholder(signer.as_ref(), "jpeg")
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2296,6 +2320,63 @@ pub(crate) mod tests {
                 "image/jpeg",
                 Some(&mut output_file),
             )
+            .unwrap();
+
+        use std::io::{Seek, SeekFrom, Write};
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&signed_manifest).unwrap();
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        assert!(manifest_store.validation_status().is_none());
+    }
+
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[actix::test]
+    async fn test_data_hash_embeddable_manifest_remote_signed() {
+        let ap = fixture_path("cloud.jpg");
+
+        let signer = temp_remote_signer();
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // get a placeholder the manifest
+        let placeholder = manifest
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        let signed_manifest = manifest
+            .data_hash_embeddable_manifest_remote(
+                &dh,
+                signer.as_ref(),
+                "image/jpeg",
+                Some(&mut output_file),
+            )
+            .await
             .unwrap();
 
         use std::io::{Seek, SeekFrom, Write};
