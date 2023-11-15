@@ -551,7 +551,7 @@ pub fn blake3_from_asset(path: &Path) -> Result<String> {
         }
     }
 
-    let hash = hasher.finalize();
+    let hash = blake3::Hasher::finalize(&hasher);
 
     Ok(hash.to_hex().as_str().to_owned())
 }
