@@ -354,7 +354,7 @@ fn add_token_to_cache(bmff_path_map: &mut HashMap<String, Vec<Token>>, path: Str
     }
 }
 
-fn path_from_token(bmff_tree: &mut Arena<BoxInfo>, current_node_token: &Token) -> Result<String> {
+fn path_from_token(bmff_tree: &Arena<BoxInfo>, current_node_token: &Token) -> Result<String> {
     let ancestors = current_node_token.ancestors(bmff_tree);
     let mut path = bmff_tree[*current_node_token].data.path.clone();
 

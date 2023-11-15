@@ -139,14 +139,14 @@ impl Hasher {
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or_default()
 }
 
 // Return hash inclusive bytes for desired hashing algorithm.
 pub fn hash_by_alg_with_inclusions(alg: &str, data: &[u8], inclusions: Vec<HashRange>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or_default()
 }
 
 // Return hash bytes for asset using desired hashing algorithm.

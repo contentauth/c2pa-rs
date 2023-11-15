@@ -124,7 +124,7 @@ impl Ingredient {
     }
 
     pub fn add_review(mut self, review: ReviewRating) -> Self {
-        let metadata = self.metadata.unwrap_or_else(Metadata::new);
+        let metadata = self.metadata.unwrap_or_default();
         self.metadata = Some(metadata.add_review(review));
         self
     }

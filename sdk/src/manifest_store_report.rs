@@ -124,7 +124,7 @@ impl ManifestStoreReport {
     /// Creates a ManifestStoreReport from an existing Store and a validation log
     pub(crate) fn from_store_with_log(
         store: &Store,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &impl StatusTracker,
     ) -> Result<Self> {
         let mut report = Self::from_store(store)?;
 
@@ -149,7 +149,7 @@ impl ManifestStoreReport {
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_memory(format, image_bytes, true, &mut validation_log)?;
-        Self::from_store_with_log(&store, &mut validation_log)
+        Self::from_store_with_log(&store, &validation_log)
     }
 
     /// Creates a ManifestStoreReport from a file
@@ -157,7 +157,7 @@ impl ManifestStoreReport {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-        Self::from_store_with_log(&store, &mut validation_log)
+        Self::from_store_with_log(&store, &validation_log)
     }
 
     /// create a json string representation of this structure, omitting binaries
