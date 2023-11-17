@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.1
+_17 November 2023_
+
+* readme update ([#345](https://github.com/contentauth/c2pa-rs/pull/345))
+* Add support for embeddable manifests with RemoteSigner ([#344](https://github.com/contentauth/c2pa-rs/pull/344))
+* Blake build fix ([#343](https://github.com/contentauth/c2pa-rs/pull/343))
+* Update image crate dependency and limit features ([#341](https://github.com/contentauth/c2pa-rs/pull/341))
+* Bump xmp_toolkit requirement to 1.6 ([#339](https://github.com/contentauth/c2pa-rs/pull/339))
+* Disable Windows builds with latest Rust version ([#342](https://github.com/contentauth/c2pa-rs/pull/342))
+
 ## 0.28.0
 _01 November 2023_
 
