@@ -118,6 +118,13 @@ This section gives a highlight of noteworthy changes.
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
 
+## 0.29.0
+_17 November 2023_
+* PDF read support
+* MP3 support
+* new and enhanced manifest APIs
+* thumbnail databox support
+* bug fixes and optimizations
 
 ## 0.25.0
 _14 July 2023_
