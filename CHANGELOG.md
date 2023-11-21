@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.2
+_21 November 2023_
+
+* Fix PDF reading of manifest from wrong key ([#346](https://github.com/contentauth/c2pa-rs/pull/346))
+
 ## 0.28.1
 _17 November 2023_
 
