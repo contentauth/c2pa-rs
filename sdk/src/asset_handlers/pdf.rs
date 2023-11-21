@@ -216,12 +216,15 @@ impl C2paPdf for Pdf {
             return Ok(None);
         };
 
+        let ef = &self
+            .document
+            .get_object(id)
+            .and_then(Object::as_dict)?
+            .get_deref(b"EF", &self.document)?
+            .as_dict()?; // EF dictionary
+
         Ok(Some(vec![
-            &self
-                .document
-                .get_object(id)
-                .and_then(Object::as_dict)?
-                .get_deref(b"EF", &self.document)?
+            &ef.get_deref(b"F", &self.document)? // F embedded file stream
                 .as_stream()?
                 .content,
         ]))
