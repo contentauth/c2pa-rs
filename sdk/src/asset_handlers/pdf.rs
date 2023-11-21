@@ -216,12 +216,15 @@ impl C2paPdf for Pdf {
             return Ok(None);
         };
 
+        let ef = &self
+            .document
+            .get_object(id)
+            .and_then(Object::as_dict)?
+            .get_deref(b"EF", &self.document)?
+            .as_dict()?; // EF dictionary
+
         Ok(Some(vec![
-            &self
-                .document
-                .get_object(id)
-                .and_then(Object::as_dict)?
-                .get_deref(b"EF", &self.document)?
+            &ef.get_deref(b"F", &self.document)? // F embedded file stream
                 .as_stream()?
                 .content,
         ]))
@@ -238,12 +241,13 @@ impl C2paPdf for Pdf {
             .ok_or_else(|| Error::NoManifest)?;
 
         // Find the manifest's file stream.
-        let file_stream_ref = self
+        let file_stream_ef_ref = self
             .document
             .get_object(file_spec_ref)?
             .as_dict()?
-            .get(b"EF")?
-            .as_reference()?;
+            .get(b"EF")?;
+
+        let file_stream_ref = file_stream_ef_ref.as_dict()?.get(b"F")?.as_reference()?;
 
         // Attempt to remove the manifest from the PDF's `Embedded Files`s. If the manifest
         // isn't in the PDF's embedded files, remove the manifest from the PDF's annotations.
@@ -436,7 +440,9 @@ impl Pdf {
             AF_RELATIONSHIP_KEY => Name(C2PA_RELATIONSHIP.into()),
             "Desc" => Object::string_literal(CONTENT_CREDS),
             "F" => Object::string_literal(CONTENT_CREDS),
-            "EF" => Reference(file_stream_ref),
+            "EF" => dictionary! {
+                "F" => Reference(file_stream_ref),
+            },
             TYPE_KEY => Name("FileSpec".into()),
             "UF" => Object::string_literal(CONTENT_CREDS),
         };
@@ -449,8 +455,10 @@ impl Pdf {
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
         let stream = Stream::new(
             dictionary! {
+                "F" => dictionary! {
                 SUBTYPE_KEY => C2PA_MIME_TYPE,
                 "Length" => Integer(bytes.len() as i64),
+                },
             },
             bytes,
         );
