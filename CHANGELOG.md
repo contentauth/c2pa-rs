@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.3
+_22 November 2023_
+
+* Remove Blake3 dependency from c2pa-rs ([#348](https://github.com/contentauth/c2pa-rs/pull/348))
+
 ## 0.28.2
 _21 November 2023_
 
