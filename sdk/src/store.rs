@@ -1446,7 +1446,7 @@ impl Store {
         // quite a bit to allow for a similar structure, so this code is
         // considered temporary. It is put within a feature flag to allow for
         // easy removal.
-        #[cfg(feature = "otf")]
+        #[cfg(feature = "sfnt")]
         {
             // Setup to assume fragmented CAI blocks
             let mut exclusions = Vec::<(usize, usize)>::new();
@@ -1500,7 +1500,7 @@ impl Store {
                 hashes.push(dh);
             }
         }
-        #[cfg(not(feature = "otf"))]
+        #[cfg(not(feature = "sfnt"))]
         {
             // generate default data hash that excludes jumbf block
             // find the first jumbf block (ours are always in order)

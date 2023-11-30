@@ -33,10 +33,11 @@ xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl", "openssl-sys"]
-otf = ["fonttools"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
-woff = []
+font = []
+sfnt = ["font"]
+woff = ["font"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -108,7 +109,6 @@ url = "2.2.2"
 uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.15.0"
 x509-certificate = "0.19.0"
-fonttools = { git = "https://github.com/Monotype/rust-font-tools", branch="monotype/fontSupport", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"

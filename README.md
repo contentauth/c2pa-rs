@@ -74,10 +74,10 @@ c2pa = { version = "0.25.0", features = ["file_io", "add_thumbnails"] }
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
 
-If you want to support OTF font files, add the `otf` dependency to your `Cargo.toml`. For example:
+If you want to support OpenType and TrueType SFNT font files, add the `sfnt` dependency to your `Cargo.toml`. For example:
 
 ```toml
-c2pa = {version = "0.11.0", features = ["otf"] }
+c2pa = {version = "0.11.0", features = ["sfnt"] }
 ```
 
 NOTE: Font support is early in stages and currently only considered a proof of concept for now, utilizing the `'name'` table as a temporary placeholder.
@@ -90,7 +90,7 @@ The Rust SDK crate provides:
 * `add_thumbnails` will generate thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
-* `otf` enables a CAI store for OTF font files. (Requires [fonttools](https://crates.io/crates/fonttools).)
+* `sfnt` enables a CAI store for OpenType and TrueType font files.
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.

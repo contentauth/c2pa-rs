@@ -188,7 +188,7 @@ impl CAIReader for JpegIO {
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
-                    for (_i, segment) in app11.enumerate() {
+                    for segment in app11 {
                         let raw_bytes = segment.contents();
                         if raw_bytes.len() > 16 {
                             // we need at least 16 bytes in each segment for CAI
