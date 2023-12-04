@@ -47,12 +47,14 @@ use crate::{
     },
     salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    trust_handler::TrustHandler,
     utils::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, Signer,
 };
+
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
@@ -61,6 +63,7 @@ use crate::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
+    openssl::OpenSSLTrustHandler,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -75,6 +78,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
+    trust_handler: Box<dyn TrustHandler>,
 }
 
 struct ManifestInfo<'a> {
@@ -118,6 +122,10 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
+            #[cfg(not(target_arch = "wasm32"))]
+            trust_handler: Box::new(OpenSSLTrustHandler::new()),
+            #[cfg(target_arch = "wasm32")]
+            trust_handler: Box::new(WebPkiTrustHandler),
             provenance_path: None,
         }
     }
@@ -125,6 +133,37 @@ impl Store {
     /// Return label for the store
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Load set of trust anchors used for certificate validation. [u8] containing the
+    /// trust anchors is passed in the trust_vec variable.
+    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .load_trust_anchors_from_data(&mut trust_reader)
+    }
+
+    // Load set of private trust anchors used for certificate validation. [u8] to the
+    /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
+    /// if there are additional trust stores.
+    pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .append_private_trust_data(&mut trust_reader)
+    }
+
+    pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler.load_configuration(&mut trust_reader)
+    }
+
+    /// Clear all existing trust anchors
+    pub fn clear_trust_anchors(&mut self) {
+        self.trust_handler.clear();
+    }
+
+    fn trust_handler(&self) -> &dyn TrustHandler {
+        self.trust_handler.as_ref()
     }
 
     /// Get the provenance if available.
@@ -395,7 +434,14 @@ impl Store {
             // Sanity check: Ensure that this signature is valid.
 
             let mut cose_log = OneShotStatusTracker::new();
-            match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
+            match verify_cose(
+                &sig,
+                &claim_bytes,
+                b"",
+                false,
+                self.trust_handler(),
+                &mut cose_log,
+            ) {
                 Ok(_) => Ok(sig),
                 Err(err) => {
                     error!(
@@ -428,6 +474,7 @@ impl Store {
                     claim_bytes,
                     b"".to_vec(),
                     false,
+                    self.trust_handler(),
                     &mut cose_log,
                 )
                 .await
@@ -1199,7 +1246,13 @@ impl Store {
 
                     // make sure
                     // verify the ingredient claim
-                    Claim::verify_claim(ingredient, asset_data, false, validation_log)?;
+                    Claim::verify_claim(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1309,8 +1362,14 @@ impl Store {
                         )?;
                     }
                     // verify the ingredient claim
-                    Claim::verify_claim_async(ingredient, asset_data, false, validation_log)
-                        .await?;
+                    Claim::verify_claim_async(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )
+                    .await?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1358,7 +1417,14 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
+        Claim::verify_claim_async(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )
+        .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
@@ -1389,7 +1455,13 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, validation_log)?;
+        Claim::verify_claim(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 

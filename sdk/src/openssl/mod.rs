@@ -35,8 +35,13 @@ pub(crate) use ed_signer::EdSigner;
 mod ed_validator;
 pub(crate) use ed_validator::EdValidator;
 
+#[cfg(feature = "openssl_sign")]
+mod openssl_trust_handler;
 #[cfg(test)]
 pub(crate) mod temp_signer;
+
+#[cfg(feature = "openssl_sign")]
+pub(crate) use openssl_trust_handler::OpenSSLTrustHandler;
 
 #[cfg(test)]
 pub(crate) mod temp_signer_async;

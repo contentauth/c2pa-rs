@@ -126,6 +126,9 @@ pub enum Error {
     #[error("COSE certificate has been revoked")]
     CoseCertRevoked,
 
+    #[error("COSE certificate not trusted")]
+    CoseCertUntrusted,
+
     /// Unable to parse the time stamp from this signature.
     #[error("COSE time stamp could not be parsed")]
     CoseInvalidTimeStamp,

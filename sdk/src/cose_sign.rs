@@ -15,6 +15,8 @@
 
 #![deny(missing_docs)]
 
+use asn1_rs::Oid;
+
 use ciborium::value::Value;
 use coset::{
     iana::{self},
@@ -27,8 +29,59 @@ use crate::{
     cose_validator::verify_cose,
     status_tracker::OneShotStatusTracker,
     time_stamp::{cose_timestamp_countersign, make_cose_timestamp},
+    trust_handler::{
+        TrustHandler, DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, OCSP_SIGNING_OID,
+        TIMESTAMPING_OID,
+    },
     Error, Result, Signer, SigningAlg,
 };
+
+// Pass through trust for the case of claim signer usage below since it has known context
+// configured to all email protection, timestamping, ocsp signing and document signing
+struct TrustPassThrough<'a> {
+    ekus: Vec<Oid<'a>>,
+}
+
+impl<'a> TrustHandler for TrustPassThrough<'a> {
+    fn new() -> Self
+    where
+        Self: Sized,
+    {
+        let mut th = TrustPassThrough { ekus: Vec::new() };
+
+        th.ekus.push(EMAIL_PROTECTION_OID.to_owned()); // email protection
+        th.ekus.push(TIMESTAMPING_OID.to_owned()); // timestamping
+        th.ekus.push(OCSP_SIGNING_OID.to_owned()); // ocsp signing
+        th.ekus.push(DOCUMENT_SIGNING_OID.to_owned()); // doc signing
+
+        th
+    }
+
+    fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn append_private_trust_data(
+        &mut self,
+        _private_anchors_data: &mut dyn std::io::Read,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn clear(&mut self) {}
+
+    fn verify_trust(&self, _chain_der: &[Vec<u8>], _cert_der: &[u8]) -> Result<bool> {
+        Ok(true)
+    }
+
+    fn load_configuration(&mut self, _config_data: &mut dyn std::io::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_auxillary_ekus(&self) -> &Vec<asn1_rs::Oid> {
+        &self.ekus
+    }
+}
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
 /// claim structure.
@@ -57,7 +110,16 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         // Sanity check: Ensure that this signature is valid.
         let mut cose_log = OneShotStatusTracker::new();
 
-        match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
+        let passthrough_tb = TrustPassThrough::new();
+
+        match verify_cose(
+            &sig,
+            claim_bytes,
+            b"",
+            false,
+            &passthrough_tb,
+            &mut cose_log,
+        ) {
             Ok(r) => {
                 if !r.validated {
                     Err(Error::CoseSignature)
