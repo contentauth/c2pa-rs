@@ -26,7 +26,7 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, ComposedManifestRef,
+        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, ComposedManifestRef,
         HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
@@ -1399,10 +1399,7 @@ impl AssetIO for TiffIO {
         tiff_clone_with_tags(&mut temp_file, &mut reader, vec![entry])?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1458,10 +1455,7 @@ impl AssetIO for TiffIO {
                 tc.clone_tiff(&mut idfs, page_0, &mut asset_reader)?;
 
                 // copy temp file to asset
-                std::fs::rename(temp_file.path(), asset_path)
-                    // if rename fails, try to copy in case we are on different volumes
-                    .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-                    .map_err(Error::IoError)
+                rename_or_copy(temp_file, asset_path)
             }
             None => Ok(()),
         }
