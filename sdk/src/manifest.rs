@@ -29,7 +29,7 @@ use crate::{
     assertions::{
         labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
-    asset_io::CAIRead,
+    asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
@@ -509,15 +509,10 @@ impl Manifest {
 
         if let Some(info_vec) = claim.claim_generator_info() {
             let mut generators = Vec::new();
-            let id_base = manifest.instance_id().to_owned();
             for claim_info in info_vec {
                 let mut info = claim_info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    info.set_icon(icon.to_resource_ref(
-                        manifest.resources_mut(),
-                        claim,
-                        &id_base,
-                    )?);
+                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
                 }
                 generators.push(info);
             }
@@ -525,6 +520,7 @@ impl Manifest {
         }
 
         manifest.set_label(claim.label());
+        manifest.resources.set_label(claim.label()); // default manifest for relative urls
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
@@ -553,7 +549,10 @@ impl Manifest {
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
 
-        for claim_assertion in claim.claim_assertion_store().iter() {
+        for assertion in claim.assertions() {
+            let claim_assertion = store.get_claim_assertion_from_uri(
+                &jumbf::labels::to_absolute_uri(claim.label(), &assertion.url()),
+            )?;
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
@@ -561,18 +560,13 @@ impl Manifest {
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
-                    let id = manifest.instance_id().to_owned();
 
                     for action in actions.actions_mut() {
                         if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
                             action.software_agent_mut()
                         {
                             if let Some(icon) = info.icon.as_mut() {
-                                let icon = icon.to_resource_ref(
-                                    manifest.resources_mut(),
-                                    claim,
-                                    id.as_str(),
-                                )?;
+                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                 info.set_icon(icon);
                             }
                         }
@@ -583,11 +577,9 @@ impl Manifest {
                         for template in templates {
                             // replace icon with resource ref
                             template.icon = match template.icon.take() {
-                                Some(icon) => Some(icon.to_resource_ref(
-                                    manifest.resources_mut(),
-                                    claim,
-                                    id.as_str(),
-                                )?),
+                                Some(icon) => {
+                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
+                                }
                                 None => None,
                             };
 
@@ -595,11 +587,8 @@ impl Manifest {
                             template.software_agent = match template.software_agent.take() {
                                 Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
                                     if let Some(icon) = info.icon.as_mut() {
-                                        let icon = icon.to_resource_ref(
-                                            manifest.resources_mut(),
-                                            claim,
-                                            id.as_str(),
-                                        )?;
+                                        let icon =
+                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
                                     Some(SoftwareAgent::ClaimGeneratorInfo(info))
@@ -629,7 +618,13 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    manifest.set_thumbnail(thumbnail.content_type, thumbnail.data)?;
+                    let id = jumbf::labels::to_assertion_uri(claim.label(), label);
+                    let id = jumbf::labels::to_relative_uri(&id);
+                    manifest.thumbnail = Some(manifest.resources.add_uri(
+                        &id,
+                        &thumbnail.content_type,
+                        thumbnail.data,
+                    )?);
                 }
                 _ => {
                     // inject assertions for all other assertions
@@ -1017,16 +1012,38 @@ impl Manifest {
         // todo:: see if we can pass a trait with to_vec support like we to for Strings
         let asset = asset.to_vec();
         let mut stream = std::io::Cursor::new(asset);
-
-        self.embed_stream(format, &mut stream, signer)
+        let mut output_stream = Cursor::new(Vec::new());
+        self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        Ok(output_stream.into_inner())
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
-    /// returns the bytes of the new asset
+    ///
+    /// Returns the bytes of the new asset
+    #[deprecated(since = "0.27.2", note = "use embed_to_stream instead")]
     pub fn embed_stream(
         &mut self,
         format: &str,
         stream: &mut dyn CAIRead,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // sign and write our store to to the output image file
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+
+        self.embed_to_stream(format, stream, &mut output_stream, signer)?;
+
+        Ok(output_stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    ///
+    /// Returns the bytes of c2pa_manifest that was embedded.
+    pub fn embed_to_stream(
+        &mut self,
+        format: &str,
+        source: &mut dyn CAIRead,
+        dest: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
         self.set_format(format);
@@ -1036,9 +1053,9 @@ impl Manifest {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail().is_none() {
+            if self.thumbnail_ref().is_none() {
                 if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
                 {
                     self.set_thumbnail(format, image)?;
                 }
@@ -1049,12 +1066,7 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-
-        store.save_to_stream(format, stream, &mut output_stream, signer)?;
-
-        Ok(output_stream.into_inner())
+        store.save_to_stream(format, source, dest, signer)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -1075,7 +1087,7 @@ impl Manifest {
         let mut stream = std::io::Cursor::new(asset);
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail().is_none() {
+            if self.thumbnail_ref().is_none() {
                 if let Ok((format, image)) =
                     crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
                 {
@@ -1146,8 +1158,10 @@ impl Manifest {
     ///
     /// The return value is pre-formatted for insertion into a file of the given format
     /// For JPEG it is a series of App11 JPEG segments containing space for a manifest
-    /// This is used to create a properly formatted file ready for signing
-    pub fn data_hash_placeholder(&mut self, signer: &dyn Signer, format: &str) -> Result<Vec<u8>> {
+    /// This is used to create a properly formatted file ready for signing.
+    /// The reserve_size is the amount of space to reserve for the signature box.  This
+    /// value is fixed once set and must be sufficient to hold the completed signature
+    pub fn data_hash_placeholder(&mut self, reserve_size: usize, format: &str) -> Result<Vec<u8>> {
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1158,7 +1172,7 @@ impl Manifest {
         }
 
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(signer, format)?;
+        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
 
@@ -1182,6 +1196,29 @@ impl Manifest {
         }
         let cm = store.get_data_hashed_embeddable_manifest(dh, signer, format, asset_reader)?;
         Ok(cm)
+    }
+
+    /// Generates an data hashed embeddable manifest for a file
+    ///
+    /// The return value is pre-formatted for insertion into a file of the given format
+    /// For JPEG it is a series of App11 JPEG segments containing a signed manifest
+    /// This can directly replace a placeholder manifest to create a properly signed asset
+    /// The data hash must contain exclusions and may contain pre-calculated hashes
+    /// if an asset reader is provided, it will be used to calculate the data hash
+    pub async fn data_hash_embeddable_manifest_remote(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn RemoteSigner,
+        format: &str,
+        mut asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        if let Some(asset_reader) = asset_reader.as_deref_mut() {
+            asset_reader.rewind()?;
+        }
+        store
+            .get_data_hashed_embeddable_manifest_remote(dh, signer, format, asset_reader)
+            .await
     }
 
     /// Generates a signed box hashed manifest, optionally preformatted for embedding
@@ -1228,6 +1265,8 @@ pub struct SignatureInfo {
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
 
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
@@ -1633,8 +1672,8 @@ pub(crate) mod tests {
             .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
-        let manifest_store =
-            crate::ManifestStore::from_bytes("c2pa", &c2pa_data, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("application/c2pa", &c2pa_data, true)
+            .expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
@@ -1777,13 +1816,14 @@ pub(crate) mod tests {
             .unwrap();
 
         let signer = temp_signer();
+        let mut output = Cursor::new(Vec::new());
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        manifest
+            .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
@@ -1992,16 +2032,17 @@ pub(crate) mod tests {
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
-        let mut stream = std::io::Cursor::new(image.to_vec());
+        let mut input = std::io::Cursor::new(image.to_vec());
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_stream("jpeg", &mut stream, signer.as_ref())
+        let mut output = Cursor::new(Vec::new());
+        manifest
+            .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
         println!("manifest_store = {manifest_store}");
         let m = manifest_store.get_active().unwrap();
 
@@ -2210,6 +2251,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn test_missing_thumbnail() {
+        const MANIFEST_JSON: &str = r#"
+            {
+                "claim_generator": "test",
+                "format" : "image/jpeg",
+                "thumbnail": {
+                    "format": "image/jpeg",
+                    "identifier": "does_not_exist.jpg"
+                }
+            }
+        "#;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+
+        let mut source = std::io::Cursor::new(vec![1, 2, 3]);
+        let mut dest = std::io::Cursor::new(Vec::new());
+        let signer = temp_signer();
+        let result =
+            manifest.embed_to_stream("image/jpeg", &mut source, &mut dest, signer.as_ref());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("resource not found: does_not_exist.jpg"));
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_data_hash_embeddable_manifest() {
         let ap = fixture_path("cloud.jpg");
@@ -2220,7 +2288,7 @@ pub(crate) mod tests {
 
         // get a placeholder the manifest
         let placeholder = manifest
-            .data_hash_placeholder(signer.as_ref(), "jpeg")
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2252,6 +2320,63 @@ pub(crate) mod tests {
                 "image/jpeg",
                 Some(&mut output_file),
             )
+            .unwrap();
+
+        use std::io::{Seek, SeekFrom, Write};
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&signed_manifest).unwrap();
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        assert!(manifest_store.validation_status().is_none());
+    }
+
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[actix::test]
+    async fn test_data_hash_embeddable_manifest_remote_signed() {
+        let ap = fixture_path("cloud.jpg");
+
+        let signer = temp_remote_signer();
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // get a placeholder the manifest
+        let placeholder = manifest
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        let signed_manifest = manifest
+            .data_hash_embeddable_manifest_remote(
+                &dh,
+                signer.as_ref(),
+                "image/jpeg",
+                Some(&mut output_file),
+            )
+            .await
             .unwrap();
 
         use std::io::{Seek, SeekFrom, Write};

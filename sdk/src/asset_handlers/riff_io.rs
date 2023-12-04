@@ -20,22 +20,27 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use conv::ValueFrom;
 use riff::*;
+use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
+        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
-static SUPPORTED_TYPES: [&str; 9] = [
+static SUPPORTED_TYPES: [&str; 12] = [
     "avi",
     "wav",
     "webp",
     "image/webp",
+    "audio/wav",
+    "audio/wave",
     "audio/x-wav",
+    "audio/vnd.wave",
     "application/x-troff-msvideo",
     "video/avi",
     "video/msvideo",
@@ -356,13 +361,15 @@ impl AssetIO for RiffIO {
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
 
-        self.write_cai(&mut input_stream, &mut output_stream, store_bytes)
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+
+        // copy temp file to asset
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(

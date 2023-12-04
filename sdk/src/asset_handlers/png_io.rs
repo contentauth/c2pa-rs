@@ -20,12 +20,14 @@ use std::{
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 use serde_bytes::ByteBuf;
+use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_copy, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -477,15 +479,15 @@ impl AssetIO for PngIO {
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        let mut output_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
 
-        self.write_cai(&mut stream, &mut output_stream, store_bytes)?;
+        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
-        Ok(())
+        // copy temp file to asset
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(

@@ -39,7 +39,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
-        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
+        labels::{to_absolute_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
         get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
@@ -52,7 +52,7 @@ use crate::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, Signer,
+    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
 
 #[cfg(feature = "file_io")]
@@ -195,7 +195,7 @@ impl Store {
         if let Some(bh) = self.manifest_box_hash_cache.get(claim.label()) {
             bh.clone()
         } else {
-            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or(Vec::new())
+            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or_default()
         }
     }
 
@@ -391,6 +391,11 @@ impl Store {
             None => self.get_claim(target_claim_label), //  relative so use the target claim label
         }
         .and_then(|claim| {
+            let uri = if target_claim_label != self.label() {
+                to_absolute_uri(target_claim_label, uri)
+            } else {
+                uri.to_owned()
+            };
             claim
                 .databoxes()
                 .iter()
@@ -1694,13 +1699,13 @@ impl Store {
 
     /// This function is used to pre-generate a manifest with place holders for the final
     /// DataHash and Manifest Signature.  The DataHash will reserve space for at least 10
-    /// Exclusion ranges.  The Signature box reserved size is based on the size returned by
-    /// the Signer.  This function is not needed when using Box Hash. This function is used
+    /// Exclusion ranges.  The Signature box reserved size is based on the size required by
+    /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `get_data_hashed_embeddable_manifest`.  The manifest returned
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
     pub fn get_data_hashed_manifest_placeholder(
         &mut self,
-        signer: &dyn Signer,
+        reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1719,29 +1724,17 @@ impl Store {
             pc.add_assertion_with_salt(&ph, &DefaultSalt::default())?;
         }
 
-        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
 
         let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
     }
 
-    /// Returns a finalized, signed manifest.  The manfiest are only supported
-    /// for cases when the client has provided a data hash content hash binding.  Note,
-    /// this function will not work for cases like BMFF where the position
-    /// of the content is also encoded.  This function is not compatible with
-    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
-    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
-    /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulations, otherwise the function uses the caller supplied values.  
-    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
-    /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.  
-    pub fn get_data_hashed_embeddable_manifest(
+    fn prep_embeddable_store(
         &mut self,
+        reserve_size: usize,
         dh: &DataHash,
-        signer: &dyn Signer,
-        format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1772,23 +1765,116 @@ impl Store {
         // update the placeholder hash
         pc.update_data_hash(adusted_dh)?;
 
-        // reborrow immuttable
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        self.to_jumbf_internal(reserve_size)
+    }
 
-        // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
-
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
+    fn finish_embeddable_store(
+        &mut self,
+        sig: &[u8],
+        sig_placeholder: &[u8],
+        jumbf_bytes: &mut Vec<u8>,
+        format: &str,
+    ) -> Result<Vec<u8>> {
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
         }
 
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
+        patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(&jumbf_bytes, format)
+        self.get_composed_manifest(jumbf_bytes, format)
+    }
+
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub fn get_data_hashed_embeddable_manifest(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn Signer,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
+    }
+
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub async fn get_data_hashed_embeddable_manifest_async(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn AsyncSigner,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
+    }
+
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub async fn get_data_hashed_embeddable_manifest_remote(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn RemoteSigner,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let claim_bytes = pc.data()?;
+        let sig = signer.sign_remote(&claim_bytes).await?;
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -1812,6 +1898,44 @@ impl Store {
 
         // sign contents
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
+    }
+
+    /// Returns a finalized, signed manifest.  The client is required to have
+    /// included the necessary box hash assertion with the pregenerated hashes.
+    pub async fn get_box_hashed_embeddable_manifest_async(
+        &mut self,
+        signer: &dyn AsyncSigner,
+    ) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+
+        // make sure there is only one
+        if pc.hash_assertions().len() != 1 {
+            return Err(Error::BadParam(
+                "Claim must have exactly one hash binding assertion".to_string(),
+            ));
+        }
+
+        // only allow box hash assertions to be present
+        if pc.box_hash_assertions().is_empty() {
+            return Err(Error::BadParam("Missing box hash assertion".to_string()));
+        }
+
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        // sign contents
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -4521,6 +4645,88 @@ pub mod tests {
             }
         }
     }
+
+    #[actix::test]
+    #[cfg(feature = "file_io")]
+    async fn test_boxhash_embeddable_manifest_async() {
+        // test adding to actual image
+        let ap = fixture_path("boxhash.jpg");
+        let box_hash_path = fixture_path("boxhash.json");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // add box hash for CA.jpg
+        let box_hash_data = std::fs::read(box_hash_path).unwrap();
+        let assertion = Assertion::from_data_json(BOX_HASH, &box_hash_data).unwrap();
+        let box_hash = BoxHash::from_json_assertion(&assertion).unwrap();
+        claim.add_assertion(&box_hash).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        // get the embeddable manifest
+        let em = store
+            .get_box_hashed_embeddable_manifest_async(&signer)
+            .await
+            .unwrap();
+
+        // get composed version for embedding to JPEG
+        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+
+        // insert manifest into ouput asset
+        let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
+        let ol = jpeg_io.get_object_locations(&ap).unwrap();
+
+        let cai_loc = ol
+            .iter()
+            .find(|o| o.htype == HashBlockObjectType::Cai)
+            .unwrap();
+
+        // remove any existing manifest
+        jpeg_io.read_cai_store(&ap).unwrap();
+
+        // build new asset in memory inserting new manifest
+        let outbuf = Vec::new();
+        let mut out_stream = Cursor::new(outbuf);
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+
+        // write before
+        let mut before = vec![0u8; cai_loc.offset];
+        input_file.read_exact(before.as_mut_slice()).unwrap();
+        out_stream.write_all(&before).unwrap();
+
+        // write composed bytes
+        out_stream.write_all(&cm).unwrap();
+
+        // write bytes after
+        let mut after_buf = Vec::new();
+        input_file.read_to_end(&mut after_buf).unwrap();
+        out_stream.write_all(&after_buf).unwrap();
+
+        // save to output file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+        output_file.write_all(&out_stream.into_inner()).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_boxhash_embeddable_manifest() {
@@ -4601,6 +4807,68 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
+    #[actix::test]
+    #[cfg(feature = "file_io")]
+    async fn test_datahash_embeddable_manifest_async() {
+        // test adding to actual image
+        let ap = fixture_path("cloud.jpg");
+
+        // Do we generate JUMBF?
+        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get a placeholder the manifest
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        // get the embeddable manifest, letting API do the hashing
+        output_file.rewind().unwrap();
+        let cm = store
+            .get_data_hashed_embeddable_manifest_async(&dh, &signer, "jpeg", Some(&mut output_file))
+            .await
+            .unwrap();
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest() {
@@ -4620,7 +4888,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.as_ref(), "jpeg")
+            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -4688,7 +4956,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.as_ref(), "jpeg")
+            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();

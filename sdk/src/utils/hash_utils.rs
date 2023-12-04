@@ -139,14 +139,14 @@ impl Hasher {
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or_default()
 }
 
 // Return hash inclusive bytes for desired hashing algorithm.
 pub fn hash_by_alg_with_inclusions(alg: &str, data: &[u8], inclusions: Vec<HashRange>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or_default()
 }
 
 // Return hash bytes for asset using desired hashing algorithm.
@@ -489,71 +489,6 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
         }
         Err(_) => false,
     }
-}
-
-// Fast implementation for Blake3 hashing that can handle large assets
-pub fn blake3_from_asset(path: &Path) -> Result<String> {
-    let mut data = File::open(path)?;
-    data.rewind()?;
-    let data_len = data.seek(SeekFrom::End(0))?;
-    data.rewind()?;
-
-    let mut hasher = blake3::Hasher::new();
-
-    let mut chunk_left = data_len;
-
-    if cfg!(feature = "no_interleaved_io") {
-        loop {
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-
-            data.read_exact(&mut chunk)?;
-
-            hasher.update(&chunk);
-
-            chunk_left -= chunk.len() as u64;
-            if chunk_left == 0 {
-                break;
-            }
-        }
-    } else {
-        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        data.read_exact(&mut chunk)?;
-
-        loop {
-            let (tx, rx) = std::sync::mpsc::channel();
-
-            chunk_left -= chunk.len() as u64;
-
-            std::thread::spawn(move || {
-                hasher.update(&chunk);
-                tx.send(hasher).unwrap_or_default();
-            });
-
-            // are we done
-            if chunk_left == 0 {
-                hasher = match rx.recv() {
-                    Ok(hasher) => hasher,
-                    Err(_) => return Err(Error::ThreadReceiveError),
-                };
-                break;
-            }
-
-            // read next chunk while we wait for hash
-            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-            data.read_exact(&mut next_chunk)?;
-
-            hasher = match rx.recv() {
-                Ok(hasher) => hasher,
-                Err(_) => return Err(Error::ThreadReceiveError),
-            };
-
-            chunk = next_chunk;
-        }
-    }
-
-    let hash = hasher.finalize();
-
-    Ok(hash.to_hex().as_str().to_owned())
 }
 
 /// Return the hash of data in the same hash format in_hash

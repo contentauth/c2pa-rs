@@ -53,7 +53,7 @@ The SDK has been tested on the following operating systems:
  | `png`         | `image/png`                                         |
  | `svg`         | `image/svg+xml`                                     |
  | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
+ | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
 
 ## Usage
@@ -62,7 +62,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.26.0"
+c2pa = "0.28.4"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
@@ -118,6 +118,13 @@ This section gives a highlight of noteworthy changes.
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
 
+## 0.29.0
+_17 November 2023_
+* PDF read support
+* MP3 support
+* new and enhanced manifest APIs
+* thumbnail databox support
+* bug fixes and optimizations
 
 ## 0.25.0
 _14 July 2023_

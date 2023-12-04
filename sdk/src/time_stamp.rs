@@ -13,6 +13,7 @@
 
 use std::convert::TryFrom;
 
+use async_generic::async_generic;
 use bcder::decode::Constructed;
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ use crate::{
         rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
     },
     hash_utils::vec_compare,
+    AsyncSigner, Signer,
 };
 
 #[allow(dead_code)]
@@ -43,12 +45,17 @@ pub(crate) fn cose_countersign_data(data: &[u8], p_header: &ProtectedHeader) -> 
     )
 }
 
-#[allow(dead_code)]
+#[async_generic(
+    async_signature(
+        signer: &dyn AsyncSigner,
+        data: &[u8],
+        p_header: &ProtectedHeader,
+    ))]
 pub(crate) fn cose_timestamp_countersign(
+    signer: &dyn Signer,
     data: &[u8],
     p_header: &ProtectedHeader,
-    tsa_url: &str,
-) -> Result<Vec<u8>> {
+) -> Option<Result<Vec<u8>>> {
     // create countersignature with TimeStampReq parameters
     // payload: data
     // context "CounterSigner"
@@ -58,7 +65,11 @@ pub(crate) fn cose_timestamp_countersign(
     // create sig data structure to be time stamped
     let sd = cose_countersign_data(data, p_header);
 
-    timestamp_data(tsa_url, &sd)
+    if _sync {
+        timestamp_data(signer, &sd)
+    } else {
+        timestamp_data_async(signer, &sd).await
+    }
 }
 
 #[allow(dead_code)]
@@ -85,22 +96,12 @@ pub(crate) fn cose_sigtst_to_tstinfos(
     }
 }
 
-/// Get URL to Time Authority to use
-#[allow(dead_code)] // in case we make use of this later
-pub fn get_ta_url() -> Option<String> {
-    //const TA_URL: &str = "http://timestamp.digicert.com";
-
-    match std::env::var("CAI_TA_URL") {
-        Ok(url) => Some(url),
-        Err(_) => None,
-    }
-}
-
 /// internal only function to work around bug in serialization of TimeStampResponse
 /// so we just return the data directly
 #[cfg(feature = "openssl_sign")]
 fn time_stamp_request_http(
     url: &str,
+    headers: Option<Vec<(String, String)>>,
     request: &crate::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -117,7 +118,15 @@ fn time_stamp_request_http(
 
     let body_reader = std::io::Cursor::new(body);
 
-    let response = ureq::post(url)
+    let mut req = ureq::post(url);
+
+    if let Some(headers) = headers {
+        for (ref name, ref value) in headers {
+            req = req.set(name.as_str(), value.as_str());
+        }
+    }
+
+    let response = req
         .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
         .send(body_reader)
         .map_err(|_err| Error::CoseTimeStampGeneration)?;
@@ -167,8 +176,9 @@ fn time_stamp_request_http(
 /// ASN.1 request object with reasonable defaults.
 
 #[cfg(feature = "openssl_sign")]
-fn time_stamp_message_http(
+pub(crate) fn time_stamp_message_http(
     url: &str,
+    headers: Option<Vec<(String, String)>>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>> {
@@ -195,7 +205,7 @@ fn time_stamp_message_http(
         extensions: None,
     };
 
-    time_stamp_request_http(url, &request)
+    time_stamp_request_http(url, headers, &request)
 }
 
 pub struct TimeStampResponse(TimeStampResp);
@@ -226,7 +236,7 @@ impl TimeStampResponse {
                     token
                         .content
                         .clone()
-                        .decode(|cons| SignedData::take_from(cons))
+                        .decode(SignedData::take_from)
                         .map_err(|_err| Error::CoseTimeStampGeneration)?,
                 ))
             } else {
@@ -258,12 +268,33 @@ impl TimeStampResponse {
         }
     }
 }
+
 /// Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
+#[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8]))]
+pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>>> {
+    if _sync {
+        signer.send_timestamp_request(data)
+    } else {
+        signer.send_timestamp_request(data).await
+        // TO DO: Fix bug in async_generic. This .await
+        // should be automatically removed.
+    }
+}
+
 #[allow(unused_variables)]
-pub fn timestamp_data(url: &str, data: &[u8]) -> Result<Vec<u8>> {
+pub fn default_rfc3161_request(
+    url: &str,
+    headers: Option<Vec<(String, String)>>,
+    data: &[u8],
+) -> Result<Vec<u8>> {
     #[cfg(feature = "openssl_sign")]
     {
-        let ts = time_stamp_message_http(url, data, x509_certificate::DigestAlgorithm::Sha256)?;
+        let ts = time_stamp_message_http(
+            url,
+            headers,
+            data,
+            x509_certificate::DigestAlgorithm::Sha256,
+        )?;
 
         // sanity check
         verify_timestamp(&ts, data)?;
@@ -275,6 +306,7 @@ pub fn timestamp_data(url: &str, data: &[u8]) -> Result<Vec<u8>> {
         Err(Error::WasmNoCrypto)
     }
 }
+
 pub fn gt_to_datetime(
     gt: x509_certificate::asn1time::GeneralizedTime,
 ) -> chrono::DateTime<chrono::Utc> {

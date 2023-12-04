@@ -122,6 +122,17 @@ pub(crate) fn to_normalized_uri(uri: &str) -> String {
     }
 }
 
+// Converts a possibly relative JUMBF URI to an absolute URI to the manifest store.
+pub(crate) fn to_absolute_uri(manifest_label: &str, uri: &str) -> String {
+    let raw_uri = to_normalized_uri(uri);
+    let parts: Vec<&str> = raw_uri.split('/').collect();
+    if parts.len() > 2 && parts[1] == MANIFEST_STORE {
+        uri.to_string()
+    } else {
+        format!("{}/{}", to_manifest_uri(manifest_label), raw_uri)
+    }
+}
+
 // Converts an absolute JUMBF URI to a URI relative to the manifest store.
 pub(crate) fn to_relative_uri(uri: &str) -> String {
     let raw_uri = to_normalized_uri(uri);
