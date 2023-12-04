@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.4
+_04 December 2023_
+
+* CAI-5041 Clear Windows temp attribute ([#352](https://github.com/contentauth/c2pa-rs/pull/352))
+
 ## 0.28.3
 _22 November 2023_
 
