@@ -33,8 +33,9 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_copy, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -188,7 +189,7 @@ impl CAIReader for JpegIO {
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
-                    for (_i, segment) in app11.enumerate() {
+                    for segment in app11 {
                         let raw_bytes = segment.contents();
                         if raw_bytes.len() > 16 {
                             // we need at least 16 bytes in each segment for CAI
@@ -475,10 +476,7 @@ impl AssetIO for JpegIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
