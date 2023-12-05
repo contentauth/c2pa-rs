@@ -70,8 +70,6 @@ use crate::{
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
 };
-#[cfg(target_arch = "wasm32")]
-use wasm::webpki_trust_handler::WebPkiTrustHandler;
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
