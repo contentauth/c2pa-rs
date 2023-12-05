@@ -137,7 +137,7 @@ impl<'a> WebPkiTrustHandler<'a> {
 
         let mut full_chain: Vec<Vec<u8>> = Vec::new();
         full_chain.push(ee_der.to_vec());
-        let mut in_chain = certs.clone().to_vec();
+        let mut in_chain = certs.to_vec();
         full_chain.append(&mut in_chain);
 
         // make sure chain is in the correct order and valid
@@ -147,13 +147,13 @@ impl<'a> WebPkiTrustHandler<'a> {
         let mut anchors: Vec<X509Certificate> = Vec::new();
         for anchor_der in &self.trust_anchors {
             let (_, anchor) =
-                X509Certificate::from_der(&anchor_der).map_err(|_e| Error::CoseCertUntrusted)?;
+                X509Certificate::from_der(anchor_der).map_err(|_e| Error::CoseCertUntrusted)?;
             anchors.push(anchor);
         }
 
         for anchor_der in &self.private_anchors {
             let (_, anchor) =
-                X509Certificate::from_der(&anchor_der).map_err(|_e| Error::CoseCertUntrusted)?;
+                X509Certificate::from_der(anchor_der).map_err(|_e| Error::CoseCertUntrusted)?;
             anchors.push(anchor);
         }
 
@@ -204,7 +204,7 @@ impl<'a> WebPkiTrustHandler<'a> {
                     } else if anchor_public_key.algorithm.algorithm == ECDSA_WITH_SHA512_OID {
                         SigningAlg::Es512
                     } else if anchor_public_key.algorithm.algorithm == RSASSA_PSS_OID {
-                        let skpi_ber = match parse_ber_sequence(&anchor_public_key.raw) {
+                        let skpi_ber = match parse_ber_sequence(anchor_public_key.raw) {
                             Ok((_, skpi_ber)) => skpi_ber,
                             Err(_) => return false,
                         };
@@ -256,7 +256,7 @@ impl<'a> WebPkiTrustHandler<'a> {
                             SigningAlg::Ps256
                         } else if hash_alg == SHA384_OID {
                             SigningAlg::Ps384
-                        } else if hash_alg == SHA256_OID {
+                        } else if hash_alg == SHA512_OID {
                             SigningAlg::Ps512
                         } else {
                             return false;

@@ -65,6 +65,8 @@ use crate::{
     },
     openssl::OpenSSLTrustHandler,
 };
+#[cfg(target_arch = "wasm32")]
+use wasm::webpki_trust_handler::WebPkiTrustHandler;
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
@@ -2812,7 +2814,7 @@ impl Store {
             })
     }
 
-    fn get_store_from_memory(
+    pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,

@@ -28,7 +28,9 @@ use crate::{
     claim::Claim,
     cose_validator::verify_cose,
     status_tracker::OneShotStatusTracker,
-    time_stamp::{cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp},
+    time_stamp::{
+        cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
+    },
     trust_handler::{
         TrustHandler, DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, OCSP_SIGNING_OID,
         TIMESTAMPING_OID,

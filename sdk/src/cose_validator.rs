@@ -803,11 +803,11 @@ pub(crate) async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(alg, &der_bytes, th, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(alg, der_bytes, th, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, &der_bytes, th, validation_log, None)?,
+                    Error::NotFound => check_cert(alg, der_bytes, th, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -858,7 +858,7 @@ pub(crate) async fn verify_cose_async(
     if let Ok(CertInfo {
         subject,
         serial_number,
-    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await
+    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, der_bytes).await
     {
         result.issuer_org = Some(subject);
         result.cert_serial_number = Some(serial_number);
@@ -1134,8 +1134,11 @@ pub mod tests {
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::openssl::{temp_signer, OpenSSLTrustHandler};
-    use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
+    use crate::{
+        openssl::{temp_signer, OpenSSLTrustHandler},
+        status_tracker::DetailedStatusTracker,
+        SigningAlg,
+    };
 
     #[test]
     #[cfg(feature = "file_io")]

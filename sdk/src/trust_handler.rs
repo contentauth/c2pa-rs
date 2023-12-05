@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use asn1_rs::{oid, Oid};
 use std::{
     io::{read_to_string, Read},
     str::FromStr,
 };
+
+use asn1_rs::{oid, Oid};
 
 use crate::Result;
 
@@ -62,24 +63,18 @@ impl std::fmt::Debug for dyn TrustHandler {
 
 pub(crate) fn has_allowed_oid<'a>(
     eku: &x509_parser::extensions::ExtendedKeyUsage,
-    allowed_ekus: &'a Vec<Oid>,
+    allowed_ekus: &'a [Oid],
 ) -> Option<&'a Oid<'a>> {
-    if eku.email_protection {
-        if allowed_ekus.iter().any(|oid| *oid == EMAIL_PROTECTION_OID) {
-            return allowed_ekus.iter().find(|v| **v == EMAIL_PROTECTION_OID);
-        }
+    if eku.email_protection && allowed_ekus.iter().any(|oid| *oid == EMAIL_PROTECTION_OID) {
+        return allowed_ekus.iter().find(|v| **v == EMAIL_PROTECTION_OID);
     }
 
-    if eku.time_stamping {
-        if allowed_ekus.iter().any(|oid| *oid == TIMESTAMPING_OID) {
-            return allowed_ekus.iter().find(|v| **v == TIMESTAMPING_OID);
-        }
+    if eku.time_stamping && allowed_ekus.iter().any(|oid| *oid == TIMESTAMPING_OID) {
+        allowed_ekus.iter().find(|v| **v == TIMESTAMPING_OID);
     }
 
-    if eku.ocsp_signing {
-        if allowed_ekus.iter().any(|oid| *oid == OCSP_SIGNING_OID) {
-            return allowed_ekus.iter().find(|v| **v == OCSP_SIGNING_OID);
-        }
+    if eku.ocsp_signing && allowed_ekus.iter().any(|oid| *oid == OCSP_SIGNING_OID) {
+        return allowed_ekus.iter().find(|v| **v == OCSP_SIGNING_OID);
     }
 
     None

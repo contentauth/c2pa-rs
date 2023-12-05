@@ -28,6 +28,29 @@ use crate::{
     CAIRead, Manifest, Result,
 };
 
+/// Options used when loading the ManifestStore from an asset
+pub struct ManifestStoreOptions<'a> {
+    /// Set to true if validation should be performed
+    pub verify: bool,
+    /// Root certificates to use for validation trust list
+    pub anchors: Option<&'a [u8]>,
+    /// Trust list private anchors
+    pub private_anchors: Option<&'a [u8]>,
+    /// Trust list validation configuration
+    pub config: Option<&'a [u8]>,
+}
+
+impl<'a> Default for ManifestStoreOptions<'a> {
+    fn default() -> Self {
+        Self {
+            verify: true,
+            anchors: None,
+            private_anchors: None,
+            config: None,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A Container for a set of Manifests and a ValidationStatus list
@@ -232,13 +255,30 @@ impl ManifestStore {
     pub async fn from_bytes_async(
         format: &str,
         image_bytes: &[u8],
-        verify: bool,
+        options: &ManifestStoreOptions<'_>,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
-
-        Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
-            .await
-            .map(|store| Self::from_store(&store, &validation_log))
+        let mut store = Store::get_store_from_memory(format, image_bytes, &mut validation_log)?;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_trust(private_anchors)?;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+        }
+        // verify the store
+        if options.verify {
+            // verify store and claims
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Bytes(image_bytes, format),
+                &mut validation_log,
+            )
+            .await?;
+        }
+        Ok(Self::from_store(&store, &validation_log))
     }
 
     /// Loads a ManifestStore from an init segment and fragment.  This
@@ -288,17 +328,27 @@ impl ManifestStore {
         manifest_bytes: &[u8],
         format: &str,
         asset_bytes: &[u8],
+        options: &ManifestStoreOptions<'_>,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
-        let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
-
-        Store::verify_store_async(
-            &store,
-            &mut ClaimAssetData::Bytes(asset_bytes, format),
-            &mut validation_log,
-        )
-        .await?;
-
+        let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_trust(private_anchors)?;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+        }
+        if options.verify {
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Bytes(asset_bytes, format),
+                &mut validation_log,
+            )
+            .await?;
+        }
         Ok(Self::from_store(&store, &validation_log))
     }
 
@@ -451,9 +501,13 @@ mod tests {
     async fn manifest_report_image_async() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
-        let manifest_store = ManifestStore::from_bytes_async("image/jpeg", image_bytes, true)
-            .await
-            .unwrap();
+        let manifest_store = ManifestStore::from_bytes_async(
+            "image/jpeg",
+            image_bytes,
+            &ManifestStoreOptions::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
@@ -492,6 +546,7 @@ mod tests {
             manifest_bytes,
             "image/jpg",
             asset_bytes,
+            &ManifestStoreOptions::default(),
         )
         .await
         .unwrap();
