@@ -41,7 +41,9 @@ mod openssl_trust_handler;
 pub(crate) mod temp_signer;
 
 #[cfg(feature = "openssl_sign")]
-pub(crate) use openssl_trust_handler::OpenSSLTrustHandler;
+pub(crate) use openssl_trust_handler::verify_trust;
+#[cfg(feature = "openssl_sign")]
+pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 
 #[cfg(test)]
 pub(crate) mod temp_signer_async;

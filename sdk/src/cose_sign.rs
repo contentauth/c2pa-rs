@@ -15,7 +15,6 @@
 
 #![deny(missing_docs)]
 
-use asn1_rs::Oid;
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -28,9 +27,11 @@ use crate::{
     claim::Claim,
     cose_validator::verify_cose,
     status_tracker::OneShotStatusTracker,
-    time_stamp::{cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp},
+    time_stamp::{
+        cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
+    },
     trust_handler::{
-        TrustHandler, DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, OCSP_SIGNING_OID,
+        TrustHandlerConfig, DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, OCSP_SIGNING_OID,
         TIMESTAMPING_OID,
     },
     AsyncSigner, Error, Result, Signer, SigningAlg,
@@ -38,23 +39,14 @@ use crate::{
 
 // Pass through trust for the case of claim signer usage below since it has known context
 // configured to all email protection, timestamping, ocsp signing and document signing
-struct TrustPassThrough<'a> {
-    ekus: Vec<Oid<'a>>,
-}
+struct TrustPassThrough {}
 
-impl<'a> TrustHandler for TrustPassThrough<'a> {
+impl TrustHandlerConfig for TrustPassThrough {
     fn new() -> Self
     where
         Self: Sized,
     {
-        let mut th = TrustPassThrough { ekus: Vec::new() };
-
-        th.ekus.push(EMAIL_PROTECTION_OID.to_owned()); // email protection
-        th.ekus.push(TIMESTAMPING_OID.to_owned()); // timestamping
-        th.ekus.push(OCSP_SIGNING_OID.to_owned()); // ocsp signing
-        th.ekus.push(DOCUMENT_SIGNING_OID.to_owned()); // doc signing
-
-        th
+        TrustPassThrough {}
     }
 
     fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
@@ -70,16 +62,21 @@ impl<'a> TrustHandler for TrustPassThrough<'a> {
 
     fn clear(&mut self) {}
 
-    fn verify_trust(&self, _chain_der: &[Vec<u8>], _cert_der: &[u8]) -> Result<bool> {
-        Ok(true)
-    }
-
     fn load_configuration(&mut self, _config_data: &mut dyn std::io::Read) -> Result<()> {
         Ok(())
     }
 
-    fn get_auxillary_ekus(&self) -> &Vec<asn1_rs::Oid> {
-        &self.ekus
+    fn get_auxillary_ekus(&self) -> Vec<asn1_rs::Oid> {
+        vec![
+            EMAIL_PROTECTION_OID.to_owned(),
+            TIMESTAMPING_OID.to_owned(),
+            OCSP_SIGNING_OID.to_owned(),
+            DOCUMENT_SIGNING_OID.to_owned(),
+        ]
+    }
+
+    fn get_anchors(&self) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 }
 

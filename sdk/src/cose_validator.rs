@@ -25,19 +25,24 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::{get_validator, CoseValidator};
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
-    trust_handler::{has_allowed_oid, TrustHandler},
+    trust_handler::{has_allowed_oid, TrustHandlerConfig},
     validation_status,
     validator::ValidationInfo,
     SigningAlg,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+    openssl::verify_trust,
+    validator::{get_validator, CoseValidator},
+};
+#[cfg(target_arch = "wasm32")]
+use crate::{
+    wasm::webcrypto_validator::validate_async, wasm::webpki_trust_handler::verify_trust_async,
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -100,7 +105,7 @@ fn get_cose_sign1(
 fn check_cert(
     _alg: SigningAlg,
     ca_der_bytes: &[u8],
-    th: &dyn TrustHandler,
+    th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
 ) -> Result<()> {
@@ -377,7 +382,7 @@ fn check_cert(
                 return Err(Error::CoseInvalidCert);
             }
 
-            if has_allowed_oid(eku, th.get_auxillary_ekus()).is_none() {
+            if has_allowed_oid(eku, &th.get_auxillary_ekus()).is_none() {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
@@ -701,14 +706,50 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn check_trust(
-    th: &dyn TrustHandler,
+    th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     validation_log: &mut impl StatusTracker,
 ) -> Result<bool> {
     // is the certificate trusted
-    match th.verify_trust(chain_der, cert_der) {
+    match verify_trust(th, chain_der, cert_der) {
+        Ok(trusted) => {
+            if trusted {
+                let log_item =
+                    log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED);
+                validation_log.log_silent(log_item);
+                Ok(true)
+            } else {
+                let log_item =
+                    log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                        .error(Error::CoseCertUntrusted)
+                        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
+                validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
+                Ok(false)
+            }
+        }
+        Err(_) => {
+            let log_item = log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .error(Error::CoseCertUntrusted)
+                .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
+            validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn check_trust(
+    th: &dyn TrustHandlerConfig,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    validation_log: &mut impl StatusTracker,
+) -> Result<bool> {
+    // is the certificate trusted
+    match verify_trust_async(th, chain_der, cert_der).await {
         Ok(trusted) => {
             if trusted {
                 let log_item =
@@ -768,7 +809,7 @@ pub(crate) async fn verify_cose_async(
     data: Vec<u8>,
     additional_data: Vec<u8>,
     signature_only: bool,
-    th: &dyn TrustHandler,
+    th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
@@ -803,11 +844,11 @@ pub(crate) async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(alg, &der_bytes, th, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(alg, der_bytes, th, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, &der_bytes, th, validation_log, None)?,
+                    Error::NotFound => check_cert(alg, der_bytes, th, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -838,6 +879,10 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
+        #[cfg(target_arch = "wasm32")]
+        check_trust(th, &certs[1..], der_bytes, validation_log).await?;
+
+        #[cfg(not(target_arch = "wasm32"))]
         check_trust(th, &certs[1..], der_bytes, validation_log)?;
     }
 
@@ -858,7 +903,7 @@ pub(crate) async fn verify_cose_async(
     if let Ok(CertInfo {
         subject,
         serial_number,
-    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await
+    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, der_bytes).await
     {
         result.issuer_org = Some(subject);
         result.cert_serial_number = Some(serial_number);
@@ -947,7 +992,7 @@ pub(crate) fn verify_cose(
     data: &[u8],
     additional_data: &[u8],
     signature_only: bool,
-    th: &dyn TrustHandler,
+    th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -1046,11 +1091,12 @@ pub(crate) fn verify_cose(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn verify_cose(
+pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
     _additional_data: &[u8],
     _signature_only: bool,
+    _th: &dyn TrustHandlerConfig,
     _validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     Err(Error::CoseVerifier)
@@ -1134,14 +1180,14 @@ pub mod tests {
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::openssl::{temp_signer, OpenSSLTrustHandler};
+    use crate::openssl::{temp_signer, OpenSSLTrustHandlerConfig};
     use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
 
     #[test]
     #[cfg(feature = "file_io")]
     fn test_expired_cert() {
         let mut validation_log = DetailedStatusTracker::new();
-        let th = OpenSSLTrustHandler::new();
+        let th = OpenSSLTrustHandlerConfig::new();
 
         let mut cert_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         cert_path.push("tests/fixtures/rsa-pss256_key-expired.pub");
@@ -1228,7 +1274,7 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
-        let th = OpenSSLTrustHandler::new();
+        let th = OpenSSLTrustHandlerConfig::new();
 
         use crate::openssl::temp_signer;
 

@@ -38,27 +38,32 @@ impl CoseValidator for EcValidator {
         };
 
         // is this an expected P1363 sig size
-        if sig.len()
-            != match self.alg {
-                SigningAlg::Es256 => 64,
-                SigningAlg::Es384 => 96,
-                SigningAlg::Es512 => 132,
-                _ => return Err(Error::UnsupportedType),
+        let sig_der = if sig.len() == 64 || sig.len() == 96 || sig.len() == 132 {
+            if sig.len()
+                != match self.alg {
+                    SigningAlg::Es256 => 64,
+                    SigningAlg::Es384 => 96,
+                    SigningAlg::Es512 => 132,
+                    _ => return Err(Error::UnsupportedType),
+                }
+            {
+                return Err(Error::CoseSignature);
             }
-        {
-            return Err(Error::CoseSignature);
-        }
 
-        // convert P1363 sig to DER sig
-        let sig_len = sig.len() / 2;
-        let r = openssl::bn::BigNum::from_slice(&sig[0..sig_len])
-            .map_err(|_err| Error::CoseSignature)?;
-        let s = openssl::bn::BigNum::from_slice(&sig[sig_len..])
-            .map_err(|_err| Error::CoseSignature)?;
+            // convert P1363 sig to DER sig
+            let sig_len = sig.len() / 2;
+            let r = openssl::bn::BigNum::from_slice(&sig[0..sig_len])
+                .map_err(|_err| Error::CoseSignature)?;
+            let s = openssl::bn::BigNum::from_slice(&sig[sig_len..])
+                .map_err(|_err| Error::CoseSignature)?;
 
-        let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r, s)
-            .map_err(|_err| Error::CoseSignature)?;
-        let sig_der = ecdsa_sig.to_der().map_err(|_err| Error::CoseSignature)?;
+            let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r, s)
+                .map_err(|_err| Error::CoseSignature)?;
+
+            ecdsa_sig.to_der().map_err(|_err| Error::CoseSignature)?
+        } else {
+            sig.to_vec()
+        };
 
         verifier.update(data).map_err(wrap_openssl_err)?;
         verifier

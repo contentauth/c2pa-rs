@@ -25,7 +25,7 @@ pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9)
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 // Trait for supply configuration and handling of trust lists and EKU configuration store
-pub(crate) trait TrustHandler {
+pub(crate) trait TrustHandlerConfig {
     fn new() -> Self
     where
         Self: Sized;
@@ -44,50 +44,52 @@ pub(crate) trait TrustHandler {
     // clear all entries in trust handler list
     fn clear(&mut self);
 
-    // verify certificate and trust chain
-    fn verify_trust(&self, chain_der: &[Vec<u8>], cert_der: &[u8]) -> Result<bool>;
-
     // load EKU configuration
     fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()>;
 
     // list off auxillary allowed EKU Oid
-    fn get_auxillary_ekus(&self) -> &Vec<Oid>;
+    fn get_auxillary_ekus(&self) -> Vec<Oid>;
+
+    // list of all anchors
+    fn get_anchors(&self) -> Vec<Vec<u8>>;
 }
 
-impl std::fmt::Debug for dyn TrustHandler {
+impl std::fmt::Debug for dyn TrustHandlerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "TrustHandler Installed")
     }
 }
 
 pub(crate) fn has_allowed_oid<'a>(
     eku: &x509_parser::extensions::ExtendedKeyUsage,
-    allowed_ekus: &'a Vec<Oid>,
+    allowed_ekus: &'a [Oid],
 ) -> Option<&'a Oid<'a>> {
-    if eku.email_protection {
-        if allowed_ekus.iter().any(|oid| *oid == EMAIL_PROTECTION_OID) {
-            return allowed_ekus.iter().find(|v| **v == EMAIL_PROTECTION_OID);
-        }
+    if eku.email_protection && allowed_ekus.iter().any(|oid| *oid == EMAIL_PROTECTION_OID) {
+        return allowed_ekus.iter().find(|v| **v == EMAIL_PROTECTION_OID);
     }
 
-    if eku.time_stamping {
-        if allowed_ekus.iter().any(|oid| *oid == TIMESTAMPING_OID) {
-            return allowed_ekus.iter().find(|v| **v == TIMESTAMPING_OID);
-        }
+    if eku.time_stamping && allowed_ekus.iter().any(|oid| *oid == TIMESTAMPING_OID) {
+        return allowed_ekus.iter().find(|v| **v == TIMESTAMPING_OID);
     }
 
-    if eku.ocsp_signing {
-        if allowed_ekus.iter().any(|oid| *oid == OCSP_SIGNING_OID) {
-            return allowed_ekus.iter().find(|v| **v == OCSP_SIGNING_OID);
-        }
+    if eku.ocsp_signing && allowed_ekus.iter().any(|oid| *oid == OCSP_SIGNING_OID) {
+        return allowed_ekus.iter().find(|v| **v == OCSP_SIGNING_OID);
     }
 
+    let mut last_oid = None;
+    if eku.other.iter().any(|v| {
+        allowed_ekus.iter().any(|oid| {
+            if oid == v {
+                last_oid = Some(oid);
+                true
+            } else {
+                false
+            }
+        })
+    }) {
+        return last_oid;
+    }
     None
-    /*
-    if eku.other
-        .iter()
-        .any(|v| allowed_ekus.iter().any(|oid| oid == v)) {}
-        */
 }
 
 // load set of validation EKUs, ignoring unrecognized Oid lines

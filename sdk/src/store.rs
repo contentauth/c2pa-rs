@@ -47,13 +47,19 @@ use crate::{
     },
     salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    trust_handler::TrustHandler,
+    trust_handler::TrustHandlerConfig,
     utils::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::openssl::OpenSSLTrustHandlerConfig;
+
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::WebTrustHandlerConfig;
 
 #[cfg(feature = "file_io")]
 use crate::{
@@ -63,7 +69,6 @@ use crate::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
     },
-    openssl::OpenSSLTrustHandler,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -78,7 +83,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    trust_handler: Box<dyn TrustHandler>,
+    trust_handler: Box<dyn TrustHandlerConfig>,
 }
 
 struct ManifestInfo<'a> {
@@ -123,9 +128,9 @@ impl Store {
             claims: Vec::new(),
             label: label.to_string(),
             #[cfg(not(target_arch = "wasm32"))]
-            trust_handler: Box::new(OpenSSLTrustHandler::new()),
+            trust_handler: Box::new(OpenSSLTrustHandlerConfig::new()),
             #[cfg(target_arch = "wasm32")]
-            trust_handler: Box::new(WebPkiTrustHandler),
+            trust_handler: Box::new(WebTrustHandlerConfig::new()),
             provenance_path: None,
         }
     }
@@ -162,7 +167,7 @@ impl Store {
         self.trust_handler.clear();
     }
 
-    fn trust_handler(&self) -> &dyn TrustHandler {
+    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
         self.trust_handler.as_ref()
     }
 

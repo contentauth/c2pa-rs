@@ -45,7 +45,7 @@ use crate::{
     jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    trust_handler::TrustHandler,
+    trust_handler::TrustHandlerConfig,
     utils::{
         base64,
         hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -1023,7 +1023,7 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
-        th: &dyn TrustHandler,
+        th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1071,7 +1071,7 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
-        th: &dyn TrustHandler,
+        th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.

@@ -20,7 +20,7 @@ use asn1_rs::Oid;
 
 use crate::{
     error::{wrap_openssl_err, Result},
-    trust_handler::{load_eku_configuration, TrustHandler},
+    trust_handler::{load_eku_configuration, TrustHandlerConfig},
 };
 
 fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
@@ -39,15 +39,14 @@ fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
 }
 
 // Struct to handle verification of trust chains
-pub(crate) struct OpenSSLTrustHandler<'a> {
+pub(crate) struct OpenSSLTrustHandlerConfig {
     trust_anchors: Vec<openssl::x509::X509>,
     private_anchors: Vec<openssl::x509::X509>,
     trust_store: Option<openssl::x509::store::X509Store>,
-    oid_strings: Vec<String>,
-    config_store: Vec<Oid<'a>>,
+    config_store: Vec<u8>,
 }
 
-impl<'a> OpenSSLTrustHandler<'a> {
+impl OpenSSLTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
         // load default trust anchors
         let ts = include_bytes!("../../tests/fixtures/certs/trust/trust_anchors.pem");
@@ -93,7 +92,7 @@ impl<'a> OpenSSLTrustHandler<'a> {
     }
 }
 
-impl<'a> std::fmt::Debug for OpenSSLTrustHandler<'a> {
+impl std::fmt::Debug for OpenSSLTrustHandlerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -105,16 +104,17 @@ impl<'a> std::fmt::Debug for OpenSSLTrustHandler<'a> {
 }
 
 #[allow(dead_code)]
-impl<'a> TrustHandler for OpenSSLTrustHandler<'a> {
+impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
     fn new() -> Self {
-        let mut th = OpenSSLTrustHandler {
+        let mut th = OpenSSLTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
             trust_store: None,
-            oid_strings: Vec::new(),
             config_store: Vec::new(),
         };
-        th.load_default_trust().expect("build config is broken");
+        if th.load_default_trust().is_err() {
+            th.clear(); // just use empty trust handler to fail automatically
+        }
 
         th
     }
@@ -147,47 +147,78 @@ impl<'a> TrustHandler for OpenSSLTrustHandler<'a> {
         self.private_anchors = Vec::new();
         self.trust_store = None;
     }
-
-    // verify certificate and trust chain
-    fn verify_trust(&self, chain_der: &[Vec<u8>], cert_der: &[u8]) -> Result<bool> {
-        let mut cert_chain = openssl::stack::Stack::new().map_err(wrap_openssl_err)?;
-        let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(wrap_openssl_err)?;
-
-        let chain = certs_der_to_x509(chain_der)?;
-        let cert = openssl::x509::X509::from_der(cert_der).map_err(wrap_openssl_err)?;
-
-        if let Some(store) = &self.trust_store {
-            for c in chain {
-                cert_chain.push(c).map_err(wrap_openssl_err)?;
-            }
-
-            match store_ctx.init(store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
-                Ok(trust) => Ok(trust),
-                Err(_) => Ok(false),
-            }
-        } else {
-            Ok(false)
-        }
-    }
-
     // load EKU configuration
     fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
-        self.oid_strings = load_eku_configuration(config_data)?;
-
-        for oid_str in &self.oid_strings {
-            if let Ok(oid) = Oid::from_str(oid_str) {
-                self.config_store.push(oid);
-            }
-        }
+        config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
 
     // list off auxillary allowed EKU Oid
-    fn get_auxillary_ekus(&self) -> &Vec<Oid<'_>> {
-        &self.config_store
+    fn get_auxillary_ekus(&self) -> Vec<Oid> {
+        let mut oids = Vec::new();
+        if let Ok(oid_strings) = load_eku_configuration(&mut Cursor::new(&self.config_store)) {
+            for oid_str in &oid_strings {
+                if let Ok(oid) = Oid::from_str(oid_str) {
+                    oids.push(oid);
+                }
+            }
+        }
+        oids
+    }
+
+    fn get_anchors(&self) -> Vec<Vec<u8>> {
+        let mut anchors = Vec::new();
+
+        for a in &self.private_anchors {
+            if let Ok(der) = a.to_der() {
+                anchors.push(der)
+            }
+        }
+
+        for a in &self.trust_anchors {
+            if let Ok(der) = a.to_der() {
+                anchors.push(der)
+            }
+        }
+        anchors
     }
 }
 
+// verify certificate and trust chain
+pub(crate) fn verify_trust(
+    th: &dyn TrustHandlerConfig,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+) -> Result<bool> {
+    let mut cert_chain = openssl::stack::Stack::new().map_err(wrap_openssl_err)?;
+    let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(wrap_openssl_err)?;
+
+    let chain = certs_der_to_x509(chain_der)?;
+    for c in chain {
+        cert_chain.push(c).map_err(wrap_openssl_err)?;
+    }
+    let cert = openssl::x509::X509::from_der(cert_der).map_err(wrap_openssl_err)?;
+
+    let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(wrap_openssl_err)?;
+
+    // todo: figure out the passthrough case
+    if th.get_anchors().is_empty() {
+        return Ok(true);
+    }
+
+    // add trust anchors
+    for d in th.get_anchors() {
+        let c = openssl::x509::X509::from_der(&d).map_err(wrap_openssl_err)?;
+        builder.add_cert(c)?;
+    }
+    // finalize store
+    let store = builder.build();
+
+    match store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
+        Ok(trust) => Ok(trust),
+        Err(_) => Ok(false),
+    }
+}
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -204,7 +235,7 @@ pub mod tests {
     fn test_trust_store() {
         let cert_dir = crate::utils::test::fixture_path("certs");
 
-        let mut th = OpenSSLTrustHandler::new();
+        let mut th = OpenSSLTrustHandlerConfig::new();
         th.clear();
 
         th.load_default_trust().unwrap();
@@ -226,15 +257,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(th.verify_trust(&ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(th.verify_trust(&ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(th.verify_trust(&ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(th.verify_trust(&es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(th.verify_trust(&es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(th.verify_trust(&es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(th
-            .verify_trust(&ed25519_certs[1..], &ed25519_certs[0])
-            .unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
     }
 
     #[test]
@@ -242,7 +271,7 @@ pub mod tests {
         let cert_dir = crate::utils::test::fixture_path("certs");
         let ta = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
-        let mut th = OpenSSLTrustHandler::new();
+        let mut th = OpenSSLTrustHandlerConfig::new();
         th.clear();
 
         // load the trust store
@@ -266,14 +295,12 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(!th.verify_trust(&ps256_certs[2..], &ps256_certs[0]).unwrap());
-        assert!(!th.verify_trust(&ps384_certs[2..], &ps384_certs[0]).unwrap());
-        assert!(!th.verify_trust(&ps512_certs[2..], &ps512_certs[0]).unwrap());
-        assert!(!th.verify_trust(&es256_certs[2..], &es256_certs[0]).unwrap());
-        assert!(!th.verify_trust(&es384_certs[2..], &es384_certs[0]).unwrap());
-        assert!(!th.verify_trust(&es512_certs[2..], &es512_certs[0]).unwrap());
-        assert!(!th
-            .verify_trust(&ed25519_certs[2..], &ed25519_certs[0])
-            .unwrap());
+        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
     }
 }
