@@ -147,7 +147,12 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
     }
 
     fn get_anchors(&self) -> Vec<Vec<u8>> {
-        todo!()
+        let mut anchors = Vec::new();
+
+        anchors.append(&mut self.trust_anchors.clone());
+        anchors.append(&mut self.private_anchors.clone());
+
+        anchors
     }
 }
 
