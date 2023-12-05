@@ -11,11 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use asn1_rs::{oid, Oid};
 use std::{
     io::{read_to_string, Read},
     str::FromStr,
 };
+
+use asn1_rs::{oid, Oid};
 
 use crate::Result;
 
