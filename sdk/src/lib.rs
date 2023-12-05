@@ -102,7 +102,7 @@ mod manifest_assertion;
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 
 mod manifest_store;
-pub use manifest_store::ManifestStore;
+pub use manifest_store::{ManifestStore, ManifestStoreOptions};
 
 mod manifest_store_report;
 pub use manifest_store_report::ManifestStoreReport;
