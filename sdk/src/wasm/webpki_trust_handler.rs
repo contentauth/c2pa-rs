@@ -171,11 +171,11 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     let cert_alg = cert.signature_algorithm.algorithm.clone();
 
     let signing_alg = if cert_alg == SHA256_WITH_RSAENCRYPTION_OID {
-        "rs256".to_string()
+        "rsa256".to_string()
     } else if cert_alg == SHA384_WITH_RSAENCRYPTION_OID {
-        "rs384".to_string()
+        "rsa384".to_string()
     } else if cert_alg == SHA512_WITH_RSAENCRYPTION_OID {
-        "rs512".to_string()
+        "rsa512".to_string()
     } else if cert_alg == ECDSA_WITH_SHA256_OID {
         SigningAlg::Es256.to_string()
     } else if cert_alg == ECDSA_WITH_SHA384_OID {
