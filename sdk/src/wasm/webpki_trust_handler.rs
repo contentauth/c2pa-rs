@@ -17,7 +17,6 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
-use x509_certificate::certificate::X509Certificate;
 use x509_parser::{oid_registry::Oid, prelude::*};
 
 use crate::{
@@ -28,8 +27,14 @@ use crate::{
     SigningAlg,
 };
 
-fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<X509Certificate>> {
-    X509Certificate::from_pem_multiple(trust_data).map_err(|_e| Error::WasmNoCrypto)
+fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let mut certs = Vec::new();
+
+    for pem_result in Pem::iter_from_buffer(trust_data) {
+        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+        certs.push(pem.contents.clone());
+    }
+    Ok(certs)
 }
 
 // Struct to handle verification of trust chains using WebPki
@@ -66,7 +71,7 @@ impl WebTrustHandlerConfig {
         self.load_configuration(&mut config_reader)?;
 
         // load debug/test private trust anchors
-        #[cfg(test)]
+        //#[cfg(test)]
         {
             let pa = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
@@ -102,11 +107,8 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         let mut trust_data = Vec::new();
         trust_data_reader.read_to_end(&mut trust_data)?;
 
-        let anchors = load_trust_from_data(&trust_data)?;
-        for anchor in anchors {
-            let der = anchor.encode_der().map_err(|_e| Error::WasmNoCrypto)?;
-            self.trust_anchors.push(der);
-        }
+        let mut anchors = load_trust_from_data(&trust_data)?;
+        self.trust_anchors.append(&mut anchors);
         Ok(())
     }
 
@@ -115,11 +117,9 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         let mut private_anchors_data = Vec::new();
         private_anchors_reader.read_to_end(&mut private_anchors_data)?;
 
-        let anchors = load_trust_from_data(&private_anchors_data)?;
-        for anchor in anchors {
-            let der = anchor.encode_der().map_err(|_e| Error::WasmNoCrypto)?;
-            self.private_anchors.push(der);
-        }
+        let mut anchors = load_trust_from_data(&private_anchors_data)?;
+        self.private_anchors.append(&mut anchors);
+
         Ok(())
     }
 
@@ -157,7 +157,6 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
 }
 
 fn find_allowed_eku<'a>(cert_der: &'a [u8], allowed_ekus: &'a Vec<Oid<'a>>) -> Option<&'a Oid<'a>> {
-    use x509_parser::prelude::X509Certificate;
     if let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) {
         if let Ok(Some(eku)) = cert.extended_key_usage() {
             if let Some(o) = has_allowed_oid(eku.value, allowed_ekus) {
@@ -261,6 +260,8 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
+#[allow(dead_code)]
+#[allow(unused_variables)]
 async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<bool> {
     use x509_parser::prelude::*;
 
@@ -310,8 +311,6 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     }
 
     for i in 1..chain_length {
-        let (_, issuer_cert) =
-            X509Certificate::from_der(&certs[i]).map_err(|_e| Error::CoseCertUntrusted)?;
         let (_, current_cert) =
             X509Certificate::from_der(&certs[i - 1]).map_err(|_e| Error::CoseCertUntrusted)?;
 
@@ -363,11 +362,11 @@ async fn on_trust_list(
         let (_, chain_cert) =
             X509Certificate::from_der(cert).map_err(|_e| Error::CoseCertUntrusted)?;
 
-        for anchor in anchors.iter() {
+        for anchor in &source_anchors {
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
 
-            let result = verify_data(anchor.as_ref().to_vec(), sig.to_vec(), data.to_vec()).await;
+            let result = verify_data(anchor.clone(), sig.to_vec(), data.to_vec()).await;
 
             match result {
                 Ok(b) => {
@@ -409,7 +408,6 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
     async fn test_trust_store() {
         let mut th = WebTrustHandlerConfig::new();
         th.clear();
@@ -425,42 +423,13 @@ pub mod tests {
         let es512 = include_bytes!("../../tests/fixtures/certs/es512.pub");
         let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 
-        let x509_ps256_certs = load_trust_from_data(ps256).unwrap();
-        let x509_ps384_certs = load_trust_from_data(ps384).unwrap();
-        let x509_ps512_certs = load_trust_from_data(ps512).unwrap();
-        let x509_es256_certs = load_trust_from_data(es256).unwrap();
-        let x509_es384_certs = load_trust_from_data(es384).unwrap();
-        let x509_es512_certs = load_trust_from_data(es512).unwrap();
-        let x509_ed25519_certs = load_trust_from_data(ed25519).unwrap();
-
-        let ps256_certs: Vec<Vec<u8>> = x509_ps256_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let ps384_certs: Vec<Vec<u8>> = x509_ps384_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let ps512_certs: Vec<Vec<u8>> = x509_ps512_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let es256_certs: Vec<Vec<u8>> = x509_es256_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let es384_certs: Vec<Vec<u8>> = x509_es384_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let es512_certs: Vec<Vec<u8>> = x509_es512_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
-        let _ed25519_cert: Vec<Vec<u8>> = x509_ed25519_certs
-            .iter()
-            .map(|x| x.encode_der().unwrap())
-            .collect();
+        let ps256_certs = load_trust_from_data(ps256).unwrap();
+        let ps384_certs = load_trust_from_data(ps384).unwrap();
+        let ps512_certs = load_trust_from_data(ps512).unwrap();
+        let es256_certs = load_trust_from_data(es256).unwrap();
+        let es384_certs = load_trust_from_data(es384).unwrap();
+        let es512_certs = load_trust_from_data(es512).unwrap();
+        let _ed25519_certs = load_trust_from_data(ed25519).unwrap();
 
         assert!(verify_trust_async(&th, &ps256_certs[1..], &ps256_certs[0])
             .await
