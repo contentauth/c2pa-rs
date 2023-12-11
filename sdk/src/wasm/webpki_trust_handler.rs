@@ -315,10 +315,6 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
         let (_, current_cert) =
             X509Certificate::from_der(&certs[i - 1]).map_err(|_e| Error::CoseCertUntrusted)?;
 
-        if current_cert.issuer() != issuer_cert.subject() {
-            return Err(Error::CoseCertUntrusted);
-        }
-
         let issuer_der = certs[i].to_vec();
         let data = current_cert.tbs_certificate.as_ref();
         let sig = current_cert.signature_value.as_ref();
