@@ -364,21 +364,18 @@ async fn on_trust_list(
             X509Certificate::from_der(cert).map_err(|_e| Error::CoseCertUntrusted)?;
 
         for anchor in anchors.iter() {
-            if chain_cert.issuer() == anchor.subject() {
-                let data = chain_cert.tbs_certificate.as_ref();
-                let sig = chain_cert.signature_value.as_ref();
+            let data = chain_cert.tbs_certificate.as_ref();
+            let sig = chain_cert.signature_value.as_ref();
 
-                let result =
-                    verify_data(anchor.as_ref().to_vec(), sig.to_vec(), data.to_vec()).await;
+            let result = verify_data(anchor.as_ref().to_vec(), sig.to_vec(), data.to_vec()).await;
 
-                match result {
-                    Ok(b) => {
-                        if b {
-                            return Ok(true);
-                        }
+            match result {
+                Ok(b) => {
+                    if b {
+                        return Ok(true);
                     }
-                    Err(_) => continue,
                 }
+                Err(_) => continue,
             }
         }
     }
