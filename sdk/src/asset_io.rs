@@ -257,3 +257,21 @@ pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }
+
+/// Utility funtion to rename or copy a temp file to a permanent location.
+///
+/// If the rename is not possible, due to cross volume references & etc, it will copy instead.
+pub fn rename_or_copy<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    // clear temp flag for Windows
+    let (_, path) = temp_file
+        .keep()
+        .map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+
+    std::fs::rename(&path, asset_path.as_ref())
+        // if rename fails, try to copy in case we are on different volumes
+        .or_else(|_| std::fs::copy(&path, asset_path).and(Ok(())))
+        .map_err(crate::Error::IoError)
+}
