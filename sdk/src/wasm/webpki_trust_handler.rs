@@ -290,8 +290,10 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
         };
 
         let adjusted_sig = if cert_alg_string.starts_with("es") {
-            let alg = &cert_alg_string;
-            match der_to_p1363(sig, alg.parse()?) {
+            let parsed_alg_string: SigningAlg = cert_alg_string
+                .parse()
+                .map_err(|_| Error::UnknownAlgorithm)?;
+            match der_to_p1363(&sig, parsed_alg_string) {
                 Some(p1363) => p1363,
                 None => sig.to_vec(),
             }
@@ -304,7 +306,7 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
             hash,
             salt_len,
             certificate_public_key.raw.to_vec(),
-            &adjusted_sig,
+            adjusted_sig,
             data,
         )
         .await
@@ -315,9 +317,9 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
 // convert der signatures to P1363 format: r | s
 fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     // handle if this is a der sequence
-    if let Ok(_rem, seq) = parse_der_sequence_of(parse_der_integer)(data) {
-        let rp = seq[0].as_bigint().ok()?;
-        let sp = seq[1].as_bigint().ok()?;
+    if let Ok((_, seq)) = parse_der_sequence_of(parse_der_integer)(data) {
+        let rp = seq.as_bigint().ok()?;
+        let sp = seq.as_bigint().ok()?;
 
         let mut r = rp.to_str_radix(16);
         let mut s = sp.to_str_radix(16);
