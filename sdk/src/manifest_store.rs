@@ -307,14 +307,21 @@ impl ManifestStore {
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
     /// ```
-    /// use c2pa::{Result, ManifestStore};
+    /// use c2pa::{Result, ManifestStore, ManifestStoreOptions};
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+    ///         let pa = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");    
+    ///         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");  
+    ///         
+    ///         let mut manifest_options = ManifestStoreOptions::default();
+    ///         manifest_options.private_anchors = Some(pa);
+    ///         manifest_options.config = Some(config);
+    ///     
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes, &manifest_options)
     ///             .await
     ///             .unwrap();
     ///

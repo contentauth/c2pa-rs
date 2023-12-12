@@ -48,13 +48,6 @@ pub(crate) struct OpenSSLTrustHandlerConfig {
 
 impl OpenSSLTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
-        // load default trust anchors
-        let ts = include_bytes!("../../tests/fixtures/certs/trust/trust_anchors.pem");
-        let mut reader = Cursor::new(ts);
-
-        // load the trust store
-        self.load_trust_anchors_from_data(&mut reader)?;
-
         // load config store
         let config = include_bytes!("../../tests/fixtures/certs/trust/store.cfg");
         let mut config_reader = Cursor::new(config);
