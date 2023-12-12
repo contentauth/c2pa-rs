@@ -290,7 +290,8 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
         };
 
         let adjusted_sig = if cert_alg_string.starts_with("es") {
-            match der_to_p1363(sig, cert_alg_string.as_ref().parse()?) {
+            let alg = &cert_alg_string;
+            match der_to_p1363(sig, alg.parse()?) {
                 Some(p1363) => p1363,
                 None => sig.to_vec(),
             }
