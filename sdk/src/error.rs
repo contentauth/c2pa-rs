@@ -255,6 +255,9 @@ pub enum Error {
     #[error("could not generate XML")]
     XmlWriteError,
 
+    #[error("unknown algorithm")]
+    UnknownAlgorithm,
+
     // --- third-party errors ---
     #[error(transparent)]
     IoError(#[from] std::io::Error),
