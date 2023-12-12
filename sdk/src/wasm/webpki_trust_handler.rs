@@ -17,6 +17,7 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
+use x509_parser::der_parser::der::{parse_der_integer, parse_der_sequence_of};
 use x509_parser::{oid_registry::Oid, prelude::*};
 
 use crate::{
@@ -288,17 +289,94 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
             _ => return Err(Error::UnsupportedType),
         };
 
+        let adjusted_sig = if cert_alg_string.starts_with("es") {
+            match der_to_p1363(sig, cert_alg_string.as_ref().parse()?) {
+                Some(p1363) => p1363,
+                None => sig.to_vec(),
+            }
+        } else {
+            sig.to_vec()
+        };
+
         async_validate(
             algo,
             hash,
             salt_len,
             certificate_public_key.raw.to_vec(),
-            sig,
+            &adjusted_sig,
             data,
         )
         .await
     } else {
         return Err(Error::CoseInvalidCert);
+    }
+}
+// convert der signatures to P1363 format: r | s
+fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
+    // handle if this is a der sequence
+    if let Ok(_rem, seq) = parse_der_sequence_of(parse_der_integer)(data) {
+        let rp = seq[0].as_bigint().ok()?;
+        let sp = seq[1].as_bigint().ok()?;
+
+        let mut r = rp.to_str_radix(16);
+        let mut s = sp.to_str_radix(16);
+
+        let sig_len: usize = match alg {
+            SigningAlg::Es256 => 64,
+            SigningAlg::Es384 => 96,
+            SigningAlg::Es512 => 132,
+            _ => return None,
+        };
+
+        // pad or truncate as needed
+        let rp = if r.len() > sig_len {
+            // truncate
+            let offset = r.len() - sig_len;
+            &r[offset..r.len()]
+        } else {
+            // pad
+            while r.len() != sig_len {
+                r.insert(0, '0');
+            }
+            r.as_ref()
+        };
+
+        let sp = if s.len() > sig_len {
+            // truncate
+            let offset = s.len() - sig_len;
+            &s[offset..s.len()]
+        } else {
+            // pad
+            while s.len() != sig_len {
+                s.insert(0, '0');
+            }
+            s.as_ref()
+        };
+
+        if rp.len() != sig_len || rp.len() != sp.len() {
+            return None;
+        }
+
+        // merge r and s strings
+        let mut new_sig = rp.to_string();
+        new_sig.push_str(sp);
+
+        // convert back from hex string to byte array
+        let result = (0..new_sig.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&new_sig[i..i + 2], 16)
+                    .map_err(|_err| crate::Error::InvalidEcdsaSignature)
+            })
+            .collect();
+
+        if let Ok(p1363) = result {
+            Some(p1363)
+        } else {
+            None
+        }
+    } else {
+        Some(data.to_vec())
     }
 }
 
