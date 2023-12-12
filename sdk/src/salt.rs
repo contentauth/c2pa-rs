@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// The Saltgenerator trait always the caller to supply
-/// a funtion to generate a salt value used when hashing
+/// The SaltGenerator trait always the caller to supply
+/// a function to generate a salt value used when hashing
 /// data.  Providing a unique salt ensures a unique hash for
 /// a given data set.
 pub trait SaltGenerator {

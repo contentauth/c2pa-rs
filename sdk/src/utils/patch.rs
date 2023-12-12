@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 
 /**
 Patch a sequence bytes with a new set of bytes - the search_bytes are erased and replaced with replace_bytes
-This function only patches the first occurance
+This function only patches the first occurrence
 returns the location where splice occurred
 */
 pub fn patch_bytes(data: &mut Vec<u8>, search_bytes: &[u8], replace_bytes: &[u8]) -> Result<usize> {

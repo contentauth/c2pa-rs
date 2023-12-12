@@ -35,7 +35,7 @@ _17 November 2023_
 _01 November 2023_
 
 * (PATCH) switches af relationship for a reference to the c2pa data to an array of references, one of which is the c2pa spec ([#333](https://github.com/contentauth/c2pa-rs/pull/333))
-* Restore async versions of embedd functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
+* Restore async versions of embed functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
 * (MINOR) Support databox thumbnails CAI-4142 ([#325](https://github.com/contentauth/c2pa-rs/pull/325))
 * (MINOR) Reuse claim thumbnail as ingredient thumbnail if the store is valid ([#322](https://github.com/contentauth/c2pa-rs/pull/322))
 * (MINOR) Use JUMBF URIs for ManifestStore identifiers ([#323](https://github.com/contentauth/c2pa-rs/pull/323))
