@@ -113,7 +113,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
             &sig,
             claim_bytes,
             b"",
-            false,
+            true,
             &passthrough_tb,
             &mut cose_log,
         ) {

@@ -434,6 +434,11 @@ async fn on_trust_list(
         anchors.push(anchor);
     }
 
+    if anchor_der.is_empty()
+    {
+        return Ok(false);
+    }
+
     // work back from last cert in chain against the trust anchors
     for cert in certs.iter().rev() {
         let (_, chain_cert) =

@@ -196,7 +196,7 @@ pub(crate) fn verify_trust(
 
     // todo: figure out the passthrough case
     if th.get_anchors().is_empty() {
-        return Ok(true);
+        return Ok(false);
     }
 
     // add trust anchors

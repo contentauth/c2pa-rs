@@ -259,13 +259,14 @@ impl ManifestStore {
     /// Example:
     ///
     /// ```
+    /// use std::path::Path;
     /// # use c2pa::Result;
-    /// use c2pa::ManifestStore;
+    /// use c2pa::{ ManifestStore, ManifestStoreOptions};
     /// # fn main() -> Result<()> {
     /// let options = ManifestStoreOptions {
-    ///    data_dir: Some("../target/tmp/manifest_store"),
+    ///    data_dir: Some(Path::new("../target/tmp/manifest_store")),
     ///    ..Default::default()
-    /// }
+    /// };
     /// let manifest_store = ManifestStore::from_file_with_options(
     ///    "tests/fixtures/C.jpg",
     ///    &options,    
@@ -635,12 +636,11 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn manifest_report_from_file_with_options() {
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let trust = include_bytes!("../tests/fixtures/certs/trust/trust_anchors.pem");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         let options = ManifestStoreOptions {
             config: Some(config),
-            anchors: Some(trust),
+            anchors: None,
             private_anchors: Some(priv_trust),
             data_dir: Some(Path::new("../target/ms")),
             ..Default::default()

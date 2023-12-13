@@ -91,12 +91,11 @@ mod integration_1 {
         manifest.embed(&parent_path, &output_path, &*signer)?;
 
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let trust = include_bytes!("../tests/fixtures/certs/trust/trust_anchors.pem");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         let options = ManifestStoreOptions {
             config: Some(config),
-            anchors: Some(trust),
+            anchors: None,
             private_anchors: Some(priv_trust),
             ..Default::default()
         };
