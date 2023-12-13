@@ -12,7 +12,6 @@
 // each license.
 
 use std::collections::HashMap;
-#[cfg(feature = "file_io")]
 use std::path::Path;
 
 #[cfg(feature = "json_schema")]

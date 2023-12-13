@@ -434,8 +434,7 @@ async fn on_trust_list(
         anchors.push(anchor);
     }
 
-    if anchor_der.is_empty()
-    {
+    if anchors.is_empty() {
         return Ok(false);
     }
 
