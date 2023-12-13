@@ -20,7 +20,8 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
+        create_signer, Ingredient, Manifest, ManifestStore, ManifestStoreOptions, Result, Signer,
+        SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -89,8 +90,18 @@ mod integration_1 {
         let signer = get_temp_signer();
         manifest.embed(&parent_path, &output_path, &*signer)?;
 
+        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
+        let trust = include_bytes!("../tests/fixtures/certs/trust/trust_anchors.pem");
+        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
+        let options = ManifestStoreOptions {
+            config: Some(config),
+            anchors: Some(trust),
+            private_anchors: Some(priv_trust),
+            ..Default::default()
+        };
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file(&output_path)?;
+        let manifest_store = ManifestStore::from_file_with_options(&output_path, &options)?;
 
         println!("{manifest_store}");
 
