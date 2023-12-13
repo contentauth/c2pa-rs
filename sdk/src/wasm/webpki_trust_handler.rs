@@ -62,20 +62,13 @@ impl std::fmt::Debug for WebTrustHandlerConfig {
 #[allow(dead_code)]
 impl WebTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
-        // load default trust anchors
-        let ts = include_bytes!("../../tests/fixtures/certs/trust/trust_anchors.pem");
-        let mut reader = Cursor::new(ts);
-
-        // load the trust store
-        self.load_trust_anchors_from_data(&mut reader)?;
-
         // load config store
         let config = include_bytes!("../../tests/fixtures/certs/trust/store.cfg");
         let mut config_reader = Cursor::new(config);
         self.load_configuration(&mut config_reader)?;
 
         // load debug/test private trust anchors
-        //#[cfg(test)]
+        #[cfg(test)]
         {
             let pa = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
