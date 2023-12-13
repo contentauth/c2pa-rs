@@ -54,8 +54,7 @@ impl OpenSSLTrustHandlerConfig {
         self.load_configuration(&mut config_reader)?;
 
         // load debug/test private trust anchors
-        #[cfg(test)]
-        {
+        if cfg!(test) {
             let pa = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
 
@@ -140,6 +139,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         self.private_anchors = Vec::new();
         self.trust_store = None;
     }
+
     // load EKU configuration
     fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
         config_data.read_to_end(&mut self.config_store)?;

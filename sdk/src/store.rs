@@ -20,6 +20,10 @@ use std::{fs, path::Path};
 
 use log::error;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::openssl::OpenSSLTrustHandlerConfig;
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::WebTrustHandlerConfig;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -54,13 +58,6 @@ use crate::{
     },
     validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
-
-#[cfg(not(target_arch = "wasm32"))]
-use crate::openssl::OpenSSLTrustHandlerConfig;
-
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::WebTrustHandlerConfig;
-
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},

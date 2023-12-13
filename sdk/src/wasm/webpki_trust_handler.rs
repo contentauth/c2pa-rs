@@ -17,8 +17,11 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
-use x509_parser::der_parser::der::{parse_der_integer, parse_der_sequence_of};
-use x509_parser::{oid_registry::Oid, prelude::*};
+use x509_parser::{
+    der_parser::der::{parse_der_integer, parse_der_sequence_of},
+    oid_registry::Oid,
+    prelude::*,
+};
 
 use crate::{
     cose_validator::*,
@@ -65,8 +68,7 @@ impl WebTrustHandlerConfig {
         self.load_configuration(&mut config_reader)?;
 
         // load debug/test private trust anchors
-        #[cfg(test)]
-        {
+        if cfg!(test) {
             let pa = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
 
@@ -121,6 +123,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         self.trust_anchors = Vec::new();
         self.private_anchors = Vec::new();
     }
+
     // load EKU configuration
     fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
         config_data.read_to_end(&mut self.config_store)?;
