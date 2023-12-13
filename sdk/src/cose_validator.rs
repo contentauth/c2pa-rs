@@ -1180,8 +1180,11 @@ pub mod tests {
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::openssl::{temp_signer, OpenSSLTrustHandlerConfig};
-    use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
+    use crate::{
+        openssl::{temp_signer, OpenSSLTrustHandlerConfig},
+        status_tracker::DetailedStatusTracker,
+        SigningAlg,
+    };
 
     #[test]
     #[cfg(feature = "file_io")]

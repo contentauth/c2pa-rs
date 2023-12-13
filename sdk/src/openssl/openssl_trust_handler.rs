@@ -147,6 +147,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         self.private_anchors = Vec::new();
         self.trust_store = None;
     }
+
     // load EKU configuration
     fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
         config_data.read_to_end(&mut self.config_store)?;

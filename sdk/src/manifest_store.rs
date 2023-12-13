@@ -38,6 +38,8 @@ pub struct ManifestStoreOptions<'a> {
     pub private_anchors: Option<&'a [u8]>,
     /// Trust list validation configuration
     pub config: Option<&'a [u8]>,
+    /// Optional data directory for resources
+    pub data_dir: Option<&'a Path>,
 }
 
 impl<'a> Default for ManifestStoreOptions<'a> {
@@ -47,6 +49,7 @@ impl<'a> Default for ManifestStoreOptions<'a> {
             anchors: None,
             private_anchors: None,
             config: None,
+            data_dir: None,
         }
     }
 }
@@ -249,6 +252,52 @@ impl ManifestStore {
             &validation_log,
             resource_path.as_ref(),
         ))
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Loads a ManifestStore from a file using options
+    /// Example:
+    ///
+    /// ```
+    /// # use c2pa::Result;
+    /// use c2pa::ManifestStore;
+    /// # fn main() -> Result<()> {
+    /// let options = ManifestStoreOptions {
+    ///    data_dir: Some("../target/tmp/manifest_store"),
+    ///    ..Default::default()
+    /// }
+    /// let manifest_store = ManifestStore::from_file_with_options(
+    ///    "tests/fixtures/C.jpg",
+    ///    &options,    
+    /// )?;
+    /// println!("{}", manifest_store);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_file_with_options<P: AsRef<Path>>(
+        path: P,
+        options: &ManifestStoreOptions<'_>,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_trust(private_anchors)?;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+        }
+        match options.data_dir {
+            Some(data_dir) => Ok(Self::from_store_with_resources(
+                &store,
+                &validation_log,
+                data_dir,
+            )),
+            None => Ok(Self::from_store(&store, &validation_log)),
+        }
     }
 
     /// Loads a ManifestStore from a file
@@ -563,6 +612,35 @@ mod tests {
             "../target/ms",
         )
         .expect("from_store_with_resources");
+        println!("{manifest_store}");
+
+        assert!(manifest_store.active_label().is_some());
+        assert!(manifest_store.get_active().is_some());
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
+        let manifest = manifest_store.get_active().unwrap();
+        assert!(!manifest.ingredients().is_empty());
+        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
+        assert!(manifest.time().is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifest_report_from_file_with_options() {
+        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
+        let trust = include_bytes!("../tests/fixtures/certs/trust/trust_anchors.pem");
+        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
+        let options = ManifestStoreOptions {
+            config: Some(config),
+            anchors: Some(trust),
+            private_anchors: Some(priv_trust),
+            data_dir: Some(Path::new("../target/ms")),
+            ..Default::default()
+        };
+        let manifest_store =
+            ManifestStore::from_file_with_options("tests/fixtures/CIE-sig-CA.jpg", &options)
+                .expect("from_store_with_resources");
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());
