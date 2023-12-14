@@ -11,8 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -259,17 +258,15 @@ impl ManifestStore {
     ///
     /// ```
     /// use std::path::Path;
+    ///
     /// # use c2pa::Result;
-    /// use c2pa::{ ManifestStore, ManifestStoreOptions};
+    /// use c2pa::{ManifestStore, ManifestStoreOptions};
     /// # fn main() -> Result<()> {
     /// let options = ManifestStoreOptions {
-    ///    data_dir: Some(Path::new("../target/tmp/manifest_store")),
-    ///    ..Default::default()
+    ///     data_dir: Some(Path::new("../target/tmp/manifest_store")),
+    ///     ..Default::default()
     /// };
-    /// let manifest_store = ManifestStore::from_file_with_options(
-    ///    "tests/fixtures/C.jpg",
-    ///    &options,    
-    /// )?;
+    /// let manifest_store = ManifestStore::from_file_with_options("tests/fixtures/C.jpg", &options)?;
     /// println!("{}", manifest_store);
     /// # Ok(())
     /// # }

@@ -36,7 +36,7 @@ fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
 
     for pem_result in Pem::iter_from_buffer(trust_data) {
         let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
-        certs.push(pem.contents.clone());
+        certs.push(pem.contents);
     }
     Ok(certs)
 }
@@ -59,7 +59,6 @@ impl std::fmt::Debug for WebTrustHandlerConfig {
     }
 }
 
-#[allow(dead_code)]
 impl WebTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
         // load config store
@@ -311,9 +310,15 @@ async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<b
 // convert der signatures to P1363 format: r | s
 fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     // handle if this is a der sequence
-    if let Ok((_, seq)) = parse_der_sequence_of(parse_der_integer)(data) {
-        let rp = seq.as_bigint().ok()?;
-        let sp = seq.as_bigint().ok()?;
+    if let Ok((_, bo)) = parse_der_sequence_of(parse_der_integer)(data) {
+        let seq = bo.as_sequence().ok()?;
+
+        if seq.len() != 2 {
+            return None;
+        }
+
+        let rp = seq[0].as_bigint().ok()?;
+        let sp = seq[1].as_bigint().ok()?;
 
         let mut r = rp.to_str_radix(16);
         let mut s = sp.to_str_radix(16);
@@ -446,7 +451,7 @@ async fn on_trust_list(
             let sig = chain_cert.signature_value.as_ref();
 
             let (_, anchor_cert) =
-            X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
+                X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
                 let result = verify_data(anchor.clone(), sig.to_vec(), data.to_vec()).await;
@@ -459,7 +464,7 @@ async fn on_trust_list(
                     }
                     Err(_) => continue,
                 }
-            }           
+            }
         }
     }
     // todo: consider (path check and names restrictions)
@@ -489,7 +494,6 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[wasm_bindgen_test]
@@ -537,7 +541,6 @@ pub mod tests {
         //assert!(verify_trust_async(&th, &ed25519_certs[1..], &ed25519_certs[0]).await..unwrap());
     }
 
-    
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[wasm_bindgen_test]
@@ -546,7 +549,6 @@ pub mod tests {
         th.clear();
 
         th.load_default_trust().unwrap();
-
 
         // test all the certs
         let ps256 = include_bytes!("../../tests/fixtures/certs/ps256.pub");
@@ -565,12 +567,24 @@ pub mod tests {
         let es512_certs = load_trust_from_data(es512).unwrap();
         let _ed25519_certs = load_trust_from_data(ed25519).unwrap();
 
-        assert!(!verify_trust_async(&th, &ps256_certs[2..], &ps256_certs[0]).await.unwrap());
-        assert!(!verify_trust_async(&th, &ps384_certs[2..], &ps384_certs[0]).await.unwrap());
-        assert!(!verify_trust_async(&th, &ps512_certs[2..], &ps512_certs[0]).await.unwrap());
-        assert!(!verify_trust_async(&th, &es256_certs[2..], &es256_certs[0]).await.unwrap());
-        assert!(!verify_trust_async(&th, &es384_certs[2..], &es384_certs[0]).await.unwrap());
-        assert!(!verify_trust_async(&th, &es512_certs[2..], &es512_certs[0]).await.unwrap());
+        assert!(!verify_trust_async(&th, &ps256_certs[2..], &ps256_certs[0])
+            .await
+            .unwrap());
+        assert!(!verify_trust_async(&th, &ps384_certs[2..], &ps384_certs[0])
+            .await
+            .unwrap());
+        assert!(!verify_trust_async(&th, &ps512_certs[2..], &ps512_certs[0])
+            .await
+            .unwrap());
+        assert!(!verify_trust_async(&th, &es256_certs[2..], &es256_certs[0])
+            .await
+            .unwrap());
+        assert!(!verify_trust_async(&th, &es384_certs[2..], &es384_certs[0])
+            .await
+            .unwrap());
+        assert!(!verify_trust_async(&th, &es512_certs[2..], &es512_certs[0])
+            .await
+            .unwrap());
         //assert!(!verify_trust_async(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
     }
 }

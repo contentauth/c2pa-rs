@@ -109,14 +109,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 
         let passthrough_tb = TrustPassThrough::new();
 
-        match verify_cose(
-            &sig,
-            claim_bytes,
-            b"",
-            true,
-            &passthrough_tb,
-            &mut cose_log,
-        ) {
+        match verify_cose(&sig, claim_bytes, b"", true, &passthrough_tb, &mut cose_log) {
             Ok(r) => {
                 if !r.validated {
                     Err(Error::CoseSignature)

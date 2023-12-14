@@ -21,6 +21,7 @@ use asn1_rs::Oid;
 use crate::{
     error::{wrap_openssl_err, Result},
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
+    Error,
 };
 
 fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
@@ -34,7 +35,7 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
     Ok(certs)
 }
 
-fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
+fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
     openssl::x509::X509::stack_from_pem(trust_data).map_err(wrap_openssl_err)
 }
 
@@ -120,7 +121,11 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let mut trust_data = Vec::new();
         trust_data_reader.read_to_end(&mut trust_data)?;
 
-        self.trust_anchors = load_trust_from_data(&trust_data)?;
+        self.trust_anchors = load_trust_from_pem_data(&trust_data)?;
+        if self.trust_anchors.is_empty() {
+            return Err(Error::NotFound); // catch silent failure
+        }
+
         self.update_store()
     }
 
@@ -129,7 +134,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let mut private_anchors_data = Vec::new();
         private_anchors_reader.read_to_end(&mut private_anchors_data)?;
 
-        let mut pa = load_trust_from_data(&private_anchors_data)?;
+        let mut pa = load_trust_from_pem_data(&private_anchors_data)?;
         self.private_anchors.append(&mut pa);
         self.update_store()
     }
