@@ -257,8 +257,6 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-#[allow(dead_code)]
-#[allow(unused_variables)]
 async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<bool> {
     use x509_parser::prelude::*;
 
@@ -447,16 +445,21 @@ async fn on_trust_list(
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
 
-            let result = verify_data(anchor.clone(), sig.to_vec(), data.to_vec()).await;
+            let (_, anchor_cert) =
+            X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
 
-            match result {
-                Ok(b) => {
-                    if b {
-                        return Ok(true);
+            if chain_cert.issuer() == anchor_cert.subject() {
+                let result = verify_data(anchor.clone(), sig.to_vec(), data.to_vec()).await;
+
+                match result {
+                    Ok(b) => {
+                        if b {
+                            return Ok(true);
+                        }
                     }
+                    Err(_) => continue,
                 }
-                Err(_) => continue,
-            }
+            }           
         }
     }
     // todo: consider (path check and names restrictions)
@@ -489,6 +492,7 @@ pub mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[wasm_bindgen_test]
     async fn test_trust_store() {
         let mut th = WebTrustHandlerConfig::new();
         th.clear();
@@ -533,30 +537,33 @@ pub mod tests {
         //assert!(verify_trust_async(&th, &ed25519_certs[1..], &ed25519_certs[0]).await..unwrap());
     }
 
-    /*
+    
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[wasm_bindgen_test]
     async fn test_broken_trust_chain() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
-        let th = WebTrustHandlerConfig::new();
+        let mut th = WebTrustHandlerConfig::new();
+        th.clear();
+
+        th.load_default_trust().unwrap();
+
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = include_bytes!("../../tests/fixtures/certs/ps256.pub");
+        let ps384 = include_bytes!("../../tests/fixtures/certs/ps384.pub");
+        let ps512 = include_bytes!("../../tests/fixtures/certs/ps512.pub");
+        let es256 = include_bytes!("../../tests/fixtures/certs/es256.pub");
+        let es384 = include_bytes!("../../tests/fixtures/certs/es384.pub");
+        let es512 = include_bytes!("../../tests/fixtures/certs/es512.pub");
+        let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let _ed25519_certs = ed25519.certs().unwrap();
+        let ps256_certs = load_trust_from_data(ps256).unwrap();
+        let ps384_certs = load_trust_from_data(ps384).unwrap();
+        let ps512_certs = load_trust_from_data(ps512).unwrap();
+        let es256_certs = load_trust_from_data(es256).unwrap();
+        let es384_certs = load_trust_from_data(es384).unwrap();
+        let es512_certs = load_trust_from_data(es512).unwrap();
+        let _ed25519_certs = load_trust_from_data(ed25519).unwrap();
 
         assert!(!verify_trust_async(&th, &ps256_certs[2..], &ps256_certs[0]).await.unwrap());
         assert!(!verify_trust_async(&th, &ps384_certs[2..], &ps384_certs[0]).await.unwrap());
@@ -565,5 +572,5 @@ pub mod tests {
         assert!(!verify_trust_async(&th, &es384_certs[2..], &es384_certs[0]).await.unwrap());
         assert!(!verify_trust_async(&th, &es512_certs[2..], &es512_certs[0]).await.unwrap());
         //assert!(!verify_trust_async(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
-    }*/
+    }
 }
