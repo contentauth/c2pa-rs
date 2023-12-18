@@ -6,7 +6,7 @@ The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C
 
 ## Key features
 
-The C2PA Rust library implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html).
+The C2PA Rust library (previously referred to as the "Rust SDK") implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html).
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_manifests).
