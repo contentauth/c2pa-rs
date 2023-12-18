@@ -126,6 +126,7 @@ jobs:
 
   publish-preflight:
     name: Preflight crate publish
+    if: false
     runs-on: ${{ matrix.os }}
 
     strategy:
