@@ -1405,6 +1405,9 @@ pub mod tests {
     use super::*;
     use crate::utils::test::{fixture_path, temp_dir_path};
 
+    #[ignore] // Need WOFF 1 test fixture
+    #[test]
+    #[cfg(not(feature = "xmp_write"))]
     // Key to cryptic test comments.
     //
     //   IIP - Invalid/Ignored/Passthrough
@@ -1413,9 +1416,6 @@ pub mod tests {
     //         "reserved" bytes in font tables which are supposed to be zero,
     //         major and/or minor version fields that look pretty in the spec
     //         but never have any practical effect in the real world, etc.
-    #[ignore] // Need WOFF 1 test fixture
-    #[test]
-    #[cfg(not(feature = "xmp_write"))]
     /// Verifies the adding of a remote C2PA manifest reference works as
     /// expected.
     fn add_c2pa_ref() {
@@ -1457,11 +1457,11 @@ pub mod tests {
         };
     }
 
+    /// Verifies the adding of a remote C2PA manifest reference as XMP works as
+    /// expected.
     #[ignore] // Need WOFF 1 test fixture
     #[test]
     #[cfg(feature = "xmp_write")]
-    /// Verifies the adding of a remote C2PA manifest reference as XMP works as
-    /// expected.
     fn add_c2pa_ref() {
         use std::str::FromStr;
 
@@ -1511,9 +1511,9 @@ pub mod tests {
         };
     }
 
+    #[test]
     /// Verify when reading the object locations for hashing, we get zero
     /// positions when the font contains zero tables
-    #[test]
     fn get_chunk_positions_without_any_tables() {
         let font_data = vec![
             0x77, 0x4f, 0x46, 0x46, // wOFF
@@ -1547,9 +1547,9 @@ pub mod tests {
         assert_eq!(ChunkType::Directory, positions.get(1).unwrap().chunk_type);
     }
 
+    #[test]
     /// Verify when reading the object locations for hashing, we get zero
     /// positions when the font does not contain a C2PA font table
-    #[test]
     fn get_chunk_positions_without_c2pa_table() {
         let font_data = vec![
             // WOFFHeader
@@ -1623,8 +1623,8 @@ pub mod tests {
         assert_eq!(27, object_positions.len());
     }
 
-    /// Verify the C2PA table data can be read from a font stream
     #[test]
+    /// Verify the C2PA table data can be read from a font stream
     fn reads_c2pa_table_from_stream() {
         let font_data = vec![
             // WOFFHeader
@@ -1676,10 +1676,10 @@ pub mod tests {
         );
     }
 
-    /// Verifies the ability to write/read C2PA manifest store data to/from an
-    /// OpenType font
     #[ignore] // Need WOFF 1 test fixture
     #[test]
+    /// Verifies the ability to write/read C2PA manifest store data to/from an
+    /// OpenType font
     fn remove_c2pa_manifest_store() {
         let c2pa_data = "test data";
 
@@ -1712,10 +1712,10 @@ pub mod tests {
         };
     }
 
-    /// Verifies the ability to write/read C2PA manifest store data to/from an
-    /// OpenType font
     #[ignore] // Need WOFF 1 test fixture
     #[test]
+    /// Verifies the ability to write/read C2PA manifest store data to/from an
+    /// OpenType font
     fn write_read_c2pa_from_font() {
         let c2pa_data = "test data";
 
@@ -1757,11 +1757,11 @@ pub mod tests {
             Error,
         };
 
+        #[ignore] // Need WOFF 1 test fixture
+        #[test]
         /// Verifies the `font_xmp_support::add_reference_as_xmp_to_stream` is
         /// able to add a reference to as XMP when there is already data in the
         /// reference field.
-        #[ignore] // Need WOFF 1 test fixture
-        #[test]
         fn add_reference_as_xmp_to_stream_with_data() {
             // Load the basic WOFF 1 test fixture - C2PA-XYZ - Select WOFF 1 test fixture
             let source = crate::utils::test::fixture_path("font.woff");
@@ -1799,10 +1799,10 @@ pub mod tests {
             }
         }
 
+        #[test]
         /// Verifies the `font_xmp_support::build_xmp_from_stream` method
         /// correctly returns error for NotFound when there is no data in the
         /// stream to return.
-        #[test]
         fn build_xmp_from_stream_without_reference() {
             let font_data = vec![
                 // WOFFHeader
@@ -1835,10 +1835,10 @@ pub mod tests {
             }
         }
 
+        #[test]
         /// Verifies the `font_xmp_support::build_xmp_from_stream` method
         /// correctly returns error for NotFound when there is no data in the
         /// stream to return.
-        #[test]
         fn build_xmp_from_stream_with_reference_not_xmp() {
             let font_data = vec![
                 // WOFFHeader

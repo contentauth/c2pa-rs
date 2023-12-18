@@ -512,7 +512,8 @@ impl SfntFont {
         if let Some(ostensible_head) = self.tables.get_mut(&HEAD_TABLE_TAG) {
             match ostensible_head {
                 Table::Head(head) => {
-                    head.checksumAdjustment = (Wrapping(SFNT_EXPECTED_CHECKSUM) - font_cksum).0;
+                    head.checksumAdjustment =
+                        (Wrapping(SFNT_EXPECTED_CHECKSUM) - font_cksum - Wrapping(0)).0;
                 }
                 _ => {
                     // Tables and directory are out-of-sync
@@ -906,20 +907,20 @@ impl ChunkReader for SfntIO {
                     positions.push(ChunkPosition {
                         offset: entry.offset as usize,
                         length: 8_usize,
-                        name: entry.tag.data,
-                        chunk_type: ChunkType::TableDataIncluded,
+                        name: *b"hea0",
+                        chunk_type: ChunkType::TableDataExcluded,
                     });
                     positions.push(ChunkPosition {
                         offset: entry.offset as usize + 8_usize,
                         length: 4_usize,
-                        name: entry.tag.data,
+                        name: *b"hea1",
                         chunk_type: ChunkType::TableDataExcluded,
                     });
                     positions.push(ChunkPosition {
                         offset: entry.offset as usize + 12_usize,
                         length: 42_usize,
-                        name: entry.tag.data,
-                        chunk_type: ChunkType::TableDataIncluded,
+                        name: *b"hea2",
+                        chunk_type: ChunkType::TableDataExcluded,
                     });
                 }
                 _ => {
@@ -1621,8 +1622,48 @@ pub mod tests {
         };
     }
 
-    /// Verify that short file fails to chunk-parse at all
     #[test]
+    /// Verify read/write idempotency
+    fn read_write_idempotent_no_c2pa() {
+        // Load the basic OTF test fixture
+        let mut font_stream = File::open(fixture_path("font.otf")).unwrap();
+        // Read & build
+        let mut sfnt = SfntFont::from_reader(&mut font_stream).unwrap();
+        // Then serialize back out
+        let mut test_data = Vec::new();
+        sfnt.write(&mut test_data).unwrap();
+        // and read _that_ back in...
+        let mut font_data = Vec::new();
+        font_stream.rewind().unwrap();
+        font_stream.read_to_end(&mut font_data).unwrap();
+        // data should match & checksum should be right
+        assert_eq!(font_data, test_data);
+        let naive_test_cksum = checksum(&test_data).0;
+        assert_eq!(naive_test_cksum, SFNT_EXPECTED_CHECKSUM);
+    }
+
+    #[test]
+    /// Verify read/write idempotency
+    fn read_write_idempotent_yes_c2pa() {
+        // Load the basic OTF test fixture
+        let mut font_stream = File::open(fixture_path("font_c2pa.otf")).unwrap();
+        // Read & build
+        let mut sfnt = SfntFont::from_reader(&mut font_stream).unwrap();
+        // Then serialize back out
+        let mut test_data = Vec::new();
+        sfnt.write(&mut test_data).unwrap();
+        // and read _that_ back in...
+        let mut font_data = Vec::new();
+        font_stream.rewind().unwrap();
+        font_stream.read_to_end(&mut font_data).unwrap();
+        // data should match & checksum should be right
+        assert_eq!(font_data, test_data);
+        let naive_test_cksum = checksum(&test_data).0;
+        assert_eq!(naive_test_cksum, SFNT_EXPECTED_CHECKSUM);
+    }
+
+    #[test]
+    /// Verify that short file fails to chunk-parse at all
     fn get_chunk_positions_without_any_font() {
         let font_data = vec![
             0x4f, 0x54, 0x54, 0x4f, // OTTO
@@ -1633,8 +1674,8 @@ pub mod tests {
         assert_err!(sfnt_io.get_chunk_positions(&mut font_stream));
     }
 
-    /// Verify chunk-parsing behavior for empty font with just the header
     #[test]
+    /// Verify chunk-parsing behavior for empty font with just the header
     fn get_chunk_positions_without_any_tables() {
         let font_data = vec![
             0x4f, 0x54, 0x54, 0x4f, // OTTO
@@ -1668,9 +1709,9 @@ pub mod tests {
         );
     }
 
+    #[test]
     /// Verify when reading the object locations for hashing, we get zero
     /// positions when the font does not contain a C2PA font table
-    #[test]
     fn get_chunk_positions_without_c2pa_table() {
         let font_data = vec![
             0x4f, 0x54, 0x54, 0x4f, // OTTO
@@ -1744,8 +1785,8 @@ pub mod tests {
         assert_eq!(16, positions.len());
     }
 
-    /// Verify the C2PA table data can be read from a font stream
     #[test]
+    /// Verify the C2PA table data can be read from a font stream
     fn reads_c2pa_table_from_stream() {
         let font_data = vec![
             0x4f, 0x54, 0x54, 0x4f, // OTTO - OpenType tag
@@ -1779,9 +1820,9 @@ pub mod tests {
         );
     }
 
+    #[test]
     /// Verifies the ability to write/read C2PA manifest store data to/from an
     /// OpenType font
-    #[test]
     fn remove_c2pa_manifest_store() {
         let c2pa_data = "test data";
 
@@ -1814,9 +1855,9 @@ pub mod tests {
         };
     }
 
+    #[test]
     /// Verifies the ability to write/read C2PA manifest store data to/from an
     /// OpenType font
-    #[test]
     fn write_read_c2pa_from_font() {
         let c2pa_data = "test data";
 
@@ -1858,10 +1899,10 @@ pub mod tests {
             Error,
         };
 
+        #[test]
         /// Verifies the `font_xmp_support::add_reference_as_xmp_to_stream` is
         /// able to add a reference to as XMP when there is already data in the
         /// reference field.
-        #[test]
         fn add_reference_as_xmp_to_stream_with_data() {
             // Load the basic OTF test fixture
             let source = crate::utils::test::fixture_path("font.otf");
@@ -1899,10 +1940,10 @@ pub mod tests {
             }
         }
 
+        #[test]
         /// Verifies the `font_xmp_support::build_xmp_from_stream` method
         /// correctly returns error for NotFound when there is no data in the
         /// stream to return.
-        #[test]
         fn build_xmp_from_stream_without_reference() {
             let font_data = vec![
                 0x4f, 0x54, 0x54, 0x4f, // OTTO
@@ -1924,10 +1965,10 @@ pub mod tests {
             }
         }
 
+        #[test]
         /// Verifies the `font_xmp_support::build_xmp_from_stream` method
         /// correctly returns error for NotFound when there is no data in the
         /// stream to return.
-        #[test]
         fn build_xmp_from_stream_with_reference_not_xmp() {
             let font_data = vec![
                 0x4f, 0x54, 0x54, 0x4f, // OTTO - OpenType tag

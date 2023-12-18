@@ -1,0 +1,51 @@
+{
+    "fullName": "Example Font Bold Italic",
+    "version": "7.0.4-beta",
+    "versionUrl": "https://fabrikam.example.com/release/efbi/7.0",
+    "familyName": "ExampleFont",
+    "style": "Italic",
+    "weight": {
+        "class": "Bold",
+        "value": 700
+    },
+    "postScriptName": "ExampleFont-BoldItalic",
+    "format": "OpenType",
+    "copyrightNotice": "© 2017 Fabrikam, Inc. All Rights Reserved.",
+    "copyrightHolder": {
+        "name": "Fabrikam Inc."
+    },
+    "copyrightYears": [
+        1982,
+        2017
+    ],
+    "designers": [
+        {
+            "person": {
+              "name": "John Doe",
+              "url": "https://fabrikam.example.com/browse/designers/john-doe"
+            },
+            "foundry": {
+               "name": "Fabrikam Fonts"
+            },
+            "contribution": "Ligatures."
+        },
+        {
+            "person": {
+              "name": "Jane Doe"
+            },
+            "foundry": {
+                "name": "Fabrikam Fonts"
+            },
+            "contribution": "All characters."
+        }
+    ],
+    "designFoundry": {
+        "name": "Fabrikam Fonts",
+        "url": "https://fabrikam.example.com"
+    },
+    "sourceFoundry": {
+        "name": "Fonts Direct 2 U",
+        "url": "https://fd2u.example.com"
+    },
+    "identifier": "ExampleFont Bold Italic (Fabrikam)"
+}

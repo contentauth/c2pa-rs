@@ -19,6 +19,7 @@ use std::{
     str::from_utf8,
 };
 
+use asn1_rs::nom::AsBytes;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 
 use crate::error::{Error, Result};
@@ -210,6 +211,27 @@ pub(crate) fn checksum(bytes: &[u8]) -> Wrapping<u32> {
     });
     // Combine ingredients & serve.
     chunks_cksum + frag_cksum
+}
+
+/// Computes a 32-bit big-endian OpenType-style checksum on the given byte
+/// array, which is presumed to start on a 4-byte boundary.
+///
+/// ### Parameters
+/// - `bytes` - Array of data to checksum
+/// - `bias`  - Starting byte offset.
+///
+/// ### Returns
+/// Wrapping<u32> with the data checksum. (Note that trailing pad bytes do not
+/// affect this checksum - it's not a real CRC.)
+#[allow(dead_code)]
+pub(crate) fn checksum_biased(bytes: &[u8], bias: u32) -> Wrapping<u32> {
+    match bias & 3 {
+        0 => checksum(bytes),
+        1 => Wrapping(BigEndian::read_u24(bytes)) + checksum(&(bytes[3..bytes.len()])),
+        2 => Wrapping(BigEndian::read_u16(bytes) as u32) + checksum(&(bytes[2..bytes.len()])),
+        3 => Wrapping(bytes[0] as u32) + checksum(&(bytes[1..bytes.len()])),
+        4_u32..=u32::MAX => todo!(),
+    }
 }
 
 /// Assembles two u16 values into a u32.
@@ -426,24 +448,22 @@ impl TableC2PA {
     pub(crate) fn checksum(&self) -> Wrapping<u32> {
         // Set up the structured data
         let raw_table = TableC2PARaw::from_table(self);
-        let mut cksum = raw_table.checksum();
-        let mut _uri_len_bias = 0;
-        // Write the remote manifest URI, if present.
-        if let Some(uri_string) = self.active_manifest_uri.as_ref() {
-            let uri_bytes = uri_string.as_bytes();
-            cksum += checksum(uri_bytes);
-        }
-        // TBD - handle remainder of uri_string. We could use chunks_exact,
-        // and the prepend its remainder to (a copy of? gross) the manifest_store.
-        // More efficient might be to pass a 'bias' value 0-3 around, so the
-        // checksum code can align its words...
-        if let Some(manifest_store) = self.manifest_store.as_ref() {
-            // TBD - need to use _uri_len_bias here to shift the manifest
-            // bytes rightward 8/16/24 bits, if the uri had 3/2/1 bytes of
-            // overhang...
-            cksum += checksum(manifest_store);
-        }
-        cksum
+        let header_cksum = raw_table.checksum();
+        // Add remote-manifest URI if present.
+        let uri_cksum = if let Some(uri_string) = self.active_manifest_uri.as_ref() {
+            checksum(uri_string.as_bytes())
+        } else {
+            Wrapping(0_u32)
+        };
+        let manifest_cksum = if let Some(manifest_store) = self.manifest_store.as_ref() {
+            checksum_biased(
+                manifest_store.as_bytes(),
+                raw_table.activeManifestUriLength as u32,
+            )
+        } else {
+            Wrapping(0_u32)
+        };
+        header_cksum + uri_cksum + manifest_cksum
     }
 
     /// Returns the total length in bytes of this table.
@@ -805,9 +825,7 @@ impl TableUnspecified {
     /// ### Returns
     /// Wrapping<u32> with the checksum.
     pub(crate) fn checksum(&self) -> Wrapping<u32> {
-        // TBD - this should never be called though - we only need to alter C2PA
-        // and head - should we panic!(), or just implement?
-        Wrapping(0x19283746)
+        checksum(&self.data)
     }
 
     /// Returns the total length in bytes of this table.
@@ -917,4 +935,285 @@ pub(crate) struct SfntTableDirEntry {
     pub checksum: u32,
     pub offset: u32,
     pub length: u32,
+}
+
+#[cfg(test)]
+pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::{any::Any, io::Cursor};
+
+    use claims::*;
+
+    use super::*;
+
+    // TBD - add'l c2pa table tests:
+    //  - Short table
+    //  - Offset of an element is nonzero when size is zero
+    //  - URI offset >, <, =, manifest offset
+    //  - Invalid UTF8 in the URI
+    //  - Bad offset/size to from_reader
+    #[test]
+    /// Verifies the head table's .checksum() method.
+    fn c2pa_raw_checksum() {
+        let c2pa_raw_data = vec![
+            0x00, 0x07, 0x00, 0x11, // Major: 7, Minor: 17
+            0x00, 0x00, 0x00, 0x00, // Manifest URI offset (0)
+            0x00, 0x1a, 0x00, 0x01, // Manifest URI length (26) / reserved (1)
+            0x00, 0x00, 0x00, 0x2e, // C2PA manifest store offset (46)
+            0x00, 0x00, 0x00, 0x12, // C2PA manifest store length (18)
+        ];
+        let mut c2pa_raw_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_raw_data);
+        assert_eq!(size_of::<TableC2PARaw>(), c2pa_raw_data.len());
+        let c2pa_raw = TableC2PARaw::from_reader(&mut c2pa_raw_stream).unwrap();
+        let naive_cksum = checksum(&c2pa_raw_data).0;
+        let table_cksum = c2pa_raw.checksum().0;
+        assert_eq!(2162770, naive_cksum);
+        assert_eq!(2162770, table_cksum);
+    }
+
+    #[test]
+    /// Verifies the head table's .checksum() method.
+    fn c2pa_checksum() {
+        let c2pa_data = vec![
+            0x00, 0x07, 0x00, 0x11, // Major: 7, Minor: 17
+            0x00, 0x00, 0x00, 0x14, // Manifest URI offset (20)
+            0x00, 0x1a, 0x00, 0x00, // Manifest URI length (26) / reserved (0)
+            0x00, 0x00, 0x00, 0x2e, // C2PA manifest store offset (46)
+            0x00, 0x00, 0x00, 0x12, // C2PA manifest store length (18)
+            0x68, 0x74, 0x74, 0x70, // http
+            0x3a, 0x2f, 0x2f, 0x65, // ://e
+            0x78, 0x61, 0x6d, 0x70, // xamp
+            0x6c, 0x65, 0x2e, 0x63, // le.c
+            0x6f, 0x6d, 0x2f, 0x6e, // om/n
+            0x6f, 0x74, 0x68, 0x69, // othi
+            0x6e, 0x67, 0x3c, 0x45, // ng<E
+            0x78, 0x61, 0x6d, 0x70, // xamp
+            0x6c, 0x65, 0x4d, 0x61, // leMa
+            0x6e, 0x69, 0x66, 0x65, // nife
+            0x73, 0x74, 0x2f, 0x3e, // st/>
+        ];
+        let mut c2pa_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_data);
+        assert_eq!(size_of::<TableC2PARaw>() + 26 + 18, c2pa_data.len());
+        let c2pa = TableC2PA::from_reader(&mut c2pa_stream, 0, c2pa_data.len()).unwrap();
+        let naive_cksum = checksum(&c2pa_data).0;
+        let table_cksum = c2pa.checksum().0;
+        assert_eq!(2608358557, naive_cksum);
+        assert_eq!(2608358557, table_cksum);
+    }
+
+    #[test]
+    /// Verify read/write idempotency with neither a URI nor a manifest
+    fn c2pa_read_write_idempotent_empty() {
+        let c2pa_input_data = vec![
+            0x00, 0x09, 0x00, 0x13, // Major: 9, Minor: 19
+            0x00, 0x00, 0x00, 0x00, // Manifest URI offset (0)
+            0x00, 0x00, 0x00, 0x00, // Manifest URI length (0) / reserved (0)
+            0x00, 0x00, 0x00, 0x00, // C2PA manifest store offset (0)
+            0x00, 0x00, 0x00, 0x00, // C2PA manifest store length (0)
+        ];
+        let mut c2pa_input_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_input_data);
+        let mut c2pa_output_stream = Cursor::new(Vec::new());
+        let c2pa =
+            TableC2PA::from_reader(&mut c2pa_input_stream, 0, c2pa_input_data.len()).unwrap();
+        assert_ok!(c2pa.write(&mut c2pa_output_stream));
+        assert_eq!(c2pa_input_data, c2pa_output_stream.get_ref().as_slice());
+    }
+
+    #[test]
+    /// Verify read/write idempotency with a URI, but no manifest
+    fn c2pa_read_write_idempotent_uri() {
+        let c2pa_input_data = vec![
+            0x00, 0x08, 0x00, 0x12, // Major: 8, Minor: 18
+            0x00, 0x00, 0x00, 0x14, // Manifest URI offset (20)
+            0x00, 0x1a, 0x00, 0x00, // Manifest URI length (26) / reserved (0)
+            0x00, 0x00, 0x00, 0x00, // C2PA manifest store offset (0)
+            0x00, 0x00, 0x00, 0x00, // C2PA manifest store length (0)
+            0x68, 0x74, 0x74, 0x70, // http
+            0x3a, 0x2f, 0x2f, 0x65, // ://e
+            0x78, 0x61, 0x6d, 0x70, // xamp
+            0x6c, 0x65, 0x2e, 0x63, // le.c
+            0x6f, 0x6d, 0x2f, 0x6e, // om/n
+            0x6f, 0x74, 0x68, 0x69, // othi
+            0x6e, 0x67, // ng
+        ];
+        let mut c2pa_input_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_input_data);
+        let mut c2pa_output_stream = Cursor::new(Vec::new());
+        let c2pa =
+            TableC2PA::from_reader(&mut c2pa_input_stream, 0, c2pa_input_data.len()).unwrap();
+        assert_ok!(c2pa.write(&mut c2pa_output_stream));
+        assert_eq!(c2pa_input_data, c2pa_output_stream.get_ref().as_slice());
+    }
+
+    #[test]
+    /// Verify read/write idempotency with no URI, but a manifest
+    fn c2pa_read_write_idempotent_manifest() {
+        let c2pa_input_data = vec![
+            0x00, 0x07, 0x00, 0x11, // Major: 7, Minor: 17
+            0x00, 0x00, 0x00, 0x00, // Manifest URI offset (20)
+            0x00, 0x00, 0x00, 0x00, // Manifest URI length (26) / reserved (0)
+            0x00, 0x00, 0x00, 0x14, // C2PA manifest store offset (20)
+            0x00, 0x00, 0x00, 0x12, // C2PA manifest store length (18)
+            0x3c, 0x45, 0x78, 0x61, // <Exa
+            0x6d, 0x70, 0x6c, 0x65, // mple
+            0x4d, 0x61, 0x6e, 0x69, // Mani
+            0x66, 0x65, 0x73, 0x74, // fest
+            0x2f, 0x3e, // />
+        ];
+        let mut c2pa_input_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_input_data);
+        let mut c2pa_output_stream = Cursor::new(Vec::new());
+        let c2pa =
+            TableC2PA::from_reader(&mut c2pa_input_stream, 0, c2pa_input_data.len()).unwrap();
+        assert_ok!(c2pa.write(&mut c2pa_output_stream));
+        assert_eq!(c2pa_input_data, c2pa_output_stream.get_ref().as_slice());
+    }
+
+    #[test]
+    /// Verify read/write idempotency with both a URI and a manifest
+    fn c2pa_read_write_idempotent_both() {
+        let c2pa_input_data = vec![
+            0x00, 0x07, 0x00, 0x11, // Major: 7, Minor: 17
+            0x00, 0x00, 0x00, 0x14, // Manifest URI offset (20)
+            0x00, 0x1a, 0x00, 0x00, // Manifest URI length (26) / reserved (0)
+            0x00, 0x00, 0x00, 0x2e, // C2PA manifest store offset (46)
+            0x00, 0x00, 0x00, 0x12, // C2PA manifest store length (18)
+            0x68, 0x74, 0x74, 0x70, // http
+            0x3a, 0x2f, 0x2f, 0x65, // ://e
+            0x78, 0x61, 0x6d, 0x70, // xamp
+            0x6c, 0x65, 0x2e, 0x63, // le.c
+            0x6f, 0x6d, 0x2f, 0x6e, // om/n
+            0x6f, 0x74, 0x68, 0x69, // othi
+            0x6e, 0x67, 0x3c, 0x45, // ng<E
+            0x78, 0x61, 0x6d, 0x70, // xamp
+            0x6c, 0x65, 0x4d, 0x61, // leMa
+            0x6e, 0x69, 0x66, 0x65, // nife
+            0x73, 0x74, 0x2f, 0x3e, // st/>
+        ];
+        let mut c2pa_input_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&c2pa_input_data);
+        let mut c2pa_output_stream = Cursor::new(Vec::new());
+        let c2pa =
+            TableC2PA::from_reader(&mut c2pa_input_stream, 0, c2pa_input_data.len()).unwrap();
+        assert_ok!(c2pa.write(&mut c2pa_output_stream));
+        assert_eq!(c2pa_input_data, c2pa_output_stream.get_ref().as_slice());
+    }
+
+    // TBD - add'l head table tests:
+    //  - Bad offset/size to from_reader
+
+    #[test]
+    /// Verifies that data with bad magic fails to produce a head table.
+    fn head_bad_magic() {
+        let head_data = vec![
+            0x00, 0x07, 0x00, 0x07, // majorVersion: 7, minorVersion: 7
+            0x12, 0x34, 0x56, 0x78, // fontRevision: 305419896
+            0x81, 0x29, 0x36, 0x0f, // checksumAdjustment: 2166961679
+            0x5f, 0x0f, 0x3c, 0xf6, // magicNumber: 1594834166
+            0xc3, 0x5a, 0x04, 0x22, // flags: 0xc35a, unitsPerEm: 0x0422
+            0x90, 0x00, 0x00, 0x00, // created (hi) 0x90000000
+            0x81, 0x4e, 0xaf, 0x80, // created (lo) 0x814eaf80
+            0xa0, 0x00, 0x00, 0x00, // modified (hi) 0xa0000000
+            0x83, 0x39, 0x1d, 0x80, // modified (lo) 0x83391d80
+            0xff, 0xb7, 0xff, 0xb6, // xMin: -73, yMin: -72
+            0x00, 0x48, 0x00, 0x49, // xMax:  72, yMax:  73
+            0xa5, 0x3c, 0x04, 0x05, // macStyle: 0xa53c, lowestRecPPEM: 1029
+            0xff, 0xfd, 0x11, 0x11, // fontDirectionHint: -3, indexToLocFormat: 0x1111
+            0x22, 0x22, // glyphDataFormat: 0x2222
+        ];
+        let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
+        assert_eq!(size_of::<TableHead>(), head_data.len());
+        let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
+        assert!(head.is_err_and(|e| e.type_id() == Error::FontLoadHeadTableBadMissing.type_id()));
+    }
+
+    #[test]
+    /// Verifies that short data fails to produce a head table.
+    fn head_short() {
+        let head_data = vec![
+            0x00, 0x07, 0x00, 0x07, // majorVersion: 7, minorVersion: 7
+            0x12, 0x34, 0x56, 0x78, // fontRevision: 305419896
+            0x81, 0x29, 0x36, 0x0f, // checksumAdjustment: 2166961679
+            0x5f, 0x0f, 0x3c, 0xf5, // magicNumber: 1594834165
+            0xc3, 0x5a, 0x04, 0x22, // flags: 0xc35a, unitsPerEm: 0x0422
+            0x90, 0x00, 0x00, 0x00, // created (hi) 0x90000000
+            0x81, 0x4e, 0xaf, 0x80, // created (lo) 0x814eaf80
+            0xa0, 0x00, 0x00, 0x00, // modified (hi) 0xa0000000
+            0x83, 0x39, 0x1d, 0x80, // modified (lo) 0x83391d80
+            0xff, 0xb7, 0xff, 0xb6, // xMin: -73, yMin: -72
+            0x00, 0x48, 0x00, 0x49, // xMax:  72, yMax:  73
+            0xa5, 0x3c, 0x04, 0x05, // macStyle: 0xa53c, lowestRecPPEM: 1029
+            0xff, 0xfd, 0x11, 0x11, // fontDirectionHint: -3, indexToLocFormat: 0x1111
+            0x22, // glyphDataFormat: 0x22...yikes!
+        ];
+        let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
+        assert_eq!(size_of::<TableHead>(), head_data.len() + 1);
+        let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
+        assert!(head.is_err_and(|e| e.type_id() == Error::FontLoadHeadTableBadMissing.type_id()));
+    }
+
+    #[test]
+    /// Verifies the head table's .checksum() method.
+    fn head_checksum() {
+        let head_data = vec![
+            0x00, 0x07, 0x00, 0x07, // majorVersion: 7, minorVersion: 7
+            0x12, 0x34, 0x56, 0x78, // fontRevision: 305419896
+            0x81, 0x29, 0x36, 0x0f, // checksumAdjustment: 2166961679
+            0x5f, 0x0f, 0x3c, 0xf5, // magicNumber: 1594834165
+            0xc3, 0x5a, 0x04, 0x22, // flags: 0xc35a, unitsPerEm: 0x0422
+            0x90, 0x00, 0x00, 0x00, // created (hi) 0x90000000
+            0x81, 0x4e, 0xaf, 0x80, // created (lo) 0x814eaf80
+            0xa0, 0x00, 0x00, 0x00, // modified (hi) 0xa0000000
+            0x83, 0x39, 0x1d, 0x80, // modified (lo) 0x83391d80
+            0xff, 0xb7, 0xff, 0xb6, // xMin: -73, yMin: -72
+            0x00, 0x48, 0x00, 0x49, // xMax:  72, yMax:  73
+            0xa5, 0x3c, 0x04, 0x05, // macStyle: 0xa53c, lowestRecPPEM: 1029
+            0xff, 0xfd, 0x11, 0x11, // fontDirectionHint: -3, indexToLocFormat: 0x1111
+            0x22, 0x22, // glyphDataFormat: 0x2222
+        ];
+        let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
+        assert_eq!(size_of::<TableHead>(), head_data.len());
+        let head = TableHead::from_reader(&mut head_stream, 0, head_data.len()).unwrap();
+        let naive_cksum = checksum(&head_data).0;
+        let table_cksum = head.checksum().0;
+        // Verify that a naive word-wise checksum produces the well-known
+        // expected value of a valid SFNT.
+        assert_eq!(SFNT_EXPECTED_CHECKSUM, naive_cksum);
+        // Verify that head.checksum() excluded the checksumAdjustment field.
+        assert_eq!(814184875, table_cksum);
+    }
+
+    #[test]
+    /// Verifies the adding of a remote C2PA manifest reference works as
+    /// expected.
+    fn un_checksums() {
+        let un_data = vec![
+            0x0f, 0x0f, 0x0f, 0x0f, 0x04, 0x03, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x01, 0x00,
+        ];
+        let un_expecteds: [u32; 17] = [
+            0x00000000_u32,
+            0x0f000000_u32,
+            0x0f0f0000_u32,
+            0x0f0f0f00_u32,
+            0x0f0f0f0f_u32,
+            0x130f0f0f_u32,
+            0x13120f0f_u32,
+            0x1312110f_u32,
+            0x13121110_u32,
+            0x13121110_u32,
+            0x13121110_u32,
+            0x13121110_u32,
+            0x13121110_u32,
+            0x13121110_u32,
+            0x13131110_u32,
+            0x13131210_u32,
+            0x13131210_u32,
+        ];
+        let mut un_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&un_data);
+        for (n, un_expected) in un_expecteds.iter().enumerate() {
+            // Make an unspecified table from the first n bytes
+            let un = TableUnspecified::from_reader(&mut un_stream, 0, n).unwrap();
+            let un_cksum = un.checksum();
+            assert_eq!(un_expected, &(un_cksum.0));
+        }
+    }
 }
