@@ -51,7 +51,7 @@ use crate::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, Signer,
+    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -1726,22 +1726,10 @@ impl Store {
         Ok(composed)
     }
 
-    /// Returns a finalized, signed manifest.  The manfiest are only supported
-    /// for cases when the client has provided a data hash content hash binding.  Note,
-    /// this function will not work for cases like BMFF where the position
-    /// of the content is also encoded.  This function is not compatible with
-    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
-    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
-    /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulations, otherwise the function uses the caller supplied values.  
-    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
-    /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.  
-    pub fn get_data_hashed_embeddable_manifest(
+    fn prep_embeddable_store(
         &mut self,
+        reserve_size: usize,
         dh: &DataHash,
-        signer: &dyn Signer,
-        format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -1772,23 +1760,53 @@ impl Store {
         // update the placeholder hash
         pc.update_data_hash(adusted_dh)?;
 
-        // reborrow immuttable
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        self.to_jumbf_internal(reserve_size)
+    }
 
-        // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
-
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
+    fn finish_embeddable_store(
+        &mut self,
+        sig: &[u8],
+        sig_placeholder: &[u8],
+        jumbf_bytes: &mut Vec<u8>,
+        format: &str,
+    ) -> Result<Vec<u8>> {
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
         }
 
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
+        patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(&jumbf_bytes, format)
+        self.get_composed_manifest(jumbf_bytes, format)
+    }
+
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub fn get_data_hashed_embeddable_manifest(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn Signer,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The manfiest are only supported
@@ -1809,53 +1827,49 @@ impl Store {
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
     ) -> Result<Vec<u8>> {
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-
-        // make sure there are data hashes present before generating
-        if pc.hash_assertions().is_empty() {
-            return Err(Error::BadParam(
-                "Claim must have hash binding assertion".to_string(),
-            ));
-        }
-
-        // don't allow BMFF assertions to be present
-        if !pc.bmff_hash_assertions().is_empty() {
-            return Err(Error::BadParam(
-                "BMFF assertions not supported in embeddable manifests".to_string(),
-            ));
-        }
-
-        let mut adusted_dh = DataHash::new("jumbf manifest", pc.alg());
-        adusted_dh.exclusions = dh.exclusions.clone();
-        adusted_dh.hash = dh.hash.clone();
-
-        if let Some(reader) = asset_reader {
-            // calc hashes
-            adusted_dh.gen_hash_from_stream(reader)?;
-        }
-
-        // update the placeholder hash
-        pc.update_data_hash(adusted_dh)?;
-
-        // reborrow immuttable
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
             .sign_claim_async(pc, signer, signer.reserve_size())
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
+    }
 
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
+    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// for cases when the client has provided a data hash content hash binding.  Note,
+    /// this function will not work for cases like BMFF where the position
+    /// of the content is also encoded.  This function is not compatible with
+    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
+    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
+    /// the correct values.  If the asset_reader value is supplied it will also perform
+    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
+    /// as this call inserts the DataHash placeholder assertion to reserve space for the
+    /// actual hash values not required when using BoxHashes.  
+    pub async fn get_data_hashed_embeddable_manifest_remote(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn RemoteSigner,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut jumbf_bytes =
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
-        self.get_composed_manifest(&jumbf_bytes, format)
+        // sign contents
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let claim_bytes = pc.data()?;
+        let sig = signer.sign_remote(&claim_bytes).await?;
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -3556,6 +3570,154 @@ pub mod tests {
         }
     }
 
+    /*  reenable this test once we place for large test files
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_arw_jumbf_generation() {
+            let ap = fixture_path("sample1.arw");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.arw");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_nef_jumbf_generation() {
+            let ap = fixture_path("sample1.nef");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.nef");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+    */
     #[test]
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {

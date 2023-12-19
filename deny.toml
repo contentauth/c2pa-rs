@@ -23,6 +23,11 @@ ignore = [
   "RUSTSEC-2021-0127", # serde_cbor
   "RUSTSEC-2021-0146", # twoway (see https://github.com/contentauth/c2pa-rs/issues/234)
   "RUSTSEC-2022-0081", # json (see https://github.com/contentauth/c2pa-rs/issues/318)
+  "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
+  "RUSTSEC-2021-0145", # Dependency on atty via fontools, will eventually go away
+                       # (see https://monotype.atlassian.net/browse/C2PA-280)
+  "RUSTSEC-2021-0153", # Dependency on encoding via fontools, will eventually go away
+                       # (see https://monotype.atlassian.net/browse/C2PA-280)
 ]
 
 # Deny multiple versions unless explicitly skipped.
@@ -63,3 +68,6 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
+
+[sources.allow-org]
+github = ["Monotype"]
