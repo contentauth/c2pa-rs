@@ -169,7 +169,7 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
             Value::Array(sc_der_array) // provide vec of certs when required
         }
     };
-    
+
     // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
     protected_h = protected_h.value(
         iana::HeaderParameter::X5Chain.to_i64(),
