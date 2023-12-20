@@ -28,7 +28,14 @@ impl RsaValidator {
 impl CoseValidator for RsaValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
         let rsa = Rsa::public_key_from_der(pkey)?;
-        let pkey = PKey::from_rsa(rsa)?;
+
+        // rebuild RSA keys to eliminate incompatible values
+        let n = rsa.n().to_owned()?;
+        let e = rsa.e().to_owned()?;
+
+        let new_rsa = Rsa::from_public_components(n, e)?;
+
+        let pkey = PKey::from_rsa(new_rsa)?;
 
         let mut verifier = match self.alg {
             SigningAlg::Ps256 => {
