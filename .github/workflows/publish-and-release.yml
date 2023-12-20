@@ -131,11 +131,11 @@ jobs:
         experimental: [false]
         include:
         - os: macos-latest
-          artifact_name: c2patool_mac_universal.zip
+          artifact_name: c2patool_mac_universal-${{ needs.repo-prep.outputs.new-tag }}.zip
         - os: ubuntu-latest
-          artifact_name: c2patool_linux_intel.tar.gz
+          artifact_name: c2patool_linux_intel-${{ needs.repo-prep.outputs.new-tag }}.tar.gz
         - os: windows-latest
-          artifact_name: c2patool_win_intel.zip
+          artifact_name: c2patool_win_intel-${{ needs.repo-prep.outputs.new-tag }}.zip
 
     steps:
     - name: Checkout repository
