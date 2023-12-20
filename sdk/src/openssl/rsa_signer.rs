@@ -17,7 +17,7 @@ use std::cell::Cell;
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
-    rsa::Rsa,
+    rsa::{Rsa, RsaPrivateKeyBuilder},
     x509::X509,
 };
 
@@ -74,7 +74,39 @@ impl ConfigurableSigner for RsaSigner {
     ) -> Result<Self> {
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
-        let pkey = PKey::from_rsa(rsa).map_err(wrap_openssl_err)?;
+
+        // rebuild RSA keys to eliminate incompatible values
+        let n = rsa.n().to_owned().map_err(wrap_openssl_err)?;
+        let e = rsa.e().to_owned().map_err(wrap_openssl_err)?;
+        let d = rsa.d().to_owned().map_err(wrap_openssl_err)?;
+        let po = rsa.p();
+        let qo = rsa.q();
+        let dmp1o = rsa.dmp1();
+        let dmq1o = rsa.dmq1();
+        let iqmpo = rsa.iqmp();
+        let mut builder = RsaPrivateKeyBuilder::new(n, e, d).map_err(wrap_openssl_err)?;
+
+        if let Some(p) = po {
+            if let Some(q) = qo {
+                builder = builder
+                    .set_factors(p.to_owned()?, q.to_owned()?)
+                    .map_err(wrap_openssl_err)?;
+            }
+        }
+
+        if let Some(dmp1) = dmp1o {
+            if let Some(dmq1) = dmq1o {
+                if let Some(iqmp) = iqmpo {
+                    builder = builder
+                        .set_crt_params(dmp1.to_owned()?, dmq1.to_owned()?, iqmp.to_owned()?)
+                        .map_err(wrap_openssl_err)?;
+                }
+            }
+        }
+
+        let new_rsa = builder.build();
+
+        let pkey = PKey::from_rsa(new_rsa).map_err(wrap_openssl_err)?;
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
