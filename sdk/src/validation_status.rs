@@ -245,6 +245,12 @@ pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
 /// `ValidationStatus.url()` will point to a C2PA assertion.
 pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+/// Hash of a box-based asset matches the hash declared in the General Box
+/// Hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
 /// A non-embedded (remote) assertion was accessible at the time of
 /// validation.
 ///
@@ -431,6 +437,18 @@ pub const ASSERTION_DATAHASH_MISMATCH: &str = "assertion.dataHash.mismatch";
 ///
 /// `ValidationStatus.url()` will point to a C2PA assertion.
 pub const ASSERTION_BMFFHASH_MISMATCH: &str = "assertion.bmffHash.mismatch";
+
+/// The hash of a box-based asset does not match the hash declared
+/// in the General Boxes hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_MISMATCH: &str = "assertion.boxesHash.mismatch";
+
+/// The hash of a box-based asset does not contain boxes in the expected order for
+/// the General Boxes hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.";
 
 /// A hard binding assertion is in a cloud data assertion.
 ///
