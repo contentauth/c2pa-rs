@@ -500,5 +500,6 @@ pub fn is_success(status_code: &str) -> bool {
             | ASSERTION_DATAHASH_MATCH
             | ASSERTION_BMFFHASH_MATCH
             | ASSERTION_ACCESSIBLE
+            | ASSERTION_BOXHASH_MATCH
     )
 }
