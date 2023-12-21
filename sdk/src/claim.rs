@@ -1354,7 +1354,7 @@ impl Claim {
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH);
                             validation_log.log_silent(log_item);
 
                             continue;
@@ -1366,7 +1366,7 @@ impl Claim {
                                 "verify_internal"
                             )
                             .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,
@@ -1426,7 +1426,7 @@ impl Claim {
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH);
                             validation_log.log_silent(log_item);
 
                             continue;
@@ -1438,7 +1438,7 @@ impl Claim {
                                 "verify_internal"
                             )
                             .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,

@@ -22,6 +22,7 @@ use crate::{
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+    validation_status::ASSERTION_BOXHASH_UNKNOWN,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -132,12 +133,10 @@ impl BoxHash {
                                 inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                             }
                         } else {
-                            return Err(Error::HashMismatch(
-                                "Box hash name out of order".to_owned(),
-                            ));
+                            return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned()));
                         }
                     }
-                    None => return Err(Error::HashMismatch("Box hash name not found".to_owned())),
+                    None => return Err(Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN.to_owned())),
                 }
                 source_index += 1;
             }
