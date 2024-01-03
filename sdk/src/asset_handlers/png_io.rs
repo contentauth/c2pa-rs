@@ -687,7 +687,7 @@ pub mod tests {
 
     use std::io::Write;
 
-    use twoway::find_bytes;
+    use memchr::memmem;
 
     use super::*;
     use crate::utils::test;
@@ -717,7 +717,7 @@ pub mod tests {
         let positions = get_png_chunk_positions(&mut f).unwrap();
 
         for hop in positions {
-            if let Some(start) = find_bytes(&png_bytes, &hop.name) {
+            if let Some(start) = memmem::find(&png_bytes, &hop.name) {
                 if hop.start != (start - 4) as u64 {
                     panic!("find_bytes found the wrong position");
                     // assert!(true);

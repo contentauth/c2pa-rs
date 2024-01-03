@@ -2997,9 +2997,9 @@ pub mod tests {
 
     use std::io::Write;
 
+    use memchr::memmem;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
-    use twoway::find_bytes;
 
     use super::*;
     use crate::{
@@ -3322,7 +3322,7 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
+        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
     }
 
     #[actix::test]

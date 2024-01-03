@@ -17,8 +17,8 @@ c2pa = { path = "../sdk", features = [
 env_logger = "0.10"
 log = "0.4.8" 
 image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"] }
+memchr = "2.7.1"
 nom = "7.1.1"
 regex = "1.5.6"
 serde = "1.0.137"
 serde_json = "1.0.81"
-twoway = "0.2.2"
