@@ -110,6 +110,9 @@ pub use manifest_store_report::ManifestStoreReport;
 mod resource_store;
 pub use resource_store::{ResourceRef, ResourceStore};
 
+mod manifest_store_builder;
+pub use manifest_store_builder::ManifestStoreBuilder;
+
 mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
