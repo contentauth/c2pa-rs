@@ -10,11 +10,11 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
+use core::mem::size_of;
 use std::{
     collections::BTreeMap,
     fs::File,
     io::{BufReader, Cursor, Read, Seek, SeekFrom, Write},
-    mem::size_of,
     path::*,
 };
 
@@ -458,7 +458,7 @@ impl WoffFont {
         //   First, the header, then the directory, and finally the tables
         self.header.totalSfntSize = size_of::<SfntHeader>() as u32;
         self.header.totalSfntSize +=
-            (size_of::<SfntTableDirEntry>() * self.header.numTables as usize) as u32;
+            (size_of::<SfntDirectoryEntry>() * self.header.numTables as usize) as u32;
         self.header.totalSfntSize += self
             .directory
             .entries
@@ -811,17 +811,10 @@ where
                 Table::C2PA(TableC2PA::new(None, Some(manifest_store_data.to_vec()))),
             );
         }
-        // If there is, replace its `active_manifest_uri` value with the
-        // provided one.
-        Some(ostensible_c2pa_table) => {
-            match ostensible_c2pa_table {
-                Table::C2PA(c2pa_table) => {
-                    c2pa_table.manifest_store = Some(manifest_store_data.to_vec());
-                }
-                _ => {
-                    todo!("A non-C2PA table was found with the C2PA tag. We should report this as if it were an error, which it most certainly is.");
-                }
-            };
+        Some(Table::C2PA(c2pa)) => c2pa.manifest_store = Some(manifest_store_data.to_vec()),
+        // Yikes! Non-C2PA table with C2PA tag!
+        Some(_) => {
+            return Err(Error::FontLoadError);
         }
     };
     font.write(destination).map_err(|_| Error::FontSaveError)?;
@@ -870,15 +863,10 @@ where
         }
         // If there is, replace its `active_manifest_uri` value with the
         // provided one.
-        Some(ostensible_c2pa_table) => {
-            match ostensible_c2pa_table {
-                Table::C2PA(c2pa_table) => {
-                    c2pa_table.active_manifest_uri = Some(manifest_uri.to_string());
-                }
-                _ => {
-                    todo!("A non-C2PA table was found with the C2PA tag. We should report this as if it were an error, which it most certainly is.");
-                }
-            };
+        Some(Table::C2PA(c2pa)) => c2pa.active_manifest_uri = Some(manifest_uri.to_string()),
+        // Yikes! Non-C2PA table with C2PA tag!
+        Some(_) => {
+            return Err(Error::FontLoadError);
         }
     };
     font.write(destination).map_err(|_| Error::FontSaveError)?;
@@ -1047,22 +1035,19 @@ where
         None => None,
         // If there is, and it has Some `active_manifest_uri`, then mutate that
         // to None, and return the former value.
-        Some(ostensible_c2pa_table) => {
-            match ostensible_c2pa_table {
-                Table::C2PA(c2pa_table) => {
-                    if c2pa_table.active_manifest_uri.is_none() {
-                        None
-                    } else {
-                        // TBD this cannot really be the idiomatic way, can it?
-                        let old_manifest_uri = c2pa_table.active_manifest_uri.clone();
-                        c2pa_table.active_manifest_uri = None;
-                        old_manifest_uri
-                    }
-                }
-                _ => {
-                    todo!("A non-C2PA table was found with the C2PA tag. We should report this as if it were an error, which it most certainly is.");
-                }
+        Some(Table::C2PA(c2pa)) => {
+            if c2pa.active_manifest_uri.is_none() {
+                None
+            } else {
+                // TBD this cannot really be the idiomatic way, can it?
+                let old_manifest_uri = c2pa.active_manifest_uri.clone();
+                c2pa.active_manifest_uri = None;
+                old_manifest_uri
             }
+        }
+        // Yikes! Non-C2PA table with C2PA tag!
+        Some(_) => {
+            return Err(Error::FontLoadError);
         }
     };
     font.write(destination).map_err(|_| Error::FontSaveError)?;
@@ -1187,12 +1172,13 @@ fn read_c2pa_from_stream<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<Tabl
     let woff = WoffFont::from_reader(reader).map_err(|_| Error::FontLoadError)?;
     let c2pa_table: Option<TableC2PA> = match woff.tables.get(&C2PA_TABLE_TAG) {
         None => None,
-        Some(ostensible_c2pa_table) => match ostensible_c2pa_table {
-            Table::C2PA(bonafied_c2pa_table) => Some(bonafied_c2pa_table.clone()),
-            _ => {
-                todo!("A non-C2PA table was found with the C2PA tag. We should report this as if it were an error, which it most certainly is.");
-            }
-        },
+        // If there is, replace its `manifest_store` value with the
+        // provided one.
+        Some(Table::C2PA(c2pa)) => Some(c2pa.clone()),
+        // Yikes! Non-C2PA table with C2PA tag!
+        Some(_) => {
+            return Err(Error::FontLoadError);
+        }
     };
     c2pa_table.ok_or(Error::JumbfNotFound)
 }

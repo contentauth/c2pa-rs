@@ -11,13 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    convert::TryFrom,
-    io::{Read, Seek, SeekFrom, Write},
-    mem::size_of,
-    num::Wrapping,
-    str::from_utf8,
-};
+use core::{convert::TryFrom, mem::size_of, num::Wrapping, str::from_utf8};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use asn1_rs::nom::AsBytes;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
@@ -73,21 +68,13 @@ impl SfntTag {
 
 impl std::fmt::Display for SfntTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}{}{}{}",
-            self.data[0], self.data[1], self.data[2], self.data[3]
-        )
+        write!(f, "{}", String::from_utf8_lossy(&self.data))
     }
 }
 
 impl std::fmt::Debug for SfntTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}{}{}{}",
-            self.data[0], self.data[1], self.data[2], self.data[3]
-        )
+        write!(f, "{}", String::from_utf8_lossy(&self.data))
     }
 }
 
@@ -600,11 +587,11 @@ impl Default for TableC2PA {
 // support exotics like FIXED).
 #[allow(non_snake_case)] // As named by Open Font Format / OpenType.
 pub(crate) struct TableHead {
-    pub majorVersion: u16,
-    pub minorVersion: u16,
-    pub fontRevision: u32,
-    pub checksumAdjustment: u32,
-    pub magicNumber: u32,
+    pub majorVersion: u16,       // Note - Since we only modify checksumAdjustment,
+    pub minorVersion: u16,       // we might just as well define this struct as
+    pub fontRevision: u32,       //    version_stuff: u8[8],
+    pub checksumAdjustment: u32, //    checksumAdjustment: u32,
+    pub magicNumber: u32,        //    rest_of_stuff: u8[42],
     pub flags: u16,
     pub unitsPerEm: u16,
     pub created: i64,
@@ -930,7 +917,7 @@ pub(crate) struct SfntHeader {
 #[derive(Copy, Clone, Debug)]
 #[repr(C, packed(1))] // As defined by the OpenType spec.
 #[allow(dead_code, non_snake_case)] // As defined by the OpenType spec.
-pub(crate) struct SfntTableDirEntry {
+pub(crate) struct SfntDirectoryEntry {
     pub tag: SfntTag,
     pub checksum: u32,
     pub offset: u32,
