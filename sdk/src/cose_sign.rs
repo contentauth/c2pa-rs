@@ -18,7 +18,7 @@
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
-    iana::{self},
+    iana::{self, EnumI64},
     CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
     TaggedCborSerializable,
 };
@@ -195,7 +195,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
 
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8], alg: SigningAlg))]
 fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
-    let protected_h = match alg {
+    let mut protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
         SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
         SigningAlg::Ps512 => HeaderBuilder::new().algorithm(iana::Algorithm::PS512),
@@ -219,14 +219,11 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
         }
     };
 
-    // enable this block of code when we want to switch to 1.3 headers
-    /*
     // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
     protected_h = protected_h.value(
         iana::HeaderParameter::X5Chain.to_i64(),
         sc_der_array_or_bytes.clone(),
     );
-    */
 
     let protected_header = protected_h.build();
     let ph2 = ProtectedHeader {
@@ -249,9 +246,6 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
     } else {
         HeaderBuilder::new()
     };
-
-    // generate old Cose header todo: remove this line when protected headers are enabled
-    unprotected_h = unprotected_h.text_value("x5chain".to_string(), sc_der_array_or_bytes);
 
     // set the ocsp responder response if available
     if let Some(ocsp) = ocsp_val {
