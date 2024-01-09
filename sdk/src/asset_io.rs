@@ -40,17 +40,9 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
-// Disable `Send` for wasm32 since we are not sending data across threads
-#[cfg(target_arch = "wasm32")]
-pub trait CAIRead: Read + Seek {}
-#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
 
-impl CAIRead for std::fs::File {}
-impl CAIRead for std::io::Cursor<&[u8]> {}
-impl CAIRead for std::io::Cursor<&mut [u8]> {}
-impl CAIRead for std::io::Cursor<Vec<u8>> {}
-impl CAIRead for NamedTempFile {}
+impl<T> CAIRead for T where T: Read + Seek + Send {}
 
 // Helper struct to create a concrete type for CAIRead when
 // that is required.  For example a function defined like this
@@ -75,10 +67,7 @@ impl Seek for CAIReadWrapper<'_> {
 
 pub trait CAIReadWrite: CAIRead + Write {}
 
-impl CAIReadWrite for std::fs::File {}
-impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
-impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
-impl CAIReadWrite for NamedTempFile {}
+impl<T> CAIReadWrite for T where T: CAIRead + Write {}
 
 // Helper struct to create a concrete type for CAIReadWrite when
 // that is required. For example a function defined like this
