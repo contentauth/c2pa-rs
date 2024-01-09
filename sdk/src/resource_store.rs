@@ -11,11 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{
     fs::{create_dir_all, read, write},
-    io::Cursor,
     path::{Path, PathBuf},
 };
 
