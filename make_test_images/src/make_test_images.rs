@@ -21,8 +21,8 @@ use std::{
 use anyhow::{Context, Result};
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    create_signer, jumbf_io, Error, Ingredient, IngredientOptions, Manifest, ManifestStore, Signer,
-    SigningAlg,
+    create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
+    ManifestStore, Signer, SigningAlg,
 };
 use nom::AsBytes;
 use serde::Deserialize;
@@ -204,6 +204,10 @@ impl MakeTestImages {
 
         let mut manifest = Manifest::new(generator);
         manifest.set_vendor("contentauth".to_owned()); // needed for generating error cases below
+
+        let mut claim_generator_info = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+        claim_generator_info.set_version(env!("CARGO_PKG_VERSION"));
+        manifest.claim_generator_info = Some([claim_generator_info].to_vec());
 
         if let Some(user) = self.config.author.as_ref() {
             let creative_work = CreativeWork::new()
