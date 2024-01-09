@@ -24,9 +24,9 @@ use c2pa::{
     create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
     ManifestStore, Signer, SigningAlg,
 };
+use memchr::memmem;
 use nom::AsBytes;
 use serde::Deserialize;
-use twoway::find_bytes;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
@@ -164,7 +164,7 @@ impl MakeTestImages {
     fn patch_file(path: &std::path::Path, search_bytes: &[u8], replace_bytes: &[u8]) -> Result<()> {
         let mut buf = fs::read(path)?;
 
-        if let Some(splice_start) = find_bytes(&buf, search_bytes) {
+        if let Some(splice_start) = memmem::find(&buf, search_bytes) {
             buf.splice(
                 splice_start..splice_start + search_bytes.len(),
                 replace_bytes.iter().cloned(),
