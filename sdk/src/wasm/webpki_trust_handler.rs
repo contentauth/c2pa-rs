@@ -256,14 +256,19 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-async fn verify_data(cert_der: Vec<u8>, sig: Vec<u8>, data: Vec<u8>) -> Result<bool> {
+async fn verify_data(
+    cert_der: Vec<u8>,
+    sig_alg: Option<String>,
+    sig: Vec<u8>,
+    data: Vec<u8>,
+) -> Result<bool> {
     use x509_parser::prelude::*;
 
     let (_, cert) =
         X509Certificate::from_der(cert_der.as_bytes()).map_err(|_e| Error::CoseCertUntrusted)?;
 
     let certificate_public_key = cert.public_key();
-    if let Some(cert_alg_string) = cert_signing_alg(&cert) {
+    if let Some(cert_alg_string) = sig_alg {
         let (algo, hash, salt_len) = match cert_alg_string.as_str() {
             "rsa256" => (
                 "RSASSA-PKCS1-v1_5".to_string(),
@@ -398,7 +403,9 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
         let data = current_cert.tbs_certificate.as_ref();
         let sig = current_cert.signature_value.as_ref();
 
-        let result = verify_data(issuer_der, sig.to_vec(), data.to_vec()).await;
+        let sig_alg = cert_signing_alg(&current_cert);
+
+        let result = verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await;
 
         // keep going as long as it validate
         match result {
@@ -450,11 +457,14 @@ async fn on_trust_list(
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
 
+            let sig_alg = cert_signing_alg(&chain_cert);
+
             let (_, anchor_cert) =
                 X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result = verify_data(anchor.clone(), sig.to_vec(), data.to_vec()).await;
+                let result =
+                    verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
 
                 match result {
                     Ok(b) => {
