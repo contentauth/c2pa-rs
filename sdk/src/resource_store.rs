@@ -15,6 +15,7 @@ use std::{borrow::Cow, collections::HashMap};
 #[cfg(feature = "file_io")]
 use std::{
     fs::{create_dir_all, read, write},
+    io::Cursor,
     path::{Path, PathBuf},
 };
 
@@ -22,7 +23,7 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
+use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, CAIRead, Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -324,6 +325,18 @@ impl ResourceStore {
 impl Default for ResourceStore {
     fn default() -> Self {
         ResourceStore::new()
+    }
+}
+
+pub trait ResourceResolver {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
+}
+
+impl ResourceResolver for ResourceStore {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
+        let data = self.get(&reference.identifier)?.into_owned();
+        let cursor = Cursor::new(data);
+        Ok(Box::new(cursor))
     }
 }
 
