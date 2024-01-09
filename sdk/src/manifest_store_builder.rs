@@ -11,13 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, Write},
+};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
+use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionBase,
@@ -25,7 +29,7 @@ use crate::{
     asset_io::{CAIRead, CAIReadWrite},
     claim::Claim,
     error::{Error, Result},
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{skip_serializing_resources, ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, Signer,
@@ -62,14 +66,17 @@ pub struct ManifestStoreBuilder {
     #[serde(default = "default_vec::<Ingredient>")]
     pub ingredients: Vec<Ingredient>,
 
+    /// A List of ingredients references to add to the ingredients
+    pub ingredient_refs: Option<Vec<ResourceRef>>,
+
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
-    assertions: Vec<ManifestAssertion>,
+    pub assertions: Vec<ManifestAssertion>,
 
     /// A list of redactions - URIs to a redacted assertions
-    redactions: Option<Vec<String>>,
+    pub redactions: Option<Vec<String>>,
 
-    label: Option<String>,
+    pub label: Option<String>,
 
     /// Indicates where a generated manifest goes
     // #[serde(skip)]
@@ -98,6 +105,67 @@ fn default_vec<T>() -> Vec<T> {
 }
 
 impl ManifestStoreBuilder {
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_str(json).map_err(Error::JsonError)
+    }
+
+    pub fn add_ingredient_from_json_with_stream(
+        &mut self,
+        ingredient_json: &str,
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<()> {
+        let ingredient: Ingredient = serde_json::from_str(ingredient_json)?;
+        let ingredient = ingredient.add_stream(format, stream)?;
+        self.ingredients.push(ingredient);
+        Ok(())
+    }
+
+    pub fn zip(&self, stream: impl Write + Seek) -> Result<()> {
+        drop(
+            {
+                let mut zip = ZipWriter::new(stream);
+                let options =
+                    FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                zip.start_file("manifest.json", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                zip.write_all(&serde_json::to_vec(self)?)?;
+                for (id, data) in self.resources.resources() {
+                    zip.start_file(id, options)
+                        .map_err(|e| Error::OtherError(Box::new(e)))?;
+                    zip.write_all(data)?;
+                }
+                zip.finish()
+            }
+            .map_err(|e| Error::OtherError(Box::new(e)))?,
+        );
+        Ok(())
+    }
+
+    pub fn unzip(stream: impl Read + Seek) -> Result<Self> {
+        let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
+        let mut manifest = zip
+            .by_name("manifest.json")
+            .map_err(|e| Error::OtherError(Box::new(e)))?;
+        let mut manifest_json = Vec::new();
+        manifest.read_to_end(&mut manifest_json)?;
+        let mut builder: ManifestStoreBuilder =
+            serde_json::from_slice(&manifest_json).map_err(|e| Error::OtherError(Box::new(e)))?;
+        drop(manifest);
+        for i in 0..zip.len() {
+            let mut file = zip
+                .by_index(i)
+                .map_err(|e| Error::OtherError(Box::new(e)))?;
+
+            if file.name() != "manifest.json" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                builder.resources.add(file.name(), data)?;
+            }
+        }
+        Ok(builder)
+    }
+
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
         // add library identifier to claim_generator
@@ -151,10 +219,13 @@ impl ManifestStoreBuilder {
         if let Some(thumb_ref) = self.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
-                let data = self.resources.get(&thumb_ref.identifier)?;
+                //let data = self.resources.get(&thumb_ref.identifier)?;
+                let mut stream = self.resources.open(thumb_ref)?;
+                let mut data = Vec::new();
+                stream.read_to_end(&mut data)?;
                 claim.add_assertion(&Thumbnail::new(
                     &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
-                    data.into_owned(),
+                    data,
                 ))?;
             }
         }
@@ -162,8 +233,20 @@ impl ManifestStoreBuilder {
         let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
+            //let ingredient = ingredient_builder.build(self)?;
             let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
-            ingredient_map.insert(ingredient.instance_id(), uri);
+            ingredient_map.insert(ingredient.instance_id().to_string(), uri);
+        }
+
+        // add ingredient references, resolving streams and processing them
+        if let Some(ingredient_refs) = self.ingredient_refs.as_ref() {
+            for ingredient_ref in ingredient_refs {
+                let mut stream = self.resources.open(ingredient_ref)?;
+                let mut ingredient = Ingredient::from_stream(&ingredient_ref.format, &mut *stream)?;
+                ingredient.set_title(&ingredient_ref.identifier);
+                let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+                ingredient_map.insert(ingredient.instance_id().to_string(), uri);
+            }
         }
 
         let salt = DefaultSalt::default();
@@ -341,16 +424,17 @@ impl ManifestStoreBuilder {
         self.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
         // generate thumbnail if we don't already have one
-        // #[cfg(feature = "add_thumbnails")]
-        // {
-        //     if self.thumbnail.is_none() {
-        //         if let Ok((format, image)) =
-        //             crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
-        //         {
-        //             self.thumbnail = (format, image)?;
-        //         }
-        //     }
-        // }
+        #[cfg(feature = "add_thumbnails")]
+        {
+            if self.thumbnail.is_none() {
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                {
+                    self.resources.add(&self.instance_id.clone(), image)?;
+                    self.thumbnail = Some(ResourceRef::new(self.instance_id.clone(), format));
+                }
+            }
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -365,12 +449,21 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Seek;
+    use std::io::{Cursor, Seek};
 
     use serde_json::Value;
 
     use super::*;
     use crate::{manifest_assertion::ManifestAssertion, utils::test::temp_signer};
+
+    const PARENT_JSON: &str = r#"
+    {
+        "title": "Parent Test",
+        "format": "image/jpeg",
+        "instance_id": "12345",
+        "relationship": "parentOf"
+    }
+    "#;
 
     const JSON: &str = r#"
     {
@@ -390,9 +483,16 @@ mod tests {
         },
         "ingredients": [
             {
-                "title": "ingredient",
+                "title": "Test",
                 "format": "image/jpeg",
-                "relationship": "parentOf"
+                "instance_id": "12345",
+                "relationship": "componentOf"
+            }
+        ],
+        "ingredient_refs": [
+            {
+                "format": "image/jpeg",
+                "identifier": "5678"
             }
         ],
         "assertions": [
@@ -400,17 +500,18 @@ mod tests {
                 "label": "org.test.assertion",
                 "data": "assertion"
             }
-        ],
-        "redactions": [
-            "redaction"
         ]
     }
     "#;
 
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+
     #[test]
     fn test_manifest_store_builder() {
+        let mut image = Cursor::new(TEST_IMAGE);
+
         let thumbnail_ref = ResourceRef::new("ingredient/jpeg", "5678");
-        let ingredient = Ingredient::new("ingredient", "image/jpeg", "12345");
+
         let mut builder = ManifestStoreBuilder {
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/tiff".to_string(),
@@ -420,7 +521,13 @@ mod tests {
         builder.vendor = Some("test".to_string());
         builder.title = Some("Test_Manifest".to_string());
         builder.thumbnail = Some(thumbnail_ref.clone());
-        builder.ingredients = vec![ingredient];
+
+        let ingredient = Ingredient::from_json(PARENT_JSON)
+            .unwrap()
+            .add_stream("application/jpeg", &mut image)
+            .unwrap();
+        builder.ingredients.push(ingredient);
+
         builder.assertions = vec![ManifestAssertion::new(
             "org.test.assertion".to_string(),
             Value::from("assertion"),
@@ -432,13 +539,12 @@ mod tests {
             .add(&thumbnail_ref.identifier, *b"12345")
             .unwrap();
 
-        //builder.resources = ResourceStore::default();
         assert_eq!(builder.vendor, Some("test".to_string()));
         assert_eq!(builder.title, Some("Test_Manifest".to_string()));
         assert_eq!(builder.format, "image/tiff".to_string());
         assert_eq!(builder.instance_id, "1234".to_string());
         assert_eq!(builder.thumbnail, Some(thumbnail_ref));
-        assert_eq!(builder.ingredients[0].title(), "ingredient".to_string());
+        assert_eq!(builder.ingredients[0].title(), "Parent Test".to_string());
         assert_eq!(
             builder.assertions[0].label(),
             "org.test.assertion".to_string()
@@ -480,7 +586,7 @@ mod tests {
         // strip whitespace so we can compare later
         let mut stripped_json = JSON.to_string();
         stripped_json.retain(|c| !c.is_whitespace());
-        let mut builder: ManifestStoreBuilder = serde_json::from_str(&stripped_json).unwrap();
+        let mut builder = ManifestStoreBuilder::from_json(&stripped_json).unwrap();
         builder.resources.add("5678", "12345").unwrap();
         assert_eq!(builder.vendor, Some("test".to_string()));
         assert_eq!(builder.title, Some("Test_Manifest".to_string()));
@@ -490,8 +596,7 @@ mod tests {
             builder.thumbnail.clone().unwrap().identifier.as_str(),
             "5678"
         );
-        assert_eq!(builder.redactions, Some(vec!["redaction".to_string()]));
-        assert_eq!(builder.ingredients[0].title(), "ingredient".to_string());
+        assert_eq!(builder.ingredients[0].title(), "Test".to_string());
         assert_eq!(
             builder.assertions[0].label(),
             "org.test.assertion".to_string()
@@ -505,20 +610,44 @@ mod tests {
     #[test]
     fn test_builder_sign() {
         let format = "image/jpeg";
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
 
-        let mut source = std::io::Cursor::new(image.to_vec());
-        let mut dest = std::io::Cursor::new(Vec::new());
+        let mut builder = ManifestStoreBuilder::from_json(JSON).unwrap();
+        builder
+            .add_ingredient_from_json_with_stream(PARENT_JSON, format, &mut source)
+            .unwrap();
+        // builder.ingredients.push(
+        //     Ingredient::from_json(PARENT_JSON)
+        //         .unwrap()
+        //         .add_stream(format, &mut source)
+        //         .unwrap(),
+        // );
 
-        let mut builder: ManifestStoreBuilder = serde_json::from_str(JSON).unwrap();
-        builder.resources.add("5678", "12345").unwrap();
+        builder.resources.add("5678", TEST_IMAGE.to_vec()).unwrap();
+
+        // write the manifest builder to a zipped stream
+        let mut zipped = Cursor::new(Vec::new());
+        builder.zip(&mut zipped).unwrap();
+
+        // write the zipped stream to a file for debugging
+        std::fs::write("../target/test.zip", zipped.get_ref()).unwrap();
+
+        // unzip the manifest builder from the zipped stream
+        zipped.rewind().unwrap();
+        let mut _builder = ManifestStoreBuilder::unzip(&mut zipped).unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
         let signer = temp_signer();
         builder
             .sign(format, &mut source, &mut dest, signer.as_ref())
             .unwrap();
+
+        // read and validate the signed manifest store
         dest.rewind().unwrap();
         let manifest_store =
             crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+
         println!("{}", manifest_store);
         assert!(manifest_store.validation_status().is_none());
         assert_eq!(
