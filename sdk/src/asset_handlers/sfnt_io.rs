@@ -49,7 +49,7 @@ use crate::{
 /// abstracted this is meant as a temporary hack to provide a working
 /// implementation for remote manifests.
 ///
-/// ### Remarks
+/// # Remarks
 /// This module depends on the `feature = "xmp_write"` to be enabled.
 #[cfg(feature = "xmp_write")]
 mod font_xmp_support {
@@ -57,13 +57,10 @@ mod font_xmp_support {
 
     use super::*;
 
-    /// Creates a default `XmpMeta` object for fonts
+    /// Creates a default `XmpMeta` object for fonts, using the specified
+    /// document and instance identifiers.
     ///
-    /// ### Parameters
-    /// - `document_id` - optional unique identifier for the document
-    /// - `instance_id` - optional unique identifier for the instance
-    ///
-    /// ### Remarks
+    /// # Remarks
     /// Default/random values will be used for the document/instance IDs as
     /// needed.
     fn default_font_xmp_meta(
@@ -101,16 +98,10 @@ mod font_xmp_support {
         Ok(xmp_meta)
     }
 
-    /// Builds a `XmpMeta` element from the data within the source stream
+    /// Builds a `XmpMeta` element from the data within the source stream, based
+    /// on either the information already in the stream or default values.
     ///
-    /// ### Parameters
-    /// - `source` - Source stream to read data from to build the `XmpMeta` object
-    ///
-    /// ### Returns
-    /// A new `XmpMeta` object, either based on information that already exists in
-    /// the stream or using defaults
-    ///
-    /// ### Remarks
+    /// # Remarks
     /// The use of this function really shouldn't be needed, but currently the SDK
     /// is tightly coupled to the use of XMP with assets.
     pub(crate) fn build_xmp_from_stream<TSource>(source: &mut TSource) -> Result<XmpMeta>
@@ -133,10 +124,7 @@ mod font_xmp_support {
 
     /// Maps the errors from the xmp_toolkit crate
     ///
-    /// ### Parameters
-    /// - `err` - The `XmpError` to map to an internal error type
-    ///
-    /// ### Remarks
+    /// # Remarks
     /// This is nearly a copy/paste from `embedded_xmp` crate, we should clean this
     /// up at some point
     fn xmp_write_err(err: XmpError) -> crate::Error {
@@ -149,13 +137,10 @@ mod font_xmp_support {
         }
     }
 
-    /// Adds a C2PA manifest reference as XMP data to a font file
+    /// Adds a C2PA manifest reference (specified by URI, JUMBF or URL based) as
+    /// XMP data to a font file (specified by path).
     ///
-    /// ### Parameters
-    /// - `font_path` - Path to the font file to add the reference to
-    /// - `manifest_uri` - A C2PA manifest URI (JUMBF or URL based)
-    ///
-    /// ### Remarks
+    /// # Remarks
     /// This method is considered a stop-gap for now until the official SDK
     /// offers a more generic method to indicate a document ID, instance ID,
     /// and a reference to the a remote manifest.
@@ -166,14 +151,10 @@ mod font_xmp_support {
         })
     }
 
-    /// Adds a C2PA manifest reference as XMP data to the stream
+    /// Adds a C2PA manifest reference (specified as a URI, JUMBF or URL based)
+    /// as XMP data to the stream, writing the result to the destination stream.
     ///
-    /// ### Parameters
-    /// - `source` - Source stream to read from
-    /// - `destination` - Destination stream to write the reference to
-    /// - `reference` - A C2PA manifest URI (JUMBF or URL based)
-    ///
-    /// ### Remarks
+    /// # Remarks
     /// This method is considered a stop-gap for now until the official SDK
     /// offers a more generic method to indicate a document ID, instance ID,
     /// and a reference to the a remote manifest.
@@ -232,10 +213,8 @@ struct TempFile {
 
 impl TempFile {
     /// Creates a new temporary file within the `env::temp_dir()` directory,
-    /// which should be deleted once the object is dropped.
-    ///
-    /// ### Parameters
-    /// - `base_name` - Base name to use for the temporary file name
+    /// which should be deleted once the object is dropped.  Uses the specified
+    /// base name for the temporary file.
     pub(crate) fn new(base_name: &Path) -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_dir_path = temp_dir.path();
@@ -274,17 +253,11 @@ struct SfntFont {
     header: SfntHeader,
     directory: SfntDirectory,
     /// All the Tables in this font, keyed by SfntTag.
-    tables: BTreeMap<SfntTag, Table>,
+    tables: BTreeMap<SfntTag, NamedTable>,
 }
 
 impl SfntFont {
     /// Reads a new instance from the given source.
-    ///
-    /// ### Parameters
-    /// - `reader` - Input stream
-    ///
-    /// ### Returns
-    /// Result containing an instance.
     fn from_reader<T: Read + Seek + ?Sized>(
         reader: &mut T,
     ) -> core::result::Result<SfntFont, Error> {
@@ -302,13 +275,7 @@ impl SfntFont {
             let offset: u64 = entry.offset as u64;
             let size: usize = entry.length as usize;
             // Create a table instance for it.
-            let table: Table = {
-                match entry.tag {
-                    C2PA_TABLE_TAG => Table::C2PA(TableC2PA::from_reader(reader, offset, size)?),
-                    HEAD_TABLE_TAG => Table::Head(TableHead::from_reader(reader, offset, size)?),
-                    _ => Table::Unspecified(TableUnspecified::from_reader(reader, offset, size)?),
-                }
-            };
+            let table = NamedTable::from_reader(&entry.tag, reader, offset, size)?;
             // Tell it to get in the van
             sfnt_tables.insert(entry.tag, table);
         }
@@ -322,9 +289,6 @@ impl SfntFont {
     }
 
     /// Serializes this instance to the given writer.
-    ///
-    /// ### Parameters
-    /// - `destination` - Output stream
     fn write<TDest: Write + ?Sized>(&mut self, destination: &mut TDest) -> Result<()> {
         let mut neo_header = SfntHeader::default();
         let mut neo_directory = SfntDirectory::new()?;
@@ -463,7 +427,7 @@ impl SfntFont {
 
         // Rewrite the head table's checksumAdjustment. (This act does *not*
         // invalidate the checksum in the TDE for the 'head' table, which is        // always treated as zero during check summing).
-        if let Some(Table::Head(head)) = self.tables.get_mut(&HEAD_TABLE_TAG) {
+        if let Some(NamedTable::Head(head)) = self.tables.get_mut(&HEAD_TABLE_TAG) {
             head.checksumAdjustment =
                 (Wrapping(SFNT_EXPECTED_CHECKSUM) - font_cksum - Wrapping(0)).0;
         }
@@ -475,24 +439,17 @@ impl SfntFont {
         self.header.write(destination)?;
         self.directory.write(destination)?;
         for entry in self.directory.physical_order().iter() {
-            match &self.tables[&entry.tag] {
-                Table::C2PA(c2pa) => c2pa.write(destination)?,
-                Table::Head(head) => head.write(destination)?,
-                Table::Unspecified(un) => un.write(destination)?,
-            }
+            self.tables[&entry.tag].write(destination)?;
         }
         Ok(())
     }
 
     /// Add an empty C2PA table in this font, at the end, so we don't have to
     /// re-position any existing tables.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
     fn append_empty_c2pa_table(&mut self) -> Result<()> {
         // Just add an empty table...
         self.tables
-            .insert(C2PA_TABLE_TAG, Table::C2PA(TableC2PA::default()));
+            .insert(C2PA_TABLE_TAG, NamedTable::C2PA(TableC2PA::default()));
         // ...and then later, when the .write() function is invoked, it will
         // notice that self.tables.len() no longer matches
         // self.header.numTables, and regenerate the header & directory.
@@ -506,12 +463,6 @@ impl SfntFont {
 /// the font_io module, because WOFF support needs to use them as well.
 impl SfntHeader {
     /// Reads a new instance from the given source.
-    ///
-    /// ### Parameters
-    /// - `reader` - Input stream
-    ///
-    /// ### Returns
-    /// Result containing an instance.
     pub(crate) fn from_reader<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<Self> {
         Ok(Self {
             sfntVersion: reader.read_u32::<BigEndian>()?,
@@ -523,9 +474,6 @@ impl SfntHeader {
     }
 
     /// Serializes this instance to the given writer.
-    ///
-    /// ### Parameters
-    /// - `destination` - Output stream
     fn write<TDest: Write + ?Sized>(&self, destination: &mut TDest) -> Result<()> {
         destination.write_u32::<BigEndian>(self.sfntVersion)?;
         destination.write_u16::<BigEndian>(self.numTables)?;
@@ -536,12 +484,6 @@ impl SfntHeader {
     }
 
     /// Computes the checksum for this font.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    ///
-    /// ### Returns
-    /// Wrapping<u32> with the checksum.
     pub(crate) fn checksum(&self) -> Wrapping<u32> {
         // 0x00
         Wrapping(self.sfntVersion)
@@ -566,12 +508,6 @@ impl Default for SfntHeader {
 
 impl SfntDirectoryEntry {
     /// Reads a new instance from the given source.
-    ///
-    /// ### Parameters
-    /// - `reader` - Input stream
-    ///
-    /// ### Returns
-    /// Result containing an instance.
     pub(crate) fn from_reader<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<Self> {
         Ok(Self {
             tag: SfntTag::from_reader(reader)?,
@@ -582,10 +518,6 @@ impl SfntDirectoryEntry {
     }
 
     /// Serializes this instance to the given writer.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    /// - `destination` - Output stream
     pub(crate) fn write<TDest: Write + ?Sized>(&self, destination: &mut TDest) -> Result<()> {
         self.tag.write(destination)?;
         destination.write_u32::<BigEndian>(self.checksum)?;
@@ -595,12 +527,6 @@ impl SfntDirectoryEntry {
     }
 
     /// Computes the checksum for this entry.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    ///
-    /// ### Returns
-    /// Wrapping<u32> with the checksum.
     pub(crate) fn checksum(&self) -> Wrapping<u32> {
         Wrapping(u32::from_be_bytes(self.tag.data))
             + Wrapping(self.checksum)
@@ -631,24 +557,14 @@ struct SfntDirectory {
 
 impl SfntDirectory {
     /// Constructs a new, empty, instance.
-    ///
-    /// ### Returns
-    /// A new instance.
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             entries: Vec::new(),
         })
     }
 
-    /// Reads a new instance from the given source.
-    ///
-    /// ### Parameters
-    /// - `reader` - Input stream
-    /// - `offset` - Position in stream where the table begins
-    /// - `size`   - Size of the table in bytes.
-    ///
-    /// ### Returns
-    /// Result containing an instance.
+    /// Reads a new instance from the given source, reading the specified
+    /// number of entries.
     pub(crate) fn from_reader<T: Read + Seek + ?Sized>(
         reader: &mut T,
         entry_count: usize,
@@ -663,10 +579,6 @@ impl SfntDirectory {
     }
 
     /// Serializes this instance to the given writer.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    /// - `destination` - Output stream
     fn write<TDest: Write + ?Sized>(&self, destination: &mut TDest) -> Result<()> {
         for entry in self.entries.iter() {
             entry.write(destination)?;
@@ -676,12 +588,6 @@ impl SfntDirectory {
 
     /// Returns an array which contains the indices of this directory's entries,
     /// arranged in increasing order of `offset` field.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    ///
-    /// ### Returns
-    /// Vector of copies of our entries, in increasing 'offset' order.
     fn physical_order(&self) -> Vec<SfntDirectoryEntry> {
         let mut physically_ordered_entries = self.entries.clone();
         physically_ordered_entries.sort_by_key(|e| e.offset);
@@ -689,12 +595,6 @@ impl SfntDirectory {
     }
 
     /// Computes the checksum for this directory.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    ///
-    /// ### Returns
-    /// Wrapping<u32> with the checksum.
     pub(crate) fn checksum(&self) -> Wrapping<u32> {
         match self.entries.is_empty() {
             true => Wrapping(0_u32),
@@ -761,13 +661,8 @@ pub(crate) struct ChunkPosition {
 /// Custom trait for reading chunks of data from a scalable font (SFNT).
 pub(crate) trait ChunkReader {
     type Error;
-    /// Gets a collection of positions of chunks within the font.
-    ///
-    /// ### Parameters
-    /// - `reader` - Source stream to read data from
-    ///
-    /// ### Returns
-    /// A collection of positions/offsets and length to omit from hashing.
+    /// Gets a collection of positions of chunks within the font, used to
+    /// omit from hashing.
     fn get_chunk_positions<T: Read + Seek + ?Sized>(
         &self,
         reader: &mut T,
@@ -804,14 +699,7 @@ impl std::fmt::Debug for ChunkPosition {
 impl ChunkReader for SfntIO {
     type Error = crate::error::Error;
 
-    /// Get a map of all the chunks in this file.
-    ///
-    /// ### Parameters
-    /// - `self` - Instance
-    /// - `reader` - Stream to interpret.
-    ///
-    /// ### Returns
-    /// Result with vector of chunks
+    /// Get a map of all the chunks in the given source stream.
     fn get_chunk_positions<T: Read + Seek + ?Sized>(
         &self,
         reader: &mut T,
@@ -900,11 +788,7 @@ impl ChunkReader for SfntIO {
     }
 }
 
-/// Adds C2PA manifest store data to a font file
-///
-/// ### Parameters
-/// - `font_path` - Path to a font file
-/// - `manifest_store_data` - C2PA manifest store data to add to the font file
+/// Adds C2PA manifest store data to a font file (specified by path).
 fn add_c2pa_to_font(font_path: &Path, manifest_store_data: &[u8]) -> Result<()> {
     process_file_with_streams(font_path, move |input_stream, temp_file| {
         // Add the C2PA data to the temp file
@@ -912,12 +796,8 @@ fn add_c2pa_to_font(font_path: &Path, manifest_store_data: &[u8]) -> Result<()> 
     })
 }
 
-/// Adds C2PA manifest store data to a font stream
-///
-/// ### Parameters
-/// - `source` - Source stream to read initial data from
-/// - `destination` - Destination stream to write C2PA manifest store data
-/// - `manifest_store_data` - C2PA manifest store data to add to the font stream
+/// Adds C2PA manifest store data to a font stream, writing the result to the
+/// destination stream.
 fn add_c2pa_to_stream<TSource, TDest>(
     source: &mut TSource,
     destination: &mut TDest,
@@ -936,12 +816,12 @@ where
         None => {
             font.tables.insert(
                 C2PA_TABLE_TAG,
-                Table::C2PA(TableC2PA::new(None, Some(manifest_store_data.to_vec()))),
+                NamedTable::C2PA(TableC2PA::new(None, Some(manifest_store_data.to_vec()))),
             );
         }
         // If there is, replace its `manifest_store` value with the
         // provided one.
-        Some(Table::C2PA(c2pa)) => c2pa.manifest_store = Some(manifest_store_data.to_vec()),
+        Some(NamedTable::C2PA(c2pa)) => c2pa.manifest_store = Some(manifest_store_data.to_vec()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
             return Err(Error::FontLoadError);
@@ -952,10 +832,6 @@ where
 }
 
 /// Adds the manifest URI reference to the font at the given path.
-///
-/// ### Parameters
-/// - `font_path` - Path to a font file
-/// - `manifest_uri` - Reference URI to a manifest store
 #[allow(dead_code)]
 fn add_reference_to_font(font_path: &Path, manifest_uri: &str) -> Result<()> {
     process_file_with_streams(font_path, move |input_stream, temp_file| {
@@ -964,12 +840,8 @@ fn add_reference_to_font(font_path: &Path, manifest_uri: &str) -> Result<()> {
     })
 }
 
-/// Adds the specified reference to the font.
-///
-/// ### Parameters
-/// - `source` - Source stream to read initial data from
-/// - `destination` - Destination stream to write data with new reference
-/// - `manifest_uri` - Reference URI to a manifest store
+/// Adds the specified reference URI to the source data, writing the result to
+/// the destination stream.
 fn add_reference_to_stream<TSource, TDest>(
     source: &mut TSource,
     destination: &mut TDest,
@@ -988,12 +860,12 @@ where
         None => {
             font.tables.insert(
                 C2PA_TABLE_TAG,
-                Table::C2PA(TableC2PA::new(Some(manifest_uri.to_string()), None)),
+                NamedTable::C2PA(TableC2PA::new(Some(manifest_uri.to_string()), None)),
             );
         }
         // If there is, replace its `active_manifest_uri` value with the
         // provided one.
-        Some(Table::C2PA(c2pa)) => c2pa.active_manifest_uri = Some(manifest_uri.to_string()),
+        Some(NamedTable::C2PA(c2pa)) => c2pa.active_manifest_uri = Some(manifest_uri.to_string()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
             return Err(Error::FontLoadError);
@@ -1003,20 +875,13 @@ where
     Ok(())
 }
 
-/// Adds the required chunks to the stream for supporting C2PA, if the chunks are
-/// already present nothing is done.
+/// Adds the required chunks to the source stream for supporting C2PA, if the
+/// chunks are already present nothing is done.  Writes the resulting data to
+/// the destination stream.
 ///
-/// ### Parameters
-/// - `input_stream` - Source stream to read initial data from
-/// - `output_stream` - Destination stream to write data with the added required
-///                     chunks
-///
-/// ### Remarks
+/// # Remarks
 /// Neither streams are rewound before and/or after the operation, so it is up
 /// to the caller.
-///
-/// ### Returns
-/// A Result indicating success or failure
 fn add_required_chunks_to_stream<TReader, TWriter>(
     input_stream: &mut TReader,
     output_stream: &mut TWriter,
@@ -1039,22 +904,12 @@ where
 }
 
 /// Opens a BufReader for the given file path
-///
-/// ### Parameters
-/// - `file_path` - Valid path to a file to open in a buffer reader
-///
-/// ### Returns
-/// A BufReader<File> object
 fn open_bufreader_for_file(file_path: &Path) -> Result<BufReader<File>> {
     let file = File::open(file_path)?;
     Ok(BufReader::new(file))
 }
 
-/// Processes a font file using a streams to process.
-///
-/// ### Parameters
-/// - `font_path` - Path to the font file to process
-/// - `callback` - Method to process the stream
+/// Processes a font file (specified by path) by stream with the given callback.
 fn process_file_with_streams(
     font_path: &Path,
     callback: impl Fn(&mut BufReader<File>, &mut TempFile) -> Result<()>,
@@ -1069,13 +924,8 @@ fn process_file_with_streams(
     Ok(())
 }
 
-/// Reads the C2PA manifest store reference from the font file.
-///
-/// ### Parameters
-/// - `font_path` - File path to the font file to read reference from.
-///
-/// ### Returns
-/// If a reference is available, it will be returned.
+/// Reads the C2PA manifest store reference from the font file (specified by
+/// path).
 #[allow(dead_code)]
 fn read_reference_from_font(font_path: &Path) -> Result<Option<String>> {
     // open the font source
@@ -1084,28 +934,19 @@ fn read_reference_from_font(font_path: &Path) -> Result<Option<String>> {
 }
 
 /// Reads the C2PA manifest store reference from the stream.
-///
-/// ### Parameters
-/// - `source` - Source font stream to read reference from.
-///
-/// ### Returns
-/// If a reference is available, it will be returned.
 #[allow(dead_code)]
 fn read_reference_from_stream<TSource>(source: &mut TSource) -> Result<Option<String>>
 where
     TSource: Read + Seek + ?Sized,
 {
     match read_c2pa_from_stream(source) {
-        Ok(c2pa_data) => Ok(c2pa_data.active_manifest_uri.to_owned()),
+        Ok(c2pa_data) => Ok(c2pa_data.active_manifest_uri),
         Err(Error::JumbfNotFound) => Ok(None),
         Err(_) => Err(Error::DeserializationError),
     }
 }
 
-/// Remove the `C2PA` font table from the font file.
-///
-/// ### Parameters
-/// - `font_path` - path to the font file to remove C2PA from
+/// Remove the `C2PA` font table from the font file (specified by path).
 fn remove_c2pa_from_font(font_path: &Path) -> Result<()> {
     process_file_with_streams(font_path, move |input_stream, temp_file| {
         // Remove the C2PA manifest store from the stream
@@ -1115,11 +956,6 @@ fn remove_c2pa_from_font(font_path: &Path) -> Result<()> {
 
 /// Remove the `C2PA` font table from the font data stream, writing to the
 /// destination.
-///
-/// ### Parameters
-/// - `source` - Source data stream containing font data
-/// - `destination` - Destination data stream to write new font data with the
-///                   C2PA table removed
 fn remove_c2pa_from_stream<TSource, TDest>(
     source: &mut TSource,
     destination: &mut TDest,
@@ -1139,15 +975,8 @@ where
 }
 
 /// Removes the reference to the active manifest from the source stream, writing
-/// to the destination.
-///
-/// ### Parameters
-/// - `source` - Source data stream containing font data
-/// - `destination` - Destination data stream to write new font data with the
-///                   active manifest reference removed
-///
-/// ### Returns
-/// Optional active manifest URI reference
+/// to the destination.  Returns an optional active manifest URI reference, if
+/// there was one.
 #[allow(dead_code)]
 fn remove_reference_from_stream<TSource, TDest>(
     source: &mut TSource,
@@ -1164,7 +993,7 @@ where
         None => None,
         // If there is, and it has Some `active_manifest_uri`, then mutate that
         // to None, and return the former value.
-        Some(Table::C2PA(c2pa)) => {
+        Some(NamedTable::C2PA(c2pa)) => {
             if c2pa.active_manifest_uri.is_none() {
                 None
             } else {
@@ -1183,13 +1012,8 @@ where
     Ok(old_manifest_uri_maybe)
 }
 
-/// Gets a collection of positions of hash objects, which are to be excluded from the hashing.
-///
-/// ### Parameters
-/// - `reader` - Reader object used to read object locations from
-///
-/// ### Returns
-/// A collection of positions/offsets and length to omit from hashing.
+/// Gets a collection of positions of hash objects from the reader which are to
+/// be excluded from the hashing, used to omit from hashing.
 fn get_object_locations_from_stream<T>(
     sfnt_io: &SfntIO,
     reader: &mut T,
@@ -1249,20 +1073,15 @@ where
     Ok(locations)
 }
 
-/// Reads the `C2PA` font table from the data stream
-///
-/// ### Parameters
-/// - `reader` - data stream reader to read font data from
-///
-/// ### Returns
-/// A result containing the `C2PA` font table data
+/// Reads the `C2PA` font table from the data stream, returning the `C2PA` font
+/// table data
 fn read_c2pa_from_stream<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<TableC2PA> {
     let sfnt = SfntFont::from_reader(reader).map_err(|_| Error::FontLoadError)?;
     match sfnt.tables.get(&C2PA_TABLE_TAG) {
         None => Err(Error::JumbfNotFound),
         // If there is, replace its `manifest_store` value with the
         // provided one.
-        Some(Table::C2PA(c2pa)) => Ok(c2pa.clone()),
+        Some(NamedTable::C2PA(c2pa)) => Ok(c2pa.clone()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => Err(Error::FontLoadError),
     }
