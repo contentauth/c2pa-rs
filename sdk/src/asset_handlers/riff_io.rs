@@ -24,8 +24,9 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
+        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
@@ -368,10 +369,7 @@ impl AssetIO for RiffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(

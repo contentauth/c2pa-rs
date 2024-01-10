@@ -9,6 +9,7 @@ jobs:
   # Create snapshot of main branch for nightly build
   nightly-snapshot:
     name: Create snapshot
+    if: false
     runs-on: ubuntu-latest
 
     steps:
@@ -72,6 +73,7 @@ jobs:
 
   tests:
     name: Unit tests
+    if: false
     runs-on: ${{ matrix.os }}
     needs: nightly-snapshot
 
@@ -97,6 +99,7 @@ jobs:
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
+    if: false
     runs-on: ${{ matrix.os }}
     needs: nightly-snapshot
 

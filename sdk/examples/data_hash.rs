@@ -108,7 +108,7 @@ fn user_data_hash_with_sdk_hashing() {
 
     // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)
     let unfinished_manifest = manifest
-        .data_hash_placeholder(signer.as_ref(), "jpg")
+        .data_hash_placeholder(signer.reserve_size(), "jpg")
         .unwrap();
 
     // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
@@ -225,7 +225,7 @@ fn user_data_hash_with_user_hashing() {
 
     // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)
     let unfinished_manifest = manifest
-        .data_hash_placeholder(signer.as_ref(), "jpg")
+        .data_hash_placeholder(signer.reserve_size(), "jpg")
         .unwrap();
 
     // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
