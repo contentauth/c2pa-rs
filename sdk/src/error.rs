@@ -150,6 +150,10 @@ pub enum Error {
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
 
+    #[cfg(feature = "font")]
+    #[error("Font error: {0}")]
+    FontError(#[from] crate::asset_handlers::font_io::FontError),
+
     #[error("WASM verifier error")]
     WasmVerifier,
 
@@ -275,38 +279,6 @@ pub enum Error {
 
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
-
-    #[error("Failed to load font")]
-    FontLoadError,
-
-    #[error("C2PA table bad or missing")]
-    FontLoadC2PATableBadMissing,
-
-    #[error("C2PA table manifest data is not valid UTF-8")]
-    FontLoadC2PATableInvalidUtf8,
-
-    #[error("C2PA table claimed sizes exceed actual")]
-    FontLoadC2PATableTruncated,
-
-    #[error("head table bad or missing")]
-    FontLoadHeadTableBadMissing,
-
-    #[error("SFNT header bad or missing")]
-    FontLoadSfntHeaderBadMissing,
-
-    #[error("Failed to save font")]
-    FontSaveError,
-
-    #[error("Font has unknown magic number")]
-    FontUnknownMagic,
-
-    /// Failed to parse or de-serialize font data
-    #[error("Failed to de-serialize data")]
-    DeserializationError,
-
-    /// Invalid font format
-    #[error("Failed to load font")]
-    UnsupportedFontError,
 
     #[error("prerelease content detected")]
     PrereleaseError,

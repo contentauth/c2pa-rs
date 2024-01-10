@@ -19,7 +19,57 @@ use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
 
 use crate::error::{Error, Result};
 
-/// Types for supporting fonts in any container.
+// Types for supporting fonts in any container.
+
+/// Errors that can occur when working with fonts.
+#[derive(Debug, thiserror::Error)]
+pub enum FontError {
+    /// Failed to parse or de-serialize font data
+    #[error("Failed to de-serialize data")]
+    DeserializationError,
+
+    /// Failed to load a font.
+    #[error("Failed to load font")]
+    LoadError,
+
+    /// Failed to load the font's 'C2PA' table, either because it was missing or
+    /// because it was truncated/bad.
+    #[error("C2PA table bad or missing")]
+    LoadC2PATableBadMissing,
+
+    /// The font's 'C2PA' table contains invalid UTF-8 data.
+    #[error("C2PA table manifest data is not valid UTF-8")]
+    LoadC2PATableInvalidUtf8,
+
+    /// The font's 'C2PA' table is truncated.
+    #[error("C2PA table claimed sizes exceed actual")]
+    LoadC2PATableTruncated,
+
+    /// The font's 'head' table is bad or missing.
+    #[error("head table bad or missing")]
+    LoadHeadTableBadMissing,
+
+    /// The font's SFNT header is bad or missing.
+    #[error("SFNT header bad or missing")]
+    LoadSfntHeaderBadMissing,
+
+    /// Failed to save the font.
+    #[error("Failed to save font")]
+    SaveError,
+
+    /// The font is missing a valid 'magic' number, therefore an unknown font type.
+    #[error("Unknown font format, the 'magic' number is not recognized.")]
+    UnknownMagic,
+
+    /// Invalid or unsupported font format
+    #[error("Invalid or unsupported font format")]
+    Unsupported,
+}
+
+/// Helper method for wrapping a FontError into a crate level error.
+pub(crate) fn wrap_font_err(e: FontError) -> Error {
+    Error::FontError(e)
+}
 
 /// Four-character tag which names a font table.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -117,7 +167,7 @@ pub(crate) const SFNT_EXPECTED_CHECKSUM: u32 = 0xb1b0afba;
 
 /// Used to attempt conversion from u32 to a Magic value.
 impl TryFrom<u32> for Magic {
-    type Error = crate::error::Error;
+    type Error = FontError;
 
     /// Try to match the given u32 value to a known font-format magic number.
     fn try_from(v: u32) -> core::result::Result<Self, Self::Error> {
@@ -128,7 +178,7 @@ impl TryFrom<u32> for Magic {
             at if at == Magic::AppleTrue as u32 => Ok(Magic::AppleTrue),
             w1 if w1 == Magic::Woff as u32 => Ok(Magic::Woff),
             w2 if w2 == Magic::Woff2 as u32 => Ok(Magic::Woff2),
-            _unknown => Err(Error::FontUnknownMagic),
+            _unknown => Err(FontError::UnknownMagic),
         }
     }
 }
@@ -139,6 +189,9 @@ impl TryFrom<u32> for Magic {
 /// # Remarks
 /// Note that trailing pad bytes do not affect this checksum - it's not a real
 /// CRC.
+///
+/// # Panics
+/// Panics if the the `bytes` array is not aligned on a 4-byte boundary.
 #[allow(dead_code)]
 pub(crate) fn checksum(bytes: &[u8]) -> Wrapping<u32> {
     // Cut your pie into 1x4cm pieces to serve
@@ -378,9 +431,9 @@ impl TableC2PA {
         reader: &mut T,
         offset: u64,
         size: usize,
-    ) -> core::result::Result<TableC2PA, Error> {
+    ) -> Result<TableC2PA> {
         if size < size_of::<TableC2PARaw>() {
-            Err(Error::FontLoadC2PATableTruncated)
+            Err(wrap_font_err(FontError::LoadC2PATableTruncated))
         } else {
             let mut active_manifest_uri: Option<String> = None;
             let mut manifest_store: Option<Vec<u8>> = None;
@@ -393,7 +446,7 @@ impl TableC2PA {
                     + raw_table.activeManifestUriLength as usize
                     + raw_table.manifestStoreLength as usize
             {
-                return Err(Error::FontLoadC2PATableTruncated);
+                return Err(wrap_font_err(FontError::LoadC2PATableTruncated));
             }
             // If a remote manifest URI is present, unpack it from the remaining
             // data in the table.
@@ -405,7 +458,7 @@ impl TableC2PA {
                 reader.read_exact(&mut uri_bytes)?;
                 active_manifest_uri = Some(
                     from_utf8(&uri_bytes)
-                        .map_err(|_e| Error::FontLoadC2PATableInvalidUtf8)?
+                        .map_err(|_e| FontError::LoadC2PATableInvalidUtf8)?
                         .to_string(),
                 );
             }
@@ -535,7 +588,7 @@ impl TableHead {
         reader.seek(SeekFrom::Start(offset))?;
         let actual_size = size_of::<TableHead>();
         if size != actual_size {
-            Err(Error::FontLoadHeadTableBadMissing)
+            Err(wrap_font_err(FontError::LoadHeadTableBadMissing))
         } else {
             let head = Self {
                 // 0x00
@@ -586,7 +639,7 @@ impl TableHead {
                 // stream is left, so we don't do anything, since that is simplest.
             };
             if head.magicNumber != HEAD_TABLE_MAGICNUMBER {
-                return Err(Error::FontLoadHeadTableBadMissing);
+                return Err(wrap_font_err(FontError::LoadHeadTableBadMissing));
             }
             Ok(head)
         }
@@ -681,7 +734,7 @@ impl TableUnspecified {
         reader: &mut T,
         offset: u64,
         size: usize,
-    ) -> core::result::Result<TableUnspecified, Error> {
+    ) -> Result<TableUnspecified> {
         let mut raw_table_data: Vec<u8> = vec![0; size];
         reader.seek(SeekFrom::Start(offset))?;
         reader.read_exact(&mut raw_table_data)?;
@@ -703,13 +756,13 @@ impl Table for TableUnspecified {
     fn write<TDest: Write + ?Sized>(&self, destination: &mut TDest) -> Result<()> {
         destination
             .write_all(&self.data[..])
-            .map_err(|_e| Error::FontSaveError)?;
+            .map_err(|_e| FontError::SaveError)?;
         let limit = self.data.len() % 4;
         if limit > 0 {
             let pad: [u8; 3] = [0, 0, 0];
             destination
                 .write_all(&pad[0..(4 - limit)])
-                .map_err(|_e| Error::FontSaveError)?;
+                .map_err(|_e| FontError::SaveError)?;
         }
         Ok(())
     }
@@ -814,7 +867,7 @@ pub(crate) struct SfntDirectoryEntry {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::{any::Any, io::Cursor};
+    use std::io::Cursor;
 
     use claims::*;
 
@@ -995,7 +1048,10 @@ pub mod tests {
         let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
         assert_eq!(size_of::<TableHead>(), head_data.len());
         let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
-        assert!(head.is_err_and(|e| e.type_id() == Error::FontLoadHeadTableBadMissing.type_id()));
+        assert_matches!(
+            head,
+            Err(Error::FontError(FontError::LoadHeadTableBadMissing))
+        );
     }
 
     #[test]
@@ -1020,7 +1076,10 @@ pub mod tests {
         let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
         assert_eq!(size_of::<TableHead>(), head_data.len() + 1);
         let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
-        assert!(head.is_err_and(|e| e.type_id() == Error::FontLoadHeadTableBadMissing.type_id()));
+        assert_matches!(
+            head,
+            Err(Error::FontError(FontError::LoadHeadTableBadMissing))
+        );
     }
 
     #[test]

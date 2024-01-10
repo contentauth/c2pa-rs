@@ -322,7 +322,7 @@ impl SfntFont {
                     size_of::<SfntDirectoryEntry>() as i64
                 } else {
                     // We added some other number of tables
-                    return Err(Error::FontSaveError);
+                    return Err(wrap_font_err(FontError::SaveError));
                 }
             }
             Ordering::Equal => 0,
@@ -332,13 +332,13 @@ impl SfntFont {
                     // the C2PA table - that's the only one we should ever
                     // be removing.
                     if self.tables.contains_key(&C2PA_TABLE_TAG) {
-                        return Err(Error::FontSaveError);
+                        return Err(wrap_font_err(FontError::SaveError));
                     }
                     // We removed exactly one table
                     -(size_of::<SfntDirectoryEntry>() as i64)
                 } else {
                     // We added some other number of tables. Weird, right?
-                    return Err(Error::FontSaveError);
+                    return Err(wrap_font_err(FontError::SaveError));
                 }
             }
         };
@@ -370,7 +370,7 @@ impl SfntFont {
                     // be the case where we're removing the C2PA table; the
                     // bias *must not* be negative.
                     if entry.tag == C2PA_TABLE_TAG && td_derived_offset_bias < 0 {
-                        return Err(Error::FontSaveError);
+                        return Err(wrap_font_err(FontError::SaveError));
                     }
                     let neo_entry = SfntDirectoryEntry {
                         tag: entry.tag,
@@ -391,7 +391,7 @@ impl SfntFont {
                         // Check - this *must* be the case where we're adding
                         // a C2PA table - therefore the bias should be positive.
                         if td_derived_offset_bias <= 0 {
-                            return Err(Error::FontSaveError);
+                            return Err(wrap_font_err(FontError::SaveError));
                         }
                         let neo_entry = SfntDirectoryEntry {
                             tag: *tag,
@@ -407,7 +407,7 @@ impl SfntFont {
                         //    align_to_four(entry.offset as usize + entry.length as usize);
                     }
                     _ => {
-                        return Err(Error::FontSaveError);
+                        return Err(wrap_font_err(FontError::SaveError));
                     }
                 },
             }
@@ -808,7 +808,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = SfntFont::from_reader(source).map_err(|_| Error::FontLoadError)?;
+    let mut font = SfntFont::from_reader(source).map_err(|_| FontError::LoadError)?;
     // Install the provide active_manifest_uri in this font's C2PA table, adding
     // that table if needed.
     match font.tables.get_mut(&C2PA_TABLE_TAG) {
@@ -824,10 +824,10 @@ where
         Some(NamedTable::C2PA(c2pa)) => c2pa.manifest_store = Some(manifest_store_data.to_vec()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(Error::FontLoadError);
+            return Err(wrap_font_err(FontError::LoadError));
         }
     };
-    font.write(destination).map_err(|_| Error::FontSaveError)?;
+    font.write(destination).map_err(|_| FontError::SaveError)?;
     Ok(())
 }
 
@@ -852,7 +852,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = SfntFont::from_reader(source).map_err(|_| Error::FontLoadError)?;
+    let mut font = SfntFont::from_reader(source).map_err(|_| FontError::LoadError)?;
     // Install the provide active_manifest_uri in this font's C2PA table, adding
     // that table if needed.
     match font.tables.get_mut(&C2PA_TABLE_TAG) {
@@ -868,10 +868,10 @@ where
         Some(NamedTable::C2PA(c2pa)) => c2pa.active_manifest_uri = Some(manifest_uri.to_string()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(Error::FontLoadError);
+            return Err(wrap_font_err(FontError::LoadError));
         }
     };
-    font.write(destination).map_err(|_| Error::FontSaveError)?;
+    font.write(destination).map_err(|_| FontError::SaveError)?;
     Ok(())
 }
 
@@ -891,7 +891,7 @@ where
     TWriter: Read + Seek + ?Sized + Write,
 {
     // Read the font from the input stream
-    let mut font = SfntFont::from_reader(input_stream).map_err(|_| Error::FontLoadError)?;
+    let mut font = SfntFont::from_reader(input_stream).map_err(|_| FontError::LoadError)?;
     // If the C2PA table does not exist...
     if font.tables.get(&C2PA_TABLE_TAG).is_none() {
         // ...install an empty one.
@@ -899,7 +899,7 @@ where
     }
     // Write the font to the output stream
     font.write(output_stream)
-        .map_err(|_| Error::FontSaveError)?;
+        .map_err(|_| FontError::SaveError)?;
     Ok(())
 }
 
@@ -942,7 +942,7 @@ where
     match read_c2pa_from_stream(source) {
         Ok(c2pa_data) => Ok(c2pa_data.active_manifest_uri),
         Err(Error::JumbfNotFound) => Ok(None),
-        Err(_) => Err(Error::DeserializationError),
+        Err(_) => Err(wrap_font_err(FontError::DeserializationError)),
     }
 }
 
@@ -966,11 +966,11 @@ where
 {
     source.rewind()?;
     // Load the font from the stream
-    let mut font = SfntFont::from_reader(source).map_err(|_| Error::FontLoadError)?;
+    let mut font = SfntFont::from_reader(source).map_err(|_| FontError::LoadError)?;
     // Remove the table from the collection
     font.tables.remove(&C2PA_TABLE_TAG);
     // And write it to the destination stream
-    font.write(destination).map_err(|_| Error::FontSaveError)?;
+    font.write(destination).map_err(|_| FontError::SaveError)?;
     Ok(())
 }
 
@@ -987,7 +987,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = SfntFont::from_reader(source).map_err(|_| Error::FontLoadError)?;
+    let mut font = SfntFont::from_reader(source).map_err(|_| FontError::LoadError)?;
     let old_manifest_uri_maybe = match font.tables.get_mut(&C2PA_TABLE_TAG) {
         // If there isn't one, how pleasant, there will be so much less to do.
         None => None,
@@ -1005,10 +1005,10 @@ where
         }
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(Error::FontLoadError);
+            return Err(wrap_font_err(FontError::LoadError));
         }
     };
-    font.write(destination).map_err(|_| Error::FontSaveError)?;
+    font.write(destination).map_err(|_| FontError::SaveError)?;
     Ok(old_manifest_uri_maybe)
 }
 
@@ -1076,14 +1076,14 @@ where
 /// Reads the `C2PA` font table from the data stream, returning the `C2PA` font
 /// table data
 fn read_c2pa_from_stream<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<TableC2PA> {
-    let sfnt = SfntFont::from_reader(reader).map_err(|_| Error::FontLoadError)?;
+    let sfnt = SfntFont::from_reader(reader).map_err(|_| FontError::LoadError)?;
     match sfnt.tables.get(&C2PA_TABLE_TAG) {
         None => Err(Error::JumbfNotFound),
         // If there is, replace its `manifest_store` value with the
         // provided one.
         Some(NamedTable::C2PA(c2pa)) => Ok(c2pa.clone()),
         // Yikes! Non-C2PA table with C2PA tag!
-        Some(_) => Err(Error::FontLoadError),
+        Some(_) => Err(wrap_font_err(FontError::LoadError)),
     }
 }
 
