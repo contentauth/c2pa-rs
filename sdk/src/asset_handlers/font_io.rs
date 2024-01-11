@@ -16,26 +16,38 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use asn1_rs::nom::AsBytes;
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
+#[cfg(feature = "xmp_write")]
+use xmp_toolkit::XmpError;
 
-use crate::error::{Error, Result};
+use crate::error::Error;
+
+/// Result type for font operations.
+pub(crate) type Result<T> = core::result::Result<T, FontError>;
 
 // Types for supporting fonts in any container.
 
 /// Errors that can occur when working with fonts.
 #[derive(Debug, thiserror::Error)]
 pub enum FontError {
-    /// Failed to parse or de-serialize font data
-    #[error("Failed to de-serialize data")]
-    DeserializationError,
+    /// Bad parameter
+    #[error("Bad parameter: {0}")]
+    BadParam(String),
 
-    /// Failed to load a font.
-    #[error("Failed to load font")]
-    LoadError,
+    /// Bad head table, when the magic number is not recognized.
+    #[error("Bad head table, unknown data format")]
+    BadHeadTable,
 
-    /// Failed to load the font's 'C2PA' table, either because it was missing or
-    /// because it was truncated/bad.
-    #[error("C2PA table bad or missing")]
-    LoadC2PATableBadMissing,
+    /// IO error while dealing with a potentially font-related file/stream.
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
+    /// Invalid named table encountered.
+    #[error("Invalid named table: {0}")]
+    InvalidNamedTable(&'static str),
+
+    /// The JUMBF data was not found.
+    #[error("The JUMBF data was not found.")]
+    JumbfNotFound,
 
     /// The font's 'C2PA' table contains invalid UTF-8 data.
     #[error("C2PA table manifest data is not valid UTF-8")]
@@ -45,17 +57,12 @@ pub enum FontError {
     #[error("C2PA table claimed sizes exceed actual")]
     LoadC2PATableTruncated,
 
-    /// The font's 'head' table is bad or missing.
-    #[error("head table bad or missing")]
-    LoadHeadTableBadMissing,
+    /// The font's 'head' table is truncated.
+    #[error("head table claimed sizes exceed actual")]
+    LoadHeadTableTruncated,
 
-    /// The font's SFNT header is bad or missing.
-    #[error("SFNT header bad or missing")]
-    LoadSfntHeaderBadMissing,
-
-    /// Failed to save the font.
-    #[error("Failed to save font")]
-    SaveError,
+    #[error("Failed to save font: {0}")]
+    SaveError(#[from] FontSaveError),
 
     /// The font is missing a valid 'magic' number, therefore an unknown font type.
     #[error("Unknown font format, the 'magic' number is not recognized.")]
@@ -64,6 +71,54 @@ pub enum FontError {
     /// Invalid or unsupported font format
     #[error("Invalid or unsupported font format")]
     Unsupported,
+
+    /// XMP data was not found.
+    #[cfg(feature = "xmp_write")]
+    #[error("XMP data was not found in the font.")]
+    XmpNotFound,
+
+    /// [`XmpError::ErrorType::NoFile`] error from the XMP toolkit.
+    #[cfg(feature = "xmp_write")]
+    #[error("XMP write error, no file; {0}")]
+    XmpNoFile(XmpError),
+
+    /// [`XmpError::ErrorType::UnsupportedType`] error from the XMP toolkit.
+    #[cfg(feature = "xmp_write")]
+    #[error("XMP write error, unsupported type: {0}")]
+    XmpUnsupportedType(XmpError),
+
+    /// XMP write error
+    #[cfg(feature = "xmp_write")]
+    #[error(transparent)]
+    XmpWriteError(#[from] XmpError),
+}
+
+/// Errors that can occur when saving a font.
+#[derive(Debug, thiserror::Error)]
+pub enum FontSaveError {
+    /// Failed to save a font file with an invalid table directory.
+    #[error("Invalid derived table offset bias, an unexpected state.")]
+    InvalidDerivedTableOffsetBias,
+
+    /// Failed to save a font file due to the fact the write operation
+    /// failed.
+    #[error("Failed to save font because the write operation failed; {0}")]
+    FailedToWrite(std::io::Error),
+
+    /// Failed to save a font file due to a state where the font's
+    /// table directory has more than just the 'C2PA' table added.
+    #[error("Too many tables were added to the font, only expected to add one for C2PA.")]
+    TooManyTablesAdded,
+
+    /// Failed to save a font file due to a state where the font's
+    /// table directory has more than just the 'C2PA' table removed.
+    #[error("Too many tables were removed from the font, only expected to remove one for C2PA.")]
+    TooManyTablesRemoved,
+
+    /// Failed to save a font file with an unexpected table found in the
+    /// table directory.
+    #[error("Unexpected table found in the table directory: {0}")]
+    UnexpectedTable(String),
 }
 
 /// Helper method for wrapping a FontError into a crate level error.
@@ -433,7 +488,7 @@ impl TableC2PA {
         size: usize,
     ) -> Result<TableC2PA> {
         if size < size_of::<TableC2PARaw>() {
-            Err(wrap_font_err(FontError::LoadC2PATableTruncated))
+            Err(FontError::LoadC2PATableTruncated)
         } else {
             let mut active_manifest_uri: Option<String> = None;
             let mut manifest_store: Option<Vec<u8>> = None;
@@ -446,7 +501,7 @@ impl TableC2PA {
                     + raw_table.activeManifestUriLength as usize
                     + raw_table.manifestStoreLength as usize
             {
-                return Err(wrap_font_err(FontError::LoadC2PATableTruncated));
+                return Err(FontError::LoadC2PATableTruncated);
             }
             // If a remote manifest URI is present, unpack it from the remaining
             // data in the table.
@@ -584,11 +639,11 @@ impl TableHead {
         reader: &mut T,
         offset: u64,
         size: usize,
-    ) -> core::result::Result<TableHead, Error> {
+    ) -> Result<TableHead> {
         reader.seek(SeekFrom::Start(offset))?;
         let actual_size = size_of::<TableHead>();
         if size != actual_size {
-            Err(wrap_font_err(FontError::LoadHeadTableBadMissing))
+            Err(FontError::LoadHeadTableTruncated)
         } else {
             let head = Self {
                 // 0x00
@@ -639,7 +694,7 @@ impl TableHead {
                 // stream is left, so we don't do anything, since that is simplest.
             };
             if head.magicNumber != HEAD_TABLE_MAGICNUMBER {
-                return Err(wrap_font_err(FontError::LoadHeadTableBadMissing));
+                return Err(FontError::BadHeadTable);
             }
             Ok(head)
         }
@@ -756,13 +811,13 @@ impl Table for TableUnspecified {
     fn write<TDest: Write + ?Sized>(&self, destination: &mut TDest) -> Result<()> {
         destination
             .write_all(&self.data[..])
-            .map_err(|_e| FontError::SaveError)?;
+            .map_err(FontSaveError::FailedToWrite)?;
         let limit = self.data.len() % 4;
         if limit > 0 {
             let pad: [u8; 3] = [0, 0, 0];
             destination
                 .write_all(&pad[0..(4 - limit)])
-                .map_err(|_e| FontError::SaveError)?;
+                .map_err(FontSaveError::FailedToWrite)?;
         }
         Ok(())
     }
@@ -1048,10 +1103,7 @@ pub mod tests {
         let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
         assert_eq!(size_of::<TableHead>(), head_data.len());
         let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
-        assert_matches!(
-            head,
-            Err(Error::FontError(FontError::LoadHeadTableBadMissing))
-        );
+        assert_matches!(head, Err(FontError::BadHeadTable));
     }
 
     #[test]
@@ -1076,10 +1128,7 @@ pub mod tests {
         let mut head_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&head_data);
         assert_eq!(size_of::<TableHead>(), head_data.len() + 1);
         let head = TableHead::from_reader(&mut head_stream, 0, head_data.len());
-        assert_matches!(
-            head,
-            Err(Error::FontError(FontError::LoadHeadTableBadMissing))
-        );
+        assert_matches!(head, Err(FontError::LoadHeadTableTruncated));
     }
 
     #[test]

@@ -31,7 +31,7 @@ use crate::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
-    error::{Error, Result},
+    error::Error,
 };
 
 /// This module is a temporary implementation of a very basic support for XMP in
@@ -118,7 +118,7 @@ mod font_xmp_support {
                     .map_err(xmp_write_err)
             }
             // Mention there is no data representing XMP found
-            None => Err(Error::NotFound),
+            None => Err(FontError::XmpNotFound),
         }
     }
 
@@ -127,13 +127,15 @@ mod font_xmp_support {
     /// # Remarks
     /// This is nearly a copy/paste from `embedded_xmp` crate, we should clean this
     /// up at some point
-    fn xmp_write_err(err: XmpError) -> crate::Error {
+    fn xmp_write_err(err: XmpError) -> FontError {
         match err.error_type {
             // convert to OS permission error code so we can detect it correctly upstream
-            XmpErrorType::FilePermission => Error::IoError(std::io::Error::from_raw_os_error(13)),
-            XmpErrorType::NoFile => Error::NotFound,
-            XmpErrorType::NoFileHandler => Error::UnsupportedType,
-            _ => Error::XmpWriteError,
+            XmpErrorType::FilePermission => {
+                FontError::IoError(std::io::Error::from_raw_os_error(13))
+            }
+            XmpErrorType::NoFile => FontError::XmpNoFile(err),
+            XmpErrorType::NoFileHandler => FontError::XmpUnsupportedType(err),
+            _ => FontError::XmpWriteError(err),
         }
     }
 
@@ -178,7 +180,7 @@ mod font_xmp_support {
             Ok(meta) => meta,
             // If data was not found for building out the XMP, we will default
             // to some good starting points
-            Err(Error::NotFound) => default_font_xmp_meta(None, None)?,
+            Err(FontError::XmpNotFound) => default_font_xmp_meta(None, None)?,
             // At this point, the font is considered to be invalid possibly
             Err(error) => return Err(error),
         };
@@ -221,7 +223,7 @@ impl TempFile {
         let path = temp_dir_path.join(
             base_name
                 .file_name()
-                .ok_or_else(|| Error::BadParam("Invalid file name".to_string()))?,
+                .ok_or_else(|| FontError::BadParam("Invalid file name".to_string()))?,
         );
         let file = File::create(&path)?;
         Ok(Self {
@@ -288,9 +290,7 @@ struct WoffFont {
 
 impl WoffFont {
     /// Reads in a WOFF 1 font file from the given stream.
-    fn from_reader<T: Read + Seek + ?Sized>(
-        reader: &mut T,
-    ) -> core::result::Result<WoffFont, Error> {
+    fn from_reader<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<WoffFont> {
         // Read in the WOFFHeader
         let woff_hdr = WoffHeader::from_reader(reader)?;
 
@@ -664,7 +664,7 @@ pub(crate) trait ChunkReader {
 
 /// Reads in chunks for a WOFF 1.0 file
 impl ChunkReader for WoffIO {
-    type Error = crate::error::Error;
+    type Error = FontError;
 
     fn get_chunk_positions<T: Read + Seek + ?Sized>(
         &self,
@@ -763,7 +763,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = WoffFont::from_reader(source).map_err(|_| FontError::LoadError)?;
+    let mut font = WoffFont::from_reader(source)?;
     // Install the provide active_manifest_uri in this font's C2PA table, adding
     // that table if needed.
     match font.tables.get_mut(&C2PA_TABLE_TAG) {
@@ -777,10 +777,10 @@ where
         Some(NamedTable::C2PA(c2pa)) => c2pa.manifest_store = Some(manifest_store_data.to_vec()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(wrap_font_err(FontError::LoadError));
+            return Err(FontError::InvalidNamedTable("Non-C2PA table with C2PA tag"));
         }
     };
-    font.write(destination).map_err(|_| FontError::SaveError)?;
+    font.write(destination)?;
     Ok(())
 }
 
@@ -805,7 +805,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = WoffFont::from_reader(source).map_err(|_| FontError::LoadError)?;
+    let mut font = WoffFont::from_reader(source)?;
     // Install the provide active_manifest_uri in this font's C2PA table, adding
     // that table if needed.
     match font.tables.get_mut(&C2PA_TABLE_TAG) {
@@ -821,10 +821,10 @@ where
         Some(NamedTable::C2PA(c2pa)) => c2pa.active_manifest_uri = Some(manifest_uri.to_string()),
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(wrap_font_err(FontError::LoadError));
+            return Err(FontError::InvalidNamedTable("Non-C2PA table with C2PA tag"));
         }
     };
-    font.write(destination).map_err(|_| FontError::SaveError)?;
+    font.write(destination)?;
     Ok(())
 }
 
@@ -844,15 +844,14 @@ where
     TWriter: Read + Seek + ?Sized + Write,
 {
     // Read the font from the input stream
-    let mut font = WoffFont::from_reader(input_stream).map_err(|_| FontError::LoadError)?;
+    let mut font = WoffFont::from_reader(input_stream)?;
     // If the C2PA table does not exist...
     if font.tables.get(&C2PA_TABLE_TAG).is_none() {
         // ...install an empty one.
         font.append_empty_c2pa_table()?;
     }
     // Write the font to the output stream
-    font.write(output_stream)
-        .map_err(|_| FontError::SaveError)?;
+    font.write(output_stream)?;
     Ok(())
 }
 
@@ -894,8 +893,8 @@ where
 {
     match read_c2pa_from_stream(source) {
         Ok(c2pa_data) => Ok(c2pa_data.active_manifest_uri),
-        Err(Error::JumbfNotFound) => Ok(None),
-        Err(_) => Err(wrap_font_err(FontError::DeserializationError)),
+        Err(FontError::JumbfNotFound) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -919,11 +918,11 @@ where
 {
     source.rewind()?;
     // Load the font from the stream
-    let mut font = WoffFont::from_reader(source).map_err(|_| FontError::LoadError)?;
+    let mut font = WoffFont::from_reader(source)?;
     // Remove the table from the collection
     font.tables.remove(&C2PA_TABLE_TAG);
     // And write it to the destination stream
-    font.write(destination).map_err(|_| FontError::SaveError)?;
+    font.write(destination)?;
 
     Ok(())
 }
@@ -941,7 +940,7 @@ where
     TDest: Write + ?Sized,
 {
     source.rewind()?;
-    let mut font = WoffFont::from_reader(source).map_err(|_| FontError::LoadError)?;
+    let mut font = WoffFont::from_reader(source)?;
     let old_manifest_uri_maybe = match font.tables.get_mut(&C2PA_TABLE_TAG) {
         // If there isn't one, how pleasant, there will be so much less to do.
         None => None,
@@ -959,10 +958,10 @@ where
         }
         // Yikes! Non-C2PA table with C2PA tag!
         Some(_) => {
-            return Err(wrap_font_err(FontError::LoadError));
+            return Err(FontError::InvalidNamedTable("Non-C2PA table with C2PA tag"));
         }
     };
-    font.write(destination).map_err(|_| FontError::SaveError)?;
+    font.write(destination)?;
     Ok(old_manifest_uri_maybe)
 }
 
@@ -1071,18 +1070,16 @@ where
 /// Reads the `C2PA` font table from the data stream, returning the `C2PA` font
 /// table data
 fn read_c2pa_from_stream<T: Read + Seek + ?Sized>(reader: &mut T) -> Result<TableC2PA> {
-    let woff = WoffFont::from_reader(reader).map_err(|_| FontError::LoadError)?;
-    let c2pa_table: Option<TableC2PA> = match woff.tables.get(&C2PA_TABLE_TAG) {
-        None => None,
+    // Convert all errors from the reader to a deserialization error.
+    let woff = WoffFont::from_reader(reader)?;
+    match woff.tables.get(&C2PA_TABLE_TAG) {
+        None => Err(FontError::JumbfNotFound),
         // If there is, replace its `manifest_store` value with the
         // provided one.
-        Some(NamedTable::C2PA(c2pa)) => Some(c2pa.clone()),
+        Some(NamedTable::C2PA(c2pa)) => Ok(c2pa.clone()),
         // Yikes! Non-C2PA table with C2PA tag!
-        Some(_) => {
-            return Err(wrap_font_err(FontError::LoadError));
-        }
-    };
-    c2pa_table.ok_or(Error::JumbfNotFound)
+        Some(_) => Err(FontError::InvalidNamedTable("Non-C2PA table with C2PA tag")),
+    }
 }
 
 /// Main WOFF IO feature.
@@ -1102,8 +1099,11 @@ impl WoffIO {
 
 /// WOFF implementation of the CAILoader trait.
 impl CAIReader for WoffIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let c2pa_table = read_c2pa_from_stream(asset_reader)?;
+    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::error::Result<Vec<u8>> {
+        let c2pa_table = read_c2pa_from_stream(asset_reader).map_err(|e| match e {
+            FontError::JumbfNotFound => Error::JumbfNotFound,
+            _ => wrap_font_err(e),
+        })?;
         match c2pa_table.get_manifest_store() {
             Some(manifest_store) => Ok(manifest_store.to_vec()),
             _ => Err(Error::JumbfNotFound),
@@ -1127,23 +1127,23 @@ impl CAIWriter for WoffIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
-    ) -> Result<()> {
-        add_c2pa_to_stream(input_stream, output_stream, store_bytes)
+    ) -> crate::error::Result<()> {
+        add_c2pa_to_stream(input_stream, output_stream, store_bytes).map_err(wrap_font_err)
     }
 
     fn get_object_locations_from_stream(
         &self,
         input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        get_object_locations_from_stream(self, input_stream)
+    ) -> crate::error::Result<Vec<HashObjectPositions>> {
+        get_object_locations_from_stream(self, input_stream).map_err(wrap_font_err)
     }
 
     fn remove_cai_store_from_stream(
         &self,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-    ) -> Result<()> {
-        remove_c2pa_from_stream(input_stream, output_stream)
+    ) -> crate::error::Result<()> {
+        remove_c2pa_from_stream(input_stream, output_stream).map_err(wrap_font_err)
     }
 }
 
@@ -1182,22 +1182,25 @@ impl AssetIO for WoffIO {
         ]
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+    fn read_cai_store(&self, asset_path: &Path) -> crate::error::Result<Vec<u8>> {
         let mut f: File = File::open(asset_path)?;
         self.read_cai(&mut f)
     }
 
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        add_c2pa_to_font(asset_path, store_bytes)
+    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> crate::error::Result<()> {
+        add_c2pa_to_font(asset_path, store_bytes).map_err(wrap_font_err)
     }
 
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
+    fn get_object_locations(
+        &self,
+        asset_path: &Path,
+    ) -> crate::error::Result<Vec<HashObjectPositions>> {
         let mut buf_reader = open_bufreader_for_file(asset_path)?;
-        get_object_locations_from_stream(self, &mut buf_reader)
+        get_object_locations_from_stream(self, &mut buf_reader).map_err(wrap_font_err)
     }
 
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        remove_c2pa_from_font(asset_path)
+    fn remove_cai_store(&self, asset_path: &Path) -> crate::error::Result<()> {
+        remove_c2pa_from_font(asset_path).map_err(wrap_font_err)
     }
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
@@ -1207,7 +1210,7 @@ impl AssetIO for WoffIO {
 
 // Implementation for the asset box hash trait for general box hash support
 impl AssetBoxHash for WoffIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> crate::error::Result<Vec<BoxMap>> {
         // Get the chunk positions
         let positions = self.get_chunk_positions(input_stream)?;
         // Create a box map vector to map the chunk positions to
@@ -1233,16 +1236,17 @@ impl RemoteRefEmbed for WoffIO {
         &self,
         asset_path: &Path,
         embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
+    ) -> crate::error::Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
                 #[cfg(feature = "xmp_write")]
                 {
                     font_xmp_support::add_reference_as_xmp_to_font(asset_path, &manifest_uri)
+                        .map_err(wrap_font_err)
                 }
                 #[cfg(not(feature = "xmp_write"))]
                 {
-                    add_reference_to_font(asset_path, &manifest_uri)
+                    add_reference_to_font(asset_path, &manifest_uri).map_err(wrap_font_err)
                 }
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
@@ -1256,7 +1260,7 @@ impl RemoteRefEmbed for WoffIO {
         reader: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
+    ) -> crate::error::Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
                 #[cfg(feature = "xmp_write")]
@@ -1266,10 +1270,12 @@ impl RemoteRefEmbed for WoffIO {
                         output_stream,
                         &manifest_uri,
                     )
+                    .map_err(wrap_font_err)
                 }
                 #[cfg(not(feature = "xmp_write"))]
                 {
                     add_reference_to_stream(reader, output_stream, &manifest_uri)
+                        .map_err(wrap_font_err)
                 }
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
@@ -1639,10 +1645,12 @@ pub mod tests {
         use xmp_toolkit::XmpMeta;
 
         use crate::{
-            asset_handlers::woff_io::{font_xmp_support, WoffIO},
+            asset_handlers::{
+                font_io::FontError,
+                woff_io::{font_xmp_support, WoffIO},
+            },
             asset_io::CAIReader,
             utils::test::temp_dir_path,
-            Error,
         };
 
         #[ignore] // Need WOFF 1 test fixture
@@ -1718,7 +1726,7 @@ pub mod tests {
             let mut font_stream: Cursor<&[u8]> = Cursor::<&[u8]>::new(&font_data);
             match font_xmp_support::build_xmp_from_stream(&mut font_stream) {
                 Ok(_) => panic!("Did not expect an OK result, as data is missing"),
-                Err(Error::NotFound) => {}
+                Err(FontError::XmpNotFound) => {}
                 Err(_) => panic!("Unexpected error when building XMP data"),
             }
         }
