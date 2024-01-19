@@ -18,10 +18,9 @@ use std::{
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
+use async_generic::async_generic;
 use log::error;
 
-#[cfg(feature = "openssl")]
-use crate::cose_validator::{verify_cose, verify_cose_async};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -35,7 +34,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::check_ocsp_status,
+    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -493,6 +492,12 @@ impl Store {
     }
 
     /// Sign the claim and return signature.
+    #[async_generic(async_signature(
+        &self,
+        claim: &Claim,
+        signer: &dyn AsyncSigner,
+        box_size: usize,
+    ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
@@ -501,60 +506,41 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
-        cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
-            // Sanity check: Ensure that this signature is valid.
-            #[cfg(feature = "openssl")]
-            if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
-                if verify_after_sign {
-                    let mut cose_log = OneShotStatusTracker::new();
-                    if let Err(err) = verify_cose(
-                        &sig,
-                        &claim_bytes,
-                        b"",
-                        false,
-                        self.trust_handler(),
-                        &mut cose_log,
-                    ) {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        return Err(err);
-                    }
-                }
-            }
-            Ok(sig)
-        })
-    }
-
-    /// Sign the claim asynchronously and return signature.
-    pub async fn sign_claim_async(
-        &self,
-        claim: &Claim,
-        signer: &dyn AsyncSigner,
-        box_size: usize,
-    ) -> Result<Vec<u8>> {
-        let claim_bytes = claim.data()?;
-
-        match cose_sign_async(signer, &claim_bytes, box_size).await {
-            // Sanity check: Ensure that this signature is valid.
+        let result = if _sync {
+            cose_sign(signer, &claim_bytes, box_size)
+        } else {
+            cose_sign_async(signer, &claim_bytes, box_size).await
+        };
+        match result {
             Ok(sig) => {
-                #[cfg(feature = "openssl")]
+                // Sanity check: Ensure that this signature is valid.
                 if let Ok(verify_after_sign) =
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
                         let mut cose_log = OneShotStatusTracker::new();
-                        if let Err(err) = verify_cose_async(
-                            sig.clone(),
-                            claim_bytes,
-                            b"".to_vec(),
-                            false,
-                            self.trust_handler(),
-                            &mut cose_log,
-                        )
-                        .await
-                        {
+
+                        let result = if _sync {
+                            verify_cose(
+                                &sig,
+                                &claim_bytes,
+                                b"",
+                                false,
+                                self.trust_handler(),
+                                &mut cose_log,
+                            )
+                        } else {
+                            verify_cose_async(
+                                sig.clone(),
+                                claim_bytes,
+                                b"".to_vec(),
+                                false,
+                                self.trust_handler(),
+                                &mut cose_log,
+                            )
+                            .await
+                        };
+                        if let Err(err) = result {
                             error!(
                                 "Signature that was just generated does not validate: {:#?}",
                                 err
@@ -2035,6 +2021,13 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+    #[async_generic(async_signature(
+        &mut self,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn AsyncSigner,
+    ))]
     pub fn save_to_stream(
         &mut self,
         format: &str,
@@ -2053,9 +2046,15 @@ impl Store {
         )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size())?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size())
+                .await?
+        };
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
+        intermediate_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,
