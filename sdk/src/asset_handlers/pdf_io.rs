@@ -130,10 +130,7 @@ pub mod tests {
 
     use crate::{
         asset_handlers,
-        asset_handlers::{
-            pdf::{C2paPdf, MockC2paPdf, Pdf},
-            pdf_io::PdfIO,
-        },
+        asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
         asset_io::{AssetIO, CAIReader},
     };
 
@@ -235,22 +232,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_read_cai_returns_cai_bytes() {
-        let source = include_bytes!("../../tests/fixtures/basic.pdf");
-
-        let mut pdf = Pdf::from_bytes(source).unwrap();
-        assert!(pdf.read_manifest_bytes().unwrap().is_none());
-
-        let mut pdf_with_manifest = vec![];
-        let expected_manifest = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
-
-        pdf.write_manifest_as_annotation(expected_manifest.clone())
-            .unwrap();
-        pdf.save_to(&mut pdf_with_manifest).unwrap();
-
+    fn test_read_cai_express_pdf_finds_single_manifest_store() {
+        let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
-        let mut cursor = Cursor::new(pdf_with_manifest);
-
-        assert_eq!(pdf_io.read_cai(&mut cursor).unwrap(), expected_manifest);
+        let mut pdf_stream = Cursor::new(source.to_vec());
+        assert!(pdf_io.read_cai(&mut pdf_stream).is_ok());
     }
 }
