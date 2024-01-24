@@ -57,7 +57,7 @@ pub struct ManifestStoreBuilder {
     pub format: String,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
-    //#[serde(default = "default_instance_id")]
+    #[serde(default = "default_instance_id")]
     pub instance_id: String,
 
     pub thumbnail: Option<ResourceRef>,
@@ -88,9 +88,9 @@ pub struct ManifestStoreBuilder {
     resources: ResourceStore,
 }
 
-// fn default_instance_id() -> String {
-//     format!("xmp:iid:{}", Uuid::new_v4())
-// }
+fn default_instance_id() -> String {
+    format!("xmp:iid:{}", Uuid::new_v4())
+}
 
 fn default_claim_generator_info() -> Vec<ClaimGeneratorInfo> {
     [ClaimGeneratorInfo::default()].to_vec()
@@ -109,20 +109,31 @@ impl ManifestStoreBuilder {
         serde_json::from_str(json).map_err(Error::JsonError)
     }
 
-    pub fn add_ingredient_from_json_with_stream(
+    pub fn add_ingredient(
         &mut self,
         ingredient_json: &str,
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<()> {
         let ingredient: Ingredient = serde_json::from_str(ingredient_json)?;
-        let ingredient = ingredient.add_stream(format, stream)?;
+        let ingredient = ingredient.with_stream(format, stream)?;
         self.ingredients.push(ingredient);
         Ok(())
     }
 
-    pub fn zip(&self, stream: impl Write + Seek) -> Result<()> {
+    pub fn add_resource(&mut self, id: &str, stream: &mut dyn CAIRead) -> Result<&mut Self> {
+        if self.resources.exists(id) {
+            return Err(Error::BadParam(id.to_string())); // todo add specific error
+        }
+        let mut buf = Vec::new();
+        let _size = stream.read_to_end(&mut buf)?;
+        self.resources.add(id, buf)?;
+        Ok(self)
+    }
+
+    pub fn zip(&mut self, stream: impl Write + Seek) -> Result<()> {
         drop(
+            // this drop seems to be required to force a flush before reading back.
             {
                 let mut zip = ZipWriter::new(stream);
                 let options =
@@ -130,10 +141,23 @@ impl ManifestStoreBuilder {
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
+                // add a folder to the zip file
+                zip.start_file("resources/", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
-                    zip.start_file(id, options)
+                    zip.start_file(format!("resources/{}", id), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
+                }
+                for (index, ingredient) in self.ingredients.iter().enumerate() {
+                    zip.start_file(format!("ingredients/{}/", index), options)
+                        .map_err(|e| Error::OtherError(Box::new(e)))?;
+                    for (id, data) in ingredient.resources().resources() {
+                        //println!("adding ingredient {}/{}", index, id);
+                        zip.start_file(format!("ingredients/{}/{}", index, id), options)
+                            .map_err(|e| Error::OtherError(Box::new(e)))?;
+                        zip.write_all(data)?;
+                    }
                 }
                 zip.finish()
             }
@@ -142,6 +166,7 @@ impl ManifestStoreBuilder {
         Ok(())
     }
 
+    #[allow(clippy::unwrap_used)]
     pub fn unzip(stream: impl Read + Seek) -> Result<Self> {
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
         let mut manifest = zip
@@ -157,10 +182,35 @@ impl ManifestStoreBuilder {
                 .by_index(i)
                 .map_err(|e| Error::OtherError(Box::new(e)))?;
 
-            if file.name() != "manifest.json" {
+            if file.name().starts_with("resources/") && file.name() != "resources/" {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                builder.resources.add(file.name(), data)?;
+                let id = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+                //println!("adding resource {}", id);
+                builder.resources.add(id, data)?;
+            }
+            if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                let index: usize = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
+                let id = file.name().split('/').nth(2).unwrap();
+                if index >= builder.ingredients.len() {
+                    return Err(Error::OtherError(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Invalid ingredient index {}", index),
+                    ))))?; // todo add specific error
+                }
+                builder.ingredients[index].resources_mut().add(id, data)?;
             }
         }
         Ok(builder)
@@ -178,10 +228,11 @@ impl ManifestStoreBuilder {
         let claim_generator: String = claim_generator_info
             .iter()
             .map(|s| {
+                let name = s.name.replace(' ', "_");
                 if let Some(version) = s.version.as_deref() {
-                    format!("{}/{}", s.name, version)
+                    format!("{}/{}", name, version)
                 } else {
-                    s.name.clone()
+                    name
                 }
             })
             .collect::<Vec<String>>()
@@ -448,7 +499,6 @@ impl ManifestStoreBuilder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-
     use std::io::{Cursor, Seek};
 
     use serde_json::Value;
@@ -524,7 +574,7 @@ mod tests {
 
         let ingredient = Ingredient::from_json(PARENT_JSON)
             .unwrap()
-            .add_stream("application/jpeg", &mut image)
+            .with_stream("application/jpeg", &mut image)
             .unwrap();
         builder.ingredients.push(ingredient);
 
@@ -615,7 +665,7 @@ mod tests {
 
         let mut builder = ManifestStoreBuilder::from_json(JSON).unwrap();
         builder
-            .add_ingredient_from_json_with_stream(PARENT_JSON, format, &mut source)
+            .add_ingredient(PARENT_JSON, format, &mut source)
             .unwrap();
         // builder.ingredients.push(
         //     Ingredient::from_json(PARENT_JSON)
@@ -635,7 +685,7 @@ mod tests {
 
         // unzip the manifest builder from the zipped stream
         zipped.rewind().unwrap();
-        let mut _builder = ManifestStoreBuilder::unzip(&mut zipped).unwrap();
+        let mut builder = ManifestStoreBuilder::unzip(&mut zipped).unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
         let signer = temp_signer();

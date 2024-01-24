@@ -444,7 +444,7 @@ impl Ingredient {
 
     /// Sets the Manifest C2PA data for this ingredient with bytes
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let base_id = self.instance_id().to_string();
+        let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
                 .add_with(&base_id, "application/c2pa", data)?,
@@ -780,7 +780,7 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    pub(crate) fn add_stream<S: Into<String>>(
+    pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
@@ -823,13 +823,8 @@ impl Ingredient {
                     Store::from_jumbf(&manifest_bytes, &mut validation_log)
                         .and_then(|mut store| {
                             // verify the store
-                            //todo, change this when we have a stream version of verify
-                            let mut buf: Vec<u8> = Vec::new();
-                            stream.rewind()?;
-                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                            store
-                                .verify_from_buffer(&buf, format, &mut validation_log)
-                                .map(|_| store)
+                            store.verify_from_stream(stream, format, &mut validation_log)?;
+                            Ok(store)
                         })
                         .map_err(|e| {
                             // add a log entry for the error so we act like verify

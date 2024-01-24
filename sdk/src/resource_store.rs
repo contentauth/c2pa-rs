@@ -22,7 +22,10 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, CAIRead, Error, Result};
+use crate::{
+    assertions::AssetType, claim::Claim, hashed_uri::HashedUri, CAIRead, CAIReadWrite, Error,
+    Result,
+};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -294,6 +297,28 @@ impl ResourceStore {
             || Err(Error::ResourceNotFound(id.to_string())),
             |v| Ok(Cow::Borrowed(v)),
         )
+    }
+
+    pub fn write_stream(&self, id: &str, stream: &mut dyn CAIReadWrite) -> Result<u64> {
+        #[cfg(feature = "file_io")]
+        if !self.resources.contains_key(id) {
+            match self.base_path.as_ref() {
+                Some(base) => {
+                    // read from, the file to stream
+                    let path = base.join(id);
+                    let mut file = std::fs::File::open(path)?;
+                    return std::io::copy(&mut file, stream).map_err(Error::IoError);
+                }
+                None => return Err(Error::ResourceNotFound(id.to_string())),
+            }
+        }
+        match self.resources().get(id) {
+            Some(data) => {
+                stream.write_all(data).map_err(Error::IoError)?;
+                Ok(data.len() as u64)
+            }
+            None => Err(Error::ResourceNotFound(id.to_string())),
+        }
     }
 
     /// Returns `true` if the resource has been added or exists as file.
