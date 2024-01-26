@@ -109,16 +109,26 @@ impl ManifestStoreBuilder {
         serde_json::from_str(json).map_err(Error::JsonError)
     }
 
+    pub fn add_assertion<S, T>(&mut self, label: S, data: &T) -> Result<&mut Self>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        self.assertions
+            .push(ManifestAssertion::from_labeled_assertion(label, data)?);
+        Ok(self)
+    }
+
     pub fn add_ingredient(
         &mut self,
         ingredient_json: &str,
         format: &str,
         stream: &mut dyn CAIRead,
-    ) -> Result<()> {
+    ) -> Result<&mut Self> {
         let ingredient: Ingredient = serde_json::from_str(ingredient_json)?;
         let ingredient = ingredient.with_stream(format, stream)?;
         self.ingredients.push(ingredient);
-        Ok(())
+        Ok(self)
     }
 
     pub fn add_resource(&mut self, id: &str, stream: &mut dyn CAIRead) -> Result<&mut Self> {
@@ -218,10 +228,8 @@ impl ManifestStoreBuilder {
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
-        // add library identifier to claim_generator
-
-        // add the default claim generator info for this library
         let mut claim_generator_info = self.claim_generator_info.clone();
+        // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
         // build the claim_generator string since this is required
@@ -230,7 +238,7 @@ impl ManifestStoreBuilder {
             .map(|s| {
                 let name = s.name.replace(' ', "_");
                 if let Some(version) = s.version.as_deref() {
-                    format!("{}/{}", name, version)
+                    format!("{}/{}", name.to_lowercase(), version)
                 } else {
                     name
                 }
@@ -482,7 +490,7 @@ impl ManifestStoreBuilder {
                     crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
                 {
                     self.resources.add(&self.instance_id.clone(), image)?;
-                    self.thumbnail = Some(ResourceRef::new(self.instance_id.clone(), format));
+                    self.thumbnail = Some(ResourceRef::new(format, self.instance_id.clone()));
                 }
             }
         }
@@ -529,7 +537,7 @@ mod tests {
         "instance_id": "1234",
         "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "5678"
+            "identifier": "thumbnail1.jpg"
         },
         "ingredients": [
             {
@@ -542,7 +550,7 @@ mod tests {
         "ingredient_refs": [
             {
                 "format": "image/jpeg",
-                "identifier": "5678"
+                "identifier": "thumbnail1.jpg"
             }
         ],
         "assertions": [
@@ -644,7 +652,7 @@ mod tests {
         assert_eq!(builder.instance_id, "1234".to_string());
         assert_eq!(
             builder.thumbnail.clone().unwrap().identifier.as_str(),
-            "5678"
+            "thumbnail1.jpg"
         );
         assert_eq!(builder.ingredients[0].title(), "Test".to_string());
         assert_eq!(
@@ -674,7 +682,10 @@ mod tests {
         //         .unwrap(),
         // );
 
-        builder.resources.add("5678", TEST_IMAGE.to_vec()).unwrap();
+        builder
+            .resources
+            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .unwrap();
 
         // write the manifest builder to a zipped stream
         let mut zipped = Cursor::new(Vec::new());
