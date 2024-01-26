@@ -35,7 +35,7 @@ fn main() -> Result<()> {
         ],
         "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "manifest_thumbnail"
+            "identifier": "manifest_thumbnail.jpg"
         },
         "ingredients": [
             {
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
 
     // add a manifest thumbnail ( just reuse the image for now )
     source.rewind()?;
-    builder.add_resource("manifest_thumbnail", &mut source)?;
+    builder.add_resource("manifest_thumbnail.jpg", &mut source)?;
 
     // write the manifest builder to a zipped stream
     let mut zipped = Cursor::new(Vec::new());
@@ -74,7 +74,6 @@ fn main() -> Result<()> {
 
     // write the zipped stream to a file for debugging
     let debug_path = format!("{}/../target/test.zip", env!("CARGO_MANIFEST_DIR"));
-    println!("writing to {}", debug_path);
     std::fs::write(debug_path, zipped.get_ref())?;
 
     // unzip the manifest builder from the zipped stream

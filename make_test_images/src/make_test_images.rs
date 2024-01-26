@@ -22,11 +22,12 @@ use anyhow::{Context, Result};
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
     create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
-    ManifestStore, Signer, SigningAlg,
+    ManifestStore, ManifestStoreBuilder, Signer, SigningAlg,
 };
 use memchr::memmem;
 use nom::AsBytes;
 use serde::Deserialize;
+use serde_json::json;
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
@@ -96,6 +97,37 @@ impl Default for Config {
             recipes: Vec::new(),
         }
     }
+}
+
+/// Converts a file extension to a MIME type
+fn extension_to_mime(extension: &str) -> Option<&'static str> {
+    Some(match extension {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "psd" => "image/vnd.adobe.photoshop",
+        "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        "dng" => "image/dng",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
+        "mp4" => "video/mp4",
+        "avif" => "image/avif",
+        "mov" | "qt" => "video/quicktime",
+        "m4a" => "audio/mp4",
+        "mid" | "rmi" => "audio/mid",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/vnd.wav",
+        "aif" | "aifc" | "aiff" => "audio/aiff",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "ai" => "application/postscript",
+        _ => return None,
+    })
 }
 
 /// Generate a blake3 hash over the image in path using a fixed buffer
@@ -178,8 +210,229 @@ impl MakeTestImages {
         Ok(())
     }
 
-    /// Creates a test image with optional source and ingredients, out to dest
+    fn add_ingredient_from_file(
+        builder: &mut ManifestStoreBuilder,
+        path: &Path,
+        relationship: &str,
+    ) -> Result<String> {
+        let mut source = fs::File::open(path).context("opening ingredient")?;
+        let name = path
+            .file_name()
+            .ok_or(Error::BadParam("no filename".to_string()))?
+            .to_string_lossy();
+        let extension = path
+            .extension()
+            .ok_or(Error::BadParam("no extension".to_owned()))?
+            .to_string_lossy()
+            .into_owned();
+        let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
+
+        let json = json!({
+            "title": name,
+            "relationship": relationship,
+        })
+        .to_string();
+        builder.add_ingredient(&json, format, &mut source)?;
+
+        Ok(builder.ingredients[builder.ingredients.len() - 1]
+            .instance_id()
+            .to_string())
+    }
+
     fn make_image(&self, recipe: &Recipe) -> Result<PathBuf> {
+        let src = recipe.parent.as_deref();
+        let dst_path = self.make_path(&recipe.output);
+        println!("Creating {dst_path:?}");
+
+        let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
+
+        let name = dst_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Untitled")
+            .to_owned();
+        let extension = dst_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("jpg")
+            .to_owned();
+        let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
+
+        let manifest_def = json!({
+            "vendor": "contentauth",
+            "title": name,
+            "format": &format,
+            "claim_generator_info": [
+                {
+                    "name": env!("CARGO_PKG_NAME"),
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = ManifestStoreBuilder::from_json(&manifest_def)?;
+
+        // keep track of ingredient instances so we don't duplicate them
+        let mut ingredient_table = HashMap::new();
+
+        let mut actions = Vec::new();
+        if let Some(author) = &self.config.author {
+            builder.add_assertion(
+                "stds.schema-org.CreativeWork",
+                &json!({
+                  "@context": "http://schema.org/",
+                  "@type": "CreativeWork",
+                  "author": [
+                    {
+                      "@type": "Person",
+                      "name": author
+                    }
+                  ]
+                }),
+            )?;
+        };
+
+        // process parent first
+        let mut img = match src {
+            Some(src) => {
+                let src_path = &self.make_path(src);
+
+                let instance_id =
+                    Self::add_ingredient_from_file(&mut builder, src_path, "parentOf")?;
+
+                actions.push(json!(
+                    {
+                        "action": "c2pa.opened",
+                        "instanceId": &instance_id,
+                    }
+                ));
+
+                // keep track of all ingredients we add via the instance Id
+                ingredient_table.insert(src, instance_id.to_owned());
+
+                // load the image for editing
+                let mut img =
+                    image::open(src_path).context(format!("opening parent {src_path:?}"))?;
+
+                // adjust brightness to show we made an edit
+                img = img.brighten(30);
+                actions.push(json!(
+                    {
+                        "action": "c2pa.opened",
+                        "instanceId": &instance_id,
+                    }
+                ));
+                actions.push(json!(
+                    {
+                        "action": "c2pa.color_adjustments",
+                        "parameters": {
+                          "name": "brightnesscontrast"
+                        }
+                      }
+                ));
+                img
+            }
+            None => {
+                // create a default image with a gradient
+                let mut img = image::DynamicImage::new_rgb8(IMAGE_WIDTH, IMAGE_HEIGHT);
+                if let Some(img_ref) = img.as_mut_rgb8() {
+                    //  fill image with a gradient
+                    for (x, y, pixel) in img_ref.enumerate_pixels_mut() {
+                        let r = (0.3 * x as f32) as u8;
+                        let b = (0.3 * y as f32) as u8;
+                        *pixel = image::Rgb([r, 100, b]);
+                    }
+                }
+                actions.push(json!(
+                    {
+                        "action": "c2pa.created",
+                        "sourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": software_agent,
+                        // "softwareAgent": {
+                        //     "name": "Make Test Images",
+                        //     "version": env!("CARGO_PKG_VERSION")
+                        // },
+                        "parameters": {
+                          "name": "gradient"
+                        }
+                    }
+                ));
+                img
+            }
+        };
+
+        // then add all ingredients
+        if let Some(ing_vec) = &recipe.ingredients {
+            // scale ingredients to paste in top row of the image
+            let width = match ing_vec.len() as u32 {
+                0 | 1 => img.width() / 2,
+                _ => img.width() / ing_vec.len() as u32,
+            };
+            let height = img.height() / 2;
+
+            let mut x = 0;
+            for ing in ing_vec {
+                let ing_path = &self.make_path(ing);
+
+                // get the bits of the ingredient, resize it and overlay it on the base image
+                let img_ingredient =
+                    image::open(ing_path).context(format!("opening ingredient {ing_path:?}"))?;
+                let img_small = img_ingredient.thumbnail(width, height);
+                image::imageops::overlay(&mut img, &img_small, x, 0);
+
+                // if we have already created an ingredient, get the instanceId, otherwise create a new one
+                let instance_id = match ingredient_table.get(ing.as_str()) {
+                    Some(id) => id.to_string(),
+                    None => Self::add_ingredient_from_file(&mut builder, ing_path, "componentOf")?,
+                };
+
+                actions.push(json!(
+                    {
+                        "action": "c2pa.placed",
+                        "instanceId": instance_id,
+                    }
+                ));
+                x += width as i64;
+            }
+            // record what we did as an action (only need to record this once)
+            actions.push(json!(
+                {
+                    "action": "c2pa.resized",
+                }
+            ));
+        }
+
+        let mut temp = tempfile::tempfile()?;
+        use std::io::Seek;
+
+        use image::ImageFormat;
+        // save the changes to the image as our target file
+        img.write_to(&mut temp, ImageFormat::Jpeg)?;
+        temp.rewind()?;
+
+        // add all our actions as an assertion now.
+        builder.add_assertion(
+            "c2pa.actions",
+            &json!(
+                {
+                    "actions": actions
+                }
+            ),
+        )?;
+
+        // now sign manifest and embed in target
+        let signer = self.config.get_signer()?;
+
+        let mut dest = fs::File::create(&dst_path)?;
+        builder.sign(format, &mut temp, &mut dest, signer.as_ref())?;
+
+        Ok(dst_path)
+    }
+
+    /// Creates a test image with optional source and ingredients, out to dest
+    #[allow(dead_code)]
+    fn make_image_v1(&self, recipe: &Recipe) -> Result<PathBuf> {
         let src = recipe.parent.as_deref();
         let dst_path = self.make_path(&recipe.output);
         println!("Creating {dst_path:?}");
