@@ -42,7 +42,7 @@ pub struct ClaimGeneratorInfo {
 impl Default for ClaimGeneratorInfo {
     fn default() -> Self {
         Self {
-            name: env!("CARGO_PKG_NAME").to_string(),
+            name: crate::NAME.to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             icon: None,
             other: HashMap::new(),

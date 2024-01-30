@@ -17,7 +17,7 @@ use std::path::Path;
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     claim::ClaimAssetData,
@@ -29,7 +29,7 @@ use crate::{
     CAIRead, CAIReadWrite, Error, Manifest, Result,
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A Container for a set of Manifests and a ValidationStatus list
 pub struct ManifestStore {

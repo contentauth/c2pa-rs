@@ -29,6 +29,8 @@ use nom::AsBytes;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::compare_manifests::compare_folders;
+
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
 
@@ -70,6 +72,8 @@ pub struct Config {
     pub author: Option<String>,
     /// A list of recipes for test files
     pub recipes: Vec<Recipe>,
+    /// A folder to compare the output to
+    pub compare_folder: Option<String>,
 }
 
 impl Config {
@@ -95,6 +99,7 @@ impl Default for Config {
             default_ext: "jpg".to_owned(),
             author: None,
             recipes: Vec::new(),
+            compare_folder: Some("target/images_v1/json".to_owned()),
         }
     }
 }
@@ -239,7 +244,8 @@ impl MakeTestImages {
             .to_string())
     }
 
-    fn make_image(&self, recipe: &Recipe) -> Result<PathBuf> {
+    #[allow(dead_code)]
+    fn make_image_v2(&self, recipe: &Recipe) -> Result<PathBuf> {
         let src = recipe.parent.as_deref();
         let dst_path = self.make_path(&recipe.output);
         println!("Creating {dst_path:?}");
@@ -319,12 +325,6 @@ impl MakeTestImages {
                 img = img.brighten(30);
                 actions.push(json!(
                     {
-                        "action": "c2pa.opened",
-                        "instanceId": &instance_id,
-                    }
-                ));
-                actions.push(json!(
-                    {
                         "action": "c2pa.color_adjustments",
                         "parameters": {
                           "name": "brightnesscontrast"
@@ -347,7 +347,7 @@ impl MakeTestImages {
                 actions.push(json!(
                     {
                         "action": "c2pa.created",
-                        "sourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                         "softwareAgent": software_agent,
                         // "softwareAgent": {
                         //     "name": "Make Test Images",
@@ -384,9 +384,13 @@ impl MakeTestImages {
                 // if we have already created an ingredient, get the instanceId, otherwise create a new one
                 let instance_id = match ingredient_table.get(ing.as_str()) {
                     Some(id) => id.to_string(),
-                    None => Self::add_ingredient_from_file(&mut builder, ing_path, "componentOf")?,
+                    None => {
+                        let instance_id =
+                            Self::add_ingredient_from_file(&mut builder, ing_path, "componentOf")?;
+                        ingredient_table.insert(ing, instance_id.clone());
+                        instance_id
+                    }
                 };
-
                 actions.push(json!(
                     {
                         "action": "c2pa.placed",
@@ -661,21 +665,33 @@ impl MakeTestImages {
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
         };
+        let json_dir = self.output_dir.join("json");
+        if !json_dir.exists() {
+            std::fs::create_dir_all(&json_dir)?;
+        }
 
         let recipes = &self.config.recipes;
         for recipe in recipes {
             let dst_path = match recipe.op.as_str() {
-                "make" => self.make_image(recipe)?,
+                "make" => self.make_image_v2(recipe)?,
                 "ogp" => self.make_ogp(recipe)?,
                 "dat" | "sig" | "uri" | "clm" | "prv" => self.make_err(recipe)?,
                 "copy" => self.make_copy(recipe)?,
                 _ => return Err(Error::BadParam(recipe.op.to_string()).into()),
             };
-            let manifest_store = ManifestStore::from_file(dst_path);
 
             if recipe.op.as_str() != "copy" {
-                println!("{}", manifest_store?);
+                let manifest_store = ManifestStore::from_file(&dst_path)?;
+                let json = manifest_store.to_string();
+
+                let json_path = json_dir
+                    .join(dst_path.file_name().unwrap())
+                    .with_extension("json");
+                std::fs::write(&json_path, json)?;
             }
+        }
+        if let Some(compare_folder) = &self.config.compare_folder {
+            compare_folders(self.output_dir.join("json"), compare_folder)?;
         }
         Ok(())
     }

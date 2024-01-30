@@ -807,6 +807,11 @@ impl Ingredient {
             self.format = format.to_string();
         };
 
+        // ensure we have an instance Id for v1 ingredients
+        if self.instance_id.is_none() {
+            self.instance_id = Some(default_instance_id());
+        };
+
         stream.rewind()?;
         self.add_stream_internal(&format, stream)
     }

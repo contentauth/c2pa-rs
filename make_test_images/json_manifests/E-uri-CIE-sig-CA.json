@@ -1,0 +1,181 @@
+{
+  "active_manifest": "contentauth:urn:uuid:8367b429-67fd-4dad-a976-2271f34530d6",
+  "manifests": {
+    "contentauth:urn:uuid:8367b429-67fd-4dad-a976-2271f34530d6": {
+      "claim_generator": "make_test_images/0.29.0-dev c2pa-rs/0.29.0-dev",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.29.0-dev"
+        }
+      ],
+      "title": "CIE-sig-CA.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:ccaab341-99c3-47c6-90e5-2ce2d77455b5",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "E-sig-CA.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:d69f3c23-3c1c-4211-b7f0-3c6a6c01b149",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:f2c206f8-ff44-43e0-be02-ebb2bcf147ed",
+          "validation_status": [
+            {
+              "code": "timeStamp.mismatch",
+              "url": "Cose_Sign1",
+              "explanation": "timestamp message imprint did not match"
+            },
+            {
+              "code": "claimSignature.mismatch",
+              "url": "self#jumbf=/c2pa/contentauth:urn:uuid:f2c206f8-ff44-43e0-be02-ebb2bcf147ed/c2pa.signature",
+              "explanation": "claim signature is not valid"
+            }
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "John Doe"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": "Make Test Images 0.29.0-dev",
+                "parameters": {
+                  "name": "gradient"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.placed",
+                "instanceId": "xmp:iid:d69f3c23-3c1c-4211-b7f0-3c6a6c01b149",
+                "parameters": {
+                  "ingredient": {
+                    "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                    "hash": "CbkMvjFJ7rF/bZFQEDTZXmxpPA/raiPvikhywmg0sqs="
+                  }
+                }
+              },
+              {
+                "action": "c2pa.resized"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-01-30T21:27:32+00:00"
+      },
+      "label": "contentauth:urn:uuid:8367b429-67fd-4dad-a976-2271f34530d6"
+    },
+    "contentauth:urn:uuid:f2c206f8-ff44-43e0-be02-ebb2bcf147ed": {
+      "claim_generator": "make_test_xxxxxx/0.29.0-dev c2pa-rs/0.29.0-dev",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.29.0-dev"
+        }
+      ],
+      "title": "CA.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:50209d2c-ab9e-4ff7-8e47-feab13da2eaa",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "parentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "John Doe"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "instanceId": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+                "parameters": {
+                  "ingredient": {
+                    "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                    "hash": "tTBD4/E0R0AjLUdJFpsVz3lE/KJUq22Vz0UGqzhEpVs="
+                  }
+                }
+              },
+              {
+                "action": "c2pa.color_adjustments",
+                "parameters": {
+                  "name": "brightnessdeadbeef"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+      },
+      "label": "contentauth:urn:uuid:f2c206f8-ff44-43e0-be02-ebb2bcf147ed"
+    }
+  },
+  "validation_status": [
+    {
+      "code": "ingredient.hashedURI.mismatch",
+      "url": "self#jumbf=/c2pa/contentauth:urn:uuid:f2c206f8-ff44-43e0-be02-ebb2bcf147ed",
+      "explanation": "ingredient hash incorrect"
+    },
+    {
+      "code": "assertion.hashedURI.mismatch",
+      "url": "self#jumbf=c2pa.assertions/c2pa.actions",
+      "explanation": "hash does not match assertion data: self#jumbf=c2pa.assertions/c2pa.actions"
+    }
+  ]
+}

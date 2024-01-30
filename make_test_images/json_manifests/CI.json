@@ -1,0 +1,84 @@
+{
+  "active_manifest": "contentauth:urn:uuid:69eb02a0-0f05-4d8e-8840-e5d26e44d04d",
+  "manifests": {
+    "contentauth:urn:uuid:69eb02a0-0f05-4d8e-8840-e5d26e44d04d": {
+      "claim_generator": "make_test_images/0.29.0-dev c2pa-rs/0.29.0-dev",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.29.0-dev"
+        }
+      ],
+      "title": "CI.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:27d1fe5d-fb1c-4036-852e-e7d938f98353",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "I.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "instance_id": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "componentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "John Doe"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": "Make Test Images 0.29.0-dev",
+                "parameters": {
+                  "name": "gradient"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.placed",
+                "instanceId": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+                "parameters": {
+                  "ingredient": {
+                    "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                    "hash": "LhHr79j69sagdiQpq9AfBwH+rzMmkO8LM3tC5IRAXaI="
+                  }
+                }
+              },
+              {
+                "action": "c2pa.resized"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-01-30T21:27:31+00:00"
+      },
+      "label": "contentauth:urn:uuid:69eb02a0-0f05-4d8e-8840-e5d26e44d04d"
+    }
+  }
+}
