@@ -14,7 +14,7 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use conv::ConvUtil;
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponse, OcspResponseStatus};
-use rasn_pkix::{Certificate, CrlReason};
+use rasn_pkix::CrlReason;
 
 use crate::{
     status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
@@ -89,6 +89,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     use std::io::Read;
 
     use rasn::prelude::*;
+    use rasn_pkix::Certificate;
     use x509_parser::prelude::*;
 
     // must have minimal chain in hierarchical order
@@ -109,11 +110,10 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
 
         for r in responders {
             let url = url::Url::parse(&r).ok()?;
-            let subject = rasn::der::decode::<rasn_pkix::Certificate>(&certs[0]).ok()?;
-            let issuer = rasn::der::decode::<rasn_pkix::Certificate>(&certs[1]).ok()?;
+            let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
+            let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
 
-            let issuer_name_raw =
-                rasn::der::encode::<rasn_pkix::Name>(&issuer.tbs_certificate.subject).ok()?;
+            let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
             let issuer_key_raw = &issuer
                 .tbs_certificate
                 .subject_public_key_info
@@ -154,7 +154,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             };
 
             // build query param
-            let request_der = rasn::der::encode::<rasn_ocsp::OcspRequest>(&ocsp_request).ok()?;
+            let request_der = rasn::der::encode(&ocsp_request).ok()?;
             let request_str = crate::utils::base64::encode(&request_der);
 
             let req_url = url.join(&request_str).ok()?;
@@ -215,7 +215,7 @@ pub(crate) fn check_ocsp_response(
                         let mut cert_der_vec = Vec::new();
 
                         for ocsp_cert in ocsp_certs {
-                            let cert_der = rasn::der::encode::<Certificate>(ocsp_cert)
+                            let cert_der = rasn::der::encode(ocsp_cert)
                                 .map_err(|_e| Error::CoseInvalidCert)?;
                             cert_der_vec.push(cert_der);
                         }
@@ -262,8 +262,9 @@ pub(crate) fn check_ocsp_response(
                                     now >= this_update && now <= next_update
                                 };
 
-                                output.next_update = DateTime::from_timestamp(next_update, 0)
-                                    .ok_or(Error::CoseInvalidCert)?;
+                                if let Some(nu) = &single_response.next_update {
+                                    output.next_update = nu.to_utc();
+                                }
 
                                 if !in_range {
                                     let log_item = log_item!(
