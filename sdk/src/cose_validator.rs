@@ -32,6 +32,7 @@ use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
+    ocsp_utils::{check_ocsp_response, OcspData},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     validation_status,
@@ -451,7 +452,7 @@ fn check_cert(
                     }
                     key_usage_good = true;
                 }
-                if ku.key_cert_sign() {
+                if ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
                 // todo: warn if not marked critical
@@ -642,6 +643,123 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
+// get OCSP der
+fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    if let Some(der) = sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("rVals".to_string()) {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        match der {
+            Value::Map(rvals_map) => {
+                // find OCSP value if available
+                rvals_map.iter().find_map(|x: &(Value, Value)| {
+                    if x.0 == Value::Text("ocspVals".to_string()) {
+                        match &x.1 {
+                            Value::Array(ocsp_responses) => {
+                                // our implementation will only check the first OCSP response
+                                if !ocsp_responses.is_empty() {
+                                    let ocsp_rsp_val = &ocsp_responses[0];
+
+                                    match ocsp_rsp_val {
+                                        Value::Bytes(ocsp_rsp_bytes) => {
+                                            Some(ocsp_rsp_bytes.clone())
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+pub(crate) fn check_ocsp_status(
+    cose_bytes: &[u8],
+    data: &[u8],
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspData> {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
+    let mut result = Ok(OcspData::default());
+
+    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
+        // check stapled OCSP response, must have timestamp
+        if let Ok(tst_info) = &time_stamp_info {
+            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+
+            // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+            if let Ok(ocsp_data) =
+                check_ocsp_response(&ocsp_response_der, Some(signing_time), validation_log)
+            {
+                // if we get a valid response validate the certs
+                if ocsp_data.revoked_at.is_none() {
+                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                        check_cert(SigningAlg::Ps256, &ocsp_certs[0], validation_log, None)?;
+                    }
+                }
+                result = Ok(ocsp_data);
+            }
+        }
+    } else {
+        // fetch OCSP response if feature "fetch_ocsp_response"
+        // only support fetching with the op
+        #[cfg(feature = "fetch_ocsp_response")]
+        {
+            // get the cert chain
+            let certs = get_sign_certs(&sign1)?;
+
+            if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                // fetch_ocsp_response(&certs) {
+                let ocsp_response_der = ocsp_der;
+
+                let signing_time = match &time_stamp_info {
+                    Ok(tst_info) => {
+                        let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+                        Some(signing_time)
+                    }
+                    Err(_) => None,
+                };
+
+                // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+                if let Ok(ocsp_data) =
+                    check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
+                {
+                    // if we get a valid response validate the certs
+                    if ocsp_data.revoked_at.is_none() {
+                        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                            check_cert(SigningAlg::Ps256, &ocsp_certs[0], validation_log, None)?;
+                        }
+                    }
+                    result = Ok(ocsp_data);
+                }
+            }
+        }
+    }
+
+    result
+}
+
 // internal util function to dump the cert chain in PEM format
 #[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
@@ -810,6 +928,9 @@ pub async fn verify_cose_async(
         }
     }
 
+    // check certificate revocation
+    check_ocsp_status(&cose_bytes, &data, validation_log)?;
+
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.payload = Some(data.clone()); // restore payload
@@ -845,7 +966,7 @@ pub async fn verify_cose_async(
 }
 
 #[allow(unused_variables)]
-pub fn get_signing_info(
+pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut impl StatusTracker,
@@ -876,12 +997,13 @@ pub fn get_signing_info(
     #[cfg(target_arch = "wasm32")]
     {
         ValidationInfo {
-            issuer_org,
-            date,
             alg,
+            date,
+            cert_serial_number,
+            issuer_org,
             validated: false,
             cert_chain: Vec::new(),
-            cert_serial_number,
+            revocation_status: None,
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -901,6 +1023,7 @@ pub fn get_signing_info(
             validated: false,
             cert_chain: certs,
             cert_serial_number,
+            revocation_status: None,
         }
     }
 }
@@ -948,10 +1071,12 @@ pub fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
     if !signature_only {
         // verify certs
-        match get_timestamp_info(&sign1, data) {
-            Ok(tst_info) => check_cert(alg, der_bytes, validation_log, Some(&tst_info))?,
+        match &time_stamp_info {
+            Ok(tst_info) => check_cert(alg, der_bytes, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
@@ -984,6 +1109,9 @@ pub fn verify_cose(
         }
     }
 
+    // check certificate revocation
+    let ocsp_data = check_ocsp_status(cose_bytes, data, validation_log)?;
+
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
@@ -1002,6 +1130,8 @@ pub fn verify_cose(
 
             // return cert chain
             result.cert_chain = dump_cert_chain(&certs, None)?;
+
+            result.revocation_status = Some(true);
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
