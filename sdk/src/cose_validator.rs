@@ -105,7 +105,6 @@ fn has_oid(eku: &ExtendedKeyUsage, oid_val: &Oid) -> bool {
 }
 
 fn check_cert(
-    _alg: SigningAlg,
     ca_der_bytes: &[u8],
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
@@ -715,7 +714,7 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(SigningAlg::Ps256, &ocsp_certs[0], validation_log, None)?;
+                        check_cert(&ocsp_certs[0], validation_log, None)?;
                     }
                 }
                 result = Ok(ocsp_data);
@@ -748,7 +747,7 @@ pub(crate) fn check_ocsp_status(
                     // if we get a valid response validate the certs
                     if ocsp_data.revoked_at.is_none() {
                         if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                            check_cert(SigningAlg::Ps256, &ocsp_certs[0], validation_log, None)?;
+                            check_cert(&ocsp_certs[0], validation_log, None)?;
                         }
                     }
                     result = Ok(ocsp_data);
@@ -893,11 +892,11 @@ pub async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(alg, &der_bytes, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(&der_bytes, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, &der_bytes, validation_log, None)?,
+                    Error::NotFound => check_cert(&der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -1076,11 +1075,11 @@ pub fn verify_cose(
     if !signature_only {
         // verify certs
         match &time_stamp_info {
-            Ok(tst_info) => check_cert(alg, der_bytes, validation_log, Some(tst_info))?,
+            Ok(tst_info) => check_cert(der_bytes, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, der_bytes, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -1110,7 +1109,7 @@ pub fn verify_cose(
     }
 
     // check certificate revocation
-    let ocsp_data = check_ocsp_status(cose_bytes, data, validation_log)?;
+    check_ocsp_status(cose_bytes, data, validation_log)?;
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
@@ -1243,7 +1242,7 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_err());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_err());
 
             assert!(!validation_log.get_log().is_empty());
 
@@ -1333,22 +1332,22 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es256, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es384, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es512, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
     }
 
