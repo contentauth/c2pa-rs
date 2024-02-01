@@ -92,7 +92,7 @@ The Rust library crate provides:
 
 ## Example code
 
-The [sdk/examples](./sdk/examples) directory contains some minimal example code.  The [client/client.rs](./sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests
+The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
 
 ## License
 
