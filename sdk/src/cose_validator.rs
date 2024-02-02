@@ -661,24 +661,10 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
                 // find OCSP value if available
                 rvals_map.iter().find_map(|x: &(Value, Value)| {
                     if x.0 == Value::Text("ocspVals".to_string()) {
-                        match &x.1 {
-                            Value::Array(ocsp_responses) => {
-                                // our implementation will only check the first OCSP response
-                                if !ocsp_responses.is_empty() {
-                                    let ocsp_rsp_val = &ocsp_responses[0];
-
-                                    match ocsp_rsp_val {
-                                        Value::Bytes(ocsp_rsp_bytes) => {
-                                            Some(ocsp_rsp_bytes.clone())
-                                        }
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        }
+                        x.1.as_array()
+                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                            .and_then(Value::as_bytes)
+                            .cloned()
                     } else {
                         None
                     }
@@ -1228,7 +1214,9 @@ pub mod tests {
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
+    use crate::{
+        signer::ConfigurableSigner, status_tracker::DetailedStatusTracker, Signer, SigningAlg,
+    };
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -1352,25 +1340,67 @@ pub mod tests {
     }
 
     #[test]
-    fn test_no_timestamp() {
+    #[cfg(feature = "openssl_sign")]
+    fn test_stapled_ocsp() {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
 
-        let box_size = 10000;
+        let sign_cert = include_bytes!("../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
+        let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let signer = crate::utils::test::temp_signer();
+        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+            &sign_cert,
+            &pem_key,
+            SigningAlg::Ps256,
+            None,
+        )
+        .unwrap();
 
+        // create a test signer that supports stapling
+        struct OcspSigner {
+            pub signer: Box<dyn crate::Signer>,
+            pub ocsp_rsp: Vec<u8>,
+        }
+        impl crate::Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.signer.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.signer.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.signer.reserve_size()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        let ocsp_signer = OcspSigner {
+            signer: Box::new(signer),
+            ocsp_rsp: ocsp_rsp_data.to_vec(),
+        };
+
+        // sign and staple
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
+                .unwrap();
 
         let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
-        let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
-
-        assert_eq!(signing_time, None);
+        assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
     }
 }

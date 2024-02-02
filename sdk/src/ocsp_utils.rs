@@ -263,7 +263,9 @@ pub(crate) fn check_ocsp_response(
                                 };
 
                                 if let Some(nu) = &single_response.next_update {
-                                    output.next_update = nu.to_utc();
+                                    let nu_utc = nu.naive_utc();
+                                    output.next_update =
+                                        DateTime::from_naive_utc_and_offset(nu_utc, Utc);
                                 }
 
                                 if !in_range {
