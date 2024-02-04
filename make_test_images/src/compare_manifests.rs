@@ -144,16 +144,13 @@ fn compare_json_values(
     match (val1, val2) {
         (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
             for (key, val1) in map1 {
-                if map2.get(key).is_none() {
-                    issues.push(format!("Key {}.{} is missing.", path, key));
-                };
                 let val2 = map2.get(key).unwrap_or(&serde_json::Value::Null);
                 compare_json_values(&format!("{}.{}", path, key), val1, val2, issues);
             }
 
-            for key in map2.keys() {
+            for (key, value) in map2 {
                 if map1.get(key).is_none() {
-                    issues.push(format!("Key {}.{} was added.", path, key));
+                    issues.push(format!("Added {}.{}: {}", path, key, value));
                 }
             }
         }
@@ -169,10 +166,13 @@ fn compare_json_values(
                 || path.contains(".hash")
                 || val1.is_string() && val2.is_string() && val1.to_string().contains(":urn:uuid:"))
             {
-                issues.push(format!(
-                    "Values at path {} do not match: {} vs {}",
-                    path, val1, val2
-                ));
+                if val2.is_null() {
+                    issues.push(format!("Missing {}: {}", path, val1));
+                } else if val2.is_null() {
+                    issues.push(format!("Added {}: {}", path, val2));
+                } else {
+                    issues.push(format!("Changed {}: {} vs {}", path, val1, val2));
+                }
             }
         }
         _ => (),

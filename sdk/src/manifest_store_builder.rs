@@ -32,7 +32,7 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, Signer,
+    ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
 /// This is used to build a ManifestStore
@@ -105,8 +105,22 @@ fn default_vec<T>() -> Vec<T> {
 }
 
 impl ManifestStoreBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_json(&mut self, json: &str) -> Result<&mut Self> {
+        *self = Self::from_json(json)?;
+        Ok(self)
+    }
+
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(Error::JsonError)
+    }
+
+    pub fn set_format(&mut self, format: &str) -> &mut Self {
+        self.format = format.to_string();
+        self
     }
 
     pub fn add_assertion<S, T>(&mut self, label: S, data: &T) -> Result<&mut Self>
@@ -210,9 +224,9 @@ impl ManifestStoreBuilder {
                     .name()
                     .split('/')
                     .nth(1)
-                    .unwrap()
+                    .ok_or_else(|| Error::BadParam("Invalid ingredient path".to_string()))?
                     .parse::<usize>()
-                    .unwrap();
+                    .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
                 let id = file.name().split('/').nth(2).unwrap();
                 if index >= builder.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::new(
@@ -501,6 +515,40 @@ impl ManifestStoreBuilder {
         // sign and write our store to to the output image file
         store.save_to_stream(format, source, dest, signer)
     }
+
+    /// Embed a signed manifest into a stream using a supplied remote signer.
+    pub async fn sign_remote(
+        &mut self,
+        format: &str,
+        source: &mut dyn CAIRead,
+        dest: &mut dyn CAIReadWrite,
+        signer: &dyn RemoteSigner,
+    ) -> Result<Vec<u8>> {
+        self.format = format.to_string();
+        // todo:: read instance_id from xmp from stream ?
+        self.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+
+        // generate thumbnail if we don't already have one
+        #[cfg(feature = "add_thumbnails")]
+        {
+            if self.thumbnail.is_none() {
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                {
+                    self.resources.add(&self.instance_id.clone(), image)?;
+                    self.thumbnail = Some(ResourceRef::new(format, self.instance_id.clone()));
+                }
+            }
+        }
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        store
+            .save_to_stream_remote_signed(format, source, dest, signer)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -510,9 +558,13 @@ mod tests {
     use std::io::{Cursor, Seek};
 
     use serde_json::Value;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
 
     use super::*;
     use crate::{manifest_assertion::ManifestAssertion, utils::test::temp_signer};
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     const PARENT_JSON: &str = r#"
     {
@@ -710,6 +762,44 @@ mod tests {
             crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
 
         println!("{}", manifest_store);
+        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "Test_Manifest"
+        );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_builder_remote_sign() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = ManifestStoreBuilder::from_json(JSON).unwrap();
+        builder
+            .add_ingredient(PARENT_JSON, format, &mut source)
+            .unwrap();
+
+        builder
+            .resources
+            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
+        let signer = crate::utils::test::temp_remote_signer();
+        builder
+            .sign_remote(format, &mut source, &mut dest, signer.as_ref())
+            .await
+            .unwrap();
+
+        // read and validate the signed manifest store
+        dest.rewind().unwrap();
+        let manifest_store =
+            crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+
+        println!("{}", manifest_store);
+        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert!(manifest_store.validation_status().is_none());
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),

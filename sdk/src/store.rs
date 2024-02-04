@@ -1932,6 +1932,46 @@ impl Store {
         }
     }
 
+    pub async fn save_to_stream_remote_signed(
+        &mut self,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        remote_signer: &dyn RemoteSigner,
+    ) -> Result<Vec<u8>> {
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
+
+        let jumbf_bytes = self.start_save_stream(
+            format,
+            input_stream,
+            &mut intermediate_stream,
+            remote_signer.reserve_size(),
+        )?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = remote_signer.sign_remote(&pc.data()?).await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
+
+        match self.finish_save_stream(
+            jumbf_bytes,
+            format,
+            &mut intermediate_stream,
+            output_stream,
+            sig,
+            &sig_placeholder,
+        ) {
+            Ok((s, m)) => {
+                // save sig so store is up to date
+                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc_mut.set_signature_val(s);
+
+                Ok(m)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
     /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.

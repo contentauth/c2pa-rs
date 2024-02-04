@@ -3,8 +3,10 @@ use std::io::{Cursor, Seek};
 use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::{create_signer, SigningAlg};
-use c2pa::{ManifestStore, ManifestStoreBuilder};
+use c2pa::{ManifestStore, ManifestStoreBuilder, RemoteSigner};
 use serde_json::json;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::runtime::Runtime;
 
 const PARENT_JSON: &str = r#"
 {
@@ -18,13 +20,8 @@ const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/es256.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/es256.pem");
 
-//#[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<()> {
-    let title = "CA.jpg";
-    let format = "image/jpeg";
-    let mut source = Cursor::new(TEST_IMAGE);
-
-    let json = json!({
+fn get_manifest_def(title: &str, format: &str) -> String {
+    json!({
         "title": title,
         "format": format,
         "claim_generator_info": [
@@ -59,7 +56,16 @@ fn main() -> Result<()> {
                 }
             }
         ]
-    }).to_string();
+    }).to_string()
+}
+
+//#[cfg(not(target_arch = "wasm32"))]
+fn main() -> Result<()> {
+    let title = "CA.jpg";
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let json = get_manifest_def(title, format);
 
     let mut builder = ManifestStoreBuilder::from_json(&json)?;
     builder.add_ingredient(PARENT_JSON, format, &mut source)?;
@@ -113,5 +119,41 @@ fn main() -> Result<()> {
     println!("{}", manifest_store);
     assert!(manifest_store.validation_status().is_none());
     assert_eq!(manifest_store.get_active().unwrap().title().unwrap(), title);
+
+    // an example of using asynchronous remote signing
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        println!("remote signing {}", format);
+        let mut dest = Cursor::new(Vec::new());
+        let remote_signer = Box::new(TestRemoteSigner {});
+        let _manifest_bytes = Runtime::new()?.block_on(async {
+            builder
+                .sign_remote(format, &mut source, &mut dest, &*remote_signer)
+                .await
+        })?;
+        dest.rewind()?;
+        let manifest_store = ManifestStore::from_stream(format, &mut dest, true)?;
+        println!("remote signed: {}", manifest_store);
+    }
     Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct TestRemoteSigner {}
+
+//#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg(not(target_arch = "wasm32"))]
+impl RemoteSigner for TestRemoteSigner {
+    async fn sign_remote(&self, claim_bytes: &[u8]) -> c2pa::Result<Vec<u8>> {
+        // you could call a remote server here to sign the claim
+        // it would need to make calls like this
+        // we must return a cose structured signature here.
+        let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
+        c2pa::cose_sign::sign_claim(claim_bytes, &*signer, self.reserve_size())
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
 }

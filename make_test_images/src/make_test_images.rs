@@ -99,7 +99,7 @@ impl Default for Config {
             default_ext: "jpg".to_owned(),
             author: None,
             recipes: Vec::new(),
-            compare_folder: Some("target/images_v1/json".to_owned()),
+            compare_folder: Some("../make_test_images/json_manifests".to_owned()),
         }
     }
 }
@@ -690,8 +690,9 @@ impl MakeTestImages {
                 std::fs::write(&json_path, json)?;
             }
         }
+        //println!("Comparing to {:#?}", self.config.compare_folder);
         if let Some(compare_folder) = &self.config.compare_folder {
-            compare_folders(self.output_dir.join("json"), compare_folder)?;
+            compare_folders(compare_folder, &self.output_dir)?;
         }
         Ok(())
     }
