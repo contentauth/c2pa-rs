@@ -6,6 +6,19 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.5
+_06 February 2024_
+
+* Finish async signing implementation for cose_sign ([#370](https://github.com/contentauth/c2pa-rs/pull/370))
+* adds read_cai test for PDF with content credentials ([#366](https://github.com/contentauth/c2pa-rs/pull/366))
+* [IGNORE] README edits ([#356](https://github.com/contentauth/c2pa-rs/pull/356))
+* Update ci.yml
+* Remove deprecated twoway crate ([#361](https://github.com/contentauth/c2pa-rs/pull/361))
+* Fix response strings for BMFF and Box hash statuses ([#360](https://github.com/contentauth/c2pa-rs/pull/360))
+* Restore correct 1.3 CoseSign1 headers ([#359](https://github.com/contentauth/c2pa-rs/pull/359))
+* Openssl update to version 3.x ([#357](https://github.com/contentauth/c2pa-rs/pull/357))
+* Add support for ARW and NEF ([#355](https://github.com/contentauth/c2pa-rs/pull/355))
+
 ## 0.28.4
 _04 December 2023_
 
