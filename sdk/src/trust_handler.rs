@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    collections::HashSet,
     io::{read_to_string, Read},
     str::FromStr,
 };
@@ -39,6 +40,9 @@ pub(crate) trait TrustHandlerConfig {
     // add trust anchors
     fn load_trust_anchors_from_data(&mut self, trust_data: &mut dyn Read) -> Result<()>;
 
+    // add allowed list
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()>;
+
     // append private trust anchors
     fn append_private_trust_data(&mut self, private_anchors_data: &mut dyn Read) -> Result<()>;
 
@@ -53,6 +57,9 @@ pub(crate) trait TrustHandlerConfig {
 
     // list of all anchors
     fn get_anchors(&self) -> Vec<Vec<u8>>;
+
+    // set of allowed cert hashes
+    fn get_allowed_list(&self) -> &HashSet<String>;
 }
 
 impl std::fmt::Debug for dyn TrustHandlerConfig {

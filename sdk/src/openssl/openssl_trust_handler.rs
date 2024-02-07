@@ -12,7 +12,8 @@
 // each license.
 
 use std::{
-    io::{Cursor, Read},
+    collections::HashSet,
+    io::{BufRead, BufReader, Cursor, Read},
     str::FromStr,
 };
 
@@ -20,7 +21,9 @@ use asn1_rs::Oid;
 
 use crate::{
     error::{wrap_openssl_err, Result},
+    hash_utils::hash_sha256,
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
+    utils::base64,
     Error,
 };
 
@@ -43,6 +46,7 @@ fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509
 pub(crate) struct OpenSSLTrustHandlerConfig {
     trust_anchors: Vec<openssl::x509::X509>,
     private_anchors: Vec<openssl::x509::X509>,
+    allowed_cert_set: HashSet<String>,
     trust_store: Option<openssl::x509::store::X509Store>,
     config_store: Vec<u8>,
 }
@@ -102,6 +106,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let mut th = OpenSSLTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
+            allowed_cert_set: HashSet::new(),
             trust_store: None,
             config_store: Vec::new(),
         };
@@ -127,6 +132,35 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         }
 
         self.update_store()
+    }
+
+    // add allowed list entries
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()> {
+        let mut buffer = Vec::new();
+        allowed_list.read_to_end(&mut buffer)?;
+
+        if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
+            for cert in &cert_list {
+                let cert_der = cert.to_der().map_err(wrap_openssl_err)?;
+                let cert_sha256 = hash_sha256(&cert_der);
+                let cert_hash_base64 = base64::encode(&cert_sha256);
+
+                self.allowed_cert_set.insert(cert_hash_base64);
+            }
+        }
+
+        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
+        let reader = Cursor::new(buffer);
+        let buf_reader = BufReader::new(reader);
+
+        for l in buf_reader.lines().flatten() {
+            // sanity check that that is is base64 encoded, only include if so
+            if base64::decode(&l).is_ok() {
+                self.allowed_cert_set.insert(l);
+            }
+        }
+
+        Ok(())
     }
 
     // append private trust anchors
@@ -180,6 +214,11 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         }
         anchors
     }
+
+    // set of allowed cert hashes
+    fn get_allowed_list(&self) -> &HashSet<String> {
+        &self.allowed_cert_set
+    }
 }
 
 // verify certificate and trust chain
@@ -188,6 +227,13 @@ pub(crate) fn verify_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
 ) -> Result<bool> {
+    // check the cert against the allowed list first
+    let cert_sha256 = hash_sha256(cert_der);
+    let cert_hash_base64 = base64::encode(&cert_sha256);
+    if th.get_allowed_list().contains(&cert_hash_base64) {
+        return Ok(true);
+    }
+
     let mut cert_chain = openssl::stack::Stack::new().map_err(wrap_openssl_err)?;
     let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(wrap_openssl_err)?;
 
@@ -300,5 +346,87 @@ pub mod tests {
         assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0]).unwrap());
         assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0]).unwrap());
         assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
+    }
+
+    #[test]
+    fn test_allowed_list() {
+        let cert_dir = crate::utils::test::fixture_path("certs");
+
+        let mut th = OpenSSLTrustHandlerConfig::new();
+        th.clear();
+
+        let mut allowed_list_path = crate::utils::test::fixture_path("certs");
+        allowed_list_path = allowed_list_path.join("trust");
+        allowed_list_path = allowed_list_path.join("allowed_list.pem");
+
+        let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
+
+        th.load_allowed_list(&mut allowed_list).unwrap();
+
+        // test all the certs
+        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
+
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+    }
+
+    #[test]
+    fn test_allowed_list_hashes() {
+        let cert_dir = crate::utils::test::fixture_path("certs");
+
+        let mut th = OpenSSLTrustHandlerConfig::new();
+        th.clear();
+
+        let mut allowed_list_path = crate::utils::test::fixture_path("certs");
+        allowed_list_path = allowed_list_path.join("trust");
+        allowed_list_path = allowed_list_path.join("allowed_list.hash");
+
+        let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
+
+        th.load_allowed_list(&mut allowed_list).unwrap();
+
+        // test all the certs
+        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
+
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
     }
 }

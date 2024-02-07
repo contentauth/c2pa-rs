@@ -53,7 +53,7 @@ use crate::{
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
-        hash_utils::{hash256, HashRange},
+        hash_utils::{hash_sha256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
@@ -157,6 +157,11 @@ impl Store {
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
         let mut trust_reader = Cursor::new(trust_vec);
         self.trust_handler.load_configuration(&mut trust_reader)
+    }
+
+    pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(allowed_vec);
+        self.trust_handler.load_allowed_list(&mut trust_reader)
     }
 
     /// Clear all existing trust anchors
@@ -410,7 +415,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
+        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);

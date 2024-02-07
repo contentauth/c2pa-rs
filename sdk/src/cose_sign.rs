@@ -15,6 +15,8 @@
 
 #![deny(missing_docs)]
 
+use std::collections::HashSet;
+
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -39,14 +41,18 @@ use crate::{
 
 // Pass through trust for the case of claim signer usage below since it has known context
 // configured to all email protection, timestamping, ocsp signing and document signing
-struct TrustPassThrough {}
+struct TrustPassThrough {
+    allowed_list: HashSet<String>,
+}
 
 impl TrustHandlerConfig for TrustPassThrough {
     fn new() -> Self
     where
         Self: Sized,
     {
-        TrustPassThrough {}
+        TrustPassThrough {
+            allowed_list: HashSet::new(),
+        }
     }
 
     fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
@@ -77,6 +83,14 @@ impl TrustHandlerConfig for TrustPassThrough {
 
     fn get_anchors(&self) -> Vec<Vec<u8>> {
         Vec::new()
+    }
+
+    fn load_allowed_list(&mut self, _allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_allowed_list(&self) -> &std::collections::HashSet<String> {
+        &self.allowed_list
     }
 }
 

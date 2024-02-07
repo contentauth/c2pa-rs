@@ -455,15 +455,13 @@ where
     }
 }
 
-/// Return a multihash (Sha256) of array of bytes
+/// Return a Sha256 hash of array of bytes
 #[allow(dead_code)]
-pub fn hash256(data: &[u8]) -> String {
+pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
     let mh = Sha2_256::digest(data);
     let digest = mh.digest();
-    let wrapped: Multihash = wrap(Code::Sha2_256, digest);
 
-    // Return Base-64 encoded hash.
-    encode(multibase::Base::Base64, wrapped.as_bytes())
+    digest.to_vec()
 }
 
 /// Verify muiltihash against input data.  True if match,

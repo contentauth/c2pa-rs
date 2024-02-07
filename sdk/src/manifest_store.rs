@@ -34,6 +34,8 @@ pub struct ManifestStoreOptions<'a> {
     pub anchors: Option<&'a [u8]>,
     /// Trust list private anchors
     pub private_anchors: Option<&'a [u8]>,
+    // Trusted end-entity certificates
+    pub allowed_list: Option<&'a [u8]>,
     /// Trust list validation configuration
     pub config: Option<&'a [u8]>,
     /// Optional data directory for resources
@@ -46,6 +48,7 @@ impl<'a> Default for ManifestStoreOptions<'a> {
             verify: true,
             anchors: None,
             private_anchors: None,
+            allowed_list: None,
             config: None,
             data_dir: None,
         }
@@ -282,11 +285,15 @@ impl ManifestStore {
             store.add_trust(anchors)?;
         }
         if let Some(private_anchors) = options.private_anchors {
-            store.add_trust(private_anchors)?;
+            store.add_private_trust_anchors(private_anchors)?;
         }
         if let Some(config) = options.config {
             store.add_trust_config(config)?;
         }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+        }
+
         match options.data_dir {
             Some(data_dir) => Ok(Self::from_store_with_resources(
                 &store,
@@ -309,11 +316,15 @@ impl ManifestStore {
             store.add_trust(anchors)?;
         }
         if let Some(private_anchors) = options.private_anchors {
-            store.add_trust(private_anchors)?;
+            store.add_private_trust_anchors(private_anchors)?;
         }
         if let Some(config) = options.config {
             store.add_trust_config(config)?;
         }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+        }
+
         // verify the store
         if options.verify {
             // verify store and claims
@@ -389,11 +400,15 @@ impl ManifestStore {
             store.add_trust(anchors)?;
         }
         if let Some(private_anchors) = options.private_anchors {
-            store.add_trust(private_anchors)?;
+            store.add_private_trust_anchors(private_anchors)?;
         }
         if let Some(config) = options.config {
             store.add_trust_config(config)?;
         }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+        }
+
         if options.verify {
             Store::verify_store_async(
                 &store,

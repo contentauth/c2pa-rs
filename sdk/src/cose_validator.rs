@@ -138,7 +138,7 @@ fn check_cert(
 
     // check for cert expiration
     if let Some(tst_info) = _tst_info_opt {
-        // was there a time stamp associtation with this signature, is verify against that time
+        // was there a time stamp association with this signature, is verify against that time
         let signing_time = gt_to_datetime(tst_info.gen_time.clone());
         if !signcert.validity().is_valid_at(
             x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())

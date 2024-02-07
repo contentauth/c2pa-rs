@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    collections::HashSet,
     io::{Cursor, Read},
     str::FromStr,
 };
@@ -26,7 +27,9 @@ use x509_parser::{
 use crate::{
     cose_validator::*,
     error::{Error, Result},
+    hash_utils::hash_sha256,
     trust_handler::{has_allowed_oid, load_eku_configuration, TrustHandlerConfig},
+    utils::base64,
     wasm::webcrypto_validator::async_validate,
     SigningAlg,
 };
@@ -45,6 +48,7 @@ fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
 pub(crate) struct WebTrustHandlerConfig {
     pub trust_anchors: Vec<Vec<u8>>,
     pub private_anchors: Vec<Vec<u8>>,
+    allowed_cert_set: HashSet<String>,
     config_store: Vec<u8>,
 }
 
@@ -83,6 +87,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         let mut th = WebTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
+            allowed_cert_set: HashSet::new(),
             config_store: Vec::new(),
         };
 
@@ -149,6 +154,39 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         anchors.append(&mut self.private_anchors.clone());
 
         anchors
+    }
+
+    // add allowed list entries
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()> {
+        let mut buffer = Vec::new();
+        allowed_list.read_to_end(&mut buffer)?;
+
+        if let Ok(cert_list) = load_trust_from_data(&buffer) {
+            for cert_der in &cert_list {
+                let cert_sha256 = hash_sha256(&cert_der);
+                let cert_hash_base64 = base64::encode(&cert_sha256);
+
+                self.allowed_cert_set.insert(cert_hash_base64);
+            }
+        }
+
+        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
+        let reader = Cursor::new(buffer);
+        let buf_reader = BufReader::new(reader);
+
+        for l in buf_reader.lines().flatten() {
+            // sanity check that that is is base64 encoded, only include if so
+            if base64::decode(&l).is_ok() {
+                self.allowed_cert_set.insert(l);
+            }
+        }
+
+        Ok(())
+    }
+
+    // set of allowed cert hashes
+    fn get_allowed_list(&self) -> &HashSet<String> {
+        &self.allowed_cert_set
     }
 }
 
@@ -263,6 +301,13 @@ async fn verify_data(
     data: Vec<u8>,
 ) -> Result<bool> {
     use x509_parser::prelude::*;
+
+    // check the cert against the allowed list first
+    let cert_sha256 = hash_sha256(cert_der);
+    let cert_hash_base64 = base64::encode(&cert_sha256);
+    if th.get_allowed_list().contains(&cert_hash_base64) {
+        return Ok(true);
+    }
 
     let (_, cert) =
         X509Certificate::from_der(cert_der.as_bytes()).map_err(|_e| Error::CoseCertUntrusted)?;
