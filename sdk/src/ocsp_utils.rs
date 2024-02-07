@@ -171,7 +171,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
                 let len = response
                     .header("Content-Length")
                     .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(2000);
+                    .unwrap_or(10000);
 
                 let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
 
@@ -255,7 +255,7 @@ pub(crate) fn check_ocsp_response(
                                     // no timestamp so check against current time
                                     // use instant to avoid wasm issues
                                     let now_f64 = instant::now() / 1000.0;
-                                    let now: i64 = now_f64.approx_as::<i64>().map_err(|_e| {
+                                    let now: i64 = now_f64.approx_as().map_err(|_e| {
                                         Error::BadParam("system time invalid".to_string())
                                     })?;
 
@@ -304,12 +304,9 @@ pub(crate) fn check_ocsp_response(
                                             // no timestamp so check against current time
                                             // use instant to avoid wasm issues
                                             let now_f64 = instant::now() / 1000.0;
-                                            let now: i64 =
-                                                now_f64.approx_as::<i64>().map_err(|_e| {
-                                                    Error::BadParam(
-                                                        "system time invalid".to_string(),
-                                                    )
-                                                })?;
+                                            let now: i64 = now_f64.approx_as().map_err(|_e| {
+                                                Error::BadParam("system time invalid".to_string())
+                                            })?;
 
                                             revoked_at > now
                                         };
