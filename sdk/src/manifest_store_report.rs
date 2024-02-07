@@ -102,7 +102,12 @@ impl ManifestStoreReport {
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
-        println!("{cert_str}");
+        println!("{cert_str}\n\n");
+
+        if let Some(ocsp_info) = store.get_ocsp_status() {
+            println!("{ocsp_info}");
+        }
+
         Ok(())
     }
 
