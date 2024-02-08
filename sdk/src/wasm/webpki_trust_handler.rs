@@ -13,7 +13,7 @@
 
 use std::{
     collections::HashSet,
-    io::{Cursor, Read},
+    io::{BufRead, BufReader, Cursor, Read},
     str::FromStr,
 };
 
@@ -295,6 +295,7 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
 }
 
 async fn verify_data(
+    th: &dyn TrustHandlerConfig,
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -303,7 +304,7 @@ async fn verify_data(
     use x509_parser::prelude::*;
 
     // check the cert against the allowed list first
-    let cert_sha256 = hash_sha256(cert_der);
+    let cert_sha256 = hash_sha256(&cert_der);
     let cert_hash_base64 = base64::encode(&cert_sha256);
     if th.get_allowed_list().contains(&cert_hash_base64) {
         return Ok(true);
@@ -432,7 +433,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     }
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
+async fn check_chain_order(th: &dyn TrustHandlerConfig, certs: &[Vec<u8>]) -> Result<()> {
     use x509_parser::prelude::*;
 
     let chain_length = certs.len();
@@ -450,7 +451,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
 
         let sig_alg = cert_signing_alg(&current_cert);
 
-        let result = verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await;
+        let result = verify_data(th, issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await;
 
         // keep going as long as it validate
         match result {
@@ -474,11 +475,11 @@ async fn on_trust_list(
 
     let mut full_chain: Vec<Vec<u8>> = Vec::new();
     full_chain.push(ee_der.to_vec());
-    let mut in_chain = certs.clone().to_vec();
+    let mut in_chain = certs.to_vec();
     full_chain.append(&mut in_chain);
 
     // make sure chain is in the correct order and valid
-    check_chain_order(&full_chain).await?;
+    check_chain_order(th, &full_chain).await?;
 
     // build anchors and check against trust anchors,
     let mut anchors: Vec<X509Certificate> = Vec::new();
@@ -509,7 +510,7 @@ async fn on_trust_list(
 
             if chain_cert.issuer() == anchor_cert.subject() {
                 let result =
-                    verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
+                    verify_data(th, anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
 
                 match result {
                     Ok(b) => {
