@@ -174,9 +174,17 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         let reader = Cursor::new(buffer);
         let buf_reader = BufReader::new(reader);
 
+        let mut inside_cert_block = false;
         for l in buf_reader.lines().flatten() {
-            // sanity check that that is is base64 encoded, only include if so
-            if base64::decode(&l).is_ok() {
+            if l.contains("-----BEGIN") {
+                inside_cert_block =  true;
+            }
+            if l.contains("-----END") {
+                inside_cert_block = false;
+            }
+
+            // sanity check that that is is base64 encoded and outside of certificate block
+            if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
                 self.allowed_cert_set.insert(l);
             }
         }
