@@ -11,6 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// TODO: Remove this after we finish the PDF write feature.
+#![allow(dead_code)]
+
 use std::io::{Read, Write};
 
 use lopdf::{
