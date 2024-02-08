@@ -251,6 +251,10 @@ impl MakeTestImages {
         println!("Creating {dst_path:?}");
 
         let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
+        // let software_agent = json!({
+        //     "name": "Make Test Images",
+        //     "version": env!("CARGO_PKG_VERSION")
+        // });
 
         let name = dst_path
             .file_name()
@@ -349,10 +353,6 @@ impl MakeTestImages {
                         "action": "c2pa.created",
                         "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                         "softwareAgent": software_agent,
-                        // "softwareAgent": {
-                        //     "name": "Make Test Images",
-                        //     "version": env!("CARGO_PKG_VERSION")
-                        // },
                         "parameters": {
                           "name": "gradient"
                         }
@@ -588,7 +588,7 @@ impl MakeTestImages {
         let src = recipe.parent.as_deref().unwrap_or_default();
         let src_path = &self.make_path(src);
         let dst_path = self.make_path(recipe.output.as_str());
-        println!("Creating OGP {dst_path:?}");
+        println!("Creating {dst_path:?}");
 
         let jumbf = jumbf_io::load_jumbf_from_file(&PathBuf::from(src_path))
             .context(format!("loading OGP {src_path:?}"))?;
@@ -611,7 +611,7 @@ impl MakeTestImages {
         let op = recipe.op.as_str();
         let src = recipe.parent.as_deref().unwrap_or_default();
         let dst_path = self.make_path(recipe.output.as_str());
-        println!("Creating Error op={op} {dst_path:?}");
+        println!("Creating {dst_path:?}");
 
         let (search_bytes, replace_bytes) = match op {
             // modify the XMP (change xmp magic id value) - this should cause a data hash mismatch (OTGP)

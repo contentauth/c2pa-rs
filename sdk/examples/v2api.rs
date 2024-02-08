@@ -67,8 +67,11 @@ fn main() -> Result<()> {
 
     let json = get_manifest_def(title, format);
 
-    let mut builder = ManifestStoreBuilder::from_json(&json)?;
-    builder.add_ingredient(PARENT_JSON, format, &mut source)?;
+    let mut builder = ManifestStoreBuilder::new();
+    builder
+        //.with_options({{ "validation": true}})
+        .with_json(&json)?
+        .add_ingredient(PARENT_JSON, format, &mut source)?;
 
     // add a manifest thumbnail ( just reuse the image for now )
     source.rewind()?;
