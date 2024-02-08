@@ -22,6 +22,25 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
     let folder1 = folder1.as_ref();
     let folder2 = folder2.as_ref();
 
+    // handle the case we have files instead of folders
+    if folder1.is_file() && folder2.is_file() {
+        let issues = compare_image_manifests(folder1, folder2)?;
+        if !issues.is_empty() {
+            eprintln!("Failed {:?}", folder1);
+            for issue in issues {
+                eprintln!("  {}", issue);
+            }
+        } else {
+            println!("Passed {:?}", folder1);
+        }
+        return Ok(());
+    } else if !(folder1.is_dir() && folder2.is_dir()) {
+        eprintln!("must be two folders or two files");
+        return Err(Error::BadParam(
+            "must be two folders or two files".to_string(),
+        ));
+    }
+
     for entry in fs::read_dir(folder1)? {
         let entry = entry?;
         let path = entry.path();
@@ -35,8 +54,9 @@ pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -
                 issues.extend(result);
             } else {
                 issues.push(format!(
-                    "File {} does not exist in folder2",
-                    relative_path.display()
+                    "File {} does not exist in {}",
+                    relative_path.display(),
+                    folder2.display()
                 ));
             }
             if !issues.is_empty() {

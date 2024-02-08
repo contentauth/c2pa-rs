@@ -73,7 +73,7 @@ pub struct Config {
     /// A list of recipes for test files
     pub recipes: Vec<Recipe>,
     /// A folder to compare the output to
-    pub compare_folder: Option<String>,
+    pub compare_folders: Option<[String; 2]>,
 }
 
 impl Config {
@@ -99,7 +99,7 @@ impl Default for Config {
             default_ext: "jpg".to_owned(),
             author: None,
             recipes: Vec::new(),
-            compare_folder: Some("../make_test_images/json_manifests".to_owned()),
+            compare_folders: None,
         }
     }
 }
@@ -691,8 +691,8 @@ impl MakeTestImages {
             }
         }
         //println!("Comparing to {:#?}", self.config.compare_folder);
-        if let Some(compare_folder) = &self.config.compare_folder {
-            compare_folders(compare_folder, &self.output_dir)?;
+        if let Some(folders) = &self.config.compare_folders {
+            compare_folders(&folders[0], &folders[1])?;
         }
         Ok(())
     }
