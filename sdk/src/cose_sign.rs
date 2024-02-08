@@ -50,27 +50,40 @@ use crate::{
 ///    will respond with an error.)
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
 ///    [`Error::CoseSignature`] if unable to validate.
+#[async_generic(async_signature(
+    claim_bytes: &[u8],
+    signer: &dyn AsyncSigner,
+    box_size: usize
+))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
-    // Generate and verify a CoseSign1 representation of the data.
-    cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
-        // Sanity check: Ensure that this signature is valid.
-        let mut cose_log = OneShotStatusTracker::new();
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size).await
+    };
 
-        match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
-            Ok(r) => {
-                if !r.validated {
-                    Err(Error::CoseSignature)
-                } else {
-                    Ok(sig)
+    match signed_bytes {
+        Ok(signed_bytes) => {
+            // Sanity check: Ensure that this signature is valid.
+            let mut cose_log = OneShotStatusTracker::new();
+
+            match verify_cose(&signed_bytes, claim_bytes, b"", false, &mut cose_log) {
+                Ok(r) => {
+                    if !r.validated {
+                        Err(Error::CoseSignature)
+                    } else {
+                        Ok(signed_bytes)
+                    }
                 }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(err),
         }
-    })
+        Err(err) => Err(err),
+    }
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
@@ -305,6 +318,28 @@ mod tests {
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+
+        assert_eq!(cose_sign1.len(), box_size);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[actix::test]
+    async fn test_sign_claim_async() {
+        use crate::{
+            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
+        };
+
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let signer = AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let box_size = signer.reserve_size();
+
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)
+            .await
+            .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }

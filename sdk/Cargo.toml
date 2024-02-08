@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.28.4"
+version = "0.28.5"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -27,6 +27,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 add_thumbnails = ["image"]
+fetch_ocsp_response = []
+psxxx_ocsp_stapling_experimental = []
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
@@ -87,6 +89,9 @@ multihash = "0.11.4"
 mp4 = "0.13.0"
 png_pong = "0.8.2"
 range-set = "0.0.9"
+rasn-ocsp = "0.12.4"
+rasn-pkix = "0.12.4"
+rasn = "0.12.4"
 ring = "0.16.20"
 riff = "1.0.1"
 schemars = { version = "0.8.13", optional = true }
