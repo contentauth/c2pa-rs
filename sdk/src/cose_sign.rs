@@ -25,8 +25,6 @@ use coset::{
 
 use crate::{
     claim::Claim,
-    cose_validator::verify_cose,
-    status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
@@ -56,33 +54,11 @@ use crate::{
     box_size: usize
 ))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
-    // Must be a valid claim.
-    let label = "dummy_label";
-    let _claim = Claim::from_data(label, claim_bytes)?;
-
-    let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size)
+    let claim: Claim = serde_cbor::from_slice(claim_bytes).map_err(|_err| Error::ClaimDecoding)?;
+    if _sync {
+        claim.sign(signer, box_size)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size).await
-    };
-
-    match signed_bytes {
-        Ok(signed_bytes) => {
-            // Sanity check: Ensure that this signature is valid.
-            let mut cose_log = OneShotStatusTracker::new();
-
-            match verify_cose(&signed_bytes, claim_bytes, b"", false, &mut cose_log) {
-                Ok(r) => {
-                    if !r.validated {
-                        Err(Error::CoseSignature)
-                    } else {
-                        Ok(signed_bytes)
-                    }
-                }
-                Err(err) => Err(err),
-            }
-        }
-        Err(err) => Err(err),
+        claim.sign_async(signer, box_size).await
     }
 }
 
@@ -384,8 +360,16 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        assert!(cose_sign1.is_err());
+        #[cfg(not(feature = "no_cose_verify"))]
+        assert!(_cose_sign1.is_err());
+        #[cfg(feature = "cose_no_verify")]
+        {
+            let claim_bytes = _cose_sign1.unwrap();
+            let mut cose_log = OneShotStatusTracker::new();
+            let result = verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log);
+            assert!(result.is_err());
+        }
     }
 }
