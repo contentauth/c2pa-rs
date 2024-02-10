@@ -117,7 +117,6 @@ mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "openssl_sign")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl_sign")]
 mod openssl;
