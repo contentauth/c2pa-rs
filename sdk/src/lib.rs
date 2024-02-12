@@ -123,6 +123,8 @@ mod openssl;
 
 mod signer;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
+mod callback_signer;
+pub use callback_signer::{create_callback_signer, SignerCallback};
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;

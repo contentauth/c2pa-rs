@@ -87,6 +87,7 @@ memchr = "2.7.1"
 multibase = "0.9.0"
 multihash = "0.11.4"
 mp4 = "0.13.0"
+pem = "3.0.2"
 png_pong = "0.8.2"
 range-set = "0.0.9"
 rasn-ocsp = "0.12.4"
@@ -143,6 +144,8 @@ web-sys = { version = "0.3.58", features = [
 [dev-dependencies]
 anyhow = "1.0.40"
 mockall = "0.11.2"
+
+
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
