@@ -20,8 +20,8 @@ use std::{
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 use id3::{frame::EncapsulatedObject, *};
+use memchr::memmem;
 use tempfile::Builder;
-use twoway::find_bytes;
 
 use crate::{
     asset_io::{
@@ -108,7 +108,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
             let mut tag_bytes = vec![0u8; header.get_size() as usize];
             input_stream.read_exact(tag_bytes.as_mut_slice()).ok()?;
 
-            let pos = find_bytes(&tag_bytes, &manifests[0])?;
+            let pos = memmem::find(&tag_bytes, &manifests[0])?;
 
             return Some((pos as u64, manifests[0].len() as u32));
         }

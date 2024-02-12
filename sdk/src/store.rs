@@ -33,7 +33,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
-    cose_validator::verify_cose,
+    cose_validator::{check_ocsp_status, verify_cose},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -378,12 +378,43 @@ impl Store {
     }
 
     /// Return certificate chain for the provenance claim
-    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+    pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
         match claim.get_cert_chain() {
             Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Return OCSP info if available
+    // Currently only called from manifest_store behind a feature flag but this is allowable
+    // anywhere so allow dead code here for future uses to compile
+    #[allow(dead_code)]
+    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+        let claim = self
+            .provenance_claim()
+            .ok_or(Error::ProvenanceMissing)
+            .ok()?;
+
+        let sig = claim.signature_val();
+        let data = claim.data().ok()?;
+        let mut validation_log = OneShotStatusTracker::new();
+
+        if let Ok(info) = check_ocsp_status(sig, &data, &mut validation_log) {
+            if let Some(revoked_at) = &info.revoked_at {
+                Some(format!(
+                    "Certificate Status: Revoked, revoked at: {}",
+                    revoked_at
+                ))
+            } else {
+                Some(format!(
+                    "Certificate Status: Good, next update: {}",
+                    info.next_update
+                ))
+            }
+        } else {
+            None
         }
     }
 
@@ -2997,9 +3028,9 @@ pub mod tests {
 
     use std::io::Write;
 
+    use memchr::memmem;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
-    use twoway::find_bytes;
 
     use super::*;
     use crate::{
@@ -3322,7 +3353,7 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
+        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
     }
 
     #[actix::test]
@@ -3503,6 +3534,154 @@ pub mod tests {
         }
     }
 
+    /*  reenable this test once we place for large test files
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_arw_jumbf_generation() {
+            let ap = fixture_path("sample1.arw");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.arw");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_nef_jumbf_generation() {
+            let ap = fixture_path("sample1.nef");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.nef");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+    */
     #[test]
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
@@ -4157,23 +4336,6 @@ pub mod tests {
             Some(validation_status::CLAIM_MISSING)
         );
     }
-
-    /* enable when we enable OCSP validation
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_ocsp() {
-        let ap = fixture_path("ocsp_test.png");
-        let mut report = DetailedStatusTracker::new();
-        let _r = Store::load_from_asset(&ap, true, &mut report);
-
-        println!(
-            "Error report for {}: {:?}",
-            ap.display(),
-            report.get_log()
-        );
-        assert!(report.get_log().is_empty());
-    }
-    */
 
     #[test]
     fn test_display() {

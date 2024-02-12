@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.28.4"
+version = "0.28.5"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -27,12 +27,14 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 add_thumbnails = ["image"]
+fetch_ocsp_response = []
+psxxx_ocsp_stapling_experimental = []
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
 xmp_write = ["xmp_toolkit"]
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = ["file_io"]
-openssl_sign = ["openssl", "openssl-sys"]
+openssl_sign = ["openssl"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
 
@@ -77,15 +79,19 @@ fast-xml = "0.23.1"
 hex = "0.4.3"
 id3 = "1.7.0"
 img-parts = "0.3.0"
-jfifdump = "0.4.0"
+jfifdump = "0.5.1"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
+memchr = "2.7.1"
 multibase = "0.9.0"
 multihash = "0.11.4"
 mp4 = "0.13.0"
 png_pong = "0.8.2"
 range-set = "0.0.9"
+rasn-ocsp = "0.12.4"
+rasn-pkix = "0.12.4"
+rasn = "0.12.4"
 ring = "0.16.20"
 riff = "1.0.1"
 schemars = { version = "0.8.13", optional = true }
@@ -99,7 +105,6 @@ sha2 = "0.10.2"
 tempfile = "3.1.0"
 thiserror = "1.0.40"
 treeline = "0.1.0"
-twoway = "0.2.2"
 url = "2.2.2"
 uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
 x509-parser = "0.15.0"
@@ -109,8 +114,7 @@ x509-certificate = "0.19.0"
 ureq = "2.4.0"
 image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"], optional = true }
 instant = "0.1.12"
-openssl = { version = "0.10.48", features = ["vendored"], optional = true }
-openssl-sys = { version = "=0.9.92", optional = true }
+openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 xmp_toolkit = { version = "1.6", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
