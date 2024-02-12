@@ -1,5 +1,20 @@
 ## V2 API Notes
 
+### Goals
+Provide a consistent flexible well tested API focusing on core functionality
+
+Move toward a JSON + binary resources model that ports well to multiple languages
+Eliminate multiple variations of functions for file/memory/stream, sync/async & etc
+Have one stream based version of each function that works sync and async.
+Design APIs keeping in mind support for multiple language bindings.
+Enable sign only/verify only and no openssl configuration
+Support Box Hash and Data Hashed signing models
+Enable builds for cameras and other embedded environments
+Provide a consistent model for setting runtime options
+Write unit tests, integration tests and documentation for all the v2 APIs.
+Keep v1 to v2 porting as simple as possible
+
+
 ### Resource References
 A resource reference in the API is associated with a HashedUri as a superset.
 The c2pa spec refers to both a hashed-uri-map and a hashed-ext-uri-map 
@@ -27,10 +42,11 @@ lack of a scheme will be interpreted as a file:/// reference when file_io is ena
 ### Source asset vs Parent asset
 The source asset isn't always the parent asset:
 The source asset is the asset that we will hash and sign. It can the output from an editing application that has not preserved the manifest store from the parent. In that case the application should have extracted a parent ingredient from the parent asset and added that to the manifest definition. 
-So there's an parent asset with a manifest store
-A parent ingredient generated from that parent asset (hashed and validated)
-The source, which is a generated rendition after edits from the parent asset
-The signed output which will include the source asset, and the new manifest store with parent ingredient.
+
+Parent asset: with a manifest store
+Parent ingredient: generated from that parent asset (hashed and validated)
+Source asset: may be a generated rendition after edits from the parent asset (manifest?)
+Signed output which will include the source asset, and the new manifest store with parent ingredient.
 
 If there is no parent ingredient defined, and the source has a manifest store, the sdk will generate a parent ingredient from the parent
 
