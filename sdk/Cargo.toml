@@ -80,7 +80,7 @@ fast-xml = "0.23.1"
 hex = "0.4.3"
 id3 = "1.7.0"
 img-parts = "0.3.0"
-jfifdump = "0.4.0"
+jfifdump = "0.5.1"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
