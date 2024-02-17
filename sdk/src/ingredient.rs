@@ -22,6 +22,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::utils::mime::extension_to_mime;
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
@@ -498,8 +500,8 @@ impl Ingredient {
             .unwrap_or_else(|| "".into())
             .to_lowercase();
 
-        let format = crate::utils::mime::extension_to_mime(&extension)
-            .unwrap_or("application/binary")
+        let format = extension_to_mime(&extension)
+            .unwrap_or("application/octet-stream")
             .to_owned();
         (title, extension, format)
     }
