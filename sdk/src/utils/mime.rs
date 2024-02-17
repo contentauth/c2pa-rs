@@ -42,7 +42,19 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
     })
 }
 
+/// Convert a format to a MIME type
+/// formats can be passed in as extensions, e.g. "jpg" or "jpeg"
+/// or as MIME types, e.g. "image/jpeg"
+pub fn format_to_mime(format: &str) -> String {
+    match extension_to_mime(format) {
+        Some(mime) => mime,
+        None => format,
+    }
+    .to_string()
+}
+
 /// Converts a format to a file extension
+#[cfg(feature = "file_io")]
 pub fn format_to_extension(format: &str) -> Option<&'static str> {
     Some(match format {
         "jpg" | "jpeg" | "image/jpeg" => "jpg",
