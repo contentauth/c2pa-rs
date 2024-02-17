@@ -15,6 +15,7 @@ use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+use async_generic::async_generic;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,11 @@ impl ManifestStore {
     }
 
     /// Generate a Store from a format string and stream.
+    #[async_generic(async_signature(
+        format: &str,
+        stream: &mut dyn CAIRead,
+        verify: bool,
+    ))]
     pub fn from_stream(
         format: &str,
         stream: &mut dyn CAIRead,
@@ -184,11 +190,20 @@ impl ManifestStore {
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
         if verify {
             // verify store and claims
-            Store::verify_store(
-                &store,
-                &mut ClaimAssetData::Stream(stream, format),
-                &mut validation_log,
-            )?;
+            if _sync {
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::Stream(stream, format),
+                    &mut validation_log,
+                )?;
+            } else {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::Stream(stream, format),
+                    &mut validation_log,
+                )
+                .await?;
+            }
         }
         Ok(Self::from_store(&store, &validation_log))
     }
