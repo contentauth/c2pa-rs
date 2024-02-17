@@ -19,11 +19,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use c2pa::{
-    assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
-    create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
-    ManifestStore, ManifestStoreBuilder, Signer, SigningAlg,
-};
+// use c2pa::{
+//     assertions::{c2pa_action, Action, Actions, CreativeWork, SchemaDotOrgPerson},
+//     create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
+//     ManifestStore, Builder, C2pa, Signer, SigningAlg,
+// };
+use c2pa::{create_signer, jumbf_io, Builder, C2pa, Error, Signer, SigningAlg};
 use memchr::memmem;
 use nom::AsBytes;
 use serde::Deserialize;
@@ -136,28 +137,29 @@ fn extension_to_mime(extension: &str) -> Option<&'static str> {
 }
 
 /// Generate a blake3 hash over the image in path using a fixed buffer
-fn blake3_hash(path: &Path) -> Result<String> {
-    use std::{fs::File, io::Read};
-    // Hash an input incrementally.
-    let mut hasher = blake3::Hasher::new();
-    const BUFFER_LEN: usize = 1024 * 1024;
-    let mut buffer = [0u8; BUFFER_LEN];
-    let mut file = File::open(path)?;
-    loop {
-        let read_count = file.read(&mut buffer)?;
-        hasher.update(&buffer[..read_count]);
-        if read_count != BUFFER_LEN {
-            break;
-        }
-    }
-    let hash = hasher.finalize();
-    Ok(hash.to_hex().as_str().to_owned())
-}
+// fn blake3_hash(path: &Path) -> Result<String> {
+//     use std::{fs::File, io::Read};
+//     // Hash an input incrementally.
+//     let mut hasher = blake3::Hasher::new();
+//     const BUFFER_LEN: usize = 1024 * 1024;
+//     let mut buffer = [0u8; BUFFER_LEN];
+//     let mut file = File::open(path)?;
+//     loop {
+//         let read_count = file.read(&mut buffer)?;
+//         hasher.update(&buffer[..read_count]);
+//         if read_count != BUFFER_LEN {
+//             break;
+//         }
+//     }
+//     let hash = hasher.finalize();
+//     Ok(hash.to_hex().as_str().to_owned())
+// }
 
 /// Tool for building test case images for C2PA
 pub struct MakeTestImages {
     config: Config,
     output_dir: PathBuf,
+    c2pa: C2pa,
 }
 
 impl MakeTestImages {
@@ -166,6 +168,7 @@ impl MakeTestImages {
         Self {
             config,
             output_dir: PathBuf::from(output),
+            c2pa: C2pa::new(),
         }
     }
 
@@ -216,7 +219,7 @@ impl MakeTestImages {
     }
 
     fn add_ingredient_from_file(
-        builder: &mut ManifestStoreBuilder,
+        builder: &mut Builder,
         path: &Path,
         relationship: &str,
     ) -> Result<String> {
@@ -281,7 +284,8 @@ impl MakeTestImages {
         })
         .to_string();
 
-        let mut builder = ManifestStoreBuilder::from_json(&manifest_def)?;
+        let mut builder = self.c2pa.builder();
+        builder.with_json(&manifest_def)?;
 
         // keep track of ingredient instances so we don't duplicate them
         let mut ingredient_table = HashMap::new();
@@ -435,153 +439,153 @@ impl MakeTestImages {
     }
 
     /// Creates a test image with optional source and ingredients, out to dest
-    #[allow(dead_code)]
-    fn make_image_v1(&self, recipe: &Recipe) -> Result<PathBuf> {
-        let src = recipe.parent.as_deref();
-        let dst_path = self.make_path(&recipe.output);
-        println!("Creating {dst_path:?}");
-        // keep track of all actions here
-        let mut actions = Actions::new();
+    // #[allow(dead_code)]
+    // fn make_image_v1(&self, recipe: &Recipe) -> Result<PathBuf> {
+    //     let src = recipe.parent.as_deref();
+    //     let dst_path = self.make_path(&recipe.output);
+    //     println!("Creating {dst_path:?}");
+    //     // keep track of all actions here
+    //     let mut actions = Actions::new();
 
-        struct ImageOptions {}
-        impl ImageOptions {
-            fn new() -> Self {
-                ImageOptions {}
-            }
-        }
+    //     struct ImageOptions {}
+    //     impl ImageOptions {
+    //         fn new() -> Self {
+    //             ImageOptions {}
+    //         }
+    //     }
 
-        impl IngredientOptions for ImageOptions {
-            fn hash(&self, path: &Path) -> Option<String> {
-                blake3_hash(path).ok()
-            }
-        }
+    //     impl IngredientOptions for ImageOptions {
+    //         fn hash(&self, path: &Path) -> Option<String> {
+    //             blake3_hash(path).ok()
+    //         }
+    //     }
 
-        let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
+    //     let generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    //     let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
 
-        let mut manifest = Manifest::new(generator);
-        manifest.set_vendor("contentauth".to_owned()); // needed for generating error cases below
+    //     let mut manifest = Manifest::new(generator);
+    //     manifest.set_vendor("contentauth".to_owned()); // needed for generating error cases below
 
-        let mut claim_generator_info = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
-        claim_generator_info.set_version(env!("CARGO_PKG_VERSION"));
-        manifest.claim_generator_info = Some([claim_generator_info].to_vec());
+    //     let mut claim_generator_info = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+    //     claim_generator_info.set_version(env!("CARGO_PKG_VERSION"));
+    //     manifest.claim_generator_info = Some([claim_generator_info].to_vec());
 
-        if let Some(user) = self.config.author.as_ref() {
-            let creative_work = CreativeWork::new()
-                .add_author(SchemaDotOrgPerson::new().set_name(user.to_owned())?)?;
+    //     if let Some(user) = self.config.author.as_ref() {
+    //         let creative_work = CreativeWork::new()
+    //             .add_author(SchemaDotOrgPerson::new().set_name(user.to_owned())?)?;
 
-            manifest.add_assertion(&creative_work)?;
-        }
+    //         manifest.add_assertion(&creative_work)?;
+    //     }
 
-        // keep track of ingredient instances so we don't duplicate them
-        let mut ingredient_table = HashMap::new();
+    //     // keep track of ingredient instances so we don't duplicate them
+    //     let mut ingredient_table = HashMap::new();
 
-        // process parent first
-        let mut img = match src {
-            Some(src) => {
-                let src_path = &self.make_path(src);
+    //     // process parent first
+    //     let mut img = match src {
+    //         Some(src) => {
+    //             let src_path = &self.make_path(src);
 
-                let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
+    //             let parent = Ingredient::from_file_with_options(src_path, &ImageOptions::new())?;
 
-                let instance_id = parent.instance_id().to_string();
+    //             let instance_id = parent.instance_id().to_string();
 
-                actions = actions.add_action(
-                    Action::new(c2pa_action::OPENED).set_instance_id(parent.instance_id()),
-                );
-                manifest.set_parent(parent)?;
+    //             actions = actions.add_action(
+    //                 Action::new(c2pa_action::OPENED).set_instance_id(parent.instance_id()),
+    //             );
+    //             manifest.set_parent(parent)?;
 
-                // keep track of all ingredients we add via the instance Id
-                ingredient_table.insert(src, instance_id);
+    //             // keep track of all ingredients we add via the instance Id
+    //             ingredient_table.insert(src, instance_id);
 
-                // load the image for editing
-                let mut img =
-                    image::open(src_path).context(format!("opening parent {src_path:?}"))?;
+    //             // load the image for editing
+    //             let mut img =
+    //                 image::open(src_path).context(format!("opening parent {src_path:?}"))?;
 
-                // adjust brightness to show we made an edit
-                img = img.brighten(30);
-                actions = actions.add_action(
-                    Action::new(c2pa_action::COLOR_ADJUSTMENTS)
-                        .set_parameter("name".to_owned(), "brightnesscontrast")?,
-                );
-                img
-            }
-            None => {
-                // create a default image with a gradient
-                let mut img = image::DynamicImage::new_rgb8(IMAGE_WIDTH, IMAGE_HEIGHT);
-                if let Some(img_ref) = img.as_mut_rgb8() {
-                    //  fill image with a gradient
-                    for (x, y, pixel) in img_ref.enumerate_pixels_mut() {
-                        let r = (0.3 * x as f32) as u8;
-                        let b = (0.3 * y as f32) as u8;
-                        *pixel = image::Rgb([r, 100, b]);
-                    }
-                }
-                actions = actions.add_action(
-                    Action::new(c2pa_action::CREATED)
-                        .set_source_type(
-                            "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
-                        )
-                        .set_software_agent(software_agent.as_str())
-                        .set_parameter("name".to_owned(), "gradient")?,
-                );
-                img
-            }
-        };
+    //             // adjust brightness to show we made an edit
+    //             img = img.brighten(30);
+    //             actions = actions.add_action(
+    //                 Action::new(c2pa_action::COLOR_ADJUSTMENTS)
+    //                     .set_parameter("name".to_owned(), "brightnesscontrast")?,
+    //             );
+    //             img
+    //         }
+    //         None => {
+    //             // create a default image with a gradient
+    //             let mut img = image::DynamicImage::new_rgb8(IMAGE_WIDTH, IMAGE_HEIGHT);
+    //             if let Some(img_ref) = img.as_mut_rgb8() {
+    //                 //  fill image with a gradient
+    //                 for (x, y, pixel) in img_ref.enumerate_pixels_mut() {
+    //                     let r = (0.3 * x as f32) as u8;
+    //                     let b = (0.3 * y as f32) as u8;
+    //                     *pixel = image::Rgb([r, 100, b]);
+    //                 }
+    //             }
+    //             actions = actions.add_action(
+    //                 Action::new(c2pa_action::CREATED)
+    //                     .set_source_type(
+    //                         "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+    //                     )
+    //                     .set_software_agent(software_agent.as_str())
+    //                     .set_parameter("name".to_owned(), "gradient")?,
+    //             );
+    //             img
+    //         }
+    //     };
 
-        // then add all ingredients
-        if let Some(ing_vec) = &recipe.ingredients {
-            // scale ingredients to paste in top row of the image
-            let width = match ing_vec.len() as u32 {
-                0 | 1 => img.width() / 2,
-                _ => img.width() / ing_vec.len() as u32,
-            };
-            let height = img.height() / 2;
+    //     // then add all ingredients
+    //     if let Some(ing_vec) = &recipe.ingredients {
+    //         // scale ingredients to paste in top row of the image
+    //         let width = match ing_vec.len() as u32 {
+    //             0 | 1 => img.width() / 2,
+    //             _ => img.width() / ing_vec.len() as u32,
+    //         };
+    //         let height = img.height() / 2;
 
-            let mut x = 0;
-            for ing in ing_vec {
-                let ing_path = &self.make_path(ing);
+    //         let mut x = 0;
+    //         for ing in ing_vec {
+    //             let ing_path = &self.make_path(ing);
 
-                // get the bits of the ingredient, resize it and overlay it on the base image
-                let img_ingredient =
-                    image::open(ing_path).context(format!("opening ingredient {ing_path:?}"))?;
-                let img_small = img_ingredient.thumbnail(width, height);
-                image::imageops::overlay(&mut img, &img_small, x, 0);
+    //             // get the bits of the ingredient, resize it and overlay it on the base image
+    //             let img_ingredient =
+    //                 image::open(ing_path).context(format!("opening ingredient {ing_path:?}"))?;
+    //             let img_small = img_ingredient.thumbnail(width, height);
+    //             image::imageops::overlay(&mut img, &img_small, x, 0);
 
-                // if we have already created an ingredient, get the instanceId, otherwise create a new one
-                let instance_id = match ingredient_table.get(ing.as_str()) {
-                    Some(id) => id.to_owned(),
-                    None => {
-                        let ingredient =
-                            Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
-                        let instance_id = ingredient.instance_id().to_string();
-                        ingredient_table.insert(ing, instance_id.clone());
-                        manifest.add_ingredient(ingredient);
-                        instance_id
-                    }
-                };
+    //             // if we have already created an ingredient, get the instanceId, otherwise create a new one
+    //             let instance_id = match ingredient_table.get(ing.as_str()) {
+    //                 Some(id) => id.to_owned(),
+    //                 None => {
+    //                     let ingredient =
+    //                         Ingredient::from_file_with_options(ing_path, &ImageOptions::new())?;
+    //                     let instance_id = ingredient.instance_id().to_string();
+    //                     ingredient_table.insert(ing, instance_id.clone());
+    //                     manifest.add_ingredient(ingredient);
+    //                     instance_id
+    //                 }
+    //             };
 
-                actions = actions
-                    .add_action(Action::new(c2pa_action::PLACED).set_instance_id(instance_id));
+    //             actions = actions
+    //                 .add_action(Action::new(c2pa_action::PLACED).set_instance_id(instance_id));
 
-                x += width as i64;
-            }
-            // record what we did as an action (only need to record this once)
-            actions = actions.add_action(Action::new(c2pa_action::RESIZED));
-        }
+    //             x += width as i64;
+    //         }
+    //         // record what we did as an action (only need to record this once)
+    //         actions = actions.add_action(Action::new(c2pa_action::RESIZED));
+    //     }
 
-        // save the changes to the image as our target file
-        img.save(&dst_path)?;
+    //     // save the changes to the image as our target file
+    //     img.save(&dst_path)?;
 
-        // add all our actions as an assertion now.
-        manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
+    //     // add all our actions as an assertion now.
+    //     manifest.add_assertion(&actions)?; // extra get required here, since actions is an array
 
-        // now sign manifest and embed in target
-        let signer = self.config.get_signer()?;
+    //     // now sign manifest and embed in target
+    //     let signer = self.config.get_signer()?;
 
-        manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
+    //     manifest.embed(&dst_path, &dst_path, signer.as_ref())?;
 
-        Ok(dst_path)
-    }
+    //     Ok(dst_path)
+    // }
 
     /// makes an off the golden path image from an existing image with a claim
     fn make_ogp(&self, recipe: &Recipe) -> Result<PathBuf> {
@@ -681,8 +685,13 @@ impl MakeTestImages {
             };
 
             if recipe.op.as_str() != "copy" {
-                let manifest_store = ManifestStore::from_file(&dst_path)?;
-                let json = manifest_store.to_string();
+                let mut file = std::fs::File::open(&dst_path)?;
+                let format = dst_path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("jpg");
+                let reader = self.c2pa.read(format, &mut file)?;
+                let json = reader.json();
 
                 let json_path = json_dir
                     .join(dst_path.file_name().unwrap())

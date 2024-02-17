@@ -1,27 +1,28 @@
+// Copyright 2024 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+//! Example App showing how to use the new v2 API
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{
-    create_callback_signer, ManifestStore, ManifestStoreBuilder, SignerCallback, SigningAlg,
-};
+use c2pa::{create_callback_signer, Builder, C2pa, SignerCallback, SigningAlg};
 use serde_json::json;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::runtime::Runtime;
-
-const PARENT_JSON: &str = r#"
-{
-    "title": "Parent Test",
-    "format": "image/jpeg",
-    "relationship": "parentOf"
-}
-"#;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/es256.pub");
-#[cfg(feature = "openssl_sign")]
-const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/es256.pem");
+const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 
-fn get_manifest_def(title: &str, format: &str) -> String {
+fn manifest_def(title: &str, format: &str) -> String {
     json!({
         "title": title,
         "format": format,
@@ -32,7 +33,7 @@ fn get_manifest_def(title: &str, format: &str) -> String {
             }
         ],
         "thumbnail": {
-            "format": "image/jpeg",
+            "format": format,
             "identifier": "manifest_thumbnail.jpg"
         },
         "ingredients": [
@@ -51,7 +52,10 @@ fn get_manifest_def(title: &str, format: &str) -> String {
                         {
                             "action": "c2pa.edited",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                            "softwareAgent": "Adobe Firefly 0.1.0"
+                            "softwareAgent": {
+                                "name": "My AI Tool",
+                                "version": "0.1.0"
+                            }
                         }
                     ]
                 }
@@ -60,23 +64,39 @@ fn get_manifest_def(title: &str, format: &str) -> String {
     }).to_string()
 }
 
-//#[cfg(not(target_arch = "wasm32"))]
+/// This example demonstrates how to use the new v2 API to create a manifest store
+/// It uses only streaming apis, showing how to avoid file i/o
+/// This example uses the `ed25519` signing algorithm
 fn main() -> Result<()> {
-    let title = "CA.jpg";
+    let c2pa = C2pa::new();
+
+    let title = "v2_edited.jpg";
     let format = "image/jpeg";
+    let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let json = get_manifest_def(title, format);
+    let json = manifest_def(title, format);
 
-    let mut builder = ManifestStoreBuilder::new();
-    builder
-        //.with_options({{ "validation": true}})
-        .with_json(&json)?
-        .add_ingredient(PARENT_JSON, format, &mut source)?;
+    let mut builder = c2pa.builder();
+    builder.with_json(&json)?.add_ingredient(
+        json!({
+            "title": parent_name,
+            "relationship": "parentOf"
+        })
+        .to_string(),
+        format,
+        &mut source,
+    )?;
+
+    let thumb_uri = builder.thumbnail.as_ref().map(|t| t.identifier.clone());
 
     // add a manifest thumbnail ( just reuse the image for now )
-    source.rewind()?;
-    builder.add_resource("manifest_thumbnail.jpg", &mut source)?;
+    if let Some(uri) = thumb_uri {
+        if !uri.starts_with("self#jumbf") {
+            source.rewind()?;
+            builder.add_resource(&uri, &mut source)?;
+        }
+    }
 
     // write the manifest builder to a zipped stream
     let mut zipped = Cursor::new(Vec::new());
@@ -89,73 +109,25 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    //#[cfg(not(target_arch = "wasm32"))]
-    let mut dest = {
-        struct EdCallbackSigner {}
+    //let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
+    let ed_signer = Box::new(EdCallbackSigner {});
+    let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)?;
 
-        // impl c2pa::Signer for EdCallbackSigner {
-        //     fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-        //         use openssl::{error::ErrorStack, pkey::PKey};
-        //         fn openssl_ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-        //             let pkey = PKey::private_key_from_pem(pkey)?;
-        //             let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-        //             signer.sign_oneshot_to_vec(data)
-        //         }
-        //         openssl_ed_sign(data, PRIVATE_KEY).map_err(c2pa::Error::OpenSslError)
-        //     }
-        //     fn alg(&self) -> SigningAlg {
-        //         SigningAlg::Ed25519
-        //     }
-        //     fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
-        //         let mut pems = pem::parse_many(CERTS).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-        //         Ok(pems.drain(..).map(|p| p.into_contents()).collect())
-        //     }
-        //     fn reserve_size(&self) -> usize {
-        //         3000
-        //     }
-        // }
+    let mut builder = Builder::unzip(&mut zipped)?;
+    // sign the ManifestStoreBuilder and write it to the output stream
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(format, &mut source, &mut dest, signer.as_ref())?;
 
-        impl SignerCallback for EdCallbackSigner {
-            #[cfg(feature = "openssl")]
-            fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-                use openssl::{error::ErrorStack, pkey::PKey};
-                fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
-                    let pkey = PKey::private_key_from_pem(pkey)?;
-                    let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
-                    signer.sign_oneshot_to_vec(data)
-                }
+    // read and validate the signed manifest store
+    dest.rewind()?;
 
-                ed_sign(data, PRIVATE_KEY).map_err(|e| e.into())
-            }
-
-            #[cfg(not(feature = "openssl"))]
-            fn sign(&self, _data: &[u8]) -> c2pa::Result<Vec<u8>> {
-                Err(c2pa::Error::NotImplemented(
-                    "openssl not enabled".to_string(),
-                ))
-            }
-        }
-        //let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
-        let ed_signer = Box::new(EdCallbackSigner {});
-        let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)?;
-
-        let mut builder = ManifestStoreBuilder::unzip(&mut zipped)?;
-        // sign the ManifestStoreBuilder and write it to the output stream
-        let mut dest = Cursor::new(Vec::new());
-        builder.sign(format, &mut source, &mut dest, signer.as_ref())?;
-
-        // read and validate the signed manifest store
-        dest.rewind()?;
-        dest
-    };
-
-    let manifest_store = ManifestStore::from_stream(format, &mut dest, true)?;
+    let reader = c2pa.read(format, &mut dest)?;
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());
-    if let Some(manifest) = manifest_store.get_active() {
+    if let Some(manifest) = reader.active_manifest() {
         if let Some(thumbnail_ref) = manifest.thumbnail_ref() {
-            manifest_store.get_resource(&thumbnail_ref.identifier, &mut thumbnail)?;
+            reader.resource(&thumbnail_ref.identifier, &mut thumbnail)?;
             println!(
                 "wrote thumbnail {} of size {}",
                 thumbnail_ref.format,
@@ -164,52 +136,59 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("{}", manifest_store);
-    assert!(manifest_store.validation_status().is_none());
-    assert_eq!(manifest_store.get_active().unwrap().title().unwrap(), title);
+    println!("{}", reader.json());
+    assert!(reader.status().is_none());
+    assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
-    // an example of using asynchronous remote signing
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        println!("remote signing {}", format);
-        let mut dest = Cursor::new(Vec::new());
-        let remote_signer = Box::new(TestRemoteSigner {});
-        let _manifest_bytes = Runtime::new()?.block_on(async {
-            builder
-                .sign_remote(format, &mut source, &mut dest, &*remote_signer)
-                .await
-        })?;
-        dest.rewind()?;
-        let manifest_store = ManifestStore::from_stream(format, &mut dest, true)?;
-        println!("remote signed: {}", manifest_store);
-    }
     Ok(())
 }
 
-use c2pa::RemoteSigner;
-struct TestRemoteSigner {}
+struct EdCallbackSigner {}
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl RemoteSigner for TestRemoteSigner {
-    #[cfg(feature = "openssl")]
-    async fn sign_remote(&self, claim_bytes: &[u8]) -> c2pa::Result<Vec<u8>> {
-        // you could call a remote server here to sign the claim
-        // it would need to make calls like this
-        // we must return a Cose structured signature here.
-        use c2pa::create_signer;
-        let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
-        c2pa::cose_sign::sign_claim(claim_bytes, &*signer, self.reserve_size())
+impl SignerCallback for EdCallbackSigner {
+    fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+        ed_sign(data, PRIVATE_KEY)
     }
+}
 
-    #[cfg(not(feature = "openssl"))]
-    async fn sign_remote(&self, _claim_bytes: &[u8]) -> c2pa::Result<Vec<u8>> {
-        Err(c2pa::Error::NotImplemented(
-            "remote signing not implemented in wasm".to_string(),
-        ))
-    }
+fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
+    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer};
+    use pem::parse;
 
-    fn reserve_size(&self) -> usize {
-        10000
+    // Parse the PEM data to get the private key
+    let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+    // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
+    let key_bytes = &pem.contents()[16..];
+    let secret =
+        SecretKey::from_bytes(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+    let public = PublicKey::from(&secret);
+    // Create a keypair from the secret and public keys
+    let keypair = Keypair { secret, public };
+    // Sign the data
+    let signature: Signature = keypair.sign(data);
+
+    Ok(signature.to_bytes().to_vec())
+}
+
+// #[cfg(feature = "openssl")]
+// use openssl::{error::ErrorStack, pkey::PKey};
+// #[cfg(feature = "openssl")]
+// fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
+//     let pkey = PKey::private_key_from_pem(pkey)?;
+//     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
+//     signer.sign_oneshot_to_vec(data)
+// }
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
+    use super::*;
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_v2_api() -> Result<()> {
+        main()
     }
 }
