@@ -33,7 +33,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
-    cose_validator::{check_ocsp_status, verify_cose},
+    cose_validator::check_ocsp_status,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -427,21 +427,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
-        cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
-            // Sanity check: Ensure that this signature is valid.
-
-            let mut cose_log = OneShotStatusTracker::new();
-            match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
-                Ok(_) => Ok(sig),
-                Err(err) => {
-                    error!(
-                        "Signature that was just generated does not validate: {:#?}",
-                        err
-                    );
-                    Err(err)
-                }
-            }
-        })
+        cose_sign(signer, &claim_bytes, box_size)
     }
 
     /// Sign the claim asynchronously and return signature.
@@ -451,35 +437,11 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
+        use crate::cose_sign::cose_sign_async;
 
         let claim_bytes = claim.data()?;
 
-        match cose_sign_async(signer, &claim_bytes, box_size).await {
-            // Sanity check: Ensure that this signature is valid.
-            Ok(sig) => {
-                let mut cose_log = OneShotStatusTracker::new();
-                match verify_cose_async(
-                    sig.clone(),
-                    claim_bytes,
-                    b"".to_vec(),
-                    false,
-                    &mut cose_log,
-                )
-                .await
-                {
-                    Ok(_) => Ok(sig),
-                    Err(err) => {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        Err(err)
-                    }
-                }
-            }
-            Err(e) => Err(e),
-        }
+        cose_sign_async(signer, &claim_bytes, box_size).await
     }
 
     /// return the current provenance claim label if available
@@ -3355,10 +3317,13 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        // JUMBF generation should fail because the certificate won't validate.
         let r = store.save_to_asset(&ap, &signer, &op);
+        assert!(r.is_ok());
+        // Note this used to fail when we ran validation after signing, now we need to validate separately
+        let r = Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new());
         assert!(r.is_err());
-        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+        assert_eq!(r.err().unwrap().to_string(), "COSE signature invalid");
+        //assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
     }
 
     #[test]
