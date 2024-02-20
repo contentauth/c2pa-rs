@@ -15,8 +15,6 @@
 
 #![deny(missing_docs)]
 
-use std::collections::HashSet;
-
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -32,67 +30,9 @@ use crate::{
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
-    trust_handler::{
-        TrustHandlerConfig, DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, OCSP_SIGNING_OID,
-        TIMESTAMPING_OID,
-    },
+    trust_handler::TrustHandlerConfig,
     AsyncSigner, Error, Result, Signer, SigningAlg,
 };
-
-// Pass through trust for the case of claim signer usage below since it has known context
-// configured to all email protection, timestamping, ocsp signing and document signing
-struct TrustPassThrough {
-    allowed_list: HashSet<String>,
-}
-
-impl TrustHandlerConfig for TrustPassThrough {
-    fn new() -> Self
-    where
-        Self: Sized,
-    {
-        TrustPassThrough {
-            allowed_list: HashSet::new(),
-        }
-    }
-
-    fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
-        Ok(())
-    }
-
-    fn append_private_trust_data(
-        &mut self,
-        _private_anchors_data: &mut dyn std::io::Read,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn clear(&mut self) {}
-
-    fn load_configuration(&mut self, _config_data: &mut dyn std::io::Read) -> Result<()> {
-        Ok(())
-    }
-
-    fn get_auxillary_ekus(&self) -> Vec<asn1_rs::Oid> {
-        vec![
-            EMAIL_PROTECTION_OID.to_owned(),
-            TIMESTAMPING_OID.to_owned(),
-            OCSP_SIGNING_OID.to_owned(),
-            DOCUMENT_SIGNING_OID.to_owned(),
-        ]
-    }
-
-    fn get_anchors(&self) -> Vec<Vec<u8>> {
-        Vec::new()
-    }
-
-    fn load_allowed_list(&mut self, _allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
-        Ok(())
-    }
-
-    fn get_allowed_list(&self) -> &std::collections::HashSet<String> {
-        &self.allowed_list
-    }
-}
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
 /// claim structure.
@@ -111,29 +51,48 @@ impl TrustHandlerConfig for TrustPassThrough {
 ///    will respond with an error.)
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
 ///    [`Error::CoseSignature`] if unable to validate.
+#[async_generic(async_signature(
+    claim_bytes: &[u8],
+    signer: &dyn AsyncSigner,
+    box_size: usize
+))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
-    // Generate and verify a CoseSign1 representation of the data.
-    cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
-        // Sanity check: Ensure that this signature is valid.
-        let mut cose_log = OneShotStatusTracker::new();
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size).await
+    };
 
-        let passthrough_tb = TrustPassThrough::new();
+    match signed_bytes {
+        Ok(signed_bytes) => {
+            // Sanity check: Ensure that this signature is valid.
+            let mut cose_log = OneShotStatusTracker::new();
+            let passthrough_tb = crate::trust_handler::TrustPassThrough::new();
 
-        match verify_cose(&sig, claim_bytes, b"", true, &passthrough_tb, &mut cose_log) {
-            Ok(r) => {
-                if !r.validated {
-                    Err(Error::CoseSignature)
-                } else {
-                    Ok(sig)
+            match verify_cose(
+                &signed_bytes,
+                claim_bytes,
+                b"",
+                true,
+                &passthrough_tb,
+                &mut cose_log,
+            ) {
+                Ok(r) => {
+                    if !r.validated {
+                        Err(Error::CoseSignature)
+                    } else {
+                        Ok(signed_bytes)
+                    }
                 }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(err),
         }
-    })
+        Err(err) => Err(err),
+    }
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
@@ -368,6 +327,28 @@ mod tests {
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+
+        assert_eq!(cose_sign1.len(), box_size);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[actix::test]
+    async fn test_sign_claim_async() {
+        use crate::{
+            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
+        };
+
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let signer = AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let box_size = signer.reserve_size();
+
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)
+            .await
+            .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }

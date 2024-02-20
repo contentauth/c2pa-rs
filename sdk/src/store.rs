@@ -20,10 +20,6 @@ use std::{fs, path::Path};
 
 use log::error;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::openssl::OpenSSLTrustHandlerConfig;
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::WebTrustHandlerConfig;
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -37,7 +33,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
-    cose_validator::verify_cose,
+    cose_validator::{check_ocsp_status, verify_cose},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -125,9 +121,9 @@ impl Store {
             claims: Vec::new(),
             label: label.to_string(),
             #[cfg(not(target_arch = "wasm32"))]
-            trust_handler: Box::new(OpenSSLTrustHandlerConfig::new()),
+            trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
             #[cfg(target_arch = "wasm32")]
-            trust_handler: Box::new(WebTrustHandlerConfig::new()),
+            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
             provenance_path: None,
         }
     }
@@ -424,12 +420,43 @@ impl Store {
     }
 
     /// Return certificate chain for the provenance claim
-    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+    pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
         match claim.get_cert_chain() {
             Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Return OCSP info if available
+    // Currently only called from manifest_store behind a feature flag but this is allowable
+    // anywhere so allow dead code here for future uses to compile
+    #[allow(dead_code)]
+    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+        let claim = self
+            .provenance_claim()
+            .ok_or(Error::ProvenanceMissing)
+            .ok()?;
+
+        let sig = claim.signature_val();
+        let data = claim.data().ok()?;
+        let mut validation_log = OneShotStatusTracker::new();
+
+        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
+            if let Some(revoked_at) = &info.revoked_at {
+                Some(format!(
+                    "Certificate Status: Revoked, revoked at: {}",
+                    revoked_at
+                ))
+            } else {
+                Some(format!(
+                    "Certificate Status: Good, next update: {}",
+                    info.next_update
+                ))
+            }
+        } else {
+            None
         }
     }
 
@@ -4384,23 +4411,6 @@ pub mod tests {
             Some(validation_status::CLAIM_MISSING)
         );
     }
-
-    /* enable when we enable OCSP validation
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_ocsp() {
-        let ap = fixture_path("ocsp_test.png");
-        let mut report = DetailedStatusTracker::new();
-        let _r = Store::load_from_asset(&ap, true, &mut report);
-
-        println!(
-            "Error report for {}: {:?}",
-            ap.display(),
-            report.get_log()
-        );
-        assert!(report.get_log().is_empty());
-    }
-    */
 
     #[test]
     fn test_display() {

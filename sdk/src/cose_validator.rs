@@ -28,6 +28,7 @@ use x509_parser::{
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
+    ocsp_utils::{check_ocsp_response, OcspData},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
@@ -103,7 +104,6 @@ fn get_cose_sign1(
 }
 
 fn check_cert(
-    _alg: SigningAlg,
     ca_der_bytes: &[u8],
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
@@ -360,6 +360,20 @@ fn check_cert(
         return Err(Error::CoseInvalidCert);
     }
 
+    // unique ids are not allowed
+    if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
+        let log_item = log_item!(
+            "Cose_Sign1",
+            "certificate issuer/subject unique ids are not allowed",
+            "check_cert_alg"
+        )
+        .error(Error::CoseInvalidCert)
+        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+        validation_log.log_silent(log_item);
+
+        return Err(Error::CoseInvalidCert);
+    }
+
     let mut aki_good = false;
     let mut ski_good = false;
     let mut key_usage_good = false;
@@ -446,7 +460,7 @@ fn check_cert(
                     }
                     key_usage_good = true;
                 }
-                if ku.key_cert_sign() {
+                if ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
                 // todo: warn if not marked critical
@@ -637,6 +651,110 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
+// get OCSP der
+fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    if let Some(der) = sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("rVals".to_string()) {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        match der {
+            Value::Map(rvals_map) => {
+                // find OCSP value if available
+                rvals_map.iter().find_map(|x: &(Value, Value)| {
+                    if x.0 == Value::Text("ocspVals".to_string()) {
+                        x.1.as_array()
+                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                            .and_then(Value::as_bytes)
+                            .cloned()
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+pub(crate) fn check_ocsp_status(
+    cose_bytes: &[u8],
+    data: &[u8],
+    th: &dyn TrustHandlerConfig,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspData> {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
+    let mut result = Ok(OcspData::default());
+
+    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
+        // check stapled OCSP response, must have timestamp
+        if let Ok(tst_info) = &time_stamp_info {
+            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+
+            // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+            if let Ok(ocsp_data) =
+                check_ocsp_response(&ocsp_response_der, Some(signing_time), validation_log)
+            {
+                // if we get a valid response validate the certs
+                if ocsp_data.revoked_at.is_none() {
+                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                        check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                    }
+                }
+                result = Ok(ocsp_data);
+            }
+        }
+    } else {
+        // fetch OCSP response if feature "fetch_ocsp_response"
+        // only support fetching with the op
+        #[cfg(feature = "fetch_ocsp_response")]
+        {
+            // get the cert chain
+            let certs = get_sign_certs(&sign1)?;
+
+            if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                // fetch_ocsp_response(&certs) {
+                let ocsp_response_der = ocsp_der;
+
+                let signing_time = match &time_stamp_info {
+                    Ok(tst_info) => {
+                        let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+                        Some(signing_time)
+                    }
+                    Err(_) => None,
+                };
+
+                // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+                if let Ok(ocsp_data) =
+                    check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
+                {
+                    // if we get a valid response validate the certs
+                    if ocsp_data.revoked_at.is_none() {
+                        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                            check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                        }
+                    }
+                    result = Ok(ocsp_data);
+                }
+            }
+        }
+    }
+
+    result
+}
+
 // internal util function to dump the cert chain in PEM format
 #[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
@@ -742,7 +860,7 @@ fn check_trust(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn check_trust(
+async fn check_trust_async(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
@@ -844,11 +962,11 @@ pub(crate) async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(alg, der_bytes, th, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, der_bytes, th, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -879,11 +997,18 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
-        #[cfg(target_arch = "wasm32")]
-        check_trust(th, &certs[1..], der_bytes, validation_log).await?;
+        if cfg!(feature = "trust") {
+            #[cfg(target_arch = "wasm32")]
+            check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
+            #[cfg(not(target_arch = "wasm32"))]
+            check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        }
+
+        // check certificate revocation
+        check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
+
+        // todo: check TSA certs against trust list
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
@@ -952,12 +1077,13 @@ pub(crate) fn get_signing_info(
     #[cfg(target_arch = "wasm32")]
     {
         ValidationInfo {
-            issuer_org,
-            date,
             alg,
+            date,
+            cert_serial_number,
+            issuer_org,
             validated: false,
             cert_chain: Vec::new(),
-            cert_serial_number,
+            revocation_status: None,
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -977,6 +1103,7 @@ pub(crate) fn get_signing_info(
             validated: false,
             cert_chain: certs,
             cert_serial_number,
+            revocation_status: None,
         }
     }
 }
@@ -1025,14 +1152,16 @@ pub(crate) fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
     if !signature_only {
         // verify certs
-        match get_timestamp_info(&sign1, data) {
-            Ok(tst_info) => check_cert(alg, der_bytes, th, validation_log, Some(&tst_info))?,
+        match &time_stamp_info {
+            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, der_bytes, th, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -1061,7 +1190,14 @@ pub(crate) fn verify_cose(
         }
 
         // is the certificate trusted
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        if cfg!(feature = "trust") {
+            check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        }
+
+        // check certificate revocation
+        check_ocsp_status(cose_bytes, data, th, validation_log)?;
+
+        // todo: check TSA certs against trust list
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
@@ -1082,6 +1218,8 @@ pub(crate) fn verify_cose(
 
             // return cert chain
             result.cert_chain = dump_cert_chain(&certs, None)?;
+
+            result.revocation_status = Some(true);
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
@@ -1181,16 +1319,16 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        openssl::{temp_signer, OpenSSLTrustHandlerConfig},
-        status_tracker::DetailedStatusTracker,
-        SigningAlg,
+        openssl::temp_signer, signer::ConfigurableSigner, status_tracker::DetailedStatusTracker,
+        Signer, SigningAlg,
     };
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "trust")]
     fn test_expired_cert() {
         let mut validation_log = DetailedStatusTracker::new();
-        let th = OpenSSLTrustHandlerConfig::new();
+        let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut cert_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         cert_path.push("tests/fixtures/rsa-pss256_key-expired.pub");
@@ -1199,14 +1337,7 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(
-                SigningAlg::Ps256,
-                &der_bytes,
-                &th,
-                &mut validation_log,
-                None
-            )
-            .is_err());
+            assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_err());
 
             assert!(!validation_log.get_log().is_empty());
 
@@ -1275,11 +1406,10 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "trust")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
-        let th = OpenSSLTrustHandlerConfig::new();
-
-        use crate::openssl::temp_signer;
+        let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -1297,50 +1427,22 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(
-                SigningAlg::Es256,
-                &der_bytes,
-                &th,
-                &mut validation_log,
-                None
-            )
-            .is_ok());
+            assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(
-                SigningAlg::Es384,
-                &der_bytes,
-                &th,
-                &mut validation_log,
-                None
-            )
-            .is_ok());
+            assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(
-                SigningAlg::Es512,
-                &der_bytes,
-                &th,
-                &mut validation_log,
-                None
-            )
-            .is_ok());
+            assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(
-                SigningAlg::Ps256,
-                &der_bytes,
-                &th,
-                &mut validation_log,
-                None
-            )
-            .is_ok());
+            assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
     }
 
@@ -1365,5 +1467,69 @@ pub mod tests {
         let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
 
         assert_eq!(signing_time, None);
+    }
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    fn test_stapled_ocsp() {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let sign_cert = include_bytes!("../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
+        let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
+
+        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+            &sign_cert,
+            &pem_key,
+            SigningAlg::Ps256,
+            None,
+        )
+        .unwrap();
+
+        // create a test signer that supports stapling
+        struct OcspSigner {
+            pub signer: Box<dyn crate::Signer>,
+            pub ocsp_rsp: Vec<u8>,
+        }
+        impl crate::Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.signer.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.signer.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.signer.reserve_size()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        let ocsp_signer = OcspSigner {
+            signer: Box::new(signer),
+            ocsp_rsp: ocsp_rsp_data.to_vec(),
+        };
+
+        // sign and staple
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
+                .unwrap();
+
+        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
+
+        assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
     }
 }

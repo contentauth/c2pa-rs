@@ -84,6 +84,7 @@ pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
 }
 
 #[cfg(feature = "openssl_sign")]
+#[allow(dead_code)]
 pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     let mut certs: Vec<X509> = Vec::new();
     for cert_der in cert_ders {

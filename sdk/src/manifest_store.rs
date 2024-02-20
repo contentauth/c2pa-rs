@@ -281,17 +281,20 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
 
         let mut store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-        if let Some(anchors) = options.anchors {
-            store.add_trust(anchors)?;
-        }
-        if let Some(private_anchors) = options.private_anchors {
-            store.add_private_trust_anchors(private_anchors)?;
-        }
-        if let Some(config) = options.config {
-            store.add_trust_config(config)?;
-        }
-        if let Some(allowed_list) = options.allowed_list {
-            store.add_trust_allowed_list(allowed_list)?;
+
+        if cfg!(feature = "trust") {
+            if let Some(anchors) = options.anchors {
+                store.add_trust(anchors)?;
+            }
+            if let Some(private_anchors) = options.private_anchors {
+                store.add_private_trust_anchors(private_anchors)?;
+            }
+            if let Some(config) = options.config {
+                store.add_trust_config(config)?;
+            }
+            if let Some(allowed_list) = options.allowed_list {
+                store.add_trust_allowed_list(allowed_list)?;
+            }
         }
 
         match options.data_dir {
@@ -312,17 +315,20 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
         let mut store = Store::get_store_from_memory(format, image_bytes, &mut validation_log)?;
-        if let Some(anchors) = options.anchors {
-            store.add_trust(anchors)?;
-        }
-        if let Some(private_anchors) = options.private_anchors {
-            store.add_private_trust_anchors(private_anchors)?;
-        }
-        if let Some(config) = options.config {
-            store.add_trust_config(config)?;
-        }
-        if let Some(allowed_list) = options.allowed_list {
-            store.add_trust_allowed_list(allowed_list)?;
+
+        if cfg!(feature = "trust") {
+            if let Some(anchors) = options.anchors {
+                store.add_trust(anchors)?;
+            }
+            if let Some(private_anchors) = options.private_anchors {
+                store.add_private_trust_anchors(private_anchors)?;
+            }
+            if let Some(config) = options.config {
+                store.add_trust_config(config)?;
+            }
+            if let Some(allowed_list) = options.allowed_list {
+                store.add_trust_allowed_list(allowed_list)?;
+            }
         }
 
         // verify the store
@@ -396,17 +402,20 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
-        if let Some(anchors) = options.anchors {
-            store.add_trust(anchors)?;
-        }
-        if let Some(private_anchors) = options.private_anchors {
-            store.add_private_trust_anchors(private_anchors)?;
-        }
-        if let Some(config) = options.config {
-            store.add_trust_config(config)?;
-        }
-        if let Some(allowed_list) = options.allowed_list {
-            store.add_trust_allowed_list(allowed_list)?;
+
+        if cfg!(feature = "trust") {
+            if let Some(anchors) = options.anchors {
+                store.add_trust(anchors)?;
+            }
+            if let Some(private_anchors) = options.private_anchors {
+                store.add_private_trust_anchors(private_anchors)?;
+            }
+            if let Some(config) = options.config {
+                store.add_trust_config(config)?;
+            }
+            if let Some(allowed_list) = options.allowed_list {
+                store.add_trust_allowed_list(allowed_list)?;
+            }
         }
 
         if options.verify {
@@ -645,6 +654,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "trust")]
     fn manifest_report_from_file_with_options() {
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");

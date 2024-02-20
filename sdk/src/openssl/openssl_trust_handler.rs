@@ -156,7 +156,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let mut inside_cert_block = false;
         for l in buf_reader.lines().flatten() {
             if l.contains("-----BEGIN") {
-                inside_cert_block =  true;
+                inside_cert_block = true;
             }
             if l.contains("-----END") {
                 inside_cert_block = false;

@@ -72,16 +72,16 @@ pub(crate) fn has_allowed_oid<'a>(
     eku: &x509_parser::extensions::ExtendedKeyUsage,
     allowed_ekus: &'a [Oid],
 ) -> Option<&'a Oid<'a>> {
-    if eku.email_protection && allowed_ekus.iter().any(|oid| *oid == EMAIL_PROTECTION_OID) {
-        return allowed_ekus.iter().find(|v| **v == EMAIL_PROTECTION_OID);
+    if eku.email_protection {
+        return Some(&EMAIL_PROTECTION_OID);
     }
 
-    if eku.time_stamping && allowed_ekus.iter().any(|oid| *oid == TIMESTAMPING_OID) {
-        return allowed_ekus.iter().find(|v| **v == TIMESTAMPING_OID);
+    if eku.time_stamping {
+        return Some(&TIMESTAMPING_OID);
     }
 
-    if eku.ocsp_signing && allowed_ekus.iter().any(|oid| *oid == OCSP_SIGNING_OID) {
-        return allowed_ekus.iter().find(|v| **v == OCSP_SIGNING_OID);
+    if eku.ocsp_signing {
+        return Some(&OCSP_SIGNING_OID);
     }
 
     let mut last_oid = None;
@@ -110,4 +110,59 @@ pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> Result<Vec<S
         }
     }
     Ok(oid_vec)
+}
+
+// Pass through trust for the case of claim signer usage since it has known trust with context
+// configured to all email protection, timestamping, ocsp signing and document signing
+pub(crate) struct TrustPassThrough {
+    allowed_list: HashSet<String>,
+}
+
+impl TrustHandlerConfig for TrustPassThrough {
+    fn new() -> Self
+    where
+        Self: Sized,
+    {
+        TrustPassThrough {
+            allowed_list: HashSet::new(),
+        }
+    }
+
+    fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn append_private_trust_data(
+        &mut self,
+        _private_anchors_data: &mut dyn std::io::Read,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn clear(&mut self) {}
+
+    fn load_configuration(&mut self, _config_data: &mut dyn std::io::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_auxillary_ekus(&self) -> Vec<asn1_rs::Oid> {
+        vec![
+            EMAIL_PROTECTION_OID.to_owned(),
+            TIMESTAMPING_OID.to_owned(),
+            OCSP_SIGNING_OID.to_owned(),
+            DOCUMENT_SIGNING_OID.to_owned(),
+        ]
+    }
+
+    fn get_anchors(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    fn load_allowed_list(&mut self, _allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_allowed_list(&self) -> &std::collections::HashSet<String> {
+        &self.allowed_list
+    }
 }

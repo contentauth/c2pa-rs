@@ -22,7 +22,7 @@ use std::{
 use log::warn;
 // multihash versions
 use multibase::{decode, encode};
-use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
+use multihash::{wrap, Code, Multihash, Sha1, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -461,6 +461,12 @@ pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
     let mh = Sha2_256::digest(data);
     let digest = mh.digest();
 
+    digest.to_vec()
+}
+
+pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
+    let mh = Sha1::digest(data);
+    let digest = mh.digest();
     digest.to_vec()
 }
 
