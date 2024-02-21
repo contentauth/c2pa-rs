@@ -15,7 +15,7 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{create_callback_signer, Builder, C2pa, SignerCallback, SigningAlg};
+use c2pa::{create_callback_signer, Builder, Reader, SigningAlg};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -68,8 +68,6 @@ fn manifest_def(title: &str, format: &str) -> String {
 /// It uses only streaming apis, showing how to avoid file i/o
 /// This example uses the `ed25519` signing algorithm
 fn main() -> Result<()> {
-    let c2pa = C2pa::new();
-
     let title = "v2_edited.jpg";
     let format = "image/jpeg";
     let parent_name = "CA.jpg";
@@ -77,8 +75,8 @@ fn main() -> Result<()> {
 
     let json = manifest_def(title, format);
 
-    let mut builder = c2pa.builder();
-    builder.with_json(&json)?.add_ingredient(
+    let mut builder = Builder::from_json(&json)?;
+    builder.add_ingredient(
         json!({
             "title": parent_name,
             "relationship": "parentOf"
@@ -88,7 +86,11 @@ fn main() -> Result<()> {
         &mut source,
     )?;
 
-    let thumb_uri = builder.thumbnail.as_ref().map(|t| t.identifier.clone());
+    let thumb_uri = builder
+        .definition
+        .thumbnail
+        .as_ref()
+        .map(|t| t.identifier.clone());
 
     // add a manifest thumbnail ( just reuse the image for now )
     if let Some(uri) = thumb_uri {
@@ -110,7 +112,7 @@ fn main() -> Result<()> {
     zipped.rewind()?;
 
     //let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
-    let ed_signer = Box::new(EdCallbackSigner {});
+    let ed_signer = |data: &[u8]| ed_sign(data, PRIVATE_KEY);
     let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)?;
 
     let mut builder = Builder::unzip(&mut zipped)?;
@@ -121,7 +123,7 @@ fn main() -> Result<()> {
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = c2pa.read(format, &mut dest)?;
+    let reader = Reader::from_stream(format, &mut dest)?;
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());
@@ -143,13 +145,13 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-struct EdCallbackSigner {}
+// struct EdCallbackSigner {}
 
-impl SignerCallback for EdCallbackSigner {
-    fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-        ed_sign(data, PRIVATE_KEY)
-    }
-}
+// impl SignerCallback for EdCallbackSigner {
+//     fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+//         ed_sign(data, PRIVATE_KEY)
+//     }
+// }
 
 fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
     use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer};

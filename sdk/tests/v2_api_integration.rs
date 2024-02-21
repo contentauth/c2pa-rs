@@ -14,7 +14,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{create_callback_signer, Builder, C2pa, SignerCallback, SigningAlg};
+    use c2pa::{create_callback_signer, Builder, C2pa, SigningAlg};
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -101,13 +101,7 @@ mod integration_v2 {
         zipped.rewind()?;
 
         let mut dest = {
-            struct EdCallbackSigner {}
-            impl SignerCallback for EdCallbackSigner {
-                fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-                    ed_sign(data, PRIVATE_KEY)
-                }
-            }
-            let ed_signer = Box::new(EdCallbackSigner {});
+            let ed_signer = |data: &[u8]| ed_sign(data, PRIVATE_KEY);
             let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)?;
 
             let mut builder = Builder::unzip(&mut zipped)?;

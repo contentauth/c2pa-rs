@@ -107,12 +107,12 @@ impl Default for Config {
 
 /// Converts a file extension to a MIME type
 fn extension_to_mime(extension: &str) -> Option<&'static str> {
-    Some(match extension {
+    Some(match extension.to_lowercase().as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
         "psd" => "image/vnd.adobe.photoshop",
-        "tiff" => "image/tiff",
+        "tiff" | "tif" => "image/tiff",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
         "bmp" => "image/bmp",
@@ -134,6 +134,18 @@ fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "ai" => "application/postscript",
         _ => return None,
     })
+}
+
+fn extension(path: &str) -> Option<&str> {
+    Path::new(path)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+}
+
+fn file_name(path: &str) -> Option<&str> {
+    Path::new(path)
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
 }
 
 /// Generate a blake3 hash over the image in path using a fixed buffer
@@ -242,15 +254,18 @@ impl MakeTestImages {
         .to_string();
         builder.add_ingredient(&json, format, &mut source)?;
 
-        Ok(builder.ingredients[builder.ingredients.len() - 1]
-            .instance_id()
-            .to_string())
+        Ok(
+            builder.definition.ingredients[builder.definition.ingredients.len() - 1]
+                .instance_id()
+                .to_string(),
+        )
     }
 
     #[allow(dead_code)]
     fn make_image_v2(&self, recipe: &Recipe) -> Result<PathBuf> {
         let src = recipe.parent.as_deref();
-        let dst_path = self.make_path(&recipe.output);
+        let dst = recipe.output.as_str();
+        let dst_path = self.make_path(dst);
         println!("Creating {dst_path:?}");
 
         let software_agent = format!("{} {}", "Make Test Images", env!("CARGO_PKG_VERSION"));
@@ -258,18 +273,10 @@ impl MakeTestImages {
         //     "name": "Make Test Images",
         //     "version": env!("CARGO_PKG_VERSION")
         // });
+        let name = file_name(dst).ok_or(Error::BadParam("no filename".to_string()))?;
+        let extension = extension(dst).unwrap_or("jpg");
 
-        let name = dst_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Untitled")
-            .to_owned();
-        let extension = dst_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("jpg")
-            .to_owned();
-        let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
+        let format = extension_to_mime(extension).unwrap_or("image/jpeg");
 
         let manifest_def = json!({
             "vendor": "contentauth",
@@ -415,8 +422,10 @@ impl MakeTestImages {
         use std::io::Seek;
 
         use image::ImageFormat;
+        let image_format = ImageFormat::from_extension(extension)
+            .ok_or(Error::BadParam("extension not supported".to_owned()))?;
         // save the changes to the image as our target file
-        img.write_to(&mut temp, ImageFormat::Jpeg)?;
+        img.write_to(&mut temp, image_format)?;
         temp.rewind()?;
 
         // add all our actions as an assertion now.
@@ -433,7 +442,9 @@ impl MakeTestImages {
         let signer = self.config.get_signer()?;
 
         let mut dest = fs::File::create(&dst_path)?;
-        builder.sign(format, &mut temp, &mut dest, signer.as_ref())?;
+        builder
+            .sign(format, &mut temp, &mut dest, signer.as_ref())
+            .context("signing")?;
 
         Ok(dst_path)
     }
@@ -656,11 +667,20 @@ impl MakeTestImages {
 
     /// copies a file from the parent to the output
     fn make_copy(&self, recipe: &Recipe) -> Result<PathBuf> {
-        let dst_path = self.make_path(recipe.output.as_str());
+        let src = recipe.parent.as_deref().unwrap_or_default();
+        let dst = recipe.output.as_str();
+        let src_path = &self.make_path(src);
+        let dst_path = self.make_path(dst);
         println!("Copying {dst_path:?}");
         let src = recipe.parent.as_deref().unwrap_or_default();
         let dst = recipe.output.as_str();
-        std::fs::copy(src, &dst_path).context(format!("copying {src} to {dst}"))?;
+        if extension(src) != extension(dst) {
+            let img = image::open(src_path).context(format!("copying {src} to {dst}"))?;
+            img.save(&dst_path)
+                .context(format!("copying {src} to {dst}"))?;
+        } else {
+            std::fs::copy(src, &dst_path).context(format!("copying {src} to {dst}"))?;
+        }
         Ok(dst_path)
     }
 

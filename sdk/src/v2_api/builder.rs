@@ -36,12 +36,11 @@ use crate::{
     ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
-/// This is used to build a ManifestStore
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
-pub struct Builder {
+pub struct ManifestDefinition {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
     pub vendor: Option<String>,
@@ -78,18 +77,6 @@ pub struct Builder {
     pub redactions: Option<Vec<String>>,
 
     pub label: Option<String>,
-
-    /// Verify the manifest on signing
-    #[serde(default = "default_verify")]
-    pub verify_on_sign: bool,
-    /// Indicates where a generated manifest goes
-    // #[serde(skip)]
-    // remote_manifest: Option<RemoteManifest>,
-
-    /// container for binary assets (like thumbnails)
-    #[serde(skip_deserializing)]
-    #[serde(skip_serializing_if = "skip_serializing_resources")]
-    resources: ResourceStore,
 }
 
 fn default_instance_id() -> String {
@@ -104,12 +91,23 @@ fn default_format() -> String {
     "application/octet-stream".to_owned()
 }
 
-fn default_verify() -> bool {
-    true
-}
-
 fn default_vec<T>() -> Vec<T> {
     Vec::new()
+}
+
+/// This is used to build a ManifestStore
+#[skip_serializing_none]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[non_exhaustive]
+pub struct Builder {
+    #[serde(flatten)]
+    pub definition: ManifestDefinition,
+
+    /// container for binary assets (like thumbnails)
+    #[serde(skip_deserializing)]
+    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    resources: ResourceStore,
 }
 
 impl AsRef<Builder> for Builder {
@@ -133,13 +131,16 @@ impl Builder {
     }
 
     /// creates a new builder from JSON
-    fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(Error::JsonError)
+    pub fn from_json(json: &str) -> Result<Self> {
+        Ok(Self {
+            definition: serde_json::from_str(json).map_err(Error::JsonError)?,
+            ..Default::default()
+        })
     }
 
     /// Sets the mime format for this manifest
     pub fn set_format(&mut self, format: &str) -> &mut Self {
-        self.format = format.to_string();
+        self.definition.format = format.to_string();
         self
     }
 
@@ -156,7 +157,8 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.assertions
+        self.definition
+            .assertions
             .push(ManifestAssertion::from_labeled_assertion(label, data)?);
         Ok(self)
     }
@@ -178,7 +180,7 @@ impl Builder {
     ) -> Result<&mut Self> {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = ingredient.with_stream(format, stream)?;
-        self.ingredients.push(ingredient);
+        self.definition.ingredients.push(ingredient);
         Ok(self)
     }
 
@@ -224,7 +226,7 @@ impl Builder {
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
-                for (index, ingredient) in self.ingredients.iter().enumerate() {
+                for (index, ingredient) in self.definition.ingredients.iter().enumerate() {
                     zip.start_file(format!("ingredients/{}/", index), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     for (id, data) in ingredient.resources().resources() {
@@ -286,13 +288,15 @@ impl Builder {
                     .parse::<usize>()
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
                 let id = file.name().split('/').nth(2).unwrap_or_default();
-                if index >= builder.ingredients.len() {
+                if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Invalid ingredient index {}", index),
                     ))))?; // todo add specific error
                 }
-                builder.ingredients[index].resources_mut().add(id, data)?;
+                builder.definition.ingredients[index]
+                    .resources_mut()
+                    .add(id, data)?;
             }
         }
         Ok(builder)
@@ -300,7 +304,8 @@ impl Builder {
 
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
-        let mut claim_generator_info = self.claim_generator_info.clone();
+        let definition = &self.definition;
+        let mut claim_generator_info = definition.claim_generator_info.clone();
         // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
@@ -318,9 +323,9 @@ impl Builder {
             .collect::<Vec<String>>()
             .join(" ");
 
-        let mut claim = match self.label.as_ref() {
+        let mut claim = match definition.label.as_ref() {
             Some(label) => Claim::new_with_user_guid(&claim_generator, &label.to_string()),
-            None => Claim::new(&claim_generator, self.vendor.as_deref()),
+            None => Claim::new(&claim_generator, definition.vendor.as_deref()),
         };
 
         // add claim generator info to claim resolving icons
@@ -341,13 +346,13 @@ impl Builder {
         //     };
         // }
 
-        if let Some(title) = self.title.as_ref() {
+        if let Some(title) = definition.title.as_ref() {
             claim.set_title(Some(title.to_owned()));
         }
-        claim.format = self.format.to_owned();
-        claim.instance_id = self.instance_id.to_owned();
+        claim.format = definition.format.to_owned();
+        claim.instance_id = definition.instance_id.to_owned();
 
-        if let Some(thumb_ref) = self.thumbnail.as_ref() {
+        if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
                 //let data = self.resources.get(&thumb_ref.identifier)?;
@@ -363,19 +368,19 @@ impl Builder {
 
         let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
-        for ingredient in &self.ingredients {
+        for ingredient in &definition.ingredients {
             //let ingredient = ingredient_builder.build(self)?;
-            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            let uri = ingredient.add_to_claim(&mut claim, definition.redactions.clone())?;
             ingredient_map.insert(ingredient.instance_id().to_string(), uri);
         }
 
         // add ingredient references, resolving streams and processing them
-        if let Some(ingredient_refs) = self.ingredient_refs.as_ref() {
+        if let Some(ingredient_refs) = definition.ingredient_refs.as_ref() {
             for ingredient_ref in ingredient_refs {
                 let mut stream = self.resources.open(ingredient_ref)?;
                 let mut ingredient = Ingredient::from_stream(&ingredient_ref.format, &mut *stream)?;
                 ingredient.set_title(&ingredient_ref.identifier);
-                let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+                let uri = ingredient.add_to_claim(&mut claim, definition.redactions.clone())?;
                 ingredient_map.insert(ingredient.instance_id().to_string(), uri);
             }
         }
@@ -383,7 +388,7 @@ impl Builder {
         let salt = DefaultSalt::default();
 
         // add any additional assertions
-        for manifest_assertion in &self.assertions {
+        for manifest_assertion in &definition.assertions {
             match manifest_assertion.label() {
                 l if l.starts_with(Actions::LABEL) => {
                     let version = labels::version(l);
@@ -557,19 +562,24 @@ impl Builder {
         dest: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
-        self.format = format.to_string();
+        let format = format_to_mime(format);
+        self.definition.format = format.clone();
         // todo:: read instance_id from xmp from stream ?
-        self.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail.is_none() {
+            if self.definition.thumbnail.is_none() {
                 if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                    crate::utils::thumbnail::make_thumbnail_from_stream(&format, source)
                 {
-                    self.resources.add(&self.instance_id.clone(), image)?;
-                    self.thumbnail = Some(ResourceRef::new(format, self.instance_id.clone()));
+                    self.resources
+                        .add(&self.definition.instance_id.clone(), image)?;
+                    self.definition.thumbnail = Some(ResourceRef::new(
+                        format,
+                        self.definition.instance_id.clone(),
+                    ));
                 }
             }
         }
@@ -578,7 +588,7 @@ impl Builder {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store.save_to_stream(format, source, dest, signer)
+        store.save_to_stream(&format, source, dest, signer)
     }
 
     /// Embed a signed manifest into a stream using a supplied remote signer.
@@ -598,19 +608,23 @@ impl Builder {
         dest: &mut dyn CAIReadWrite,
         signer: &dyn RemoteSigner,
     ) -> Result<Vec<u8>> {
-        self.format = format_to_mime(format);
+        self.definition.format = format_to_mime(format);
         // todo:: read instance_id from xmp from stream ?
-        self.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         {
-            if self.thumbnail.is_none() {
+            if self.definition.thumbnail.is_none() {
                 if let Ok((format, image)) =
                     crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
                 {
-                    self.resources.add(&self.instance_id.clone(), image)?;
-                    self.thumbnail = Some(ResourceRef::new(format, self.instance_id.clone()));
+                    self.resources
+                        .add(&self.definition.instance_id.clone(), image)?;
+                    self.definition.thumbnail = Some(ResourceRef::new(
+                        format,
+                        self.definition.instance_id.clone(),
+                    ));
                 }
             }
         }
@@ -684,8 +698,7 @@ mod tests {
                 "label": "org.test.assertion",
                 "data": "assertion"
             }
-        ],
-        "verify_on_sign": true
+        ]
     }
     "#;
 
@@ -697,74 +710,56 @@ mod tests {
 
         let thumbnail_ref = ResourceRef::new("ingredient/jpeg", "5678");
 
-        let mut builder = Builder {
+        let mut builder = Builder::new();
+        let mut definition = ManifestDefinition {
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
             format: "image/tiff".to_string(),
             instance_id: "1234".to_string(),
             ..Default::default()
         };
-        builder.vendor = Some("test".to_string());
-        builder.title = Some("Test_Manifest".to_string());
-        builder.thumbnail = Some(thumbnail_ref.clone());
-        builder.verify_on_sign = true;
+        definition.vendor = Some("test".to_string());
+        definition.title = Some("Test_Manifest".to_string());
+        definition.thumbnail = Some(thumbnail_ref.clone());
 
         let ingredient = Ingredient::from_json(PARENT_JSON)
             .unwrap()
             .with_stream("application/jpeg", &mut image)
             .unwrap();
-        builder.ingredients.push(ingredient);
+        definition.ingredients.push(ingredient);
 
-        builder.assertions = vec![ManifestAssertion::new(
+        definition.assertions = vec![ManifestAssertion::new(
             "org.test.assertion".to_string(),
             Value::from("assertion"),
         )];
-        builder.redactions = Some(vec!["redaction".to_string()]);
-        builder.label = Some("ABCDE".to_string());
+        definition.redactions = Some(vec!["redaction".to_string()]);
+        definition.label = Some("ABCDE".to_string());
         builder
             .resources
             .add(&thumbnail_ref.identifier, *b"12345")
             .unwrap();
+        builder.definition = definition;
 
-        assert_eq!(builder.vendor, Some("test".to_string()));
-        assert_eq!(builder.title, Some("Test_Manifest".to_string()));
-        assert_eq!(builder.format, "image/tiff".to_string());
-        assert_eq!(builder.instance_id, "1234".to_string());
-        assert_eq!(builder.thumbnail, Some(thumbnail_ref));
-        assert_eq!(builder.ingredients[0].title(), "Parent Test".to_string());
+        let definition = &builder.definition;
+        assert_eq!(definition.vendor, Some("test".to_string()));
+        assert_eq!(definition.title, Some("Test_Manifest".to_string()));
+        assert_eq!(definition.format, "image/tiff".to_string());
+        assert_eq!(definition.instance_id, "1234".to_string());
+        assert_eq!(definition.thumbnail, Some(thumbnail_ref));
+        assert_eq!(definition.ingredients[0].title(), "Parent Test".to_string());
         assert_eq!(
-            builder.assertions[0].label(),
+            definition.assertions[0].label(),
             "org.test.assertion".to_string()
         );
-        assert_eq!(builder.redactions, Some(vec!["redaction".to_string()]));
-        assert_eq!(builder.label, Some("ABCDE".to_string()));
+        assert_eq!(definition.redactions, Some(vec!["redaction".to_string()]));
+        assert_eq!(definition.label, Some("ABCDE".to_string()));
         assert_eq!(
             builder
                 .resources
-                .get(&builder.thumbnail.unwrap().identifier)
+                .get(&builder.definition.thumbnail.unwrap().identifier)
                 .unwrap()
                 .into_owned(),
             b"12345"
         );
-    }
-
-    #[test]
-    fn test_manifest_store_builder_default() {
-        let builder = Builder {
-            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
-            format: "image/tiff".to_string(),
-            instance_id: "1234".to_string(),
-            ..Default::default()
-        };
-        println!("{}", serde_json::to_string(&builder).unwrap());
-        assert_eq!(builder.format, "image/tiff".to_string());
-        assert_eq!(builder.instance_id, "1234".to_string());
-        assert_eq!(builder.vendor, None);
-        assert_eq!(builder.title, None);
-        assert_eq!(builder.thumbnail, None);
-        assert!(builder.ingredients.is_empty());
-        assert!(builder.assertions.is_empty());
-        assert_eq!(builder.redactions, None);
-        assert_eq!(builder.label, None);
     }
 
     #[test]
@@ -774,24 +769,61 @@ mod tests {
         stripped_json.retain(|c| !c.is_whitespace());
         let mut builder = Builder::from_json(&stripped_json).unwrap();
         builder.resources.add("5678", "12345").unwrap();
-        assert_eq!(builder.vendor, Some("test".to_string()));
-        assert_eq!(builder.title, Some("Test_Manifest".to_string()));
-        assert_eq!(builder.format, "image/tiff".to_string());
-        assert_eq!(builder.instance_id, "1234".to_string());
+        let definition = &builder.definition;
+        assert_eq!(definition.vendor, Some("test".to_string()));
+        assert_eq!(definition.title, Some("Test_Manifest".to_string()));
+        assert_eq!(definition.format, "image/tiff".to_string());
+        assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(
-            builder.thumbnail.clone().unwrap().identifier.as_str(),
+            definition.thumbnail.clone().unwrap().identifier.as_str(),
             "thumbnail1.jpg"
         );
-        assert_eq!(builder.ingredients[0].title(), "Test".to_string());
+        assert_eq!(definition.ingredients[0].title(), "Test".to_string());
         assert_eq!(
-            builder.assertions[0].label(),
+            definition.assertions[0].label(),
             "org.test.assertion".to_string()
         );
 
         // convert back to json and compare to original
-        let builder_json = serde_json::to_string(&builder).unwrap();
+        let builder_json = serde_json::to_string(&builder.definition).unwrap();
         assert_eq!(builder_json, stripped_json);
     }
+
+    // const TEST_IMAGE_TIF: &[u8] = include_bytes!("../../tests/fixtures/TUSCANY.TIF");
+    // #[test]
+    // fn test_builder_sign_tiff() {
+    //     let format = "image/tiff";
+    //     let mut source = Cursor::new(TEST_IMAGE_TIF);
+    //     let mut dest = Cursor::new(Vec::new());
+
+    //     let mut builder = Builder::from_json(JSON).unwrap();
+    //     builder
+    //         .add_ingredient(PARENT_JSON, format, &mut source)
+    //         .unwrap();
+
+    //     builder
+    //         .resources
+    //         .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+    //         .unwrap();
+
+    //     // sign the ManifestStoreBuilder and write it to the output stream
+    //     let signer = temp_signer();
+    //     builder
+    //         .sign(format, &mut source, &mut dest, signer.as_ref())
+    //         .unwrap();
+
+    //     // read and validate the signed manifest store
+    //     dest.rewind().unwrap();
+    //     let manifest_store =
+    //         crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+
+    //     println!("{}", manifest_store);
+    //     assert!(manifest_store.validation_status().is_none());
+    //     assert_eq!(
+    //         manifest_store.get_active().unwrap().title().unwrap(),
+    //         "Test_Manifest"
+    //     );
+    // }
 
     #[test]
     fn test_builder_sign() {

@@ -22,11 +22,12 @@ use crate::{
 };
 
 /// Defines a callback interface for a signer
-pub trait SignerCallback: Send + Sync {
-    /// Sign the given bytes and return the signature
-    /// The private key should only be known by the callback's implementation
-    fn sign(&self, bytes: &[u8]) -> Result<Vec<u8>>;
-}
+// pub trait SignerCallback: Send + Sync {
+//     /// Sign the given bytes and return the signature
+//     /// The private key should only be known by the callback's implementation
+//     fn sign(&self, bytes: &[u8]) -> Result<Vec<u8>>;
+// }
+pub type SignerCallback = dyn Fn(&[u8]) -> std::result::Result<Vec<u8>, Error>;
 
 /// Defines a signer that uses a callback to sign data
 /// The private key should only be known by the callback
@@ -35,7 +36,7 @@ pub trait SignerCallback: Send + Sync {
 struct CallbackSigner {
     alg: SigningAlg,
 
-    callback: Box<dyn SignerCallback>,
+    callback: Box<SignerCallback>,
 
     signcerts: Vec<u8>,
 
@@ -46,16 +47,19 @@ struct CallbackSigner {
 
 impl CallbackSigner {
     /// Create a new callback signer
-    fn new<C: Into<Vec<u8>>>(
+    fn new<C: Into<Vec<u8>>, F>(
         alg: SigningAlg,
         signcerts: C,
-        callback: Box<dyn SignerCallback>,
+        callback: F,
         reserve_size: usize,
         tsa_url: Option<String>,
-    ) -> Self {
+    ) -> Self
+    where
+        F: Fn(&[u8]) -> std::result::Result<Vec<u8>, Error> + 'static,
+    {
         Self {
             alg,
-            callback,
+            callback: Box::new(callback),
             signcerts: signcerts.into(),
             reserve_size,
             tsa_url,
@@ -65,7 +69,7 @@ impl CallbackSigner {
 
 impl Signer for CallbackSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.callback.sign(data)
+        (self.callback)(data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -109,12 +113,15 @@ impl Signer for CallbackSigner {
 /// #    Ok(())
 /// }
 /// ```
-pub fn create_callback_signer<P: Into<Vec<u8>>>(
+pub fn create_callback_signer<P: Into<Vec<u8>>, F>(
     alg: SigningAlg,
     signcerts: P,
-    callback: Box<dyn SignerCallback>,
+    callback: F, // Box<dyn SignerCallback>,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer>> {
+) -> Result<Box<dyn Signer>>
+where
+    F: Fn(&[u8]) -> Result<Vec<u8>> + 'static,
+{
     let signer = CallbackSigner::new(alg, signcerts.into(), callback, 3000, tsa_url);
     Ok(Box::new(signer))
 }

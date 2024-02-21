@@ -378,9 +378,9 @@ pub mod tests {
     #[test]
     fn test_no_writer() {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
+            //Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
-            Box::new(TiffIO::new("")),
+            //Box::new(TiffIO::new("")),
         ];
 
         // build handler map

@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_generic::async_generic;
+
 use crate::{
-    error::Result, manifest_store::ManifestStore, validation_status::ValidationStatus,
+    error::Result, manifest_store::ManifestStore, validation_status::ValidationStatus, CAIRead,
     CAIReadWrite, Manifest,
 };
 
@@ -22,6 +24,36 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Create a manifest store Reader from a stream
+    /// # Arguments
+    /// * `format` - The format of the stream
+    /// * `stream` - The stream to read from
+    /// # Returns
+    /// A reader for the manifest store
+    /// # Errors
+    /// If the stream is not a valid manifest store
+    #[async_generic(async_signature(
+        //settings: ReaderSettings,
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ))]
+    pub fn from_stream(
+        //settings: ReaderSettings,
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Reader> {
+        let verify = true; // todo: get this from config
+        let reader = if _sync {
+            ManifestStore::from_stream(format, stream, verify)
+        } else {
+            ManifestStore::from_stream_async(format, stream, verify).await
+        }?;
+        Ok(Reader {
+            //settings,
+            manifest_store: reader,
+        })
+    }
+
     /// Get the manifest store as a JSON string
     pub fn json(&self) -> String {
         self.manifest_store.to_string()

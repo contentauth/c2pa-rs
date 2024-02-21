@@ -38,6 +38,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "ogg" => "audio/ogg",
         "pdf" => "application/pdf",
         "ai" => "application/postscript",
+        "c2pa" => "application/c2pa",
         _ => return None,
     })
 }
@@ -81,6 +82,7 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         "ogg" | "audio/ogg" => "ogg",
         "pdf" | "application/pdf" => "pdf",
         "ai" | "application/postscript" => "ai",
+        "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "c2pa",
         _ => return None,
     })
 }
