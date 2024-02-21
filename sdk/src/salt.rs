@@ -15,6 +15,7 @@
 /// a funtion to generate a salt value used when hashing
 /// data.  Providing a unique salt ensures a unique hash for
 /// a given data set.
+
 pub trait SaltGenerator {
     /// generate a salt vector
     fn generate_salt(&self) -> Option<Vec<u8>>;
@@ -61,11 +62,17 @@ impl SaltGenerator for DefaultSalt {
             openssl::rand::rand_bytes(&mut salt).ok()?;
             Some(salt)
         }
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
+        {
+            let salt = crate::wasm::util::get_random_values(self.salt_len).ok()?;
+            Some(salt)
+        }
+        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
         {
             use ring::rand::SecureRandom;
             let mut salt = vec![0u8; self.salt_len];
             ring::rand::SystemRandom::new().fill(&mut salt).ok()?;
+
             Some(salt)
         }
     }
