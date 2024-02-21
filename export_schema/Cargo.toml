@@ -1,6 +1,6 @@
 [package]
 name = "export_schema"
-version = "0.28.0"
+version = "0.28.5"
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"

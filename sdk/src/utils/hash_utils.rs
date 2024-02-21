@@ -22,7 +22,7 @@ use std::{
 use log::warn;
 // multihash versions
 use multibase::{decode, encode};
-use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
+use multihash::{wrap, Code, Multihash, Sha1, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -466,6 +466,12 @@ pub fn hash256(data: &[u8]) -> String {
     encode(multibase::Base::Base64, wrapped.as_bytes())
 }
 
+pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
+    let mh = Sha1::digest(data);
+    let digest = mh.digest();
+    digest.to_vec()
+}
+
 /// Verify muiltihash against input data.  True if match,
 /// false if no match or unsupported.  The hash value should be
 /// be multibase encoded string.
@@ -489,71 +495,6 @@ pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
         }
         Err(_) => false,
     }
-}
-
-// Fast implementation for Blake3 hashing that can handle large assets
-pub fn blake3_from_asset(path: &Path) -> Result<String> {
-    let mut data = File::open(path)?;
-    data.rewind()?;
-    let data_len = data.seek(SeekFrom::End(0))?;
-    data.rewind()?;
-
-    let mut hasher = blake3::Hasher::new();
-
-    let mut chunk_left = data_len;
-
-    if cfg!(feature = "no_interleaved_io") {
-        loop {
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-
-            data.read_exact(&mut chunk)?;
-
-            hasher.update(&chunk);
-
-            chunk_left -= chunk.len() as u64;
-            if chunk_left == 0 {
-                break;
-            }
-        }
-    } else {
-        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        data.read_exact(&mut chunk)?;
-
-        loop {
-            let (tx, rx) = std::sync::mpsc::channel();
-
-            chunk_left -= chunk.len() as u64;
-
-            std::thread::spawn(move || {
-                hasher.update(&chunk);
-                tx.send(hasher).unwrap_or_default();
-            });
-
-            // are we done
-            if chunk_left == 0 {
-                hasher = match rx.recv() {
-                    Ok(hasher) => hasher,
-                    Err(_) => return Err(Error::ThreadReceiveError),
-                };
-                break;
-            }
-
-            // read next chunk while we wait for hash
-            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-            data.read_exact(&mut next_chunk)?;
-
-            hasher = match rx.recv() {
-                Ok(hasher) => hasher,
-                Err(_) => return Err(Error::ThreadReceiveError),
-            };
-
-            chunk = next_chunk;
-        }
-    }
-
-    let hash = hasher.finalize();
-
-    Ok(hash.to_hex().as_str().to_owned())
 }
 
 /// Return the hash of data in the same hash format in_hash

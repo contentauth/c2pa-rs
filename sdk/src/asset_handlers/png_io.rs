@@ -25,8 +25,9 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_copy, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -486,10 +487,7 @@ impl AssetIO for PngIO {
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -689,7 +687,7 @@ pub mod tests {
 
     use std::io::Write;
 
-    use twoway::find_bytes;
+    use memchr::memmem;
 
     use super::*;
     use crate::utils::test;
@@ -719,7 +717,7 @@ pub mod tests {
         let positions = get_png_chunk_positions(&mut f).unwrap();
 
         for hop in positions {
-            if let Some(start) = find_bytes(&png_bytes, &hop.name) {
+            if let Some(start) = memmem::find(&png_bytes, &hop.name) {
                 if hop.start != (start - 4) as u64 {
                     panic!("find_bytes found the wrong position");
                     // assert!(true);

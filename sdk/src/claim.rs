@@ -936,8 +936,16 @@ impl Claim {
     // Crate private function to allow for patching a BMFF hash with final contents.
     #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
+        self.replace_assertion(bmff_hash.to_assertion()?)
+    }
+
+    // Patch an existing assertion with new contents.
+    //
+    // `replace_with` should match in name and size of an existing assertion.
+    #[cfg(feature = "file_io")]
+    pub(crate) fn replace_assertion(&mut self, replace_with: Assertion) -> Result<()> {
         self.update_assertion(
-            bmff_hash.to_assertion()?,
+            replace_with,
             |_: &ClaimAssertion| true,
             |_: &ClaimAssertion, a: Assertion| Ok(a),
         )
@@ -1346,7 +1354,7 @@ impl Claim {
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH);
                             validation_log.log_silent(log_item);
 
                             continue;
@@ -1358,7 +1366,7 @@ impl Claim {
                                 "verify_internal"
                             )
                             .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,
@@ -1418,7 +1426,7 @@ impl Claim {
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH);
                             validation_log.log_silent(log_item);
 
                             continue;
@@ -1430,7 +1438,7 @@ impl Claim {
                                 "verify_internal"
                             )
                             .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,

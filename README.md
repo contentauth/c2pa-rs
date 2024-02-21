@@ -1,19 +1,23 @@
-# C2PA Rust SDK
+# C2PA Rust library
 
 [![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust SDK as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022.
+<div style={{display: 'none'}}>
+
+The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. Adobe and other contributors created the C2PA Rust library as part of the [Content Authenticity Initiative](https://contentauthenticity.org) and [released it to open source](https://contentauthenticity.org/blog/cai-releases-suite-of-open-source-tools-to-advance-digital-content-provenance) in June, 2022.
+
+</div>
 
 ## Key features
 
-The C2PA Rust SDK implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html).
+The C2PA Rust library (previously referred to as the "Rust SDK") implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html).
 
-The SDK enables a desktop, mobile, or embedded application to:
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_manifests).
+The library enables a desktop, mobile, or embedded application to:
+* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_manifests).
 * Embed manifests in certain file formats.
 * Parse and validate manifests found in certain file formats.
 
-The SDK supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_hard_bindings).
+The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_hard_bindings).
 
 ## State of the project
 
@@ -25,11 +29,11 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The SDK requires **Rust version 1.70.0** or newer.
+The library requires **Rust version 1.70.0** or newer.
 
 ### Supported platforms
 
-The SDK has been tested on the following operating systems:
+The library has been tested on the following operating systems:
 
 * Windows (Intel only)
 * MacOS (Intel and Apple silicon)
@@ -62,7 +66,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.28.0"
+c2pa = "0.28.5"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
@@ -76,21 +80,28 @@ NOTE: If you are building for WASM, omit the `file_io` dependency.
 
 ## Crate features
 
-The Rust SDK crate provides:
+The Rust library crate provides:
 
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `add_thumbnails` will generate thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
 * `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
-* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the SDK uses threaded I/O for some operations to improve performance.
+* `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
+* `fetch_ocsp_response` if the feature is enabled, during manifest validation if an OCSP response is not present in the manifest we will attempt a network call to fetch it.  OCSP is used to check the revocation status of the manifest signing certificate.  
+* `psxxx_ocsp_stapling_experimental` this is an demonstration feature that will attempt to fetch the OCSP data from the OCSP responders listed in the manifest signing certificate.  The response becomes part of the manifest and is used to prove the certificate was not revoked at the time of signing.  This is only implemented for PS256, PS384 and PS512 signatures and is intended as a demonstration.
+
+
+## Example code
+
+The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
 
 ## License
 
 The `c2pa` crate is distributed under the terms of both the [MIT license](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT) and the [Apache License (Version 2.0)](https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-APACHE).
 
-Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
+Some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
 
 ## Nightly builds
 
@@ -98,7 +109,7 @@ In most cases, you should depend on this crate as published via [crates.io](http
 
 The Adobe team produces nightly snapshots of this crate via a `nightly` branch, which we use for testing the impact of pending changes to upstream dependencies.
 
-You may wish to use these builds for your own testing ahead of our releases, you may include the SDK via the following `Cargo.toml` entry:
+You may wish to use these builds for your own testing ahead of our releases, you may include the library via the following `Cargo.toml` entry:
 
 ```toml
 c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
@@ -114,5 +125,5 @@ Please note that there is no formal support for code from a nightly release, but
 
 ## Changelog
 
-Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from git commit history.
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
