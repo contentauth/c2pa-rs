@@ -23,6 +23,14 @@ lazy_static! {
         RwLock::new(Config::try_from(&Settings::default()).unwrap_or_default());
 }
 
+// trait used to validate user input to make sure user supplied configurations are valid
+pub trait SettingsValidate {
+    // returns error if settings are invalid
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 // Settings for trust list feature
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
@@ -32,6 +40,8 @@ pub struct Trust {
     trust_config: Option<String>,
     allowed_list: Option<String>,
 }
+
+impl SettingsValidate for Trust {}
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -60,6 +70,15 @@ impl Default for Core {
     }
 }
 
+impl SettingsValidate for Core {
+    fn validate(&self) -> Result<()> {
+        match self.hash_alg.as_str() {
+            "sha256" | "sha384" | "sha512" => Ok(()),
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+}
+
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
@@ -81,6 +100,8 @@ impl Default for Verify {
     }
 }
 
+impl SettingsValidate for Verify {}
+
 // Settings for manifest API options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
@@ -95,6 +116,8 @@ impl Default for Manifest {
         }
     }
 }
+
+impl SettingsValidate for Manifest {}
 
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
@@ -134,14 +157,46 @@ impl Settings {
             _ => return Err(Error::UnsupportedType),
         };
 
-        let c = Config::builder()
+        let new_config = Config::builder()
             .add_source(config::File::from_str(settings_str, f))
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        // make sure it is a valid settings structure
-        c.try_deserialize::<Settings>()
-            .map_err(|_e| Error::BadParam("configuration file contains unrecognized param".into()))
+        // blocking write
+        match SETTINGS.write() {
+            Ok(mut c) => {
+                let source = c.clone();
+                let update_config = Config::builder()
+                    .add_source(source)
+                    .add_source(new_config) // merge overrides, allows for partial changes
+                    .build()
+                    .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+                // sanity check the values before committing
+                let settings = update_config
+                    .clone()
+                    .try_deserialize::<Settings>()
+                    .map_err(|_e| {
+                        Error::BadParam("configuration file contains unrecognized param".into())
+                    })?;
+                settings.validate()?;
+
+                // update if valid
+                *c = update_config;
+
+                Ok(settings)
+            }
+            Err(_) => Err(Error::OtherError("could not save settings".into())),
+        }
+    }
+}
+
+impl SettingsValidate for Settings {
+    fn validate(&self) -> Result<()> {
+        self.trust.validate()?;
+        self.core.validate()?;
+        self.trust.validate()?;
+        self.manifest.validate()
     }
 }
 
@@ -184,37 +239,7 @@ pub fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
 // Load settings form string representation of the configuration.  Format of configuration must be supplied.
 #[allow(unused)]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    let f = match format.to_lowercase().as_str() {
-        "json" => FileFormat::Json,
-        "json5" => FileFormat::Json5,
-        "ini" => FileFormat::Ini,
-        "toml" => FileFormat::Toml,
-        "yaml" => FileFormat::Yaml,
-        "ron" => FileFormat::Ron,
-        _ => return Err(Error::UnsupportedType),
-    };
-
-    let new_config = Config::builder()
-        .add_source(config::File::from_str(settings_str, f))
-        .build()
-        .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
-
-    // blocking write
-    match SETTINGS.write() {
-        Ok(mut c) => {
-            let source = c.clone();
-            let update_config = Config::builder()
-                .add_source(source)
-                .add_source(new_config) // merge overrides, allows for partial changes
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-            *c = update_config;
-
-            Ok(())
-        }
-        Err(_) => Err(Error::OtherError("could not save settings".into())),
-    }
+    Settings::from_string(settings_str, format).map(|_| ())
 }
 
 // Save the current configuration to a json file.
@@ -415,7 +440,7 @@ pub mod tests {
     fn test_save_load() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let temp_dir = tempfile::tempdir().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();
@@ -433,7 +458,7 @@ pub mod tests {
     fn test_save_load_from_string() {
         let _protect = PROTECT.lock().unwrap();
 
-        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let temp_dir = tempfile::tempdir().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
         save_settings_as_json(&op).unwrap();
@@ -506,6 +531,23 @@ pub mod tests {
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes
         );
+
+        reset_default_settings().unwrap();
+    }
+
+    #[test]
+    fn test_bad_setting() {
+        let _protect = PROTECT.lock().unwrap();
+
+        let modified_core = r#"{
+            "core": {
+                "debug": true,
+                "hash_alg": "sha1000000",
+                "max_memory_usage": 123456
+            }
+        }"#;
+
+        assert!(load_settings_from_str(modified_core, "json").is_err());
 
         reset_default_settings().unwrap();
     }
