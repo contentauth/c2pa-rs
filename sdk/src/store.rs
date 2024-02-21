@@ -3034,12 +3034,9 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Ingredient, Uuid},
-        claim::{AssertionStoreJsonFormat, Claim},
-        jumbf_io::{
-            get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file,
-            update_file_jumbf,
-        },
+        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
+        claim::AssertionStoreJsonFormat,
+        jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
         status_tracker::*,
         utils::{
             hash_utils::Hasher,
