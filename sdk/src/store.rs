@@ -4803,6 +4803,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4883,6 +4884,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4922,6 +4924,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -4984,6 +4987,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -5052,6 +5056,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
