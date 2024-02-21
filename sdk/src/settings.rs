@@ -551,4 +551,30 @@ pub mod tests {
 
         reset_default_settings().unwrap();
     }
+    #[test]
+    fn test_hidden_setting() {
+        let _protect = PROTECT.lock().unwrap();
+
+        let secret = r#"{
+            "hidden": {
+                "test1": true,
+                "test2": "hello world",
+                "test3": 123456
+            }
+        }"#;
+
+        load_settings_from_str(secret, "json").unwrap();
+
+        assert_eq!(get_settings_value::<bool>("hidden.test1").unwrap(), true);
+        assert_eq!(
+            get_settings_value::<String>("hidden.test2").unwrap(),
+            "hello world".to_string()
+        );
+        assert_eq!(
+            get_settings_value::<u32>("hidden.test3").unwrap(),
+            123456u32
+        );
+
+        reset_default_settings().unwrap();
+    }
 }
