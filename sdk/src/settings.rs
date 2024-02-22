@@ -565,7 +565,7 @@ pub mod tests {
 
         load_settings_from_str(secret, "json").unwrap();
 
-        assert_eq!(get_settings_value::<bool>("hidden.test1").unwrap(), true);
+        assert!(get_settings_value::<bool>("hidden.test1").unwrap());
         assert_eq!(
             get_settings_value::<String>("hidden.test2").unwrap(),
             "hello world".to_string()
