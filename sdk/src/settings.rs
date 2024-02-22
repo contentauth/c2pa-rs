@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{path::Path, sync::RwLock};
+
 use config::{Config, FileFormat};
 use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
-use std::{path::Path, sync::RwLock};
 
 use crate::{Error, Result};
 
