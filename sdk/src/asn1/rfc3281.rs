@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use bcder::{
-    decode::{Constructed, Source, Unimplemented},
+    decode::{Constructed, DecodeError, Source},
     BitString, Oid,
 };
 use x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*};
@@ -25,7 +25,7 @@ pub struct AttributeCertificate {
 }
 
 impl AttributeCertificate {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let ac_info = AttributeCertificateInfo::take_from(cons)?;
             let signature_algorithm = AlgorithmIdentifier::take_from(cons)?;
@@ -69,8 +69,8 @@ pub struct AttributeCertificateInfo {
 }
 
 impl AttributeCertificateInfo {
-    pub fn take_from<S: Source>(_cons: &mut Constructed<S>) -> Result<Self, S::Err> {
-        Err(Unimplemented.into())
+    pub fn take_from<S: Source>(cons: &Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+        Err(cons.content_err("AttributeCertificateInfo parsing not implemented"))
     }
 }
 

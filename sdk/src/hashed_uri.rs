@@ -13,17 +13,25 @@
 
 use std::fmt;
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Hashed Uri stucture as defined by C2PA spec
+/// Hashed Uri structure as defined by C2PA spec
 /// It is annotated to produce the correctly tagged cbor serialization
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {
     url: String, // URI stored as tagged cbor
     #[serde(skip_serializing_if = "Option::is_none")]
     alg: Option<String>,
     #[serde(with = "serde_bytes")]
+    #[cfg_attr(feature = "json_schema", schemars(with = "Vec<u8>"))]
     hash: Vec<u8>, // hash stored as cbor byte string
+
+    // salt used to generate hash
+    #[serde(skip_deserializing, skip_serializing)]
+    salt: Option<Vec<u8>>,
 }
 
 impl HashedUri {
@@ -32,12 +40,14 @@ impl HashedUri {
             url,
             alg,
             hash: hash_bytes.to_vec(),
+            salt: None,
         }
     }
 
     pub fn url(&self) -> String {
         self.url.clone()
     }
+
     pub fn is_relative_url(&self) -> bool {
         crate::jumbf::labels::manifest_label_from_uri(&self.url).is_none()
     }
@@ -50,9 +60,16 @@ impl HashedUri {
         self.hash.clone()
     }
 
-    #[cfg(feature = "file_io")]
     pub(crate) fn update_hash(&mut self, hash: Vec<u8>) {
         self.hash = hash;
+    }
+
+    pub fn add_salt(&mut self, salt: Option<Vec<u8>>) {
+        self.salt = salt;
+    }
+
+    pub fn salt(&self) -> &Option<Vec<u8>> {
+        &self.salt
     }
 }
 

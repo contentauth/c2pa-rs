@@ -11,10 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use twoway::find_bytes;
+use memchr::memmem;
 
-#[cfg(all(test, feature = "file_io"))]
-use crate::error::wrap_io_err;
 use crate::error::{Error, Result};
 
 /**
@@ -25,7 +23,7 @@ returns the location where splice occurred
 pub fn patch_bytes(data: &mut Vec<u8>, search_bytes: &[u8], replace_bytes: &[u8]) -> Result<usize> {
     // patch data bytes in memory
 
-    if let Some(splice_start) = find_bytes(data, search_bytes) {
+    if let Some(splice_start) = memmem::find(data, search_bytes) {
         data.splice(
             splice_start..splice_start + search_bytes.len(),
             replace_bytes.iter().cloned(),
@@ -49,11 +47,11 @@ pub fn patch_file(
     search_bytes: &[u8],
     replace_bytes: &[u8],
 ) -> Result<usize> {
-    let mut buf = std::fs::read(path).map_err(wrap_io_err)?;
+    let mut buf = std::fs::read(path).map_err(Error::IoError)?;
 
     let splice_point = patch_bytes(&mut buf, search_bytes, replace_bytes)?;
 
-    std::fs::write(path, &buf).map_err(wrap_io_err)?;
+    std::fs::write(path, &buf).map_err(Error::IoError)?;
 
     Ok(splice_point)
 }

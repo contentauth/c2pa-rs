@@ -11,11 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::{Any, Class, Header, Tag};
 use ciborium::value::Value;
 use conv::*;
-use coset::{sig_structure_data, Label, TaggedCborSerializable};
+use coset::{
+    iana::{self, EnumI64},
+    sig_structure_data, Label, TaggedCborSerializable,
+};
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
+    num_bigint::BigUint,
     oid_registry::Oid,
     prelude::*,
 };
@@ -27,6 +32,7 @@ use crate::wasm::webcrypto_validator::validate_async;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
+    ocsp_utils::{check_ocsp_response, OcspData},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     validation_status,
@@ -50,6 +56,9 @@ const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+
+const DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
+const MS_C2PA_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .4 .1 .311 .76 .59 .1 .9);
 
 /********************** Supported Valiators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -90,8 +99,12 @@ fn get_cose_sign1(
         }
     }
 }
+
+fn has_oid(eku: &ExtendedKeyUsage, oid_val: &Oid) -> bool {
+    eku.other.iter().any(|v| v == oid_val)
+}
+
 fn check_cert(
-    _alg: SigningAlg,
     ca_der_bytes: &[u8],
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
@@ -127,12 +140,10 @@ fn check_cert(
     if let Some(tst_info) = _tst_info_opt {
         // was there a time stamp associtation with this signature, is verify against that time
         let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-        if !signcert
-            .validity()
-            .is_valid_at(x509_parser::time::ASN1Time::from_timestamp(
-                signing_time.timestamp(),
-            ))
-        {
+        if !signcert.validity().is_valid_at(
+            x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
+                .map_err(|_| Error::CoseInvalidCert)?,
+        ) {
             let log_item = log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .error(Error::CoseCertExpiration)
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED);
@@ -148,10 +159,9 @@ fn check_cert(
             .approx_as::<i64>()
             .map_err(|_e| Error::BadParam("system time invalid".to_string()))?;
 
-        if !signcert
-            .validity()
-            .is_valid_at(x509_parser::time::ASN1Time::from_timestamp(now))
-        {
+        if !signcert.validity().is_valid_at(
+            x509_parser::time::ASN1Time::from_timestamp(now).map_err(|_| Error::CoseInvalidCert)?,
+        ) {
             let log_item = log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .error(Error::CoseCertExpiration)
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED);
@@ -193,46 +203,45 @@ fn check_cert(
             let seq = parameters
                 .as_sequence()
                 .map_err(|_err| Error::CoseInvalidCert)?;
-            if seq.len() < 3 {
-                let log_item = log_item!(
-                    "Cose_Sign1",
-                    "certificate incorrect rsapss algorithm",
-                    "check_cert_alg"
-                )
-                .error(Error::CoseInvalidCert)
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
-                validation_log.log_silent(log_item);
 
-                return Err(Error::CoseInvalidCert);
-            }
+            let (_i, (ha_alg, mgf_ai)) = seq
+                .parse(|i| {
+                    let (i, h) = Header::from_der(i)?;
+                    if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
+                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+                    }
 
-            // get hash algorithm
-            let (_b, ha_alg) = AlgorithmIdentifier::from_der(
-                seq[0]
-                    .content
-                    .as_slice()
-                    .map_err(|_err| Error::CoseInvalidCert)?,
-            )
-            .map_err(|_err| Error::CoseInvalidCert)?;
+                    let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
+                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
-            let (_b, mgf_ai) = AlgorithmIdentifier::from_der(
-                seq[1]
-                    .content
-                    .as_slice()
-                    .map_err(|_err| Error::CoseInvalidCert)?,
-            )
-            .map_err(|_err| Error::CoseInvalidCert)?;
+                    let (i, h) = Header::from_der(i)?;
+                    if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
+                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
+                    }
+
+                    let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
+                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
+
+                    // Ignore anything that follows these two parameters.
+
+                    Ok((i, (ha_alg, mgf_ai)))
+                })
+                .map_err(|_| Error::CoseInvalidCert)?;
 
             let mgf_ai_parameters = mgf_ai.parameters.ok_or(Error::CoseInvalidCert)?;
-            let s = mgf_ai_parameters
+            let mgf_ai_parameters = mgf_ai_parameters
                 .as_sequence()
-                .map_err(|_err| Error::CoseInvalidCert)?;
-            let t0 = &s[0];
-            //let _t1 = &s[1];
-            let mfg_ai_params_algorithm = t0.as_oid_val().map_err(|_err| Error::CoseInvalidCert)?;
+                .map_err(|_| Error::CoseInvalidCert)?;
+
+            let (_i, mgf_ai_params_algorithm) =
+                Any::from_der(&mgf_ai_parameters.content).map_err(|_| Error::CoseInvalidCert)?;
+
+            let mgf_ai_params_algorithm = mgf_ai_params_algorithm
+                .as_oid()
+                .map_err(|_| Error::CoseInvalidCert)?;
 
             // must be the same
-            if ha_alg.algorithm != mfg_ai_params_algorithm {
+            if ha_alg.algorithm != mgf_ai_params_algorithm {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",
@@ -281,9 +290,7 @@ fn check_cert(
 
     if skpi_alg.algorithm == EC_PUBLICKEY_OID {
         if let Some(parameters) = &skpi_alg.parameters {
-            let named_curve_oid = parameters
-                .as_oid_val()
-                .map_err(|_err| Error::CoseInvalidCert)?;
+            let named_curve_oid = parameters.as_oid().map_err(|_err| Error::CoseInvalidCert)?;
 
             // must be one of these named curves
             if !(named_curve_oid == PRIME256V1_OID
@@ -308,7 +315,7 @@ fn check_cert(
 
     // check modulus minimum length (for RSA & PSS algorithms)
     if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
-        let (_, skpi_ber) = parse_ber_sequence(pk.subject_public_key.data)
+        let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
             .map_err(|_err| Error::CoseInvalidCert)?;
 
         let seq = skpi_ber
@@ -318,7 +325,7 @@ fn check_cert(
             return Err(Error::CoseInvalidCert);
         }
 
-        let modulus = seq[0].as_bigint().ok_or(Error::CoseInvalidCert)?;
+        let modulus = seq[0].as_bigint().map_err(|_| Error::CoseInvalidCert)?;
 
         if modulus.bits() < 2048 {
             let log_item = log_item!(
@@ -357,8 +364,11 @@ fn check_cert(
     let mut ski_good = false;
     let mut key_usage_good = false;
     let mut handled_all_critical = true;
-    let extended_key_usage_good = match tbscert.extended_key_usage() {
-        Some((_critical, eku)) => {
+    let extended_key_usage_good = match tbscert
+        .extended_key_usage()
+        .map_err(|_| Error::CoseInvalidCert)?
+    {
+        Some(BasicExtension { value: eku, .. }) => {
             if eku.any {
                 let log_item = log_item!(
                     "Cose_Sign1",
@@ -372,7 +382,12 @@ fn check_cert(
                 return Err(Error::CoseInvalidCert);
             }
 
-            if !(eku.email_protection || eku.ocsp_signing || eku.time_stamping) {
+            if !(eku.email_protection
+                || eku.ocsp_signing
+                || eku.time_stamping
+                || has_oid(eku, &DOCUMENT_SIGNING_OID)
+                || has_oid(eku, &MS_C2PA_SIGNING_OID))
+            {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
@@ -391,7 +406,8 @@ fn check_cert(
                     && (eku.client_auth
                         | eku.code_signing
                         | eku.email_protection
-                        | eku.server_auth))
+                        | eku.server_auth
+                        | has_oid(eku, &DOCUMENT_SIGNING_OID)))
             {
                 let log_item = log_item!(
                     "Cose_Sign1",
@@ -435,7 +451,7 @@ fn check_cert(
                     }
                     key_usage_good = true;
                 }
-                if ku.key_cert_sign() {
+                if ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
                 // todo: warn if not marked critical
@@ -527,11 +543,8 @@ fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     let certs = get_sign_certs(sign1)?;
     Ok(certs[0].clone())
 }
-// get the public key der
-fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
-    let mut certs: Vec<Vec<u8>> = Vec::new();
 
-    // get the public key der
+fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     if let Some(der) = sign1
         .unprotected
         .rest
@@ -544,6 +557,8 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
             }
         })
     {
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
         match der {
             Value::Array(cert_chain) => {
                 // handle array of certs
@@ -552,7 +567,12 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
                         certs.push(der_bytes.clone());
                     }
                 }
-                Ok(certs)
+
+                if certs.is_empty() {
+                    Err(Error::CoseMissingKey)
+                } else {
+                    Ok(certs)
+                }
             }
             Value::Bytes(ref der_bytes) => {
                 // handle single cert case
@@ -565,22 +585,192 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
         Err(Error::CoseX5ChainMissing)
     }
 }
+// get the public key der
+fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
+    // check for protected header int, then protected header x5chain,
+    // then the legacy unprotected x5chain to get the public key der
 
-// internal util function to dump the cert chain in PEM format
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(feature = "file_io")]
-#[allow(dead_code)]
-fn dump_cert_chain(certs: &[Vec<u8>], output_path: &std::path::Path) -> Result<()> {
-    let mut out_buf: Vec<u8> = Vec::new();
+    // check the protected header
+    if let Some(der) = sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("x5chain".to_string())
+                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
+            {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        // make sure there are no certs in the legacy unprotected header, certs
+        // are only allowing in protect OR unprotected header
+        if get_unprotected_header_certs(sign1).is_ok() {
+            return Err(Error::CoseVerifier);
+        }
 
-    for der_bytes in certs {
-        let c = openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
-        let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+        let mut certs: Vec<Vec<u8>> = Vec::new();
 
-        out_buf.append(&mut c_pem);
+        match der {
+            Value::Array(cert_chain) => {
+                // handle array of certs
+                for c in cert_chain {
+                    if let Value::Bytes(der_bytes) = c {
+                        certs.push(der_bytes.clone());
+                    }
+                }
+
+                if certs.is_empty() {
+                    return Err(Error::CoseX5ChainMissing);
+                } else {
+                    return Ok(certs);
+                }
+            }
+            Value::Bytes(ref der_bytes) => {
+                // handle single cert case
+                certs.push(der_bytes.clone());
+                return Ok(certs);
+            }
+            _ => return Err(Error::CoseX5ChainMissing),
+        }
     }
 
-    std::fs::write(output_path, &out_buf).map_err(Error::IoError)
+    // check the unprotected header if necessary
+    get_unprotected_header_certs(sign1)
+}
+
+// get OCSP der
+fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    if let Some(der) = sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("rVals".to_string()) {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    {
+        match der {
+            Value::Map(rvals_map) => {
+                // find OCSP value if available
+                rvals_map.iter().find_map(|x: &(Value, Value)| {
+                    if x.0 == Value::Text("ocspVals".to_string()) {
+                        x.1.as_array()
+                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                            .and_then(Value::as_bytes)
+                            .cloned()
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+pub(crate) fn check_ocsp_status(
+    cose_bytes: &[u8],
+    data: &[u8],
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspData> {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
+    let mut result = Ok(OcspData::default());
+
+    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
+        // check stapled OCSP response, must have timestamp
+        if let Ok(tst_info) = &time_stamp_info {
+            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+
+            // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+            if let Ok(ocsp_data) =
+                check_ocsp_response(&ocsp_response_der, Some(signing_time), validation_log)
+            {
+                // if we get a valid response validate the certs
+                if ocsp_data.revoked_at.is_none() {
+                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                        check_cert(&ocsp_certs[0], validation_log, None)?;
+                    }
+                }
+                result = Ok(ocsp_data);
+            }
+        }
+    } else {
+        // fetch OCSP response if feature "fetch_ocsp_response"
+        // only support fetching with the op
+        #[cfg(feature = "fetch_ocsp_response")]
+        {
+            // get the cert chain
+            let certs = get_sign_certs(&sign1)?;
+
+            if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                // fetch_ocsp_response(&certs) {
+                let ocsp_response_der = ocsp_der;
+
+                let signing_time = match &time_stamp_info {
+                    Ok(tst_info) => {
+                        let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+                        Some(signing_time)
+                    }
+                    Err(_) => None,
+                };
+
+                // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+                if let Ok(ocsp_data) =
+                    check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
+                {
+                    // if we get a valid response validate the certs
+                    if ocsp_data.revoked_at.is_none() {
+                        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                            check_cert(&ocsp_certs[0], validation_log, None)?;
+                        }
+                    }
+                    result = Ok(ocsp_data);
+                }
+            }
+        }
+    }
+
+    result
+}
+
+// internal util function to dump the cert chain in PEM format
+#[allow(unused_variables)]
+fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
+    #[cfg(feature = "openssl_sign")]
+    {
+        let mut out_buf: Vec<u8> = Vec::new();
+
+        for der_bytes in certs {
+            let c =
+                openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
+            let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
+
+            out_buf.append(&mut c_pem);
+        }
+
+        if let Some(op) = output_path {
+            std::fs::write(op, &out_buf).map_err(Error::IoError)?;
+        }
+        Ok(out_buf)
+    }
+
+    #[cfg(not(feature = "openssl_sign"))]
+    {
+        let out_buf: Vec<u8> = Vec::new();
+        Ok(out_buf)
+    }
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
@@ -612,9 +802,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
             }
         })
     {
-        let alg = get_signing_alg(sign1)?;
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, alg)?;
+        let tst_infos =
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -622,6 +812,14 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
         }
     }
     Err(Error::NotFound)
+}
+
+/// A wrapper containing information of the signing cert.
+pub(crate) struct CertInfo {
+    /// The name of the identity the certificate is issued to.
+    pub subject: String,
+    /// The serial number of the cert. Will be unique to the CA.
+    pub serial_number: BigUint,
 }
 
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
@@ -632,6 +830,11 @@ fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
         .ok_or(Error::CoseX5ChainMissing)?
         .map(|attr| attr.to_string())
         .map_err(|_e| Error::CoseX5ChainMissing)
+}
+
+/// Returns the unique serial number from the provided cert.
+fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
+    cert.serial.clone()
 }
 
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
@@ -675,11 +878,11 @@ pub async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(alg, &der_bytes, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(&der_bytes, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, &der_bytes, validation_log, None)?,
+                    Error::NotFound => check_cert(&der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -710,6 +913,9 @@ pub async fn verify_cose_async(
         }
     }
 
+    // check certificate revocation
+    check_ocsp_status(&cose_bytes, &data, validation_log)?;
+
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.payload = Some(data.clone()); // restore payload
@@ -724,19 +930,28 @@ pub async fn verify_cose_async(
         sign1.payload.as_ref().unwrap_or(&vec![]),
     ); // get "to be signed" bytes
 
-    if let Ok(issuer) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await {
-        result.issuer_org = Some(issuer);
+    if let Ok(CertInfo {
+        subject,
+        serial_number,
+    }) = validate_with_cert_async(alg, &sign1.signature, &tbs, &der_bytes).await
+    {
+        result.issuer_org = Some(subject);
+        result.cert_serial_number = Some(serial_number);
         result.validated = true;
         result.alg = Some(alg);
 
         // parse the temp time for now util we have TA
         result.date = get_signing_time(&sign1, &data);
+
+        // return cert chain
+        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?, None)?;
     }
 
     Ok(result)
 }
 
-pub fn get_signing_info(
+#[allow(unused_variables)]
+pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut impl StatusTracker,
@@ -744,14 +959,16 @@ pub fn get_signing_info(
     let mut date = None;
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
+    let mut cert_serial_number = None;
 
-    let _ = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
+    let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
         // get the public key der
         let der_bytes = get_sign_cert(&sign1)?;
 
         let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
             date = get_signing_time(&sign1, data);
             issuer_org = extract_subject_from_cert(&signcert).ok();
+            cert_serial_number = Some(extract_serial_from_cert(&signcert));
             if let Ok(a) = get_signing_alg(&sign1) {
                 alg = Some(a);
             }
@@ -762,11 +979,37 @@ pub fn get_signing_info(
         Ok(sign1)
     });
 
-    ValidationInfo {
-        issuer_org,
-        date,
-        alg,
-        validated: false,
+    #[cfg(target_arch = "wasm32")]
+    {
+        ValidationInfo {
+            alg,
+            date,
+            cert_serial_number,
+            issuer_org,
+            validated: false,
+            cert_chain: Vec::new(),
+            revocation_status: None,
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let certs = match sign1 {
+            Ok(s) => match get_sign_certs(&s) {
+                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            },
+            Err(_e) => Vec::new(),
+        };
+
+        ValidationInfo {
+            issuer_org,
+            date,
+            alg,
+            validated: false,
+            cert_chain: certs,
+            cert_serial_number,
+            revocation_status: None,
+        }
     }
 }
 
@@ -813,14 +1056,16 @@ pub fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
+    let time_stamp_info = get_timestamp_info(&sign1, data);
+
     if !signature_only {
         // verify certs
-        match get_timestamp_info(&sign1, data) {
-            Ok(tst_info) => check_cert(alg, der_bytes, validation_log, Some(&tst_info))?,
+        match &time_stamp_info {
+            Ok(tst_info) => check_cert(der_bytes, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(alg, der_bytes, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, validation_log, None)?,
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
@@ -843,24 +1088,35 @@ pub fn verify_cose(
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
-
-                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }
         }
     }
 
+    // check certificate revocation
+    check_ocsp_status(cose_bytes, data, validation_log)?;
+
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
     sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
-        if let Ok(issuer) = validate_with_cert(validator, sig, verify_data, der_bytes) {
-            result.issuer_org = Some(issuer);
+        if let Ok(CertInfo {
+            subject,
+            serial_number,
+        }) = validate_with_cert(validator, sig, verify_data, der_bytes)
+        {
+            result.issuer_org = Some(subject);
+            result.cert_serial_number = Some(serial_number);
             result.validated = true;
             result.alg = Some(alg);
 
             // parse the temp time for now util we have TA
             result.date = get_signing_time(&sign1, data);
+
+            // return cert chain
+            result.cert_chain = dump_cert_chain(&certs, None)?;
+
+            result.revocation_status = Some(true);
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())
@@ -886,7 +1142,7 @@ fn validate_with_cert(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -894,7 +1150,10 @@ fn validate_with_cert(
     let pk_der = pk.raw;
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -906,14 +1165,17 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseMissingKey)?;
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
     if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
@@ -925,7 +1187,7 @@ async fn validate_with_cert_async(
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
-) -> Result<String> {
+) -> Result<CertInfo> {
     // get the cert in der format
     let (_rem, signcert) =
         X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
@@ -935,13 +1197,16 @@ async fn validate_with_cert_async(
     let validator = get_validator(signing_alg);
 
     if validator.validate(sig, data, pk_der)? {
-        Ok(extract_subject_from_cert(&signcert).unwrap_or_default())
+        Ok(CertInfo {
+            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+            serial_number: extract_serial_from_cert(&signcert),
+        })
     } else {
         Err(Error::CoseSignature)
     }
 }
 #[allow(unused_imports)]
-#[cfg(feature = "file_io")]
+#[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
@@ -949,7 +1214,9 @@ pub mod tests {
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{status_tracker::DetailedStatusTracker, SigningAlg};
+    use crate::{
+        signer::ConfigurableSigner, status_tracker::DetailedStatusTracker, Signer, SigningAlg,
+    };
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -963,7 +1230,7 @@ pub mod tests {
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_err());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_err());
 
             assert!(!validation_log.get_log().is_empty());
 
@@ -1031,7 +1298,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
 
@@ -1040,35 +1307,35 @@ pub mod tests {
         let mut validation_log = DetailedStatusTracker::new();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(&cert_path).unwrap();
+        let es256_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(&cert_path).unwrap();
+        let es384_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(&cert_path).unwrap();
+        let es512_cert = std::fs::read(cert_path).unwrap();
 
         let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(&cert_path).unwrap();
+        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es256, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es384, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Es512, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
 
         if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(SigningAlg::Ps256, &der_bytes, &mut validation_log, None).is_ok());
+            assert!(check_cert(&der_bytes, &mut validation_log, None).is_ok());
         }
     }
 
@@ -1085,12 +1352,77 @@ pub mod tests {
 
         let signer = crate::utils::test::temp_signer();
 
-        let cose_bytes = crate::cose_sign::sign_claim(&claim_bytes, &signer, box_size).unwrap();
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
         let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
         let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
 
         assert_eq!(signing_time, None);
+    }
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    fn test_stapled_ocsp() {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let sign_cert = include_bytes!("../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
+        let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
+
+        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
+            &sign_cert,
+            &pem_key,
+            SigningAlg::Ps256,
+            None,
+        )
+        .unwrap();
+
+        // create a test signer that supports stapling
+        struct OcspSigner {
+            pub signer: Box<dyn crate::Signer>,
+            pub ocsp_rsp: Vec<u8>,
+        }
+        impl crate::Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.signer.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.signer.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.signer.reserve_size()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        let ocsp_signer = OcspSigner {
+            signer: Box::new(signer),
+            ocsp_rsp: ocsp_rsp_data.to_vec(),
+        };
+
+        // sign and staple
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
+                .unwrap();
+
+        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
+
+        assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
     }
 }

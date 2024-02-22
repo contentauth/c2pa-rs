@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs, path::Path};
-
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
@@ -35,18 +33,6 @@ pub struct EdSigner {
 }
 
 impl ConfigurableSigner for EdSigner {
-    fn from_files<P: AsRef<Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
@@ -72,7 +58,7 @@ impl ConfigurableSigner for EdSigner {
             signcerts,
             pkey,
             certs_size,
-            timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
+            timestamp_size: 10000, /* todo: call out to TSA to get actual timestamp and use that size */
             alg,
             tsa_url,
         })
@@ -113,15 +99,12 @@ impl Signer for EdSigner {
     }
 }
 
-fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
-}
-
 fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
@@ -131,7 +114,7 @@ mod tests {
     fn ed25519_signer() {
         let cert_dir = fixture_path("certs");
 
-        let (signer, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let (signer, _) = temp_signer::get_ed_signer(cert_dir, SigningAlg::Ed25519, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());

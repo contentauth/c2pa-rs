@@ -18,6 +18,8 @@
 #![deny(missing_docs)]
 
 use log::debug;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -34,6 +36,7 @@ use crate::{
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_existing_manifests>.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
     code: String,
 
@@ -96,10 +99,11 @@ impl ValidationStatus {
         match error {
             e if e.starts_with("ClaimMissing") => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
-            e if e.starts_with("AssertionDecoding") => STATUS_ASSERTION_MALFORMED, // todo: no code for invalid assertion format
+            e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
             e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
+            e if e.starts_with("RemoteManifestFetch") => MANIFEST_INACCESSIBLE,
             e if e.starts_with("PrereleaseError") => STATUS_PRERELEASE,
-            _ => STATUS_OTHER,
+            _ => GENERAL_ERROR,
         }
     }
 
@@ -108,10 +112,11 @@ impl ValidationStatus {
         match error {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
-            Error::AssertionDecoding(_code) => STATUS_ASSERTION_MALFORMED, // todo: no code for invalid assertion format
+            Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, /* todo detect json/cbor errors */
             Error::HashMismatch(_) => ASSERTION_DATAHASH_MATCH,
+            Error::RemoteManifestFetch(_) => MANIFEST_INACCESSIBLE,
             Error::PrereleaseError => STATUS_PRERELEASE,
-            _ => STATUS_OTHER,
+            _ => GENERAL_ERROR,
         }
     }
 
@@ -156,7 +161,7 @@ impl PartialEq for ValidationStatus {
 /// be reported as a validation error for any ingredient.
 pub fn status_for_store(
     store: &Store,
-    validation_log: &mut impl StatusTracker,
+    validation_log: &impl StatusTracker,
 ) -> Vec<ValidationStatus> {
     let statuses: Vec<ValidationStatus> = validation_log
         .get_log()
@@ -240,6 +245,12 @@ pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
 /// `ValidationStatus.url()` will point to a C2PA assertion.
 pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+/// Hash of a box-based asset matches the hash declared in the General Box
+/// Hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
 /// A non-embedded (remote) assertion was accessible at the time of
 /// validation.
 ///
@@ -263,6 +274,16 @@ pub const CLAIM_MULTIPLE: &str = "claim.multiple";
 /// `ValidationStatus.url()` will point to a C2PA claim box.
 pub const HARD_BINDINGS_MISSING: &str = "claim.hardBindings.missing";
 
+/// A required field is not present in the claim.
+///
+/// `ValidationStatus.url()` will point to a C2PA claim box.
+pub const CLAIM_REQUIRED_MISSING: &str = "claim.required.missing";
+
+/// The cbor of the claim is not valid.
+///
+/// `ValidationStatus.url()` will point to a C2PA claim box.
+pub const CLAIM_CBOR_INVALID: &str = "claim.cbor.invalid";
+
 /// The hash of the the referenced ingredient claim in the manifest
 /// does not match the corresponding hash in the ingredient's hashed
 /// URI in the claim.
@@ -281,6 +302,14 @@ pub const CLAIM_SIGNATURE_MISSING: &str = "claimSignature.missing";
 ///
 /// `ValidationStatus.url()` will point to a C2PA claim signature box.
 pub const CLAIM_SIGNATURE_MISMATCH: &str = "claimSignature.mismatch";
+
+/// If a manifest was documented to exist in a remote location,
+/// but is not present there, or the location is not currently available
+/// (such as in an offline scenario),
+/// the `manifest.inaccessible` error code shall be used to report the situation.
+///
+/// `ValidationStatus.url()` URI reference to the C2PA Manifest that could not be accessed.
+pub const MANIFEST_INACCESSIBLE: &str = "manifest.inaccessible";
 
 /// The manifest has more than one ingredient whose `relationship`
 /// is `parentOf`.
@@ -370,6 +399,27 @@ pub const ASSERTION_NOT_REDACTED: &str = "assertion.notRedacted";
 /// `ValidationStatus.url()` will point to a C2PA claim box.
 pub const ASSERTION_SELF_REDACTED: &str = "assertion.selfRedacted";
 
+/// A required field is not present in an assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_REQUIRED_MISSING: &str = "assertion.required.missing";
+
+/// The JSON(-LD) of an assertion is not valid.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_JSON_INVALID: &str = "assertion.json.invalid";
+
+/// The cbor of an assertion is not valid.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_CBOR_INVALID: &str = "assertion.cbor.invalid";
+
+/// An action that requires an associated ingredient either does not have one
+/// or the one specified cannot be located
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ACTION_ASSERTION_INGREDIENT_MISMATCH: &str = "assertion.action.ingredientMismatch";
+
 /// An `action` assertion was redacted when the ingredient's
 /// claim was created.
 ///
@@ -388,16 +438,28 @@ pub const ASSERTION_DATAHASH_MISMATCH: &str = "assertion.dataHash.mismatch";
 /// `ValidationStatus.url()` will point to a C2PA assertion.
 pub const ASSERTION_BMFFHASH_MISMATCH: &str = "assertion.bmffHash.mismatch";
 
+/// The hash of a box-based asset does not match the hash declared
+/// in the General Boxes hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_MISMATCH: &str = "assertion.boxesHash.mismatch";
+
+/// The hash of a box-based asset does not contain boxes in the expected order for
+/// the General Boxes hash assertion.
+///
+/// `ValidationStatus.url()` will point to a C2PA assertion.
+pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.";
+
 /// A hard binding assertion is in a cloud data assertion.
 ///
 /// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_CLOUDDATA_HARD_BINDING: &str = "assertion.clouddata.hardBinding";
+pub const ASSERTION_CLOUD_DATA_HARD_BINDING: &str = "assertion.cloud-data.hardBinding";
 
 /// An update manifest contains a cloud data assertion referencing
 /// an actions assertion.
 ///
 /// `ValidationStatus.url()` will point to a C2PA assertion.
-pub const ASSERTION_CLOUDDATA_ACTIONS: &str = "assertion.clouddata.actions";
+pub const ASSERTION_CLOUD_DATA_ACTIONS: &str = "assertion.cloud-data.actions";
 
 /// The value of an `alg` header, or other header that specifies an
 /// algorithm used to compute the value of another field, is unknown
@@ -406,11 +468,14 @@ pub const ASSERTION_CLOUDDATA_ACTIONS: &str = "assertion.clouddata.actions";
 /// `ValidationStatus.url()` will point to a C2PA claim box or C2PA assertion.
 pub const ALGORITHM_UNSUPPORTED: &str = "algorithm.unsupported";
 
+/// A value to be used when there was an error not specifically listed here.
+///
+/// `ValidationStatus.url()` will point to a C2PA claim box or C2PA assertion.
+pub const GENERAL_ERROR: &str = "general.error";
+
 // -- unofficial status codes --
 
-pub(crate) const STATUS_OTHER: &str = "com.adobe.other";
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
-pub(crate) const STATUS_ASSERTION_MALFORMED: &str = "com.adobe.assertion.malformed";
 
 /// Returns `true` if the status code is a known C2PA success status code.
 ///
@@ -435,5 +500,6 @@ pub fn is_success(status_code: &str) -> bool {
             | ASSERTION_DATAHASH_MATCH
             | ASSERTION_BMFFHASH_MATCH
             | ASSERTION_ACCESSIBLE
+            | ASSERTION_BOXHASH_MATCH
     )
 }

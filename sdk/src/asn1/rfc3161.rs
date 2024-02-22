@@ -5,7 +5,7 @@
 //! ASN.1 types defined by RFC 3161.
 
 use bcder::{
-    decode::{Constructed, Malformed, Primitive, Source},
+    decode::{Constructed, DecodeError, Primitive, Source},
     encode::{self, PrimitiveContent, Values},
     ConstOid, Integer, OctetString, Oid, Tag,
 };
@@ -51,7 +51,7 @@ pub struct TimeStampReq {
 }
 
 impl TimeStampReq {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
             let message_imprint = MessageImprint::take_from(cons)?;
@@ -103,7 +103,7 @@ pub struct MessageImprint {
 }
 
 impl MessageImprint {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let hash_algorithm = AlgorithmIdentifier::take_from(cons)?;
             let hashed_message = OctetString::take_from(cons)?;
@@ -136,7 +136,7 @@ pub struct TimeStampResp {
 }
 
 impl TimeStampResp {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let status = PkiStatusInfo::take_from(cons)?;
             let time_stamp_token = TimeStampToken::take_opt_from(cons)?;
@@ -176,7 +176,7 @@ pub struct PkiStatusInfo {
 }
 
 impl PkiStatusInfo {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let status = PkiStatus::take_from(cons)?;
             let status_string = PkiFreeText::take_opt_from(cons)?;
@@ -235,7 +235,7 @@ pub enum PkiStatus {
 }
 
 impl PkiStatus {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         match cons.take_primitive_if(Tag::INTEGER, Integer::i8_from_primitive)? {
             0 => Ok(Self::Granted),
             1 => Ok(Self::GrantedWithMods),
@@ -243,7 +243,7 @@ impl PkiStatus {
             3 => Ok(Self::Waiting),
             4 => Ok(Self::RevocationWarning),
             5 => Ok(Self::RevocationNotification),
-            _ => Err(Malformed.into()),
+            _ => Err(cons.content_err("unknown PKIStatus value")),
         }
     }
 
@@ -300,15 +300,19 @@ pub enum PkiFailureInfo {
 }
 
 impl PkiFailureInfo {
-    pub fn take_opt_from<S: Source>(cons: &mut Constructed<S>) -> Result<Option<Self>, S::Err> {
+    pub fn take_opt_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    pub fn from_primitive<S: Source>(prim: &mut Primitive<S>) -> Result<Self, S::Err> {
+    pub fn from_primitive<S: Source>(
+        prim: &mut Primitive<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         match Integer::i8_from_primitive(prim)? {
             0 => Ok(Self::BadAlg),
             1 => Ok(Self::BadRequest),
@@ -318,7 +322,7 @@ impl PkiFailureInfo {
             16 => Ok(Self::UnacceptedExtension),
             17 => Ok(Self::AddInfoNotAvailable),
             25 => Ok(Self::SystemFailure),
-            _ => Err(Malformed.into()),
+            _ => Err(prim.content_err("Unknown PKIFailureInfo value")),
         }
     }
 
@@ -385,7 +389,7 @@ pub struct TstInfo {
 }
 
 impl TstInfo {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
             let policy = TsaPolicyId::take_from(cons)?;
@@ -452,15 +456,21 @@ pub struct Accuracy {
 }
 
 impl Accuracy {
-    pub fn take_opt_from<S: Source>(cons: &mut Constructed<S>) -> Result<Option<Self>, S::Err> {
+    pub fn take_opt_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn from_sequence<S: Source>(cons: &mut Constructed<S>) -> Result<Self, S::Err> {
+    pub fn from_sequence<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         let seconds =
             cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
+
         let millis =
             cons.take_opt_primitive_if(Tag::CTX_0, |prim| Integer::from_primitive(prim))?;
+
         let micros =
             cons.take_opt_primitive_if(Tag::CTX_1, |prim| Integer::from_primitive(prim))?;
 

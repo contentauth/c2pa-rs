@@ -23,7 +23,12 @@ use crate::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
         AssertionBase, AssertionData,
     },
-    assertions::{self, labels, BmffHash, DataHash},
+    assertions::{
+        self,
+        labels::{self, CLAIM},
+        AssetType, BmffHash, BoxHash, DataBox, DataHash,
+    },
+    asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -32,12 +37,21 @@ use crate::{
         boxes::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
+        labels::{
+            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
+        },
     },
-    salt::{SaltGenerator, NO_SALT},
+    jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
+    salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    utils::{
+        base64,
+        hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    },
     validation_status,
     validator::ValidationInfo,
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -48,16 +62,21 @@ use HashedUri as C2PAAssertion;
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
 
+// Enum to encapsulate the data type of the source asset.  This simplifies
+// having different implementations for functions as a single entry point can be
+// used to handle different data types.
 pub enum ClaimAssetData<'a> {
-    PathData(&'a Path),
-    ByteData(&'a [u8]),
+    Path(&'a Path),
+    Bytes(&'a [u8], &'a str),
+    Stream(&'a mut dyn CAIRead, &'a str),
+    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
 }
 
-#[derive(PartialEq, Eq, Clone)]
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
 // stored separate from the Assertion to allow for late binding to the label.  Also,
 // we can load assertions in any order and know the position without re-parsing label. We also
 // save on parsing the cbor assertion each time we need its contents
+#[derive(PartialEq, Eq, Clone)]
 pub struct ClaimAssertion {
     assertion: Assertion,
     instance: usize,
@@ -146,6 +165,7 @@ impl fmt::Debug for ClaimAssertion {
         write!(f, "{:?}, instance: {}", self.assertion, self.instance)
     }
 }
+
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
 /// hashes of the asset itself, and a reference to the previous `Claim`.
@@ -154,7 +174,7 @@ impl fmt::Debug for ClaimAssertion {
 /// assigned a label (`c2pa.claim.v1`) and being either embedded into the
 /// asset or in the cloud. The claim is cryptographically hashed and
 /// that hash is signed to produce the claim signature.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct Claim {
     // external manifest
     #[serde(skip_deserializing, skip_serializing)]
@@ -186,6 +206,7 @@ pub struct Claim {
 
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
+    #[allow(dead_code)]
     root: String,
 
     // internal scratch objects
@@ -200,9 +221,11 @@ pub struct Claim {
     // Internal list of verifiable credentials for claim.
     // These are serialized manually based on need.
     #[serde(skip_deserializing, skip_serializing)]
-    vc_store: Vec<AssertionData>,
+    vc_store: Vec<(HashedUri, AssertionData)>,
 
     claim_generator: String, // generator of this claim
+
+    pub(crate) claim_generator_info: Option<Vec<ClaimGeneratorInfo>>, /* detailed generator info of this claim */
 
     signature: String,              // link to signature box
     assertions: Vec<C2PAAssertion>, // list of assertion hashed URIs
@@ -210,6 +233,10 @@ pub struct Claim {
     // original JSON bytes of claim; only present when reading from asset
     #[serde(skip_deserializing, skip_serializing)]
     original_bytes: Option<Vec<u8>>,
+
+    // original JUMBF box order need to recalculate JUMBF box hash
+    #[serde(skip_deserializing, skip_serializing)]
+    original_box_order: Option<Vec<&'static str>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
@@ -222,6 +249,9 @@ pub struct Claim {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
+
+    #[serde(skip_deserializing, skip_serializing)]
+    data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -238,8 +268,8 @@ pub enum AssertionStoreJsonFormat {
 pub enum RemoteManifest {
     NoRemote,                // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
-    Remote(String), // Manifest will be saved as a side car file, output asset will contain remote reference
-    EmbedWithRemote(String), // Manifest will be embedded with a remote reference, sidecar will be generated
+    Remote(String), /* Manifest will be saved as a side car file, output asset will contain remote reference */
+    EmbedWithRemote(String), /* Manifest will be embedded with a remote reference, sidecar will be generated */
 }
 
 impl Default for RemoteManifest {
@@ -272,10 +302,10 @@ impl Claim {
             Some(v) => format!(
                 "{}:{}",
                 v.to_lowercase(),
-                urn.to_urn().encode_lower(&mut Uuid::encode_buffer())
+                urn.urn().encode_lower(&mut Uuid::encode_buffer())
             ),
             None => urn
-                .to_urn()
+                .urn()
                 .encode_lower(&mut Uuid::encode_buffer())
                 .to_string(),
         };
@@ -290,10 +320,12 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
+            original_box_order: None,
             redacted_assertions: None,
             alg: Some(BUILD_HASH_ALG.to_string()),
             alg_soft: None,
@@ -304,6 +336,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -321,10 +354,12 @@ impl Claim {
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
+            claim_generator_info: None,
             assertion_store: Vec::new(),
             vc_store: Vec::new(),
             assertions: Vec::new(),
             original_bytes: None,
+            original_box_order: None,
             redacted_assertions: None,
             alg: Some(BUILD_HASH_ALG.into()),
             alg_soft: None,
@@ -335,6 +370,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            data_boxes: Vec::new(),
         }
     }
 
@@ -413,6 +449,23 @@ impl Claim {
         self.title.as_ref()
     }
 
+    /// order for which to generate the JUMBF boxes with writing manifest
+    pub fn set_box_order(&mut self, box_order: Vec<&'static str>) {
+        self.original_box_order = Some(box_order);
+    }
+
+    /// order to process
+    pub fn get_box_order(&self) -> &[&str] {
+        const DEFAULT_MANIFEST_ORDER: [&str; 5] =
+            [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
+
+        if let Some(bo) = &self.original_box_order {
+            bo
+        } else {
+            &DEFAULT_MANIFEST_ORDER
+        }
+    }
+
     /// get algorithm
     pub fn alg(&self) -> &str {
         match self.alg.as_ref() {
@@ -452,11 +505,11 @@ impl Claim {
 
         Ok(())
     }
+
     pub fn set_external_manifest(&mut self) {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
-    #[cfg(feature = "file_io")]
     pub(crate) fn remote_manifest(&self) -> RemoteManifest {
         self.remote_manifest.clone()
     }
@@ -464,6 +517,19 @@ impl Claim {
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
     }
+
+    pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
+        match self.claim_generator_info.as_mut() {
+            Some(cgi) => cgi.push(info),
+            None => self.claim_generator_info = Some([info].to_vec()),
+        }
+        self
+    }
+
+    pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+        self.claim_generator_info.as_deref()
+    }
+
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
         if self.claim_generator_hints.is_none() {
             self.claim_generator_hints = Some(HashMap::new());
@@ -488,7 +554,7 @@ impl Claim {
                 if let Some(append_val) = hint_value.as_str() {
                     map.insert(
                         hint_key.to_string(),
-                        Value::String(format!("{}, {}", curr_val, append_val)),
+                        Value::String(format!("{curr_val}, {append_val}")),
                     );
                 }
                 return;
@@ -503,7 +569,7 @@ impl Claim {
         self.claim_generator_hints.as_ref()
     }
 
-    pub fn calc_box_hash(
+    pub fn calc_assertion_box_hash(
         label: &str,
         assertion: &Assertion,
         salt: Option<Vec<u8>>,
@@ -578,13 +644,14 @@ impl Claim {
         // Get salted hash of the assertion's contents.
         let salt = salt_generator.generate_salt();
 
-        let hash = Claim::calc_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
+        let hash = Claim::calc_assertion_box_hash(&as_label, &assertion, salt.clone(), self.alg())?;
 
         // Build hash link.
         let link = jumbf::labels::to_assertion_uri(self.label(), &as_label);
         let link_relative = jumbf::labels::to_relative_uri(&link);
 
-        let c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
+        let mut c2pa_assertion = C2PAAssertion::new(link_relative, None, &hash);
+        c2pa_assertion.add_salt(salt.clone());
 
         // Add to assertion store.
         let (_l, instance) = Claim::assertion_label_from_link(&as_label);
@@ -593,6 +660,113 @@ impl Claim {
         self.assertions.push(c2pa_assertion.clone());
 
         Ok(c2pa_assertion)
+    }
+
+    // Add a new DataBox and return the HashedURI reference
+    pub fn add_databox(
+        &mut self,
+        format: &str,
+        data: Vec<u8>,
+        data_types: Option<Vec<AssetType>>,
+    ) -> Result<HashedUri> {
+        // create data box
+        let new_db = DataBox {
+            format: format.to_string(),
+            data,
+            data_types,
+        };
+
+        // serialize to cbor
+        let db_cbor = serde_cbor::to_vec(&new_db).map_err(|_err| Error::AssertionEncoding)?;
+
+        // get the index for the new assertion
+        let mut index = 0;
+        for (uri, _db) in &self.data_boxes {
+            let (_l, i) = Claim::assertion_label_from_link(&uri.url());
+            if i >= index {
+                index = i + 1;
+            }
+        }
+
+        let label = Claim::label_with_instance(DATABOX, index);
+        let link = jumbf::labels::to_databox_uri(self.label(), &label);
+
+        // salt box for 1.2 VC redaction support
+        let ds = DefaultSalt::default();
+        let salt = ds.generate_salt();
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(&label, &db_cbor);
+        let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), self.alg())?;
+
+        let mut databox_uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        databox_uri.add_salt(salt);
+
+        // add databox to databox store
+        self.data_boxes.push((databox_uri.clone(), new_db));
+
+        Ok(databox_uri)
+    }
+
+    pub(crate) fn databoxes(&self) -> &Vec<(HashedUri, DataBox)> {
+        &self.data_boxes
+    }
+
+    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
+        self.data_boxes
+            .iter()
+            .find(|(h, _d)| h.url() == uri)
+            .map(|(_sh, data_box)| data_box)
+    }
+
+    /// Load known VC with optional salt
+    pub(crate) fn put_data_box(
+        &mut self,
+        label: &str,
+        databox_cbor: &[u8],
+        salt: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let link = jumbf::labels::to_databox_uri(self.label(), label);
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_cbor(label, databox_cbor);
+        let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), self.alg())?;
+
+        let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        uri.add_salt(salt);
+
+        let db: DataBox =
+            serde_cbor::from_slice(databox_cbor).map_err(|_err| Error::AssertionEncoding)?;
+
+        // add data box  to data box store
+        self.data_boxes.push((uri, db));
+
+        Ok(())
+    }
+
+    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+        // normalize uri
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+            if manifest != self.label() {
+                return None;
+            }
+            uri.to_owned()
+        } else {
+            // make a full path
+            if let Some(box_name) = box_name_from_uri(uri) {
+                to_databox_uri(self.label(), &box_name)
+            } else {
+                return None;
+            }
+        };
+
+        self.data_boxes.iter().find_map(|x| {
+            if x.0.url() == normalized_uri {
+                Some(&x.1)
+            } else {
+                None
+            }
+        })
     }
 
     pub(crate) fn vc_id(vc_json: &str) -> Result<String> {
@@ -623,21 +797,56 @@ impl Claim {
     // the "id" value will be used as the label in the vcstore
     pub fn add_verifiable_credential(&mut self, vc_json: &str) -> Result<HashedUri> {
         let id = Claim::vc_id(vc_json)?;
-
-        let hash = hash_by_alg(self.alg(), vc_json.as_bytes(), None);
+        let credential = AssertionData::Json(vc_json.to_string());
 
         let link = jumbf::labels::to_verifiable_credential_uri(self.label(), &id);
 
-        let c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        // salt box for 1.2 VC redaction support
+        let ds = DefaultSalt::default();
+        let salt = ds.generate_salt();
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt.clone(), self.alg())?;
+
+        let mut c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        c2pa_assertion.add_salt(salt);
 
         // add credential to vcstore
-        let credential = AssertionData::Json(vc_json.to_string());
-        self.vc_store.push(credential);
+        self.vc_store.push((c2pa_assertion.clone(), credential));
 
         Ok(c2pa_assertion)
     }
 
-    pub fn get_verifiable_credentials(&self) -> &Vec<AssertionData> {
+    /// Load known VC with optional salt
+    pub(crate) fn put_verifiable_credential(
+        &mut self,
+        vc_json: &str,
+        salt: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let id = Claim::vc_id(vc_json)?;
+        let credential = AssertionData::Json(vc_json.to_string());
+
+        let link = jumbf::labels::to_verifiable_credential_uri(self.label(), &id);
+
+        // assertion JUMBF box hash for 1.2 validation
+        let assertion = Assertion::from_data_json(&id, vc_json.as_bytes())?;
+        let hash = Claim::calc_assertion_box_hash(&id, &assertion, salt.clone(), self.alg())?;
+
+        let mut c2pa_assertion = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
+        c2pa_assertion.add_salt(salt);
+
+        // add credential to vcstore
+        self.vc_store.push((c2pa_assertion, credential));
+
+        Ok(())
+    }
+
+    pub fn get_verifiable_credentials(&self) -> Vec<&AssertionData> {
+        self.vc_store.iter().map(|t| &t.1).collect::<Vec<_>>()
+    }
+
+    pub fn get_verifiable_credentials_store(&self) -> &Vec<(HashedUri, AssertionData)> {
         &self.vc_store
     }
 
@@ -646,104 +855,108 @@ impl Claim {
         self.assertion_store.push(assertion);
     }
 
-    // crate private function to allow for patching a data hash with final contents
-    #[cfg(feature = "file_io")]
-    pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
-        let mut replacement_assertion = data_hash.to_assertion()?;
+    // Patch an existing assertion with new contents.
+    //
+    // `replace_with` should match in name and size of an existing assertion.
+    fn update_assertion<MatchFn, PatchFn>(
+        &mut self,
+        replace_with: Assertion,
+        match_fn: MatchFn,
+        patch_fn: PatchFn,
+    ) -> Result<()>
+    where
+        MatchFn: Fn(&ClaimAssertion) -> bool,
+        PatchFn: FnOnce(&ClaimAssertion, Assertion) -> Result<Assertion>,
+    {
+        // Find the assertion that should be replaced.
+        let Some(ref mut target_assertion) = self
+            .assertion_store
+            .iter_mut()
+            .find(|ca| Assertion::assertions_eq(&replace_with, ca.assertion()) && match_fn(ca))
+        else {
+            return Err(Error::NotFound);
+        };
 
-        match self.assertion_store.iter_mut().find(|assertion| {
-            // is this a DataHash Assertion
-            if !Assertion::assertions_eq(&replacement_assertion, assertion.assertion()) {
-                return false;
-            }
+        // Save off copy of original hash to cross-check before
+        // replacing it.
+        let original_hash = target_assertion.hash().to_vec();
 
-            if let Ok(dh) = DataHash::from_assertion(assertion.assertion()) {
-                dh.name == data_hash.name
-            } else {
-                false
-            }
-        }) {
-            Some(ref mut dh_assertion) => {
-                let original_hash = dh_assertion.hash().to_vec();
-                let original_len = dh_assertion.assertion().data().len();
-                data_hash.pad_to_size(original_len)?;
-                replacement_assertion = data_hash.to_assertion()?;
+        // Give caller a chance to patch/replace the assertion.
+        let replace_with = patch_fn(target_assertion, replace_with)?;
 
-                let replacement_hash = Claim::calc_box_hash(
-                    &dh_assertion.label(),
-                    &replacement_assertion,
-                    dh_assertion.salt().clone(),
-                    dh_assertion.hash_alg(),
-                )?;
-                dh_assertion.update_assertion(replacement_assertion, replacement_hash)?;
+        // Calculate new hash, given new content.
+        let replacement_hash = Claim::calc_assertion_box_hash(
+            &target_assertion.label(),
+            &replace_with,
+            target_assertion.salt().clone(),
+            target_assertion.hash_alg(),
+        )?;
 
-                // fix up hashed uri
-                match self.assertions.iter_mut().find_map(|f| {
-                    if f.url().contains(&dh_assertion.label())
-                        && vec_compare(&f.hash(), &original_hash)
-                    {
-                        // replace with newly updated hash
-                        f.update_hash(dh_assertion.hash().to_vec());
-                        Some(f)
-                    } else {
-                        None
-                    }
-                }) {
-                    Some(_) => Ok(()),
-                    None => Err(Error::NotFound),
-                }
-            }
-            None => Err(Error::NotFound),
-        }
+        target_assertion.update_assertion(replace_with, replacement_hash)?;
+
+        let target_label = target_assertion.label();
+        let target_hash = target_assertion.hash();
+
+        // Replace the existing hash in the hashed URI reference
+        // with the newly-calculated hash.
+        let Some(f) = self
+            .assertions
+            .iter_mut()
+            .find(|f| f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash))
+        else {
+            return Err(Error::NotFound);
+        };
+
+        // Replace existing hash with newly-calculated hash.
+        f.update_hash(target_hash.to_vec());
+        Ok(())
     }
 
-    // crate private function to allow for patching a BMFF hash with final contents
+    // Crate private function to allow for patching a data hash with final contents.
+    pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
+        let dh_name = data_hash.name.clone();
+
+        self.update_assertion(
+            data_hash.to_assertion()?,
+            |ca: &ClaimAssertion| {
+                if let Ok(dh) = DataHash::from_assertion(ca.assertion()) {
+                    dh.name == dh_name
+                } else {
+                    false
+                }
+            },
+            |target_assertion: &ClaimAssertion, _: Assertion| {
+                let original_len = target_assertion.assertion().data().len();
+                data_hash.pad_to_size(original_len)?;
+                data_hash.to_assertion()
+            },
+        )
+    }
+
+    // Crate private function to allow for patching a BMFF hash with final contents.
     #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
-        let replacement_assertion = bmff_hash.to_assertion()?;
-
-        match self.assertion_store.iter_mut().find(|assertion| {
-            // is this a BMFFHash Assertion
-            Assertion::assertions_eq(&replacement_assertion, assertion.assertion())
-        }) {
-            Some(ref mut bmff_assertion) => {
-                let original_hash = bmff_assertion.hash().to_vec();
-
-                let replacement_hash = Claim::calc_box_hash(
-                    &bmff_assertion.label(),
-                    &replacement_assertion,
-                    bmff_assertion.salt().clone(),
-                    bmff_assertion.hash_alg(),
-                )?;
-                bmff_assertion.update_assertion(replacement_assertion, replacement_hash)?;
-
-                // fix up hashed uri
-                match self.assertions.iter_mut().find_map(|f| {
-                    if f.url().contains(&bmff_assertion.label())
-                        && vec_compare(&f.hash(), &original_hash)
-                    {
-                        // replace with newly updated hash
-                        f.update_hash(bmff_assertion.hash().to_vec());
-                        Some(f)
-                    } else {
-                        None
-                    }
-                }) {
-                    Some(_) => Ok(()),
-                    None => Err(Error::NotFound),
-                }
-            }
-            None => Err(Error::NotFound),
-        }
+        self.replace_assertion(bmff_hash.to_assertion()?)
     }
 
-    /// Not ready for use!!!!!
+    // Patch an existing assertion with new contents.
+    //
+    // `replace_with` should match in name and size of an existing assertion.
+    #[cfg(feature = "file_io")]
+    pub(crate) fn replace_assertion(&mut self, replace_with: Assertion) -> Result<()> {
+        self.update_assertion(
+            replace_with,
+            |_: &ClaimAssertion| true,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
+    }
+
     /// Redact an assertion from a prior claim.
     /// This will remove the assertion from the JUMBF
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
-        if label == assertions::labels::ACTIONS {
+        if label == labels::ACTIONS {
             return Err(Error::AssertionInvalidRedaction);
         }
 
@@ -777,13 +990,20 @@ impl Claim {
         }
     }
 
-    /// Return the signing date and time for this claim, if there is one.
+    /// Return the signing issuer for this claim, if there is one.
     pub fn signing_issuer(&self) -> Option<String> {
         if let Some(validation_data) = self.signature_info() {
             validation_data.issuer_org
         } else {
             None
         }
+    }
+
+    /// Return the cert's serial number, if there is one.
+    pub fn signing_cert_serial(&self) -> Option<String> {
+        self.signature_info()
+            .and_then(|validation_info| validation_info.cert_serial_number)
+            .map(|serial| serial.to_string())
     }
 
     /// Return information about the signature
@@ -800,7 +1020,7 @@ impl Claim {
     /// asset_bytes - reference to bytes of the asset
     pub async fn verify_claim_async<'a>(
         claim: &Claim,
-        asset_bytes: &'a [u8],
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -838,21 +1058,15 @@ impl Claim {
             validation_log,
         )
         .await;
-        Claim::verify_internal(
-            claim,
-            &ClaimAssetData::ByteData(asset_bytes),
-            is_provenance,
-            verified,
-            validation_log,
-        )
+        Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub fn verify_claim<'a>(
+    pub fn verify_claim(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -887,9 +1101,20 @@ impl Claim {
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
-    fn verify_internal<'a>(
+    /// Get the signing certificate chain as PEM bytes
+    pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log = OneShotStatusTracker::new();
+
+        let vi = get_signing_info(sig, &data, &mut validation_log);
+
+        Ok(vi.cert_chain)
+    }
+
+    fn verify_internal(
         claim: &Claim,
-        asset_data: &ClaimAssetData<'a>,
+        asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         verified: Result<ValidationInfo>,
         validation_log: &mut impl StatusTracker,
@@ -930,7 +1155,7 @@ impl Claim {
             }
         };
 
-        // check for self redacted assertions and illegal readactions
+        // check for self redacted assertions and illegal redactions
         if let Some(redactions) = claim.redactions() {
             for r in redactions {
                 let r_manifest = jumbf::labels::manifest_label_from_uri(r)
@@ -949,7 +1174,7 @@ impl Claim {
                 if r.contains(assertions::labels::ACTIONS) {
                     let log_item = log_item!(
                         claim.uri(),
-                        "readaction of action assertions disallowed",
+                        "redaction of action assertions disallowed",
                         "verify_internal"
                     )
                     .error(Error::ClaimDisallowedRedaction)
@@ -970,6 +1195,7 @@ impl Claim {
             .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
             validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
         }
+
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
@@ -1027,7 +1253,7 @@ impl Claim {
         // verify data hashes for provenance claims
         if is_provenance {
             // must have at least one hard binding for normal manifests
-            if claim.data_hash_assertions().is_empty() && !claim.update_manifest() {
+            if claim.hash_assertions().is_empty() && !claim.update_manifest() {
                 let log_item = log_item!(
                     &claim.uri(),
                     "claim missing data binding",
@@ -1039,7 +1265,7 @@ impl Claim {
             }
 
             // update manifests cannot have data hashes
-            if !claim.data_hash_assertions().is_empty() && claim.update_manifest() {
+            if !claim.hash_assertions().is_empty() && claim.update_manifest() {
                 let log_item = log_item!(
                     &claim.uri(),
                     "update manifests cannot contain data hash assertions",
@@ -1050,25 +1276,29 @@ impl Claim {
                 validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
             }
 
-            for dh_assertion in claim.data_hash_assertions() {
-                if dh_assertion.label_root() == DataHash::LABEL {
-                    let dh = DataHash::from_assertion(dh_assertion)?;
+            for hash_binding_assertion in claim.hash_assertions() {
+                if hash_binding_assertion.label_root() == DataHash::LABEL {
+                    let dh = DataHash::from_assertion(hash_binding_assertion)?;
                     let name = dh.name.as_ref().map_or(UNNAMED.to_string(), default_str);
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
                         let hash_result = match asset_data {
-                            ClaimAssetData::PathData(asset_path) => {
+                            ClaimAssetData::Path(asset_path) => {
                                 dh.verify_hash(asset_path, Some(claim.alg()))
                             }
-                            ClaimAssetData::ByteData(asset_bytes) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
+                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                             }
+                            ClaimAssetData::Stream(stream_data, _) => {
+                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                            }
+                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
                         match hash_result {
                             Ok(_a) => {
                                 let log_item = log_item!(
-                                    claim.assertion_uri(&dh_assertion.label()),
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
                                     "data hash valid",
                                     "verify_internal"
                                 )
@@ -1079,59 +1309,140 @@ impl Claim {
                             }
                             Err(e) => {
                                 let log_item = log_item!(
-                                    claim.assertion_uri(&dh_assertion.label()),
-                                    format!("asset hash error, name: {}, error: {}", name, e),
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    format!("asset hash error, name: {name}, error: {e}"),
                                     "verify_internal"
                                 )
-                                .error(Error::HashMismatch(format!("Asset hash failure: {}", e)))
+                                .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
                                 .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
 
                                 validation_log.log(
                                     log_item,
-                                    Some(Error::HashMismatch(format!("Asset hash failure: {}", e))),
+                                    Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
                                 )?;
                             }
                         }
                     }
-                } else {
+                } else if hash_binding_assertion.label_root() == BmffHash::LABEL {
                     // handle BMFF data hashes
-                    let dh = BmffHash::from_assertion(dh_assertion)?;
+                    let dh = BmffHash::from_assertion(hash_binding_assertion)?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
                     let hash_result = match asset_data {
-                        ClaimAssetData::PathData(asset_path) => {
+                        ClaimAssetData::Path(asset_path) => {
                             dh.verify_hash(asset_path, Some(claim.alg()))
                         }
-                        ClaimAssetData::ByteData(asset_bytes) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg().to_string()))
+                        ClaimAssetData::Bytes(asset_bytes, _) => {
+                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
                         }
+                        ClaimAssetData::Stream(stream_data, _) => {
+                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
+                        }
+                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
+                            .verify_stream_segment(
+                                *initseg_data,
+                                *fragment_data,
+                                Some(claim.alg()),
+                            ),
                     };
 
                     match hash_result {
                         Ok(_a) => {
                             let log_item = log_item!(
-                                claim.assertion_uri(&dh_assertion.label()),
+                                claim.assertion_uri(&hash_binding_assertion.label()),
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH);
                             validation_log.log_silent(log_item);
 
                             continue;
                         }
                         Err(e) => {
                             let log_item = log_item!(
-                                claim.assertion_uri(&dh_assertion.label()),
-                                format!("asset hash error, name: {}, error: {}", name, e),
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
-                            .error(Error::HashMismatch(format!("Asset hash failure: {}", e)))
-                            .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
+                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH);
 
                             validation_log.log(
                                 log_item,
-                                Some(Error::HashMismatch(format!("Asset hash failure: {}", e))),
+                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
+                            )?;
+                        }
+                    }
+                } else if hash_binding_assertion.label_root() == BoxHash::LABEL {
+                    // box hash case
+                    // handle BMFF data hashes
+                    let bh = BoxHash::from_assertion(hash_binding_assertion)?;
+
+                    let hash_result = match asset_data {
+                        ClaimAssetData::Path(asset_path) => {
+                            let box_hash_processor = get_assetio_handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
+
+                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
+                        }
+                        ClaimAssetData::Bytes(asset_bytes, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_in_memory_hash(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
+                        }
+                        ClaimAssetData::Stream(stream_data, asset_type) => {
+                            let box_hash_processor = get_assetio_handler(asset_type)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch(format!(
+                                    "Box hash not supported for: {asset_type}"
+                                )))?;
+
+                            bh.verify_stream_hash(
+                                *stream_data,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                            )
+                        }
+                        _ => return Err(Error::UnsupportedType),
+                    };
+
+                    match hash_result {
+                        Ok(_a) => {
+                            let log_item = log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "data hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH);
+                            validation_log.log_silent(log_item);
+
+                            continue;
+                        }
+                        Err(e) => {
+                            let log_item = log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("asset hash error: {e}"),
+                                "verify_internal"
+                            )
+                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH);
+
+                            validation_log.log(
+                                log_item,
+                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
                             )?;
                         }
                     }
@@ -1155,7 +1466,7 @@ impl Claim {
     }
 
     /// Return list of data hash assertions
-    pub fn data_hash_assertions(&self) -> Vec<&Assertion> {
+    pub fn hash_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
         let mut data_hashes = self.assertions_by_type(&dummy_hash);
@@ -1164,6 +1475,11 @@ impl Claim {
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash));
+
+        // add in an box hashes
+        let dummy_box_data = AssertionData::Cbor(Vec::new());
+        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
+        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash));
 
         data_hashes
     }
@@ -1174,8 +1490,16 @@ impl Claim {
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash)
     }
+
+    pub fn box_hash_assertions(&self) -> Vec<&Assertion> {
+        // add in an BMFF hashes
+        let dummy_box_data = AssertionData::Cbor(Vec::new());
+        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
+        self.assertions_by_type(&dummy_box_hash)
+    }
+
     /// Return list of ingredient assertions. This function
-    /// is only useful on commited or loaded claims since ingredients
+    /// is only useful on committed or loaded claims since ingredients
     /// are resolved at commit time.
     pub fn ingredient_assertions(&self) -> Vec<&Assertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
@@ -1540,7 +1864,7 @@ impl Claim {
             let tn_type = get_thumbnail_image_type(label);
             format!("{}__{}.{}", get_thumbnail_type(label), instance, tn_type)
         } else {
-            format!("{}__{}", label, instance)
+            format!("{label}__{instance}")
         }
     }
 
@@ -1620,12 +1944,10 @@ impl Claim {
     // Do any assertions of this type exist?
     pub fn has_assertion_type(&self, in_label: &str) -> bool {
         let (label, _) = Claim::assertion_label_from_link(in_label);
-        let found = self
-            .assertion_store
-            .iter()
-            .find(|&x| x.assertion.label().starts_with(&label));
 
-        !matches!(found, None)
+        self.assertion_store
+            .iter()
+            .any(|x| x.assertion.label().starts_with(&label))
     }
 
     // Create a JUMBF URI from a claim label.
@@ -1645,7 +1967,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::utils::test::create_test_claim;
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
 
     #[test]
     fn test_build_claim() {
@@ -1665,7 +1987,7 @@ pub mod tests {
         let restored_binary = restored_claim.data().expect("failure returning data");
 
         assert_eq!(orig_binary, restored_binary);
-        println!("Restored Claim: {:?}", restored_claim);
+        println!("Restored Claim: {restored_claim:?}");
 
         // NOTE: I added a separate mirror of original data because a third-party's
         // JSON serialization could differ from our re-serialization of that same data.
@@ -1679,7 +2001,7 @@ pub mod tests {
             .to_json(AssertionStoreJsonFormat::OrderedList, true)
             .expect("could not generate json");
 
-        println!("Claim: {}", json_str);
+        println!("Claim: {json_str}");
     }
 
     #[test]
@@ -1702,5 +2024,30 @@ pub mod tests {
         let value = &cg_map[GH_FULL_VERSION_LIST];
 
         assert_eq!(expected_value, value.as_str().unwrap());
+    }
+
+    #[test]
+    fn test_build_claim_generator_info() {
+        // Create a new claim.
+        let mut claim = create_test_claim().expect("create test claim");
+
+        let mut info = ClaimGeneratorInfo::new("test app");
+        info.version = Some("2.3.4".to_string());
+        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+            "self#jumbf=c2pa.databoxes.data_box".to_string(),
+            None,
+            b"hashed",
+        )));
+        info.insert("something", "else");
+
+        claim.add_claim_generator_info(info);
+
+        let cgi = claim.claim_generator_info().unwrap();
+
+        assert_eq!(&cgi[0].name, "test app");
+        assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
+        if let UriOrResource::HashedUri(r) = cgi[0].icon.as_ref().unwrap() {
+            assert_eq!(r.hash(), b"hashed");
+        }
     }
 }

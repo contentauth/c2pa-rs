@@ -7,13 +7,18 @@
 // Unless required by applicable law or agreed to in writing,
 // this software is distributed on an "AS IS" BASIS, WITHOUT
 // WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
-// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for thema
 // specific language governing permissions and limitations under
 // each license.
 
 #![allow(clippy::unwrap_used)]
 
 use std::path::PathBuf;
+#[cfg(feature = "file_io")]
+use std::{
+    io::{Cursor, Read, Write},
+    path::Path,
+};
 
 use tempfile::TempDir;
 
@@ -22,17 +27,19 @@ use crate::{
     claim::Claim,
     salt::DefaultSalt,
     store::Store,
-    Result,
+    RemoteSigner, Result, Signer, SigningAlg,
 };
 #[cfg(feature = "file_io")]
 use crate::{
-    create_signer,
-    openssl::RsaSigner,
-    signer::{ConfigurableSigner, Signer},
-    SigningAlg,
+    asset_io::CAIReadWrite, create_signer, hash_utils::Hasher,
+    jumbf_io::get_assetio_handler_from_path,
 };
+#[cfg(feature = "openssl_sign")]
+use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
+
+pub const TEST_WEBP: &str = "mars.webp";
 
 pub const TEST_VC: &str = r#"{
     "@context": [
@@ -62,6 +69,11 @@ pub const TEST_VC: &str = r#"{
 /// creates a claim for testing
 pub fn create_test_claim() -> Result<Claim> {
     let mut claim = Claim::new("adobe unit test", Some("adobe"));
+
+    // add some data boxes
+    let _db_uri = claim.add_databox("text/plain", "this is a test".as_bytes().to_vec(), None)?;
+    let _db_uri_1 =
+        claim.add_databox("text/plain", "this is more text".as_bytes().to_vec(), None)?;
 
     // add VC entry
     let _hu = claim.add_verifiable_credential(TEST_VC)?;
@@ -178,7 +190,7 @@ pub fn temp_dir_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
     let fixture_src = fixture_path(file_name);
     let fixture_copy = temp_dir_path(temp_dir, file_name);
-    std::fs::copy(&fixture_src, &fixture_copy).unwrap();
+    std::fs::copy(fixture_src, &fixture_copy).unwrap();
     fixture_copy
 }
 
@@ -196,7 +208,7 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 /// Can panic if the certs cannot be read. (This function should only
 /// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
-pub fn temp_signer() -> RsaSigner {
+pub fn temp_signer_file() -> RsaSigner {
     #![allow(clippy::expect_used)]
     let mut sign_cert_path = fixture_path("certs");
     sign_cert_path.push("ps256");
@@ -208,6 +220,118 @@ pub fn temp_signer() -> RsaSigner {
 
     RsaSigner::from_files(&sign_cert_path, &pem_key_path, SigningAlg::Ps256, None)
         .expect("get_temp_signer")
+}
+
+/// Utility to create a test file with a placeholder for a manifest
+#[cfg(feature = "file_io")]
+pub fn write_jpeg_placeholder_file(
+    placeholder: &[u8],
+    input: &Path,
+    output_file: &mut dyn CAIReadWrite,
+    mut hasher: Option<&mut Hasher>,
+) -> Result<usize> {
+    // get where we will put the data
+    let mut f = std::fs::File::open(input).unwrap();
+    let jpeg_io = get_assetio_handler_from_path(input).unwrap();
+    let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
+    let boxes = box_mapper.get_box_map(&mut f).unwrap();
+    let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
+
+    // build new asset with hole for new manifest
+    let outbuf = Vec::new();
+    let mut out_stream = Cursor::new(outbuf);
+    let mut input_file = std::fs::File::open(input).unwrap();
+
+    // write before
+    let mut before = vec![0u8; sof.range_start];
+    input_file.read_exact(before.as_mut_slice()).unwrap();
+    if let Some(hasher) = hasher.as_deref_mut() {
+        hasher.update(&before);
+    }
+    out_stream.write_all(&before).unwrap();
+
+    // write placeholder
+    out_stream.write_all(placeholder).unwrap();
+
+    // write bytes after
+    let mut after_buf = Vec::new();
+    input_file.read_to_end(&mut after_buf).unwrap();
+    if let Some(hasher) = hasher {
+        hasher.update(&after_buf);
+    }
+    out_stream.write_all(&after_buf).unwrap();
+
+    // save to output file
+    output_file.write_all(&out_stream.into_inner()).unwrap();
+
+    Ok(sof.range_start)
+}
+
+pub(crate) struct TestGoodSigner {}
+impl crate::Signer for TestGoodSigner {
+    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+        Ok(b"not a valid signature".to_vec())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024
+    }
+}
+
+pub(crate) struct AsyncTestGoodSigner {}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::AsyncSigner for AsyncTestGoodSigner {
+    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(b"not a valid signature".to_vec())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024
+    }
+}
+
+/// Create a [`Signer`] instance that can be used for testing purposes using ps256 alg.
+///
+/// # Returns
+///
+/// Returns a boxed [`Signer`] instance.
+pub fn temp_signer() -> Box<dyn Signer> {
+    #[cfg(feature = "openssl_sign")]
+    {
+        #![allow(clippy::expect_used)]
+        let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
+
+        let signer =
+            RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .expect("get_temp_signer");
+
+        Box::new(signer)
+    }
+
+    // todo: the will be a RustTLS signer shortly
+    #[cfg(not(feature = "openssl_sign"))]
+    {
+        Box::new(TestGoodSigner {})
+    }
 }
 
 /// Create a [`Signer`] instance for a specific algorithm that can be used for testing purposes.
@@ -234,6 +358,48 @@ pub fn temp_signer_with_alg(alg: SigningAlg) -> Box<dyn Signer> {
 
     create_signer::from_files(sign_cert_path.clone(), pem_key_path, alg, None)
         .expect("get_temp_signer_with_alg")
+}
+
+struct TempRemoteSigner {}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::signer::RemoteSigner for TempRemoteSigner {
+    async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
+        #[cfg(feature = "openssl_sign")]
+        {
+            let signer =
+                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+            // this would happen on some remote server
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+        }
+        #[cfg(not(feature = "openssl_sign"))]
+        {
+            use std::io::{Seek, Write};
+
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+
+            sign_bytes.rewind()?;
+            sign_bytes.write_all(claim_bytes)?;
+
+            // fake sig
+            Ok(sign_bytes.into_inner())
+        }
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
+}
+
+/// Create a [`RemoteSigner`] instance that can be used for testing purposes.
+///
+/// # Returns
+///
+/// Returns a boxed [`RemoteSigner`] instance.
+pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
+    Box::new(TempRemoteSigner {})
 }
 
 #[test]

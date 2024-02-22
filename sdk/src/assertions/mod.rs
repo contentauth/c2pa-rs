@@ -14,14 +14,16 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-pub use actions::*;
+pub use actions::{c2pa_action, Action, Actions, SoftwareAgent};
 
 mod bmff_hash;
-pub use bmff_hash::{BmffHash, DataMap, ExclusionsMap, SubsetMap};
+pub use bmff_hash::{BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, SubsetMap};
 
-#[allow(dead_code)] // will become public later
+mod box_hash;
+pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
+
 mod data_hash;
-pub(crate) use data_hash::DataHash;
+pub use data_hash::DataHash;
 
 mod creative_work;
 pub use creative_work::CreativeWork;
@@ -36,7 +38,9 @@ pub(crate) use ingredient::{Ingredient, Relationship};
 pub mod labels;
 
 mod metadata;
-pub use metadata::{Actor, DataSource, Metadata, ReviewRating, *};
+pub use metadata::{
+    c2pa_source, Actor, AssetType, DataBox, DataSource, Metadata, ReviewCode, ReviewRating,
+};
 
 mod schema_org;
 pub use schema_org::{SchemaDotOrg, SchemaDotOrgPerson};
@@ -45,10 +49,11 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod user;
-pub use user::User;
+pub(crate) use user::User;
 
 mod user_cbor;
-pub use user_cbor::UserCbor;
+pub(crate) use user_cbor::UserCbor;
 
 mod uuid_assertion;
-pub use uuid_assertion::Uuid;
+#[allow(unused_imports)]
+pub(crate) use uuid_assertion::Uuid;

@@ -40,7 +40,7 @@ fn get_mutable_label(var_label: &str) -> (String, Option<usize>) {
                         let (ver, ver_inst_str) = last.split_at(1);
                         if ver == "v" {
                             if let Ok(ver_inst) = ver_inst_str.parse::<usize>() {
-                                let ver_trim = format!(".{}", last);
+                                let ver_trim = format!(".{last}");
                                 let root_label = var_label.trim_end_matches(&ver_trim);
                                 return (root_label.to_string(), Some(ver_inst));
                             }
@@ -115,6 +115,11 @@ where
         Self::LABEL
     }
 
+    /// Returns a version for this assertion.
+    fn version(&self) -> Option<usize> {
+        Self::VERSION
+    }
+
     /// Returns an Assertion upon success or Error otherwise.
     fn to_assertion(&self) -> Result<Assertion>;
 
@@ -127,7 +132,7 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
     fn to_cbor_assertion(&self) -> Result<Assertion> {
         let data =
             AssertionData::Cbor(serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding)?);
-        Ok(Assertion::new(self.label(), Self::VERSION, data))
+        Ok(Assertion::new(self.label(), self.version(), data))
     }
 
     fn from_cbor_assertion(assertion: &Assertion) -> Result<Self> {
@@ -154,7 +159,7 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
         let data = AssertionData::Json(
             serde_json::to_string(self).map_err(|_err| Error::AssertionEncoding)?,
         );
-        Ok(Assertion::new(self.label(), Self::VERSION, data).set_content_type("application/json"))
+        Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/json"))
     }
 
     fn from_json_assertion(assertion: &Assertion) -> Result<Self> {
@@ -170,10 +175,10 @@ pub trait AssertionJson: Serialize + DeserializeOwned + AssertionBase {
     }
 }
 
-/// Assertion data as binary cbor or json depending upon
+/// Assertion data as binary CBOR or JSON depending upon
 /// the Assertion type (see spec).
-/// for Json assertions the data is a Json string and Vec<u8> for
-/// binary data and json data to be cbor encoded.
+/// For JSON assertions the data is a JSON string and a Vec of u8 values for
+/// binary data and JSON data to be CBOR encoded.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
 pub enum AssertionData {
     Json(String),          // json encoded data
@@ -185,10 +190,10 @@ pub enum AssertionData {
 impl fmt::Debug for AssertionData {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Json(s) => write!(f, "{:?}", s), // json encoded data
+            Self::Json(s) => write!(f, "{s:?}"), // json encoded data
             Self::Binary(_) => write!(f, "<omitted>"),
             Self::Uuid(uuid, _) => {
-                write!(f, "uuid: {}, <omitted>", uuid)
+                write!(f, "uuid: {uuid}, <omitted>")
             }
             Self::Cbor(s) => {
                 let buf: Vec<u8> = Vec::new();
@@ -208,10 +213,10 @@ impl fmt::Debug for AssertionData {
 
 /// Internal Assertion structure
 ///
-// Each assertion type will
-// contain its AssertionData.  For the User Assertion type we
-// allow a String to set the label. The AssertionData contains
-// the data payload for the assertion and the version number for its schema (if supported).
+/// Each assertion type will
+/// contain its AssertionData.  For the User Assertion type we
+/// allow a String to set the label. The AssertionData contains
+/// the data payload for the assertion and the version number for its schema (if supported).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assertion {
     label: String,
@@ -286,7 +291,7 @@ impl Assertion {
         // thumbnails need the image_type added
         match get_thumbnail_image_type(&self.label).as_str() {
             "none" => label,
-            image_type => format!("{}.{}", label, image_type),
+            image_type => format!("{label}.{image_type}"),
         }
     }
 
@@ -297,7 +302,7 @@ impl Assertion {
             Some(v) => {
                 if v > 1 {
                     // c2pa does not include v1 labels
-                    format!("{}.v{}", base_label, v)
+                    format!("{base_label}.v{v}")
                 } else {
                     base_label
                 }
@@ -318,6 +323,7 @@ impl Assertion {
 
     /// Return assertion as serde_json Object
     /// this may have loss of cbor structure if unsupported in conversion to json
+    /// It should always do the correct thing when using the correct tagged CBOR types
     pub(crate) fn as_json_object(&self) -> AssertionDecodeResult<Value> {
         match self.decode_data() {
             AssertionData::Json(x) => serde_json::from_str(x)
@@ -641,7 +647,7 @@ pub mod tests {
                 Action::new("c2pa.cropped")
                     .set_parameter(
                         "coordinate".to_owned(),
-                        r#"{"left": 0,"right": 2000,"top": 1000,"botton": 4000}"#,
+                        serde_json::json!({"left": 0,"right": 2000,"top": 1000,"bottom": 4000}),
                     )
                     .unwrap(),
             )

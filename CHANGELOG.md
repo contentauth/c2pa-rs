@@ -6,6 +6,251 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.28.5
+_06 February 2024_
+
+* Finish async signing implementation for cose_sign ([#370](https://github.com/contentauth/c2pa-rs/pull/370))
+* adds read_cai test for PDF with content credentials ([#366](https://github.com/contentauth/c2pa-rs/pull/366))
+* [IGNORE] README edits ([#356](https://github.com/contentauth/c2pa-rs/pull/356))
+* Update ci.yml
+* Remove deprecated twoway crate ([#361](https://github.com/contentauth/c2pa-rs/pull/361))
+* Fix response strings for BMFF and Box hash statuses ([#360](https://github.com/contentauth/c2pa-rs/pull/360))
+* Restore correct 1.3 CoseSign1 headers ([#359](https://github.com/contentauth/c2pa-rs/pull/359))
+* Openssl update to version 3.x ([#357](https://github.com/contentauth/c2pa-rs/pull/357))
+* Add support for ARW and NEF ([#355](https://github.com/contentauth/c2pa-rs/pull/355))
+
+## 0.28.4
+_04 December 2023_
+
+* CAI-5041 Clear Windows temp attribute ([#352](https://github.com/contentauth/c2pa-rs/pull/352))
+
+## 0.28.3
+_22 November 2023_
+
+* Remove Blake3 dependency from c2pa-rs ([#348](https://github.com/contentauth/c2pa-rs/pull/348))
+
+## 0.28.2
+_21 November 2023_
+
+* Fix PDF reading of manifest from wrong key ([#346](https://github.com/contentauth/c2pa-rs/pull/346))
+
+## 0.28.1
+_17 November 2023_
+
+* readme update ([#345](https://github.com/contentauth/c2pa-rs/pull/345))
+* Add support for embeddable manifests with RemoteSigner ([#344](https://github.com/contentauth/c2pa-rs/pull/344))
+* Blake build fix ([#343](https://github.com/contentauth/c2pa-rs/pull/343))
+* Update image crate dependency and limit features ([#341](https://github.com/contentauth/c2pa-rs/pull/341))
+* Bump xmp_toolkit requirement to 1.6 ([#339](https://github.com/contentauth/c2pa-rs/pull/339))
+* Disable Windows builds with latest Rust version ([#342](https://github.com/contentauth/c2pa-rs/pull/342))
+
+## 0.28.0
+_01 November 2023_
+
+* (PATCH) switches af relationship for a reference to the c2pa data to an array of references, one of which is the c2pa spec ([#333](https://github.com/contentauth/c2pa-rs/pull/333))
+* Restore async versions of embedd functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
+* (MINOR) Support databox thumbnails CAI-4142 ([#325](https://github.com/contentauth/c2pa-rs/pull/325))
+* (MINOR) Reuse claim thumbnail as ingredient thumbnail if the store is valid ([#322](https://github.com/contentauth/c2pa-rs/pull/322))
+* (MINOR) Use JUMBF URIs for ManifestStore identifiers ([#323](https://github.com/contentauth/c2pa-rs/pull/323))
+* Add ManifestStore::from_stream ([#319](https://github.com/contentauth/c2pa-rs/pull/319))
+* Adds embed_to_stream ([#313](https://github.com/contentauth/c2pa-rs/pull/313))
+
+## 0.27.1
+_04 October 2023_
+
+* Support for validating JPEGs that contain MPF (multi-picture format). ([#317](https://github.com/contentauth/c2pa-rs/pull/317))
+* Add ability to customize HTTP headers on timestamp request to Signer and AsyncSigner traits ([#315](https://github.com/contentauth/c2pa-rs/pull/315))
+* Add all of the MIME types that are associated with WAV files ([#316](https://github.com/contentauth/c2pa-rs/pull/316))
+* Allow MS_C2PA_SIGNING OID to pass ([#314](https://github.com/contentauth/c2pa-rs/pull/314))
+
+## 0.27.0
+_29 September 2023_
+
+* supports removal of manifests from pdf ([#312](https://github.com/contentauth/c2pa-rs/pull/312))
+* Support for MP3 ([#295](https://github.com/contentauth/c2pa-rs/pull/295))
+* (MINOR) Signer can call timestamp authority directly ([#311](https://github.com/contentauth/c2pa-rs/pull/311))
+* implements pdf read support ([#309](https://github.com/contentauth/c2pa-rs/pull/309))
+
+## 0.26.0
+_13 September 2023_
+
+* Add support for default SVG MIME type ([#305](https://github.com/contentauth/c2pa-rs/pull/305))
+* Support for writing and reading manifest data from simple PDFs (without incremental updates or signatures) ([#249](https://github.com/contentauth/c2pa-rs/pull/249))
+* Increase actix requirement to 0.13.1 ([#304](https://github.com/contentauth/c2pa-rs/pull/304))
+* (MINOR) Expose HashRange ([#300](https://github.com/contentauth/c2pa-rs/pull/300))
+* Lock openssl-sys version to 0.9.92 ([#302](https://github.com/contentauth/c2pa-rs/pull/302))
+* Update links to C2PA spec to 1.3 ([#292](https://github.com/contentauth/c2pa-rs/pull/292))
+* Error saving stream writes ([#290](https://github.com/contentauth/c2pa-rs/pull/290))
+* Fix for overly harsh checks when checking Merkle trees. ([#289](https://github.com/contentauth/c2pa-rs/pull/289))
+
+## 0.25.2
+_02 August 2023_
+
+* Adds a way to force no claim thumbnail generation ([#288](https://github.com/contentauth/c2pa-rs/pull/288))
+* adds ManifestStoreReport::cert_chain_from_bytes ([#286](https://github.com/contentauth/c2pa-rs/pull/286))
+
+## 0.25.1
+_14 July 2023_
+
+* Expose DataHash and BoxHash to public SDK ([#284](https://github.com/contentauth/c2pa-rs/pull/284))
+* Remove debug statement ([#283](https://github.com/contentauth/c2pa-rs/pull/283))
+
+## 0.25.0
+_14 July 2023_
+
+* (MINOR) User, UserCbor and Uuid assertions removed from SDK ([#141](https://github.com/contentauth/c2pa-rs/pull/141))
+* Fix for #195 make_test_images missing ingredient references ([#254](https://github.com/contentauth/c2pa-rs/pull/254))
+* Return ResourceNotFound  instead of NotFound for resource get ([#279](https://github.com/contentauth/c2pa-rs/pull/279))
+* (MINOR) Minor improvements for Wasm and Node.js interoperability ([#276](https://github.com/contentauth/c2pa-rs/pull/276))
+* Fix iloc extent_offsets when offset_size is 0 ([#277](https://github.com/contentauth/c2pa-rs/pull/277))
+* (MINOR) Converts DataHash and BoxHash methods to use RemoteSigner instead of AsyncSigner ([#280](https://github.com/contentauth/c2pa-rs/pull/280))
+* (MINOR) Embeddable manifest support ([#266](https://github.com/contentauth/c2pa-rs/pull/266))
+* Repair CI tests ([#278](https://github.com/contentauth/c2pa-rs/pull/278))
+
+## 0.24.0
+_21 June 2023_
+
+* (MINOR) force minor version change ([#273](https://github.com/contentauth/c2pa-rs/pull/273))
+
+## 0.23.3
+_21 June 2023_
+
+* Bump minor version and update README.md ([#272](https://github.com/contentauth/c2pa-rs/pull/272))
+* Updates ([#270](https://github.com/contentauth/c2pa-rs/pull/270))
+* Add `Send` to `CAIRead` trait so that it can be used across threads ([#271](https://github.com/contentauth/c2pa-rs/pull/271))
+* Generate old COSE headers for temporary backwards support ([#269](https://github.com/contentauth/c2pa-rs/pull/269))
+
+## 0.23.2
+_19 June 2023_
+
+* Fix for returning input stream data when using `embed_from_memory` ([#268](https://github.com/contentauth/c2pa-rs/pull/268))
+
+## 0.23.1
+_13 June 2023_
+
+* Remove no-default ci test ([#259](https://github.com/contentauth/c2pa-rs/pull/259))
+* includes the cert serial number in the ValidationInfo output ([#263](https://github.com/contentauth/c2pa-rs/pull/263))
+* adds ManifestStoreReport::cert_chain ([#265](https://github.com/contentauth/c2pa-rs/pull/265))
+* Update Timestamp message imprint to include entire protected header ([#264](https://github.com/contentauth/c2pa-rs/pull/264))
+
+## 0.23.0
+_09 June 2023_
+
+* Box hash support ([#261](https://github.com/contentauth/c2pa-rs/pull/261))
+* Fix timestamp Accuracy decoding ([#262](https://github.com/contentauth/c2pa-rs/pull/262))
+* Make remote manifest handling consistent across input types ([#260](https://github.com/contentauth/c2pa-rs/pull/260))
+* (MINOR) Support for Ingredients V2 and Actions V2 ([#258](https://github.com/contentauth/c2pa-rs/pull/258))
+* Generate and validate 1.3 Cose signatures ([#256](https://github.com/contentauth/c2pa-rs/pull/256))
+* Add type exports via JSON Schema ([#255](https://github.com/contentauth/c2pa-rs/pull/255))
+* Bmff v2 ([#251](https://github.com/contentauth/c2pa-rs/pull/251))
+
+## 0.22.0
+_18 May 2023_
+
+* (MINOR) Improved Remote Manifest handling ([#250](https://github.com/contentauth/c2pa-rs/pull/250))
+* Riff streaming support ([#248](https://github.com/contentauth/c2pa-rs/pull/248))
+
+## 0.21.0
+_04 May 2023_
+
+* (MINOR) Added ResourceNotFound error ([#244](https://github.com/contentauth/c2pa-rs/pull/244))
+
+## 0.20.3
+_03 May 2023_
+
+* backed out calls to set_memory_thumbnail ([#243](https://github.com/contentauth/c2pa-rs/pull/243))
+* Revert "backed out calls to set_memory_thumbnail"
+* backed out calls to set_memory_thumbnail This was causing thumbnail files to not be generated.
+
+## 0.20.2
+_24 April 2023_
+
+* Fixes bug in Ingredient_from_stream_info ([#241](https://github.com/contentauth/c2pa-rs/pull/241))
+
+## 0.20.1
+_20 April 2023_
+
+* Ingredient async and thumbnail support ([#240](https://github.com/contentauth/c2pa-rs/pull/240))
+* Update actix requirement from 0.11.0 to 0.13.0 in /sdk ([#209](https://github.com/contentauth/c2pa-rs/pull/209))
+* Update uuid requirement from 0.8.1 to 1.3.1 in /sdk ([#237](https://github.com/contentauth/c2pa-rs/pull/237))
+* Upgrade x509-parser to 0.15.0 ([#229](https://github.com/contentauth/c2pa-rs/pull/229))
+* Add support for ARM on Linux ([#233](https://github.com/contentauth/c2pa-rs/pull/233))
+
+## 0.20.0
+_05 April 2023_
+
+* (MINOR) SVG support ([#226](https://github.com/contentauth/c2pa-rs/pull/226))
+* (MINOR) Update several X509-related crate dependencies ([#225](https://github.com/contentauth/c2pa-rs/pull/225))
+* Update thiserror to 1.0.40 in /sdk ([#223](https://github.com/contentauth/c2pa-rs/pull/223))
+* Avoid chrono's transitive dependency on time crate ([#222](https://github.com/contentauth/c2pa-rs/pull/222))
+* Require openssl >0.10.48 to address multiple RUSTSEC warnings ([#221](https://github.com/contentauth/c2pa-rs/pull/221))
+* Apply code format to doc comments ([#220](https://github.com/contentauth/c2pa-rs/pull/220))
+
+## 0.19.1
+_28 March 2023_
+
+* Update README ([#215](https://github.com/contentauth/c2pa-rs/pull/215))
+
+## 0.19.0
+_23 March 2023_
+
+* Makefile update ([#213](https://github.com/contentauth/c2pa-rs/pull/213))
+* Streaming enhancement  ([#212](https://github.com/contentauth/c2pa-rs/pull/212))
+* Adds base_path_take to ResourceStore ([#205](https://github.com/contentauth/c2pa-rs/pull/205))
+* Add write support for HEIC, HEIF, AVIF ([#210](https://github.com/contentauth/c2pa-rs/pull/210))
+* (MINOR) Riff support with refactored AssetIO ([#203](https://github.com/contentauth/c2pa-rs/pull/203))
+* (MINOR) Resource format and is_parent / relationship changes ([#202](https://github.com/contentauth/c2pa-rs/pull/202))
+* Fix hash algo warning in Wasm and hashing for RSA-PSS SHA-384/512 ([#206](https://github.com/contentauth/c2pa-rs/pull/206))
+* Derive impl of Default for Relationship enum ([#204](https://github.com/contentauth/c2pa-rs/pull/204))
+
+## 0.18.1
+_07 March 2023_
+
+* Update Validation Status codes ([#200](https://github.com/contentauth/c2pa-rs/pull/200))
+* Fix async path to support ingredient box hashing ([#201](https://github.com/contentauth/c2pa-rs/pull/201))
+
+## 0.18.0
+_02 March 2023_
+
+* Fix issue where value was inadvertently included in Exclusion structure ([#197](https://github.com/contentauth/c2pa-rs/pull/197))
+* (MINOR) Bump MSRV to 1.63.0 ([#198](https://github.com/contentauth/c2pa-rs/pull/198))
+* Fixed unit test failure (invalid unique name generation). ([#190](https://github.com/contentauth/c2pa-rs/pull/190))
+
+## 0.17.0
+_22 February 2023_
+
+* Disable mdat exclusion ([#187](https://github.com/contentauth/c2pa-rs/pull/187))
+* Bmff v2 ([#186](https://github.com/contentauth/c2pa-rs/pull/186))
+* Fix for using non-c2pa segment when add required segments ([#185](https://github.com/contentauth/c2pa-rs/pull/185))
+* Update Ingredient and VC hashes to 1.2 spec ([#184](https://github.com/contentauth/c2pa-rs/pull/184))
+* (MINOR) Create a ResourceStore for binary assets  ([#180](https://github.com/contentauth/c2pa-rs/pull/180))
+* Fix Clippy warnings from new Rust 1.67 ([#182](https://github.com/contentauth/c2pa-rs/pull/182))
+* Visualizations ([#163](https://github.com/contentauth/c2pa-rs/pull/163))
+
+## 0.16.1
+_19 December 2022_
+
+* Update xmp-toolkit from 0.6.0 to 1.0.0 ([#165](https://github.com/contentauth/c2pa-rs/pull/165))
+* Prepare 0.16.1 release
+* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
+* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
+
+## 0.16.1
+_19 December 2022_
+
+* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
+* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
+
+## 0.16.0
+_03 December 2022_
+
+* Updates some cargo dependencies ([#159](https://github.com/contentauth/c2pa-rs/pull/159))
+* makes manifest#add_redaction public; adds test ([#156](https://github.com/contentauth/c2pa-rs/pull/156))
+* Fixes support for instanceId on action and generate parameters.ingredient field when possible ([#158](https://github.com/contentauth/c2pa-rs/pull/158))
+* Support digitalSourceType field in Action ([#154](https://github.com/contentauth/c2pa-rs/pull/154))
+* (MINOR) Add sign feature for signing manifests without file I/O ([#125](https://github.com/contentauth/c2pa-rs/pull/125))
+* TIFF/DNG support ([#152](https://github.com/contentauth/c2pa-rs/pull/152))
+
 ## 0.15.0
 _09 November 2022_
 

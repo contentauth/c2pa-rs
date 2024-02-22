@@ -17,11 +17,16 @@ use thiserror::Error;
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     // --- c2pa errors ---
     /// Could not find a claim with this label.
     #[error("claim missing: label = {label}")]
     ClaimMissing { label: String },
+
+    /// An assertion has an unsupported version
+    #[error("Unsupported Assertion version")]
+    AssertionUnsupportedVersion,
 
     /// An assertion could not be found at the expected URL.
     #[error("assertion missing: url = {url}")]
@@ -42,6 +47,12 @@ pub enum Error {
 
     #[error("bad parameter: {0}")]
     BadParam(String),
+
+    #[error("required feature missing")]
+    MissingFeature(String),
+
+    #[error("feature implementation incomplete")]
+    NotImplemented(String),
 
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
@@ -87,9 +98,9 @@ pub enum Error {
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {
-        coset_error: coset::CoseError, // NOTE: We can not use #[transparent] here because
-                                       // coset::CoseError does not implement std::Error::error
-                                       // and can't because coset is nostd.
+        coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
+                                        * coset::CoseError does not implement std::Error::error
+                                        * and can't because coset is nostd. */
     },
 
     /// The COSE signature uses an algorithm that is not supported by this crate.
@@ -195,11 +206,17 @@ pub enum Error {
     #[error("file not found: {0}")]
     FileNotFound(String),
 
+    #[error("resource not found: {0}")]
+    ResourceNotFound(String),
+
     #[error("XMP read error")]
     XmpReadError,
 
     #[error("XMP write error")]
     XmpWriteError,
+
+    #[error("XMP is not supported")]
+    XmpNotSupported,
 
     #[error("C2PA provenance not found in XMP")]
     ProvenanceMissing,
@@ -229,6 +246,12 @@ pub enum Error {
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
 
+    #[error("missing data box")]
+    MissingDataBox,
+
+    #[error("could not generate XML")]
+    XmlWriteError,
+
     // --- third-party errors ---
     #[error(transparent)]
     IoError(#[from] std::io::Error),
@@ -244,7 +267,7 @@ pub enum Error {
     CborError(#[from] serde_cbor::Error),
 
     #[error(transparent)]
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl")]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
     #[error(transparent)]
@@ -257,11 +280,7 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub(crate) fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
-}
-
-#[cfg(feature = "file_io")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
     Error::OpenSslError(err)
 }

@@ -11,39 +11,38 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
-use std::path::Path;
+use std::{fs::create_dir_all, path::Path};
 
-use log::{debug, error, warn};
+use log::{debug, error};
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 #[cfg(feature = "file_io")]
-use crate::Signer;
+use crate::AsyncSigner;
 use crate::{
     assertion::{AssertionBase, AssertionData},
-    assertions::{labels, Actions, CreativeWork, Exif, Thumbnail, User, UserCbor},
+    assertions::{
+        labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+    },
+    asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
     jumbf,
+    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    Ingredient, ManifestAssertion, ManifestAssertionKind,
+    ClaimGeneratorInfo, HashRange, Ingredient, ManifestAssertion, ManifestAssertionKind,
+    RemoteSigner, Signer,
 };
-#[cfg(all(feature = "async_signer", feature = "file_io"))]
-use crate::{AsyncSigner, RemoteSigner};
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// thumbnail data based on the `serialize_thumbnails` flag.
-/// (Serialization is disabled by default.)
-fn skip_serializing_thumbnails(value: &Option<(String, Vec<u8>)>) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || value.is_none()
-}
 
 /// A Manifest represents all the information in a c2pa manifest
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Manifest {
     /// Optional prefix added to the generated Manifest Label
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
@@ -52,24 +51,33 @@ pub struct Manifest {
 
     /// A User Agent formatted string identifying the software/hardware/system produced this claim
     /// Spaces are not allowed in names, versions can be specified with product/1.0 syntax
+    #[serde(default = "default_claim_generator")]
     pub claim_generator: String,
 
+    ///
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+
     /// A human-readable title, generally source filename.
+    #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
 
     /// The format of the source file as a MIME type.
+    #[serde(default = "default_format")]
     format: String,
 
     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+    #[serde(default = "default_instance_id")]
     instance_id: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
-    #[serde(skip_serializing_if = "skip_serializing_thumbnails")]
-    thumbnail: Option<(String, Vec<u8>)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thumbnail: Option<ResourceRef>,
 
     /// A List of ingredients
+    #[serde(default = "default_vec::<Ingredient>")]
     ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
@@ -77,6 +85,7 @@ pub struct Manifest {
     credentials: Option<Vec<Value>>,
 
     /// A list of assertions
+    #[serde(default = "default_vec::<ManifestAssertion>")]
     assertions: Vec<ManifestAssertion>,
 
     /// A list of redactions - URIs to a redacted assertions
@@ -90,8 +99,30 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
-    #[serde(skip_deserializing, skip_serializing)]
+    /// Indicates where a generated manifest goes
+    #[serde(skip)]
     remote_manifest: Option<RemoteManifest>,
+
+    /// container for binary assets (like thumbnails)
+    #[serde(skip_deserializing)]
+    #[serde(skip_serializing_if = "skip_serializing_resources")]
+    resources: ResourceStore,
+}
+
+fn default_claim_generator() -> String {
+    format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+}
+
+fn default_instance_id() -> String {
+    format!("xmp:iid:{}", Uuid::new_v4())
+}
+
+fn default_format() -> String {
+    "application/octet-stream".to_owned()
+}
+
+fn default_vec<T>() -> Vec<T> {
+    Vec::new()
 }
 
 impl Manifest {
@@ -99,20 +130,10 @@ impl Manifest {
     /// requires a claim_generator string (User Agent))
     pub fn new<S: Into<String>>(claim_generator: S) -> Self {
         Self {
-            vendor: None,
-            title: None,
-            format: "application/octet-stream".to_owned(),
-            instance_id: format!("xmp:iid:{}", Uuid::new_v4()),
             claim_generator: claim_generator.into(),
-            claim_generator_hints: None,
-            thumbnail: None,
-            ingredients: Vec::new(),
-            assertions: Vec::new(),
-            redactions: None,
-            credentials: None,
-            signature_info: None,
-            label: None,
-            remote_manifest: None,
+            format: default_format(),
+            instance_id: default_instance_id(),
+            ..Default::default()
         }
     }
 
@@ -141,17 +162,28 @@ impl Manifest {
         self.title.as_deref()
     }
 
-    /// Returns a tuple with thumbnail format and image bytes or `None`.
-    pub fn thumbnail(&self) -> Option<(&str, &[u8])> {
+    /// Returns thumbnail tuple with Some((format, bytes)) or None
+    pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
-            .map(|(format, image)| (format.as_str(), image.as_ref()))
+            .and_then(|t| Some(t.format.as_str()).zip(self.resources.get(&t.identifier).ok()))
     }
 
-    /// Returns the [Ingredient]s used by this Manifest
+    /// Returns a thumbnail ResourceRef or `None`.
+    pub fn thumbnail_ref(&self) -> Option<&ResourceRef> {
+        self.thumbnail.as_ref()
+    }
+
+    /// Returns immutable [Ingredient]s used by this Manifest
     /// This can include a parent as well as any placed assets
     pub fn ingredients(&self) -> &[Ingredient] {
         &self.ingredients
+    }
+
+    /// Returns mutable [Ingredient]s used by this Manifest
+    /// This can include a parent as well as any placed assets
+    pub fn ingredients_mut(&mut self) -> &mut [Ingredient] {
+        &mut self.ingredients
     }
 
     /// Returns Assertions for this Manifest
@@ -204,10 +236,31 @@ impl Manifest {
         self
     }
 
+    /// Sets the thumbnail from a ResourceRef.
+    pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
+        // verify the resource referenced exists
+        if thumbnail.format != "none" && !self.resources.exists(&thumbnail.identifier) {
+            return Err(Error::NotFound);
+        };
+        self.thumbnail = Some(thumbnail);
+        Ok(self)
+    }
+
     /// Sets the thumbnail format and image data.
-    pub fn set_thumbnail<S: Into<String>>(&mut self, format: S, thumbnail: Vec<u8>) -> &mut Self {
-        self.thumbnail = Some((format.into(), thumbnail));
-        self
+    pub fn set_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
+        &mut self,
+        format: S,
+        thumbnail: B,
+    ) -> Result<&mut Self> {
+        let base_id = self
+            .label()
+            .unwrap_or_else(|| self.instance_id())
+            .to_string();
+        self.thumbnail = Some(
+            self.resources
+                .add_with(&base_id, &format.into(), thumbnail)?,
+        );
+        Ok(self)
     }
 
     /// If set, the embed calls will create a sidecar .c2pa manifest file next to the output file
@@ -238,45 +291,27 @@ impl Manifest {
         self.signature_info.as_ref()
     }
 
+    /// Returns the parent ingredient if it exists
+    pub fn parent(&self) -> Option<&Ingredient> {
+        self.ingredients.iter().find(|i| i.is_parent())
+    }
+
     /// Sets the parent ingredient, assuring it is first and setting the is_parent flag
     pub fn set_parent(&mut self, mut ingredient: Ingredient) -> Result<&mut Self> {
         // there should only be one parent so return an error if we already have one
-        if self.ingredients.iter().any(|i| i.is_parent()) {
+        if self.parent().is_some() {
             error!("parent already added");
             return Err(Error::BadParam("Parent parent already added".to_owned()));
         }
-        // if the hash of our new ingredient does not match any of the ingredients
-        // then add it
-        if !self
-            .ingredients
-            .iter()
-            .any(|i| ingredient.hash().is_some() && i.hash() == ingredient.hash())
-        {
-            debug!("ingredients:set_is_parent {:?}", ingredient.title());
-            ingredient.set_is_parent();
-            self.ingredients.insert(0, ingredient);
-        } else {
-            // dup so just keep the ingredient instead of adding the parent
-            warn!("duplicate parent {}", ingredient.title());
-        }
+        ingredient.set_is_parent();
+        self.ingredients.insert(0, ingredient);
 
         Ok(self)
     }
 
     /// Add an ingredient removing duplicates (consumes the asset)
     pub fn add_ingredient(&mut self, ingredient: Ingredient) -> &mut Self {
-        // if the hash of the new asset does not match any of the ingredients
-        // then add it
-        if !self
-            .ingredients
-            .iter()
-            .any(|i| ingredient.hash().is_some() && i.hash() == ingredient.hash())
-        {
-            debug!("Manifest:add_ingredient {:?}", ingredient.title());
-            self.ingredients.push(ingredient);
-        } else {
-            warn!("duplicate ingredient {}", ingredient.title());
-        }
+        self.ingredients.push(ingredient);
         self
     }
 
@@ -312,8 +347,8 @@ impl Manifest {
     ///```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -334,8 +369,8 @@ impl Manifest {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{Actions, Action, c2pa_action},
-    ///     Manifest
+    ///     assertions::{c2pa_action, Action, Actions},
+    ///     Manifest,
     /// };
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app");
@@ -344,7 +379,7 @@ impl Manifest {
     ///
     /// let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
     /// for action in actions.actions {
-    ///    println!("{}", action.action());
+    ///     println!("{}", action.action());
     /// }
     /// # Ok(())
     /// # }
@@ -358,7 +393,6 @@ impl Manifest {
     }
 
     /// Retrieves an assertion by label and instance if it exists or Error::NotFound
-    ///
     pub fn find_assertion_with_instance<T: DeserializeOwned>(
         &self,
         label: &str,
@@ -375,9 +409,9 @@ impl Manifest {
         }
     }
 
-    // keep this private until we support it externally
-    #[allow(dead_code)]
-    pub(crate) fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
+    /// Redacts an assertion from the parent [Ingredient] of this manifest using the provided
+    /// assertion label.
+    pub fn add_redaction<S: Into<String>>(&mut self, label: S) -> Result<&mut Self> {
         // todo: any way to verify if this assertion exists in the parent claim here?
         match self.redactions.as_mut() {
             Some(redactions) => redactions.push(label.into()),
@@ -397,10 +431,16 @@ impl Manifest {
     }
 
     /// Sets the signature information for the report
-    fn set_signature(&mut self, issuer: Option<&String>, time: Option<&String>) -> &mut Self {
+    fn set_signature(
+        &mut self,
+        issuer: Option<&String>,
+        time: Option<&String>,
+        cert_serial: Option<&String>,
+    ) -> &mut Self {
         self.signature_info = Some(SignatureInfo {
             issuer: issuer.cloned(),
             time: time.cloned(),
+            cert_serial_number: cert_serial.cloned(),
         });
         self
     }
@@ -415,8 +455,42 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.time)
     }
 
+    /// Return an immutable reference to the manifest resources
+    pub fn resources(&self) -> &ResourceStore {
+        &self.resources
+    }
+
+    /// Return a mutable reference to the manifest resources
+    pub fn resources_mut(&mut self) -> &mut ResourceStore {
+        &mut self.resources
+    }
+
+    /// Creates a Manifest from a JSON string formatted as a Manifest
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_slice(json.as_bytes()).map_err(Error::JsonError)
+    }
+
+    /// Setting a base path will make the manifest use resource files instead of memory buffers
+    ///
+    /// The files will be relative to the given base path
+    /// Ingredients resources will also be relative to this path
+    #[cfg(feature = "file_io")]
+    pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+        create_dir_all(&base_path)?;
+        self.resources.set_base_path(base_path.as_ref());
+        for i in 0..self.ingredients.len() {
+            // todo: create different subpath for each ingredient?
+            self.ingredients[i].with_base_path(base_path.as_ref())?;
+        }
+        Ok(self)
+    }
+
     // Generates a Manifest given a store and a manifest label
-    pub(crate) fn from_store(store: &Store, manifest_label: &str) -> Result<Self> {
+    pub(crate) fn from_store(
+        store: &Store,
+        manifest_label: &str,
+        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+    ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
             .ok_or_else(|| Error::ClaimMissing {
@@ -425,9 +499,28 @@ impl Manifest {
 
         // extract vendor from claim label
         let claim_generator = claim.claim_generator().to_owned();
+
         let mut manifest = Manifest::new(claim_generator);
 
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = resource_path {
+            manifest.with_base_path(base_path)?;
+        }
+
+        if let Some(info_vec) = claim.claim_generator_info() {
+            let mut generators = Vec::new();
+            for claim_info in info_vec {
+                let mut info = claim_info.to_owned();
+                if let Some(icon) = claim_info.icon.as_ref() {
+                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
+                }
+                generators.push(info);
+            }
+            manifest.claim_generator_info = Some(generators);
+        }
+
         manifest.set_label(claim.label());
+        manifest.resources.set_label(claim.label()); // default manifest for relative urls
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
 
         // get credentials converting from AssertionData to Value
@@ -450,49 +543,101 @@ impl Manifest {
                 .collect()
         });
 
-        // let title = claim.title().map_or("".to_owned(), |s| s.to_owned());
-        // let format = claim.format().to_owned();
-        // let instance_id = claim.instance_id().to_owned();
         if let Some(title) = claim.title() {
             manifest.set_title(title);
         }
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
 
-        //let mut asset = Ingredient::new(&title, &format, &instance_id);
-
-        for claim_assertion in claim.claim_assertion_store().iter() {
+        for assertion in claim.assertions() {
+            let claim_assertion = store.get_claim_assertion_from_uri(
+                &jumbf::labels::to_absolute_uri(claim.label(), &assertion.url()),
+            )?;
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
-            debug!("assertion = {}", label);
+            debug!("assertion = {}", &label);
             match base_label.as_ref() {
-                labels::INGREDIENT => {
+                base if base.starts_with(labels::ACTIONS) => {
+                    let mut actions = Actions::from_assertion(assertion)?;
+
+                    for action in actions.actions_mut() {
+                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
+                            action.software_agent_mut()
+                        {
+                            if let Some(icon) = info.icon.as_mut() {
+                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                info.set_icon(icon);
+                            }
+                        }
+                    }
+
+                    // convert icons in templates to resource refs
+                    if let Some(templates) = actions.templates.as_mut() {
+                        for template in templates {
+                            // replace icon with resource ref
+                            template.icon = match template.icon.take() {
+                                Some(icon) => {
+                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
+                                }
+                                None => None,
+                            };
+
+                            // replace software agent with resource ref
+                            template.software_agent = match template.software_agent.take() {
+                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                    if let Some(icon) = info.icon.as_mut() {
+                                        let icon =
+                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                        info.set_icon(icon);
+                                    }
+                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                }
+                                agent => agent,
+                            };
+                        }
+                    }
+                    let manifest_assertion = ManifestAssertion::from_assertion(&actions)?
+                        .set_instance(claim_assertion.instance());
+                    manifest.assertions.push(manifest_assertion);
+                }
+                base if base.starts_with(labels::INGREDIENT) => {
+                    // note that we use the original label here, not the base label
                     let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
-                    let ingredient = Ingredient::from_ingredient_uri(store, &assertion_uri)?;
+                    let ingredient = Ingredient::from_ingredient_uri(
+                        store,
+                        manifest_label,
+                        &assertion_uri,
+                        #[cfg(feature = "file_io")]
+                        resource_path,
+                    )?;
                     manifest.add_ingredient(ingredient);
+                }
+                labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
+                    // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    manifest.set_thumbnail(thumbnail.content_type, thumbnail.data);
+                    let id = jumbf::labels::to_assertion_uri(claim.label(), label);
+                    let id = jumbf::labels::to_relative_uri(&id);
+                    manifest.thumbnail = Some(manifest.resources.add_uri(
+                        &id,
+                        &thumbnail.content_type,
+                        thumbnail.data,
+                    )?);
                 }
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(_x) => {
+                        AssertionData::Json(_) | AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json);
-                            manifest.assertions.push(ma);
-                        }
-                        AssertionData::Cbor(_x) => {
-                            let value = assertion.as_json_object()?; //todo: should this be cbor?
-                            let ma = ManifestAssertion::new(base_label, value)
-                                .set_instance(claim_assertion.instance());
 
                             manifest.assertions.push(ma);
                         }
+
                         // todo: support binary forms
                         AssertionData::Binary(_x) => {}
                         AssertionData::Uuid(_, _) => {}
@@ -500,8 +645,6 @@ impl Manifest {
                 }
             }
         }
-
-        // manifest.set_asset(asset);
 
         let issuer = claim.signing_issuer();
         let signing_time = claim
@@ -513,7 +656,11 @@ impl Manifest {
                 "added signature issuer={:?} time={:?}",
                 issuer, signing_time
             );
-            manifest.set_signature(issuer.as_ref(), signing_time.as_ref());
+            manifest.set_signature(
+                issuer.as_ref(),
+                signing_time.as_ref(),
+                claim.signing_cert_serial().as_ref(),
+            );
         }
 
         Ok(manifest)
@@ -524,7 +671,7 @@ impl Manifest {
     /// this method can be used to ensure that data is correct
     /// it will extract filename,format and xmp info and generate a thumbnail
     #[cfg(feature = "file_io")]
-    pub fn set_asset_from_path<P: AsRef<Path>>(&mut self, path: P) {
+    pub fn set_asset_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         // Gather the information we need from the target path
         let ingredient = Ingredient::from_file_info(path.as_ref());
 
@@ -537,12 +684,18 @@ impl Manifest {
         }
 
         // if a thumbnail is not already defined, create one here
-        if self.thumbnail().is_none() {
+        if self.thumbnail_ref().is_none() {
             #[cfg(feature = "add_thumbnails")]
             if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
-                self.set_thumbnail(format, image);
+                // Do not write this as a file when reading from files
+                let base_path = self.resources_mut().take_base_path();
+                self.set_thumbnail(format, image)?;
+                if let Some(path) = base_path {
+                    self.resources_mut().set_base_path(path)
+                }
             }
         }
+        Ok(())
     }
 
     // Convert a Manifest into a Claim
@@ -560,6 +713,16 @@ impl Manifest {
             None => Claim::new(&generator, self.vendor.as_deref()),
         };
 
+        if let Some(info_vec) = self.claim_generator_info.as_ref() {
+            for info in info_vec {
+                let mut claim_info = info.to_owned();
+                if let Some(icon) = claim_info.icon.as_ref() {
+                    claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
+                }
+                claim.add_claim_generator_info(claim_info);
+            }
+        }
+
         if let Some(remote_op) = &self.remote_manifest {
             match remote_op {
                 RemoteManifest::NoRemote => (),
@@ -574,11 +737,16 @@ impl Manifest {
         }
         claim.format = self.format().to_owned();
         claim.instance_id = self.instance_id().to_owned();
-        if let Some((format, image)) = self.thumbnail() {
-            claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, format),
-                image.to_vec(),
-            ))?;
+
+        if let Some(thumb_ref) = self.thumbnail_ref() {
+            // Setting the format to "none" will ensure that no claim thumbnail is added
+            if thumb_ref.format != "none" {
+                let data = self.resources.get(&thumb_ref.identifier)?;
+                claim.add_assertion(&Thumbnail::new(
+                    &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_ref.format),
+                    data.into_owned(),
+                ))?;
+            }
         }
 
         // add any verified credentials - needs to happen early so we can reference them
@@ -591,9 +759,11 @@ impl Manifest {
             }
         }
 
+        let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
-            ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            ingredient_map.insert(ingredient.instance_id(), uri);
         }
 
         let salt = DefaultSalt::default();
@@ -601,10 +771,95 @@ impl Manifest {
         // add any additional assertions
         for manifest_assertion in &self.assertions {
             match manifest_assertion.label() {
-                Actions::LABEL => {
-                    let actions: Actions = manifest_assertion.to_assertion()?;
-                    // todo: fixup parameters field from instance_id to ingredient uri for
-                    // c2pa.transcoded, c2pa.repackaged, and c2pa.placed action
+                l if l.starts_with(Actions::LABEL) => {
+                    let version = labels::version(l);
+
+                    let mut actions: Actions = manifest_assertion.to_assertion()?;
+
+                    let ingredients_key = match version {
+                        None | Some(1) => "ingredient",
+                        Some(2) => "ingredients",
+                        _ => return Err(Error::AssertionUnsupportedVersion),
+                    };
+
+                    // fixup parameters field from instance_id to ingredient uri
+                    let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
+                        .actions()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, a)| {
+                            if a.instance_id().is_some()
+                                && a.get_parameter(ingredients_key).is_none()
+                            {
+                                Some((i, a.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    for (index, action) in needs_ingredient {
+                        if let Some(id) = action.instance_id() {
+                            if let Some(hash_url) = ingredient_map.get(id) {
+                                let update = match ingredients_key {
+                                    "ingredient" => {
+                                        action.set_parameter(ingredients_key, hash_url.clone())
+                                    }
+                                    _ => {
+                                        // we only support on instanceId for actions, so only one ingredient on writing
+                                        action.set_parameter(ingredients_key, [hash_url.clone()])
+                                    }
+                                }?;
+                                actions = actions.update_action(index, update);
+                            }
+                        }
+                    }
+
+                    if let Some(templates) = actions.templates.as_mut() {
+                        for template in templates {
+                            // replace icon with hashed_uri
+                            template.icon = match template.icon.take() {
+                                Some(icon) => {
+                                    Some(icon.to_hashed_uri(self.resources(), &mut claim)?)
+                                }
+                                None => None,
+                            };
+
+                            // replace software agent with hashed_uri
+                            template.software_agent = match template.software_agent.take() {
+                                Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
+                                    if let Some(icon) = info.icon.as_mut() {
+                                        let icon =
+                                            icon.to_hashed_uri(self.resources(), &mut claim)?;
+                                        info.set_icon(icon);
+                                    }
+                                    Some(SoftwareAgent::ClaimGeneratorInfo(info))
+                                }
+                                agent => agent,
+                            };
+                        }
+                    }
+
+                    // convert icons in software agents to hashed uris
+                    let actions_mut = actions.actions_mut();
+                    #[allow(clippy::needless_range_loop)]
+                    // clippy is wrong here, we reference index twice
+                    for index in 0..actions_mut.len() {
+                        let action = &actions_mut[index];
+                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
+                            action.software_agent()
+                        {
+                            if let Some(icon) = info.icon.as_ref() {
+                                let mut info = info.to_owned();
+                                let icon_uri = icon.to_hashed_uri(self.resources(), &mut claim)?;
+                                let update = info.set_icon(icon_uri);
+                                let mut action = action.to_owned();
+                                action = action.set_software_agent(update.to_owned());
+                                actions_mut[index] = action;
+                            }
+                        }
+                    }
+
                     claim.add_assertion(&actions)
                 }
                 CreativeWork::LABEL => {
@@ -683,11 +938,15 @@ impl Manifest {
         }
         // we need to copy the source to target before setting the asset info
         if !dest_path.as_ref().exists() {
+            // ensure the path to the file exists
+            if let Some(output_dir) = dest_path.as_ref().parent() {
+                create_dir_all(output_dir)?;
+            }
             std::fs::copy(&source_path, &dest_path)?;
             copied = true;
         }
         // first add the information about the target file
-        self.set_asset_from_path(dest_path.as_ref());
+        self.set_asset_from_path(dest_path.as_ref())?;
 
         if copied {
             Ok(dest_path)
@@ -702,18 +961,17 @@ impl Manifest {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::{
-    ///     assertions::User,
-    ///     create_signer,
-    ///     Manifest,
-    ///     SigningAlg,
-    /// };
+    /// use c2pa::{create_signer, Manifest, SigningAlg};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Test {
+    ///     my_tag: usize,
+    /// }
+    ///
     /// # fn main() -> Result<()> {
     /// let mut manifest = Manifest::new("my_app".to_owned());
-    /// manifest.add_assertion(&User::new("org.contentauth.mylabel", r#"{"my_tag":"Anything I want"}"#))?;
-    ///
-    /// let source = "tests/fixtures/C.jpg";
-    /// let dest = "../target/test_file.jpg";
+    /// manifest.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
     ///
     /// // Create a PS256 signer using certs and public key files.
     /// let signcert_path = "tests/fixtures/certs/ps256.pub";
@@ -721,7 +979,7 @@ impl Manifest {
     /// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
     ///
     /// // Embed a manifest using the signer.
-    /// manifest.embed(&source, &dest, &*signer)?;
+    /// manifest.embed("tests/fixtures/C.jpg", "../target/test_file.jpg", &*signer)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -742,9 +1000,116 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the bytes of the  manifest that was embedded
+    pub fn embed_from_memory(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // first make a copy of the asset that will contain our modified result
+        // todo:: see if we can pass a trait with to_vec support like we to for Strings
+        let asset = asset.to_vec();
+        let mut stream = std::io::Cursor::new(asset);
+        let mut output_stream = Cursor::new(Vec::new());
+        self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        Ok(output_stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    ///
+    /// Returns the bytes of the new asset
+    #[deprecated(since = "0.27.2", note = "use embed_to_stream instead")]
+    pub fn embed_stream(
+        &mut self,
+        format: &str,
+        stream: &mut dyn CAIRead,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        // sign and write our store to to the output image file
+        let output_vec: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(output_vec);
+
+        self.embed_to_stream(format, stream, &mut output_stream, signer)?;
+
+        Ok(output_stream.into_inner())
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    ///
+    /// Returns the bytes of c2pa_manifest that was embedded.
+    pub fn embed_to_stream(
+        &mut self,
+        format: &str,
+        source: &mut dyn CAIRead,
+        dest: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+    ) -> Result<Vec<u8>> {
+        self.set_format(format);
+        // todo:: read instance_id from xmp from stream
+        self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+
+        // generate thumbnail if we don't already have one
+        #[cfg(feature = "add_thumbnails")]
+        {
+            if self.thumbnail_ref().is_none() {
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
+                {
+                    self.set_thumbnail(format, image)?;
+                }
+            }
+        }
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        store.save_to_stream(format, source, dest, signer)
+    }
+
+    /// Embed a signed manifest into a stream using a supplied signer.
+    /// returns the  asset generated and bytes of the manifest that was embedded
+    //#[cfg(feature = "remote_wasm_sign")]
+    pub async fn embed_from_memory_remote_signed(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn RemoteSigner,
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        self.set_format(format);
+        // todo:: read instance_id from xmp from stream
+        self.set_instance_id(format!("xmp:iid:{}", Uuid::new_v4()));
+
+        // generate thumbnail if we don't already have one
+        #[allow(unused_mut)] // so that this builds with WASM
+        let mut stream = std::io::Cursor::new(asset);
+        #[cfg(feature = "add_thumbnails")]
+        {
+            if self.thumbnail_ref().is_none() {
+                if let Ok((format, image)) =
+                    crate::utils::thumbnail::make_thumbnail_from_stream(format, &mut stream)
+                {
+                    self.set_thumbnail(format, image)?;
+                }
+            }
+        }
+        let asset = stream.into_inner();
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to to the output image file
+        let (output_asset, output_manifest) = store
+            .save_to_memory_remote_signed(format, asset, signer)
+            .await?;
+
+        Ok((output_asset, output_manifest))
+    }
+
     /// Embed a signed manifest into the target file using a supplied [`AsyncSigner`].
     #[cfg(feature = "file_io")]
-    #[cfg(feature = "async_signer")]
     pub async fn embed_async_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -762,7 +1127,7 @@ impl Manifest {
     }
 
     /// Embed a signed manifest into the target file using a supplied [`RemoteSigner`].
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(feature = "file_io")]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
         source_path: P,
@@ -778,6 +1143,99 @@ impl Manifest {
             .save_to_asset_remote_signed(source_path.as_ref(), signer, dest_path.as_ref())
             .await
     }
+
+    /// Removes any existing manifest from a file
+    ///
+    /// This should only be used for special cases, such as converting an embedded manifest
+    /// to a cloud manifest
+    #[cfg(feature = "file_io")]
+    pub fn remove_manifest<P: AsRef<Path>>(asset_path: P) -> Result<()> {
+        use crate::jumbf_io::remove_jumbf_from_file;
+        remove_jumbf_from_file(asset_path.as_ref())
+    }
+
+    /// Generates a data hashed placeholder manifest for a file
+    ///
+    /// The return value is pre-formatted for insertion into a file of the given format
+    /// For JPEG it is a series of App11 JPEG segments containing space for a manifest
+    /// This is used to create a properly formatted file ready for signing.
+    /// The reserve_size is the amount of space to reserve for the signature box.  This
+    /// value is fixed once set and must be sufficient to hold the completed signature
+    pub fn data_hash_placeholder(&mut self, reserve_size: usize, format: &str) -> Result<Vec<u8>> {
+        let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
+        if dh.is_err() {
+            let mut ph = DataHash::new("jumbf manifest", "sha256");
+            for _ in 0..10 {
+                ph.add_exclusion(HashRange::new(0, 2));
+            }
+            self.add_assertion(&ph)?;
+        }
+
+        let mut store = self.to_store()?;
+        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
+        Ok(placeholder)
+    }
+
+    /// Generates an data hashed embeddable manifest for a file
+    ///
+    /// The return value is pre-formatted for insertion into a file of the given format
+    /// For JPEG it is a series of App11 JPEG segments containing a signed manifest
+    /// This can directly replace a placeholder manifest to create a properly signed asset
+    /// The data hash must contain exclusions and may contain pre-calculated hashes
+    /// if an asset reader is provided, it will be used to calculate the data hash
+    pub fn data_hash_embeddable_manifest(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn Signer,
+        format: &str,
+        mut asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        if let Some(asset_reader) = asset_reader.as_deref_mut() {
+            asset_reader.rewind()?;
+        }
+        let cm = store.get_data_hashed_embeddable_manifest(dh, signer, format, asset_reader)?;
+        Ok(cm)
+    }
+
+    /// Generates an data hashed embeddable manifest for a file
+    ///
+    /// The return value is pre-formatted for insertion into a file of the given format
+    /// For JPEG it is a series of App11 JPEG segments containing a signed manifest
+    /// This can directly replace a placeholder manifest to create a properly signed asset
+    /// The data hash must contain exclusions and may contain pre-calculated hashes
+    /// if an asset reader is provided, it will be used to calculate the data hash
+    pub async fn data_hash_embeddable_manifest_remote(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn RemoteSigner,
+        format: &str,
+        mut asset_reader: Option<&mut dyn CAIRead>,
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        if let Some(asset_reader) = asset_reader.as_deref_mut() {
+            asset_reader.rewind()?;
+        }
+        store
+            .get_data_hashed_embeddable_manifest_remote(dh, signer, format, asset_reader)
+            .await
+    }
+
+    /// Generates a signed box hashed manifest, optionally preformatted for embedding
+    ///
+    /// The manifest must include a box hash assertion with correct hashes
+    pub fn box_hash_embeddable_manifest(
+        &mut self,
+        signer: &dyn Signer,
+        format: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        let mut cm = store.get_box_hashed_embeddable_manifest(signer)?;
+        if let Some(format) = format {
+            cm = store.get_composed_manifest(&cm, format)?;
+        }
+        Ok(cm)
+    }
 }
 
 impl std::fmt::Display for Manifest {
@@ -787,36 +1245,55 @@ impl std::fmt::Display for Manifest {
     }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Holds information about a signature
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
     issuer: Option<String>,
+
+    /// The serial number of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cert_serial_number: Option<String>,
+
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
 }
+
 #[cfg(test)]
 pub(crate) mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Cursor;
+
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     use crate::{
         assertions::{c2pa_action, Action, Actions},
-        utils::test::TEST_VC,
-        Manifest, Result,
+        utils::test::{temp_remote_signer, temp_signer, TEST_VC},
+        Ingredient, Manifest, Result,
     };
     #[cfg(feature = "file_io")]
     use crate::{
+        assertions::{labels::ACTIONS, DataHash},
+        error::Error,
+        hash_utils::HashRange,
+        resource_store::ResourceRef,
         status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{
-            fixture_path, temp_dir_path, temp_fixture_path, temp_signer, TEST_SMALL_JPEG,
+            fixture_path, temp_dir_path, temp_fixture_path, write_jpeg_placeholder_file,
+            TEST_SMALL_JPEG,
         },
-        validation_status, Ingredient,
+        validation_status,
     };
 
     // example of random data structure as an assertion
@@ -885,7 +1362,7 @@ pub(crate) mod tests {
         let signer = temp_signer();
 
         let _store = manifest
-            .embed(&source_path, &test_output, &signer)
+            .embed(&source_path, &test_output, signer.as_ref())
             .expect("embed");
 
         assert_eq!(manifest.format(), "image/jpeg");
@@ -907,7 +1384,7 @@ pub(crate) mod tests {
         let ap = fixture_path(TEST_SMALL_JPEG);
         let temp_dir = tempdir().expect("temp dir");
         let test_output = temp_dir_path(&temp_dir, "ws_bad_assertion.jpg");
-        std::fs::copy(&ap, &test_output).expect("copy");
+        std::fs::copy(ap, test_output).expect("copy");
 
         let mut manifest = test_manifest();
 
@@ -925,7 +1402,7 @@ pub(crate) mod tests {
         // convert to store
         let result = manifest.to_store();
 
-        println!("{:?}", result);
+        println!("{result:?}");
         assert!(result.is_err())
     }
 
@@ -955,10 +1432,15 @@ pub(crate) mod tests {
         manifest.add_assertion(&cbor).expect("add_assertion");
         let store = manifest.to_store().expect("to_store");
 
-        let _manifest2 =
-            Manifest::from_store(&store, &store.provenance_label().unwrap()).expect("from_store");
-        println!("{}", store);
-        println!("{:?}", _manifest2);
+        let _manifest2 = Manifest::from_store(
+            &store,
+            &store.provenance_label().unwrap(),
+            #[cfg(feature = "file_io")]
+            None,
+        )
+        .expect("from_store");
+        println!("{store}");
+        println!("{_manifest2:?}");
         let cbor2: UserCbor = manifest.find_assertion(LABEL).expect("get_assertion");
         assert_eq!(cbor, cbor2);
     }
@@ -994,7 +1476,9 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let mut validation_log = DetailedStatusTracker::new();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
@@ -1009,11 +1493,6 @@ pub(crate) mod tests {
             .set_parent(Ingredient::from_file(&output).expect("from_file"))
             .expect("set_parent");
 
-        // todo: add a test to validate that actions assertions cannot be redacted
-        // let mut actions = Actions::new();
-        // actions.add_action(Action::new(C2PA_ACTION_EDITED).parameters("gaussian_blur"));
-        // ws.add_assertion("c2pa.actions", &actions).expect("add_assertion"); // must use .get() with Actions
-
         // redact the assertion
         manifest2
             .add_redaction(ASSERTION_LABEL)
@@ -1021,7 +1500,9 @@ pub(crate) mod tests {
 
         //embed a claim in output2
         let signer = temp_signer();
-        let _store2 = manifest2.embed(&output2, &output2, &signer).expect("embed");
+        let _store2 = manifest2
+            .embed(&output2, &output2, signer.as_ref())
+            .expect("embed");
 
         let mut report = DetailedStatusTracker::new();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
@@ -1041,6 +1522,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    fn test_action_assertion_redaction_error() {
+        let temp_dir = tempdir().expect("temp dir");
+        let parent_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        // Create parent with a c2pa_action type assertion.
+        let mut parent_manifest = test_manifest();
+        let actions = Actions::new().add_action(
+            Action::new(c2pa_action::FILTERED)
+                .set_parameter("name".to_owned(), "gaussian blur")
+                .unwrap()
+                .set_when("2015-06-26T16:43:23+0200"),
+        );
+        parent_manifest
+            .add_assertion(&actions)
+            .expect("add_assertion");
+
+        let signer = temp_signer();
+        parent_manifest
+            .embed(&parent_output, &parent_output, signer.as_ref())
+            .expect("embed");
+
+        // Add parent_manifest as an ingredient of the new manifest and redact the assertion `c2pa.actions`.
+        let mut manifest = test_manifest();
+        manifest
+            .set_parent(Ingredient::from_file(&parent_output).expect("from_file"))
+            .expect("set_parent");
+        assert!(manifest.add_redaction(ACTIONS).is_ok());
+
+        // Attempt embedding the manifest with the invalid redaction.
+        let redact_output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+        let embed_result = manifest.embed(&redact_output, &redact_output, signer.as_ref());
+        assert!(matches!(
+            embed_result.err().unwrap(),
+            Error::AssertionInvalidRedaction
+        ));
+    }
+
+    #[test]
     fn manifest_assertion_instances() {
         let mut manifest = Manifest::new("test".to_owned());
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
@@ -1051,17 +1571,25 @@ pub(crate) mod tests {
 
         // convert to a store and read back again
         let store = manifest.to_store().expect("to_store");
-        println!("{}", store);
+        println!("{store}");
         let active_label = store.provenance_label().unwrap();
-        let manifest2 = Manifest::from_store(&store, &active_label).expect("from_store");
-        println!("{}", manifest2);
+
+        let manifest2 = Manifest::from_store(
+            &store,
+            &active_label,
+            #[cfg(feature = "file_io")]
+            None,
+        )
+        .expect("from_store");
+        println!("{manifest2}");
+
         // now check to see if we have three separate assertions with different instances
         let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
         assert!(action2.is_ok());
         assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
     }
 
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_embed_async_sign() {
         let temp_dir = tempdir().expect("temp dir");
@@ -1083,34 +1611,17 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(feature = "file_io", feature = "async_signer"))]
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_embed_remote_sign() {
-        struct MyRemoteSigner {}
-
-        #[async_trait::async_trait]
-        impl crate::signer::RemoteSigner for MyRemoteSigner {
-            async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-                let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(
-                    crate::SigningAlg::Ps256,
-                );
-
-                // this would happen on some remote server
-                crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
-            }
-            fn reserve_size(&self) -> usize {
-                10000
-            }
-        }
-
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let remote_signer = MyRemoteSigner {};
+        let remote_signer = temp_remote_signer();
 
         let mut manifest = test_manifest();
         manifest
-            .embed_remote_signed(&output, &output, &remote_signer)
+            .embed_remote_signed(&output, &output, remote_signer.as_ref())
             .await
             .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -1131,7 +1642,9 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
@@ -1154,11 +1667,13 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_label("MyLabel");
         manifest.set_remote_manifest(url);
-        let c2pa_data = manifest.embed(&output, &output, &signer).expect("embed");
+        let c2pa_data = manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
-        let manifest_store =
-            crate::ManifestStore::from_bytes("c2pa", c2pa_data, true).expect("from_bytes");
+        let manifest_store = crate::ManifestStore::from_bytes("application/c2pa", &c2pa_data, true)
+            .expect("from_bytes");
         assert_eq!(manifest_store.active_label(), Some("MyLabel"));
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
@@ -1166,6 +1681,157 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_jpeg_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        // add a parent ingredient
+        let mut ingredient = Ingredient::from_memory_async("jpeg", image)
+            .await
+            .expect("from_stream_async");
+        ingredient.set_title("parent.jpg");
+        manifest.set_parent(ingredient).expect("set_parent");
+
+        let signer = temp_remote_signer();
+
+        // Embed a manifest using the signer.
+        let (out_vec, _out_manifest) = manifest
+            .embed_from_memory_remote_signed("jpeg", image, signer.as_ref())
+            .await
+            .expect("embed_stream");
+
+        // try to load the image
+        let manifest_store =
+            crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
+
+        /* to be enabled later
+                // try to load the manifest
+                let mut validation_log = DetailedStatusTracker::new();
+                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
+        */
+        println!("It worked: {manifest_store}\n");
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_png_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/libpng-test.png");
+        // convert buffer to cursor with Read/Write/Seek capability
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_remote_signer();
+
+        // Embed a manifest using the signer.
+        let (out_vec, _out_manifest) = manifest
+            .embed_from_memory_remote_signed("png", image, signer.as_ref())
+            .await
+            .expect("embed_stream");
+
+        // try to load the image
+        let manifest_store = crate::ManifestStore::from_bytes("image/png", &out_vec, true).unwrap();
+
+        /* to be enabled later
+                // try to load the manifest
+                let mut validation_log = DetailedStatusTracker::new();
+                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
+        */
+
+        println!("It worked: {manifest_store}\n");
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_webp_stream_wasm() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/mars.webp");
+        // convert buffer to cursor with Read/Write/Seek capability
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_remote_signer();
+
+        // Embed a manifest using the signer.
+        let (out_vec, _out_manifest) = manifest
+            .embed_from_memory_remote_signed("image/webp", image, signer.as_ref())
+            .await
+            .expect("embed_stream");
+
+        // try to load the image
+        let manifest_store =
+            crate::ManifestStore::from_bytes("image/webp", &out_vec, true).unwrap();
+
+        /* to be enabled later
+                // try to load the manifest
+                let mut validation_log = DetailedStatusTracker::new();
+                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
+        */
+
+        println!("It worked: {manifest_store}\n");
+    }
+
+    #[test]
+    fn test_embed_stream() {
+        use crate::assertions::User;
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image.to_vec());
+        // let mut image = image.to_vec();
+        // let mut stream = std::io::Cursor::new(image.as_mut_slice());
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_signer();
+        let mut output = Cursor::new(Vec::new());
+        // Embed a manifest using the signer.
+        manifest
+            .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
+            .expect("embed_stream");
+
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "EmbedStream"
+        );
+        #[cfg(feature = "add_thumbnails")]
+        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+        //println!("{manifest_store}");main
+    }
     #[cfg(feature = "file_io")]
     #[actix::test]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
@@ -1184,9 +1850,11 @@ pub(crate) mod tests {
             validation_status::ASSERTION_DATAHASH_MISMATCH
         );
         manifest.add_ingredient(ingredient);
-        manifest.embed(&output, &output, &signer).expect("embed");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
         let manifest = manifest_store.get_active().unwrap();
         let ingredient_status = manifest.ingredients()[0].validation_status();
         assert_eq!(
@@ -1213,7 +1881,9 @@ pub(crate) mod tests {
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
         manifest.set_remote_manifest(url);
-        let _c2pa_data = manifest.embed(&source, &output, &signer).expect("embed");
+        let _c2pa_data = manifest
+            .embed(&source, &output, signer.as_ref())
+            .expect("embed");
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
@@ -1232,12 +1902,523 @@ pub(crate) mod tests {
         let signer = temp_signer();
 
         let mut manifest = test_manifest();
-        manifest.set_thumbnail("image/jpeg", vec![1, 2, 3]);
-        manifest.embed(&output, &output, &signer).expect("embed");
+        let thumb_data = vec![1, 2, 3];
+        manifest
+            .set_thumbnail("image/jpeg", thumb_data.clone())
+            .expect("set_thumbnail");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
         let active_manifest = manifest_store.get_active().unwrap();
-        let (format, thumb) = active_manifest.thumbnail().unwrap();
+        let (format, image) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
-        assert_eq!(thumb, vec![1, 2, 3]);
+        assert_eq!(image.into_owned(), thumb_data);
+    }
+
+    #[cfg(feature = "file_io")]
+    const MANIFEST_JSON: &str = r#"{
+        "claim_generator": "test",
+        "claim_generator_info": [
+            {
+                "name": "test",
+                "version": "1.0",
+                "icon": {
+                    "format": "image/svg+xml",
+                    "identifier": "sample1.svg"
+                }
+            }
+        ],
+        "format" : "image/jpeg",
+        "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "IMG_0003.jpg"
+        },
+        "assertions": [
+            {
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                            "parameters": {
+                                "description": "import"
+                            },
+                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg+xml",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            }
+                        }
+                    ],
+                    "templates": [
+                        {
+                            "action": "c2pa.opened",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg+xml",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            },
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "ingredients": [{
+            "title": "A.jpg",
+            "format": "image/jpeg",
+            "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+            "relationship": "parentOf",
+            "thumbnail": {
+                "format": "image/png",
+                "identifier": "exp-test1.png"
+            }
+        },
+        {
+            "title": "prompt",
+            "format": "text/plain",
+            "relationship": "inputTo",
+            "data": {
+              "format": "text/plain",
+              "identifier": "prompt.txt",
+              "data_types": [
+                {
+                  "type": "c2pa.types.generator.prompt"
+                }
+              ]
+            }
+          }
+        ]
+    }"#;
+
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    /// tests and illustrates how to add assets to a non-file based manifest by using a stream
+    fn from_json_with_stream() {
+        use crate::assertions::Relationship;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
+        manifest
+            .resources_mut()
+            .add("IMG_0003.jpg", *b"my value")
+            .unwrap()
+            .add("sample1.svg", *b"my value")
+            .expect("add resource");
+        manifest.ingredients_mut()[0]
+            .resources_mut()
+            .add("exp-test1.png", *b"my value")
+            .expect("add_resource");
+        manifest.ingredients_mut()[1]
+            .resources_mut()
+            .add("prompt.txt", *b"pirate with bird on shoulder")
+            .expect("add_resource");
+
+        println!("{manifest}");
+
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut input = std::io::Cursor::new(image.to_vec());
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        manifest
+            .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
+            .expect("embed_stream");
+
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
+        println!("manifest_store = {manifest_store}");
+        let m = manifest_store.get_active().unwrap();
+
+        //println!("after = {m}");
+
+        assert!(m.thumbnail().is_some());
+        let (format, image) = m.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+        assert_eq!(image.to_vec(), b"my value");
+        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
+        assert!(m.ingredients()[1].data_ref().is_some());
+        assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
+        let id = m.ingredients()[1].data_ref().unwrap().identifier.as_str();
+        assert_eq!(
+            m.ingredients()[1].resources().get(id).unwrap().into_owned(),
+            b"pirate with bird on shoulder"
+        );
+        // println!("{manifest_store}");
+    }
+
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    /// tests and illustrates how to add assets to a non-file based manifest by using a memory buffer
+    fn from_json_with_memory() {
+        use crate::assertions::Relationship;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
+        manifest
+            .resources_mut()
+            .add("IMG_0003.jpg", *b"my value")
+            .unwrap()
+            .add("sample1.svg", *b"my value")
+            .expect("add resource");
+        manifest.ingredients_mut()[0]
+            .resources_mut()
+            .add("exp-test1.png", *b"my value")
+            .expect("add_resource");
+        manifest.ingredients_mut()[1]
+            .resources_mut()
+            .add("prompt.txt", *b"pirate with bird on shoulder")
+            .expect("add_resource");
+
+        println!("{manifest}");
+
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        let output_image = manifest
+            .embed_from_memory("jpeg", image, signer.as_ref())
+            .expect("embed_stream");
+
+        let manifest_store =
+            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
+        println!("manifest_store = {manifest_store}");
+        let m = manifest_store.get_active().unwrap();
+
+        assert!(m.thumbnail().is_some());
+        let (format, image) = m.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+        assert_eq!(image.to_vec(), b"my value");
+        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
+        assert!(m.ingredients()[1].data_ref().is_some());
+        assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
+        let id = m.ingredients()[1].data_ref().unwrap().identifier.as_str();
+        assert_eq!(
+            m.ingredients()[1].resources().get(id).unwrap().into_owned(),
+            b"pirate with bird on shoulder"
+        );
+        // println!("{manifest_store}");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn from_json_with_files() {
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures"); // the path we want to read files from
+        manifest.with_base_path(path).expect("with_files");
+        // convert the manifest to a store
+        let store = manifest.to_store().expect("to store");
+        let mut resource_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        resource_path.push("../target/tmp/manifest");
+        let m2 = Manifest::from_store(
+            &store,
+            &store.provenance_label().unwrap(),
+            Some(&resource_path),
+        )
+        .expect("from store");
+        println!("{m2}");
+        assert!(m2.thumbnail().is_some());
+        assert!(m2.ingredients()[0].thumbnail().is_some());
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_embed_from_json() {
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures"); // the path we want to read files from
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let signer = temp_signer();
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+        manifest.with_base_path(fixtures).expect("with_base");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        let (format, _) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_embed_webp_from_json() {
+        use crate::utils::test::TEST_WEBP;
+
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures"); // the path we want to read files from
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_WEBP);
+
+        let signer = temp_signer();
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+        manifest.with_base_path(fixtures).expect("with_base");
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        let (format, _) = active_manifest.thumbnail().unwrap();
+        assert_eq!(format, "image/jpeg");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_create_file_based_ingredient() {
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures");
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let mut manifest = Manifest::new("claim_generator");
+        manifest.with_base_path(fixtures).expect("with_base");
+        // verify we can't set a references that don't exist
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
+            .is_err());
+        assert!(manifest.thumbnail_ref().is_none());
+        // verify we can set a references that do exist
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
+            .is_ok());
+        assert!(manifest.thumbnail_ref().is_some());
+
+        let signer = temp_signer();
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+    }
+
+    #[test]
+    #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
+    fn test_create_no_claim_thumbnail() {
+        let mut fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixtures.push("tests/fixtures");
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // Set format to none to force no claim thumbnail generated
+        assert!(manifest
+            .set_thumbnail_ref(ResourceRef::new("none", "none"))
+            .is_ok());
+        // verify there is a thumbnail ref
+        assert!(manifest.thumbnail_ref().is_some());
+        // verify there is no thumbnail
+        assert!(manifest.thumbnail().is_none());
+
+        let signer = temp_signer();
+        manifest
+            .embed(&output, &output, signer.as_ref())
+            .expect("embed");
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        let active_manifest = manifest_store.get_active().unwrap();
+        assert!(active_manifest.thumbnail_ref().is_none());
+        assert!(active_manifest.thumbnail().is_none());
+    }
+
+    #[test]
+    fn test_missing_thumbnail() {
+        const MANIFEST_JSON: &str = r#"
+            {
+                "claim_generator": "test",
+                "format" : "image/jpeg",
+                "thumbnail": {
+                    "format": "image/jpeg",
+                    "identifier": "does_not_exist.jpg"
+                }
+            }
+        "#;
+
+        let mut manifest = Manifest::from_json(MANIFEST_JSON).expect("from_json");
+
+        let mut source = std::io::Cursor::new(vec![1, 2, 3]);
+        let mut dest = std::io::Cursor::new(Vec::new());
+        let signer = temp_signer();
+        let result =
+            manifest.embed_to_stream("image/jpeg", &mut source, &mut dest, signer.as_ref());
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("resource not found: does_not_exist.jpg"));
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_data_hash_embeddable_manifest() {
+        let ap = fixture_path("cloud.jpg");
+
+        let signer = temp_signer();
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // get a placeholder the manifest
+        let placeholder = manifest
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        let signed_manifest = manifest
+            .data_hash_embeddable_manifest(
+                &dh,
+                signer.as_ref(),
+                "image/jpeg",
+                Some(&mut output_file),
+            )
+            .unwrap();
+
+        use std::io::{Seek, SeekFrom, Write};
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&signed_manifest).unwrap();
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        assert!(manifest_store.validation_status().is_none());
+    }
+
+    #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
+    #[actix::test]
+    async fn test_data_hash_embeddable_manifest_remote_signed() {
+        let ap = fixture_path("cloud.jpg");
+
+        let signer = temp_remote_signer();
+
+        let mut manifest = Manifest::new("claim_generator");
+
+        // get a placeholder the manifest
+        let placeholder = manifest
+            .data_hash_placeholder(signer.reserve_size(), "jpeg")
+            .unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&output)
+            .unwrap();
+
+        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // build manifest to insert in the hole
+
+        // create an hash exclusion for the manifest
+        let exclusion = HashRange::new(offset, placeholder.len());
+        let exclusions = vec![exclusion];
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(exclusions);
+
+        let signed_manifest = manifest
+            .data_hash_embeddable_manifest_remote(
+                &dh,
+                signer.as_ref(),
+                "image/jpeg",
+                Some(&mut output_file),
+            )
+            .await
+            .unwrap();
+
+        use std::io::{Seek, SeekFrom, Write};
+
+        // path in new composed manifest
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&signed_manifest).unwrap();
+
+        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        println!("{manifest_store}");
+        assert!(manifest_store.validation_status().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_box_hash_embeddable_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/boxhash.jpg");
+        let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
+        let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
+
+        let mut manifest = Manifest::new("test_app".to_owned());
+        manifest.set_title("BoxHashTest").set_format("image/jpeg");
+
+        manifest
+            .add_labeled_assertion(crate::assertions::labels::BOX_HASH, &box_hash)
+            .unwrap();
+
+        let signer = temp_signer();
+
+        let embeddable = manifest
+            .box_hash_embeddable_manifest(signer.as_ref(), None)
+            .expect("embeddable_manifest");
+
+        // Validate the embeddable manifest against the asset bytes
+        let manifest_store = crate::ManifestStore::from_manifest_and_asset_bytes(
+            &embeddable,
+            "image/jpeg",
+            asset_bytes,
+        )
+        .unwrap();
+        println!("{manifest_store}");
+        assert!(!manifest_store.manifests().is_empty());
+        assert!(manifest_store.validation_status().is_none());
     }
 }

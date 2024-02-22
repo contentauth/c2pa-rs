@@ -10,9 +10,7 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-
 use crate::{Result, SigningAlg};
-
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -36,6 +34,28 @@ pub trait Signer {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
+        self.time_authority_url()
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
@@ -48,12 +68,20 @@ pub trait Signer {
 /// Trait to allow loading of signing credential from external sources
 pub(crate) trait ConfigurableSigner: Signer + Sized {
     /// Create signer form credential files
+    #[cfg(feature = "file_io")]
     fn from_files<P: AsRef<std::path::Path>>(
         signcert_path: P,
         pkey_path: P,
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self>;
+    ) -> Result<Self> {
+        use crate::Error;
+
+        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+
+        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
+    }
 
     /// Create signer from credentials data
     fn from_signcert_and_pkey(
@@ -64,7 +92,6 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
     ) -> Result<Self>;
 }
 
-#[cfg(feature = "async_signer")]
 use async_trait::async_trait;
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
@@ -72,8 +99,8 @@ use async_trait::async_trait;
 /// This trait exists to allow the signature mechanism to be extended.
 ///
 /// Use this when the implementation is asynchronous.
-#[cfg(feature = "async_signer")]
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
@@ -94,6 +121,30 @@ pub trait AsyncSigner: Sync {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        // NOTE: This is currently synchronous, but may become
+        // async in the future.
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
+        self.time_authority_url()
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
@@ -103,8 +154,8 @@ pub trait AsyncSigner: Sync {
     }
 }
 
-#[cfg(feature = "async_signer")]
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait RemoteSigner: Sync {
     /// Returns the `CoseSign1` bytes signed by the [`RemoteSigner`].
     ///

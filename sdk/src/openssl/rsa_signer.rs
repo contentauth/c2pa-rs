@@ -11,22 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{cell::Cell, fs, path::Path};
+use std::cell::Cell;
 
 //use extfmt::Hexlify;
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
-    rsa::Rsa,
+    rsa::{Rsa, RsaPrivateKeyBuilder},
     x509::X509,
 };
 
 use super::check_chain_order;
-use crate::{
-    ocsp_utils::{get_ocsp_response, OcspData},
-    signer::ConfigurableSigner,
-    Error, Result, Signer, SigningAlg,
-};
+use crate::{ocsp_utils::OcspData, signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// SHA256 + RSA encryption.
@@ -44,7 +40,10 @@ pub struct RsaSigner {
 }
 
 impl RsaSigner {
-    pub fn update_ocsp(&self) {
+    // Sample of OCSP stapling while signing. This code is only for demo purposes and not for
+    // production use since there is no caching in the SDK and fetching is expensive. This is behind the
+    // feature flag 'psxxx_ocsp_stapling_experimental'
+    fn update_ocsp(&self) {
         // do we need an update
         let now = chrono::offset::Utc::now();
 
@@ -55,29 +54,25 @@ impl RsaSigner {
         if now < next_update {
             return;
         }
-
-        if let Ok(certs) = self.certs() {
-            if let Some(ocsp_rsp) = get_ocsp_response(&certs) {
-                self.ocsp_size.set(ocsp_rsp.ocsp_der.len());
-                self.ocsp_rsp.set(ocsp_rsp);
+        #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
+        {
+            if let Ok(certs) = self.certs() {
+                if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                    self.ocsp_size.set(ocsp_rsp.len());
+                    let mut validation_log =
+                        crate::status_tracker::DetailedStatusTracker::default();
+                    if let Ok(ocsp_data) =
+                        crate::ocsp_utils::check_ocsp_response(&ocsp_rsp, None, &mut validation_log)
+                    {
+                        self.ocsp_rsp.set(ocsp_data);
+                    }
+                }
             }
         }
     }
 }
 
 impl ConfigurableSigner for RsaSigner {
-    fn from_files<P: AsRef<Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = fs::read(signcert_path).map_err(wrap_io_err)?;
-        let pkey = fs::read(pkey_path).map_err(wrap_io_err)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
@@ -86,7 +81,39 @@ impl ConfigurableSigner for RsaSigner {
     ) -> Result<Self> {
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
-        let pkey = PKey::from_rsa(rsa).map_err(wrap_openssl_err)?;
+
+        // rebuild RSA keys to eliminate incompatible values
+        let n = rsa.n().to_owned().map_err(wrap_openssl_err)?;
+        let e = rsa.e().to_owned().map_err(wrap_openssl_err)?;
+        let d = rsa.d().to_owned().map_err(wrap_openssl_err)?;
+        let po = rsa.p();
+        let qo = rsa.q();
+        let dmp1o = rsa.dmp1();
+        let dmq1o = rsa.dmq1();
+        let iqmpo = rsa.iqmp();
+        let mut builder = RsaPrivateKeyBuilder::new(n, e, d).map_err(wrap_openssl_err)?;
+
+        if let Some(p) = po {
+            if let Some(q) = qo {
+                builder = builder
+                    .set_factors(p.to_owned()?, q.to_owned()?)
+                    .map_err(wrap_openssl_err)?;
+            }
+        }
+
+        if let Some(dmp1) = dmp1o {
+            if let Some(dmq1) = dmq1o {
+                if let Some(iqmp) = iqmpo {
+                    builder = builder
+                        .set_crt_params(dmp1.to_owned()?, dmq1.to_owned()?, iqmp.to_owned()?)
+                        .map_err(wrap_openssl_err)?;
+                }
+            }
+        }
+
+        let new_rsa = builder.build();
+
+        let pkey = PKey::from_rsa(new_rsa).map_err(wrap_openssl_err)?;
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
@@ -99,7 +126,7 @@ impl ConfigurableSigner for RsaSigner {
             signcerts,
             pkey,
             certs_size: signcert.len(),
-            timestamp_size: 10000, // todo: call out to TSA to get actual timestamp and use that size
+            timestamp_size: 10000, /* todo: call out to TSA to get actual timestamp and use that size */
             ocsp_size: Cell::new(0),
             alg,
             tsa_url,
@@ -195,10 +222,6 @@ impl Signer for RsaSigner {
             None
         }
     }
-}
-
-fn wrap_io_err(err: std::io::Error) -> Error {
-    Error::IoError(err)
 }
 
 fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {

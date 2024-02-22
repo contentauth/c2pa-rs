@@ -11,12 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
+pub(crate) mod base64;
 pub(crate) mod cbor_types;
 #[allow(dead_code)]
 pub(crate) mod hash_utils;
+pub(crate) mod merkle;
+#[cfg(feature = "file_io")]
+pub(crate) mod mime;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
-#[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
+#[cfg(feature = "add_thumbnails")]
 pub(crate) mod thumbnail;
 pub(crate) mod time_it;
 #[allow(dead_code)] // for wasm builds

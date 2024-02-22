@@ -45,11 +45,21 @@ pub const SIGNATURE: &str = "c2pa.signature";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_storage>.
 pub const CREDENTIALS: &str = "c2pa.credentials";
 
+/// Label for the DataBox box.
+///
+/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_boxes>.
+pub const DATABOX: &str = "c2pa.data";
+
+/// Label for the DataBox store box.
+///
+/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_storage>.
+pub const DATABOXES: &str = "c2pa.databoxes";
+
 const JUMBF_PREFIX: &str = "self#jumbf";
 
 // Converts a manifest label to a JUMBF URI.
 pub(crate) fn to_manifest_uri(manifest_label: &str) -> String {
-    format!("{}=/{}/{}", JUMBF_PREFIX, MANIFEST_STORE, manifest_label)
+    format!("{JUMBF_PREFIX}=/{MANIFEST_STORE}/{manifest_label}")
 }
 
 // Converts a manifest label and an assertion label into a JUMBF URI.
@@ -79,6 +89,18 @@ pub(crate) fn to_verifiable_credential_uri(manifest_label: &str, vc_id: &str) ->
     )
 }
 
+// Converts a manifest label and a DataBox label to a JUMBF
+// HashedURI.
+pub(crate) fn to_databox_uri(manifest_label: &str, databox_id: &str) -> String {
+    // TO CONSIDER: Does this now belong in jumbf::labels?
+    format!(
+        "{}/{}/{}",
+        to_manifest_uri(manifest_label),
+        DATABOXES,
+        databox_id
+    )
+}
+
 // Split off JUMBF prefix.
 pub(crate) fn to_normalized_uri(uri: &str) -> String {
     let uri_parts: Vec<&str> = uri.split('=').collect();
@@ -97,6 +119,17 @@ pub(crate) fn to_normalized_uri(uri: &str) -> String {
         format!("{}{}", "/", output)
     } else {
         output
+    }
+}
+
+// Converts a possibly relative JUMBF URI to an absolute URI to the manifest store.
+pub(crate) fn to_absolute_uri(manifest_label: &str, uri: &str) -> String {
+    let raw_uri = to_normalized_uri(uri);
+    let parts: Vec<&str> = raw_uri.split('/').collect();
+    if parts.len() > 2 && parts[1] == MANIFEST_STORE {
+        uri.to_string()
+    } else {
+        format!("{}/{}", to_manifest_uri(manifest_label), raw_uri)
     }
 }
 
@@ -203,7 +236,7 @@ pub mod tests {
         let raw_uri = to_normalized_uri(&absolute_uri);
 
         let raw_uri_no_slash =
-            to_normalized_uri(&format!("{}={}/{}", JUMBF_PREFIX, MANIFEST_STORE, manifest));
+            to_normalized_uri(&format!("{JUMBF_PREFIX}={MANIFEST_STORE}/{manifest}"));
 
         let raw_empty_uri = to_normalized_uri(empty_uri);
 
@@ -231,7 +264,7 @@ pub mod tests {
 
         assert_eq!(
             assertion_relative,
-            format!("{}={}/{}", JUMBF_PREFIX, ASSERTIONS, assertion)
+            format!("{JUMBF_PREFIX}={ASSERTIONS}/{assertion}")
         );
         assert_eq!(
             Some(assertion.to_string()),

@@ -3,7 +3,7 @@
     "tsa_url": "http://timestamp.digicert.com",
     "output_path": "target/images",
     "default_ext": "jpg",
-    "author": "Gavin Peacock",
+    "author": "Adobe make_test",
     "recipes": [
         { "op": "copy", "parent": "sdk/tests/fixtures/IMG_0003.jpg", "output": "A.jpg" },
         { "op": "copy", "parent": "sdk/tests/fixtures/P1000827.jpg", "output": "I.jpg" },
@@ -20,7 +20,6 @@
         { "op": "make", "ingredients": ["CA","CA","CA"], "output": "CICACACA" },
         { "op": "ogp", "parent": "CA", "output": "XCA" },
         { "op": "ogp", "parent": "CI", "output": "XCI" },
-        { "op": "dat", "parent": "CA", "output": "E-dat-CA" },
         { "op": "sig", "parent": "CA", "output": "E-sig-CA" },
         { "op": "uri", "parent": "CA", "output": "E-uri-CA" },
         { "op": "clm", "parent": "CAICAI", "output": "E-clm-CAICAI" },

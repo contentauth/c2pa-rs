@@ -34,6 +34,11 @@ pub const ASSERTION_METADATA: &str = "c2pa.assertion.metadata";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_data_hash>.
 pub const DATA_HASH: &str = "c2pa.hash.data";
 
+/// Label prefix for a box hash assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_general_boxes_hash>.
+pub const BOX_HASH: &str = "c2pa.hash.boxes";
+
 /// Label prefix for a BMFF-based hash assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
@@ -187,14 +192,14 @@ pub fn version(label: &str) -> Option<usize> {
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
     match format {
-        "image/jpeg" | "jpeg" | "jpg" => format!("{}.jpeg", label),
-        "image/png" | "png" => format!("{}.png", label),
+        "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
+        "image/png" | "png" => format!("{label}.png"),
         _ => {
             let p: Vec<&str> = format.split('/').collect();
             if p.len() == 2 && p[0] == "image" {
                 format!("{}/{}", label, p[1]) // try to parse other image types
             } else {
-                format!("{}/{}", label, format)
+                format!("{label}/{format}")
             }
         }
     }

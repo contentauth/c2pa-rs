@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2023 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
+    path::Path,
 };
 
 use atree::{Arena, Token};
@@ -24,15 +25,18 @@ use conv::ValueFrom;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{AssetIO, AssetPatch, CAILoader, CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+    },
     error::{Error, Result},
 };
 
 const II: [u8; 2] = *b"II";
 const MM: [u8; 2] = *b"MM";
 
-const C2PA_TAG: u16 = 0xCD41;
-const XMP_TAG: u16 = 0x02BC;
+const C2PA_TAG: u16 = 0xcd41;
+const XMP_TAG: u16 = 0x02bc;
 const SUBFILE_TAG: u16 = 0x014a;
 const EXIFIFD_TAG: u16 = 0x8769;
 const GPSIFD_TAG: u16 = 0x8825;
@@ -44,6 +48,18 @@ const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
+
+static SUPPORTED_TYPES: [&str; 9] = [
+    "tif",
+    "tiff",
+    "image/tiff",
+    "dng",
+    "image/x-adobe-dng",
+    "arw",
+    "image/x-sony-arw",
+    "nef",
+    "image/x-nikon-nef",
+];
 
 // The type of an IFD entry
 enum IFDEntryType {
@@ -280,7 +296,7 @@ impl TiffStructure {
     {
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
-        let ifd_offset = byte_reader.seek(SeekFrom::Current(0))?;
+        let ifd_offset = byte_reader.stream_position()?;
         //println!("IFD Offset: {:#x}", ifd_offset);
 
         let entry_cnt = if big_tiff {
@@ -341,7 +357,7 @@ where
     R: Read + Seek,
 {
     let _size = input.seek(SeekFrom::End(0))?;
-    input.seek(SeekFrom::Start(0))?;
+    input.rewind()?;
 
     let ts = TiffStructure::load(input)?;
 
@@ -496,7 +512,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 
     fn offset(&mut self) -> Result<u64> {
-        Ok(self.writer.seek(SeekFrom::Current(0))?)
+        Ok(self.writer.stream_position()?)
     }
 
     fn pad_word_boundary(&mut self) -> Result<()> {
@@ -522,13 +538,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u16(43u16)?;
             self.writer.write_u16(8u16)?;
             self.writer.write_u16(0u16)?;
-            offset = self.writer.seek(SeekFrom::Current(0))?; // first ifd offset
+            offset = self.writer.stream_position()?; // first ifd offset
 
             self.writer.write_u64(0)?;
         } else {
             self.writer.write_all(&[boi, boi])?;
             self.writer.write_u16(42u16)?;
-            offset = self.writer.seek(SeekFrom::Current(0))?; // first ifd offset
+            offset = self.writer.stream_position()?; // first ifd offset
 
             self.writer.write_u32(0)?;
         }
@@ -564,7 +580,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             if value_bytes_ref.len() > data_bytes {
                 // get location of entry data start
-                let offset = self.writer.seek(SeekFrom::Current(0))?;
+                let offset = self.writer.stream_position()?;
 
                 // write out the data bytes
                 self.writer.write_all(value_bytes_ref)?;
@@ -599,7 +615,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.pad_word_boundary()?;
 
         // save location of start of IFD
-        let ifd_offset = self.writer.seek(SeekFrom::Current(0))?;
+        let ifd_offset = self.writer.stream_position()?;
 
         // write out the entry count
         self.write_entry_count(target_ifd.len())?;
@@ -703,7 +719,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
 
-                        let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
+                        let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
 
                         // copy the strip to new file
@@ -804,7 +820,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         };
 
-                        let dest_offset = self.writer.seek(SeekFrom::Current(0))?;
+                        let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
 
                         // copy the tile to new file
@@ -857,7 +873,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
     fn clone_sub_files<R: Read + Seek>(
         &mut self,
-        tiff_tree: &mut Arena<ImageFileDirectory>,
+        tiff_tree: &Arena<ImageFileDirectory>,
         page: Token,
         asset_reader: &mut R,
     ) -> Result<HashMap<u16, Vec<u64>>> {
@@ -1349,7 +1365,7 @@ where
 }
 pub struct TiffIO {}
 
-impl CAILoader for TiffIO {
+impl CAIReader for TiffIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(asset_reader)?;
         Ok(cai_data)
@@ -1392,10 +1408,7 @@ impl AssetIO for TiffIO {
         tiff_clone_with_tags(&mut temp_file, &mut reader, vec![entry])?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1451,13 +1464,37 @@ impl AssetIO for TiffIO {
                 tc.clone_tiff(&mut idfs, page_0, &mut asset_reader)?;
 
                 // copy temp file to asset
-                std::fs::rename(temp_file.path(), asset_path)
-                    // if rename fails, try to copy in case we are on different volumes
-                    .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-                    .map_err(Error::IoError)
+                rename_or_copy(temp_file, asset_path)
             }
             None => Ok(()),
         }
+    }
+
+    fn new(_asset_type: &str) -> Self
+    where
+        Self: Sized,
+    {
+        TiffIO {}
+    }
+
+    fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
+        Box::new(TiffIO::new(asset_type))
+    }
+
+    fn get_reader(&self) -> &dyn CAIReader {
+        self
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
+    fn supported_types(&self) -> &[&str] {
+        &SUPPORTED_TYPES
     }
 }
 
@@ -1500,6 +1537,48 @@ impl AssetPatch for TiffIO {
     }
 }
 
+impl RemoteRefEmbed for TiffIO {
+    #[allow(unused_variables)]
+    fn embed_reference(
+        &self,
+        asset_path: &Path,
+        embed_ref: crate::asset_io::RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                #[cfg(feature = "xmp_write")]
+                {
+                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                }
+
+                #[cfg(not(feature = "xmp_write"))]
+                {
+                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+        _embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
+}
+
+impl ComposedManifestRef for TiffIO {
+    // Return entire CAI block as Vec<u8>
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        Ok(manifest_data.to_vec())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]
@@ -1521,7 +1600,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 
@@ -1543,7 +1622,7 @@ pub mod tests {
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
 
-        std::fs::copy(&source, &output).unwrap();
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 

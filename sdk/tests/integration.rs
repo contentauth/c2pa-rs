@@ -58,6 +58,7 @@ mod integration_1 {
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
+                .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("identifier".to_owned(), parent.instance_id().to_owned())?,
         );
@@ -91,7 +92,47 @@ mod integration_1 {
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
 
-        println!("{}", manifest_store);
+        println!("{manifest_store}");
+
+        assert!(manifest_store.get_active().is_some());
+        if let Some(manifest) = manifest_store.get_active() {
+            assert!(manifest.title().is_some());
+            assert_eq!(manifest.ingredients().len(), 2);
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_embed_json_manifest() -> Result<()> {
+        // set up parent and destination paths
+        let dir = tempdir()?;
+        let output_path = dir.path().join("test_file.jpg");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("earth_apollo17.jpg");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("manifest.json");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut manifest = Manifest::from_json(&json)?;
+        manifest.with_base_path(fixture_path.canonicalize()?)?;
+
+        // sign and embed into the target file
+        let signer = get_temp_signer();
+        manifest.embed(&parent_path, &output_path, &*signer)?;
+
+        // read our new file with embedded manifest
+        let manifest_store = ManifestStore::from_file(&output_path)?;
+
+        println!("{manifest_store}");
+        // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
 
         assert!(manifest_store.get_active().is_some());
         if let Some(manifest) = manifest_store.get_active() {

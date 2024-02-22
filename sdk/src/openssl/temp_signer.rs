@@ -31,8 +31,10 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 
+#[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "file_io")]
 use crate::{
     openssl::{EcSigner, EdSigner, RsaSigner},
     signer::ConfigurableSigner,
@@ -57,6 +59,7 @@ use crate::{
 /// # Panics
 ///
 /// Can panic if unable to invoke OpenSSL executable properly.
+#[cfg(feature = "file_io")]
 pub fn get_ec_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
@@ -65,7 +68,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => (),
         _ => {
-            panic!("Unknown EC signer alg {:#?}", alg);
+            panic!("Unknown EC signer alg {alg:#?}");
         }
     }
 
@@ -101,13 +104,14 @@ pub fn get_ec_signer<P: AsRef<Path>>(
 /// # Panics
 ///
 /// Can panic if unable to invoke OpenSSL executable properly.
+#[cfg(feature = "file_io")]
 pub fn get_ed_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> (EdSigner, PathBuf) {
     if alg != SigningAlg::Ed25519 {
-        panic!("Unknown ED signer alg {:#?}", alg);
+        panic!("Unknown ED signer alg {alg:#?}");
     }
 
     let mut sign_cert_path = path.as_ref().to_path_buf();
@@ -142,6 +146,7 @@ pub fn get_ed_signer<P: AsRef<Path>>(
 /// # Panics
 ///
 /// Can panic if unable to invoke OpenSSL executable properly.
+#[cfg(feature = "file_io")]
 pub fn get_rsa_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
@@ -150,7 +155,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     match alg {
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => (),
         _ => {
-            panic!("Unknown RSA signer alg {:#?}", alg);
+            panic!("Unknown RSA signer alg {alg:#?}");
         }
     }
 

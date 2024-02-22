@@ -12,7 +12,6 @@
 // each license.
 
 //! Example: Creating a custom assertion
-//!
 use c2pa::{Assertion, AssertionBase, AssertionCbor, Manifest, Result};
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +63,7 @@ fn main() -> Result<()> {
     let original = Custom::new();
     manifest.add_assertion(&original)?;
     let result: Custom = manifest.find_assertion(Custom::LABEL)?;
-    println!("{}\n", manifest);
+    println!("{manifest}\n");
     println!("c2pa sdk version = {}", result.version);
 
     Ok(())

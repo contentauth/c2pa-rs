@@ -20,20 +20,20 @@ check-docs:
 	cargo doc --no-deps --workspace --all-features
 
 clippy:
-	cargo clippy --all-features --all-targets -- -D warnings
+	cargo +nightly clippy --all-features --all-targets -- -D warnings
 
 test-local:
 	cargo test --all-features
 
-test-no-defaults:
-	cd sdk && cargo test --features="file_io, xmp_write, bmff" --no-default-features 
-
 test-wasm:
 	cd sdk && wasm-pack test --node
 
+test-wasm-web:
+	cd sdk && wasm-pack test --chrome --headless -- --features="serialize_thumbnails"
+	
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-local test-no-defaults test-wasm
+test: check-format check-docs clippy test-local test-wasm-web
 
 # Auto format code according to standards
 fmt: 
@@ -47,6 +47,11 @@ doc:
 # Outputs to release/test-images
 images:
 	cargo run --release --bin make_test_images
+
+# Exports JSON schema files so that types can easily be exported to other languages
+# Outputs to release/json-schema
+schema:
+	cargo run --release --bin export_schema
 
 # Runs the client example using test image and output to target/tmp/client.jpg
 client:
