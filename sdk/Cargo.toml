@@ -64,8 +64,6 @@ async-trait = { version = "0.1.48" }
 atree = "0.5.2"
 base64 = "0.21.2"
 bcder = "0.7.1"
-# Version 3.15.0 doesn't compile under Rust 1.70, pinning to 3.14.0
-bumpalo = "=3.14.0"
 bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
@@ -79,8 +77,7 @@ coset = "0.3.1"
 extfmt = "0.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"
-# Version 1.13.0 doesn't compile under Rust 1.70, pinning to 1.12.0
-id3 = "=1.12.0"
+id3 = "1.13.0"
 img-parts = "0.3.0"
 jfifdump = "0.5.1"
 log = "0.4.8"
@@ -153,6 +150,3 @@ wasm-bindgen-test = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 actix = "0.13.1"
-
-[package.metadata.cargo-udeps.ignore]
-normal = ["bumpalo"]
