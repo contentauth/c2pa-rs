@@ -287,7 +287,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertion::{Assertion, AssertionData},
+        assertion::AssertionData,
         utils::test::fixture_path,
     };
 

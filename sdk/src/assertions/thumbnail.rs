@@ -88,8 +88,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::labels;
-
+    
     // a binary assertion  ('deadbeefadbeadbe')
     fn some_binary_data() -> Vec<u8> {
         vec![

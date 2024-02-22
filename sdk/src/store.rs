@@ -3034,10 +3034,10 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Ingredient, Uuid},
-        claim::{AssertionStoreJsonFormat, Claim},
+        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
+        claim::AssertionStoreJsonFormat,
         jumbf_io::{
-            get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file,
+            get_assetio_handler_from_path,
             update_file_jumbf,
         },
         status_tracker::*,
@@ -4806,6 +4806,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4886,6 +4887,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4925,6 +4927,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -4987,6 +4990,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -5055,6 +5059,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
