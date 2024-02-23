@@ -98,11 +98,11 @@ rasn-pkix = "0.12.4"
 rasn = "0.12.4"
 riff = "1.0.1"
 schemars = { version = "0.8.13", optional = true }
-serde = { version = "1.0.137", features = ["derive"] }
+serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.137"
-serde_json = "1.0.81"
+serde_json = "1.0.114"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.1.0"
