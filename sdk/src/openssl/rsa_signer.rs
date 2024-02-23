@@ -51,20 +51,21 @@ impl RsaSigner {
         let ocsp_data = self.ocsp_rsp.take();
         let next_update = ocsp_data.next_update;
         self.ocsp_rsp.set(ocsp_data);
-        if now < next_update {
-            return;
-        }
-        #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
-        {
-            if let Ok(certs) = self.certs() {
-                if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
-                    self.ocsp_size.set(ocsp_rsp.len());
-                    let mut validation_log =
-                        crate::status_tracker::DetailedStatusTracker::default();
-                    if let Ok(ocsp_data) =
-                        crate::ocsp_utils::check_ocsp_response(&ocsp_rsp, None, &mut validation_log)
-                    {
-                        self.ocsp_rsp.set(ocsp_data);
+        if now > next_update {
+            #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
+            {
+                if let Ok(certs) = self.certs() {
+                    if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                        self.ocsp_size.set(ocsp_rsp.len());
+                        let mut validation_log =
+                            crate::status_tracker::DetailedStatusTracker::default();
+                        if let Ok(ocsp_data) = crate::ocsp_utils::check_ocsp_response(
+                            &ocsp_rsp,
+                            None,
+                            &mut validation_log,
+                        ) {
+                            self.ocsp_rsp.set(ocsp_data);
+                        }
                     }
                 }
             }
