@@ -93,7 +93,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         reader: input_stream,
     };
 
-    if let Ok(tag) = Tag::read_from2(reader) {
+    if let Ok(tag) = Tag::read_from(reader) {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
@@ -124,7 +124,7 @@ impl CAIReader for Mp3IO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut manifest: Option<Vec<u8>> = None;
 
-        if let Ok(tag) = Tag::read_from2(input_stream) {
+        if let Ok(tag) = Tag::read_from(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
@@ -255,7 +255,7 @@ impl CAIWriter for Mp3IO {
             reader: input_stream,
         };
 
-        if let Ok(tag) = Tag::read_from2(reader) {
+        if let Ok(tag) = Tag::read_from(reader) {
             for f in tag.frames() {
                 match f.content() {
                     // remove existing manifest keeping existing frames

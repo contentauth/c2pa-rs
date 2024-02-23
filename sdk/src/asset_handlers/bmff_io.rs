@@ -14,7 +14,6 @@
 use std::{
     cmp::min,
     collections::HashMap,
-    convert::{From, TryFrom},
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
