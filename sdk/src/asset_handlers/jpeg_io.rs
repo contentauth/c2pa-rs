@@ -1036,7 +1036,6 @@ pub mod tests {
     use std::io::{Read, Seek};
 
     use super::*;
-
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
