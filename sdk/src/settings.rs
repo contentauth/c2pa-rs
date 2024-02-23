@@ -285,8 +285,11 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 #[allow(unused)]
 pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
-) -> Option<T> {
-    SETTINGS.read().ok()?.get::<T>(value_path).ok()
+) -> Result<T> {
+    match SETTINGS.read() {
+        Ok(settings) => settings.get::<T>(value_path).map_err(|_| Error::NotFound),
+        Err(_) => Err(Error::OtherError("could not read setting object".into())),
+    }
 }
 
 // Set settings back to the default values.  Current use case is for testing.
