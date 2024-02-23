@@ -17,7 +17,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.70.0"
+rust-version = "1.73.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -77,7 +77,8 @@ coset = "0.3.1"
 extfmt = "0.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"
-id3 = "1.13.0"
+# Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
+id3 = "=1.12.0"
 img-parts = "0.3.0"
 jfifdump = "0.5.1"
 log = "0.4.8"
@@ -88,11 +89,12 @@ multibase = "0.9.0"
 multihash = "0.11.4"
 mp4 = "0.13.0"
 png_pong = "0.8.2"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 range-set = "0.0.9"
 rasn-ocsp = "0.12.4"
 rasn-pkix = "0.12.4"
 rasn = "0.12.4"
-ring = "0.16.20"
 riff = "1.0.1"
 schemars = { version = "0.8.13", optional = true }
 serde = { version = "1.0.137", features = ["derive"] }
@@ -112,10 +114,13 @@ x509-certificate = "0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.24.7", default-features = false, features = ["jpeg", "png"], optional = true }
+image = { version = "0.24.7", default-features = false, features = [
+	"jpeg",
+	"png",
+], optional = true }
 instant = "0.1.12"
 openssl = { version = "0.10.61", features = ["vendored"], optional = true }
-xmp_toolkit = { version = "1.6", optional = true }
+xmp_toolkit = { version = "1.7.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
@@ -124,7 +129,6 @@ getrandom = { version = "0.2.7", features = ["js"] }
 # to handle certificate timestamp checking correctly.
 instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
-rand = "0.8.5"
 rsa = "0.6.1"
 serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"

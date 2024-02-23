@@ -1401,6 +1401,7 @@ impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
     }
+
     fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
         let mut reader = std::fs::File::open(asset_path)?;
 
