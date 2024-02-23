@@ -24,7 +24,6 @@
 
 use std::{
     any::Any,
-    convert::TryInto,
     ffi::CString,
     fmt,
     io::{Read, Result as IoResult, Seek, SeekFrom, Write},
