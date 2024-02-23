@@ -2297,6 +2297,7 @@ pub(crate) mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -2353,6 +2354,7 @@ pub(crate) mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 

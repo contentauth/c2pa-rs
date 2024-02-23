@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::convert::TryFrom;
-
 use async_generic::async_generic;
 use bcder::decode::Constructed;
 use coset::{sig_structure_data, ProtectedHeader};
@@ -182,15 +180,15 @@ pub(crate) fn time_stamp_message_http(
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>> {
-    use ring::rand::SecureRandom;
+    use rand::{thread_rng, Rng};
 
     let mut h = digest_algorithm.digester();
     h.update(message);
     let digest = h.finish();
 
     let mut random = [0u8; 8];
-    ring::rand::SystemRandom::new()
-        .fill(&mut random)
+    thread_rng()
+        .try_fill(&mut random)
         .map_err(|_| Error::CoseTimeStampGeneration)?;
 
     let request = crate::asn1::rfc3161::TimeStampReq {

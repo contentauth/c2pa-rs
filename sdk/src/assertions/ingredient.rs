@@ -175,7 +175,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertion::{AssertionCbor, AssertionData};
+    use crate::assertion::AssertionData;
 
     #[test]
     fn assertion_ingredient() {

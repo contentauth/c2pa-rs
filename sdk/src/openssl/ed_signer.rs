@@ -108,7 +108,7 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
 
     #[test]
     fn ed25519_signer() {

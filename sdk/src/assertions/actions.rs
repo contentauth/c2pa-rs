@@ -486,7 +486,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertion::{Assertion, AssertionData},
+        assertion::AssertionData,
         assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
         hashed_uri::HashedUri,
     };
