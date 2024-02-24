@@ -1388,8 +1388,6 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::assertions::Metadata;
-
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 

@@ -13,7 +13,6 @@
 
 use std::{
     collections::HashMap,
-    convert::{From, TryFrom},
     fs::File,
     io::{BufReader, Cursor, Write},
     path::*,
@@ -1036,11 +1035,7 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
-    use img_parts::Bytes;
-
     use super::*;
-    use crate::asset_io::RemoteRefEmbedType;
-
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");

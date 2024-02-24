@@ -61,6 +61,7 @@ fn user_data_hash_with_sdk_hashing() {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&dest)
         .unwrap();
 
@@ -178,6 +179,7 @@ fn user_data_hash_with_user_hashing() {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&dest)
         .unwrap();
 

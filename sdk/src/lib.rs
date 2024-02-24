@@ -145,6 +145,7 @@ pub(crate) mod hashed_uri;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
 pub(crate) mod salt;
+pub(crate) mod settings;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;

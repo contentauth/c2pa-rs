@@ -102,15 +102,10 @@ impl Signer for CallbackSigner {
 /// # use c2pa::{create_callback_signer, SigningAlg, SignerCallback, Result};
 /// # fn main() -> Result<()> {
 ///     const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
-///     struct MyCallback;
-///     impl SignerCallback for MyCallback {
-///        fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-///          Ok(vec![0; 64])
-///        }
-///      }
-///      let callback = Box::new(MyCallback);
-///      let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, callback, None)?;
-/// #    Ok(())
+///     fn my_signer(_data: &[u8])-> Result<Vec<u8>> { Ok(vec![0; 64]) };
+///     let callback = Box::new(my_signer);
+///     let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, callback, None)?;
+/// #   Ok(())
 /// }
 /// ```
 pub fn create_callback_signer<P: Into<Vec<u8>>, F>(

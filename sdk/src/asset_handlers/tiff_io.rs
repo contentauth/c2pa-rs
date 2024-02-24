@@ -16,6 +16,7 @@ use std::{
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
+    vec,
 };
 
 use atree::{Arena, Token};
@@ -350,6 +351,16 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+fn stream_len(reader: &mut dyn CAIRead) -> crate::Result<u64> {
+    let old_pos = reader.stream_position()?;
+    let len = reader.seek(SeekFrom::End(0))?;
+
+    if old_pos != len {
+        reader.seek(SeekFrom::Start(old_pos))?;
+    }
+
+    Ok(len)
+}
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R: ?Sized>(
     input: &mut R,
@@ -649,7 +660,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
 
-    fn clone_image_data<R: Read + Seek>(
+    fn clone_image_data<R: Read + Seek + ?Sized>(
         &mut self,
         target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
         asset_reader: &mut R,
@@ -872,7 +883,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
-    fn clone_sub_files<R: Read + Seek>(
+    fn clone_sub_files<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &Arena<ImageFileDirectory>,
         page: Token,
@@ -921,7 +932,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(offset_map)
     }
 
-    pub fn clone_tiff<R: Read + Seek>(
+    pub fn clone_tiff<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
         page_0: Token,
@@ -1005,7 +1016,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
-    fn clone_ifd_entries<R: Read + Seek>(
+    fn clone_ifd_entries<R: Read + Seek + ?Sized>(
         &mut self,
         entries: &HashMap<u16, IfdEntry>,
         asset_reader: &mut R,
@@ -1272,7 +1283,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 }
 
-fn tiff_clone_with_tags<R: Read + Seek, W: Read + Write + Seek>(
+fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     writer: &mut W,
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
@@ -1291,17 +1302,25 @@ fn tiff_clone_with_tags<R: Read + Seek, W: Read + Write + Seek>(
     bo.flush()?;
     Ok(())
 }
-
-fn add_required_tags(asset_path: &std::path::Path) -> Result<()> {
-    let mut f = std::fs::File::open(asset_path)?;
+fn add_required_tags_to_stream(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+) -> Result<()> {
     let tiff_io = TiffIO {};
 
-    match tiff_io.read_cai(&mut f) {
-        Ok(_) => Ok(()),
+    match tiff_io.read_cai(input_stream) {
+        Ok(_) => {
+            // just clone
+            input_stream.rewind()?;
+            output_stream.rewind()?;
+            std::io::copy(input_stream, output_stream)?;
+            Ok(())
+        }
         Err(Error::JumbfNotFound) => {
             // allocate enough bytes so that value is not stored in offset field
             let some_bytes = vec![0u8; 10];
-            tiff_io.save_cai_store(asset_path, &some_bytes)
+            let tio = TiffIO {};
+            tio.write_cai(input_stream, output_stream, &some_bytes)
         }
         Err(e) => Err(e),
     }
@@ -1378,84 +1397,84 @@ impl CAIReader for TiffIO {
     }
 }
 
-impl CAIWriter for TiffIO {
-    fn write_cai(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        store_bytes: &[u8],
-    ) -> Result<()> {
-        let l = u64::value_from(store_bytes.len())
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+// impl CAIWriter for TiffIO {
+//     fn write_cai(
+//         &self,
+//         input_stream: &mut dyn CAIRead,
+//         output_stream: &mut dyn CAIReadWrite,
+//         store_bytes: &[u8],
+//     ) -> Result<()> {
+//         let l = u64::value_from(store_bytes.len())
+//             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-        let entry = IfdClonedEntry {
-            entry_tag: C2PA_TAG,
-            entry_type: C2PA_FIELD_TYPE,
-            value_count: l,
-            value_bytes: store_bytes.to_vec(),
-        };
-        input_stream.rewind()?;
-        tiff_clone_with_tags(
-            &mut Box::new(output_stream),
-            &mut Box::new(input_stream),
-            vec![entry],
-        )?;
-        Ok(())
-    }
+//         let entry = IfdClonedEntry {
+//             entry_tag: C2PA_TAG,
+//             entry_type: C2PA_FIELD_TYPE,
+//             value_count: l,
+//             value_bytes: store_bytes.to_vec(),
+//         };
+//         input_stream.rewind()?;
+//         tiff_clone_with_tags(
+//             &mut Box::new(output_stream),
+//             &mut Box::new(input_stream),
+//             vec![entry],
+//         )?;
+//         Ok(())
+//     }
 
-    fn get_object_locations_from_stream(
-        &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        input_stream.rewind()?;
-        let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut Box::new(input_stream))?;
+//     fn get_object_locations_from_stream(
+//         &self,
+//         input_stream: &mut dyn CAIRead,
+//     ) -> Result<Vec<HashObjectPositions>> {
+//         input_stream.rewind()?;
+//         let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut Box::new(input_stream))?;
 
-        let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
-            Some(ifd) => ifd,
-            None => return Ok(Vec::new()),
-        };
+//         let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
+//             Some(ifd) => ifd,
+//             None => return Ok(Vec::new()),
+//         };
 
-        // make sure data type is for unstructured data
-        if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
-            return Err(Error::InvalidAsset(
-                "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
-            ));
-        }
+//         // make sure data type is for unstructured data
+//         if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
+//             return Err(Error::InvalidAsset(
+//                 "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+//             ));
+//         }
 
-        let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-        let manifest_offset = usize::value_from(decoded_offset)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-        let manifest_len = usize::value_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+//         let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+//         let manifest_offset = usize::value_from(decoded_offset)
+//             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+//         let manifest_len = usize::value_from(cai_ifd_entry.value_count)
+//             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
-        Ok(vec![HashObjectPositions {
-            offset: manifest_offset,
-            length: manifest_len,
-            htype: HashBlockObjectType::Cai,
-        }])
-    }
+//         Ok(vec![HashObjectPositions {
+//             offset: manifest_offset,
+//             length: manifest_len,
+//             htype: HashBlockObjectType::Cai,
+//         }])
+//     }
 
-    fn remove_cai_store_from_stream(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-    ) -> Result<()> {
-        let input_stream = &mut Box::new(input_stream);
-        let output_stream = &mut Box::new(output_stream);
-        let (mut idfs, page_0, e, big_tiff) = map_tiff(input_stream)?;
+//     fn remove_cai_store_from_stream(
+//         &self,
+//         input_stream: &mut dyn CAIRead,
+//         output_stream: &mut dyn CAIReadWrite,
+//     ) -> Result<()> {
+//         let input_stream = &mut Box::new(input_stream);
+//         let output_stream = &mut Box::new(output_stream);
+//         let (mut idfs, page_0, e, big_tiff) = map_tiff(input_stream)?;
 
-        let mut bo = ByteOrdered::new(output_stream, e);
-        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+//         let mut bo = ByteOrdered::new(output_stream, e);
+//         let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
 
-        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
-            Some(_ifd) => {
-                input_stream.rewind()?;
-                tc.clone_tiff(&mut idfs, page_0, input_stream)
-            }
-            None => Ok(()),
-        }
-    }
-}
+//         match idfs[page_0].data.entries.remove(&C2PA_TAG) {
+//             Some(_ifd) => {
+//                 input_stream.rewind()?;
+//                 tc.clone_tiff(&mut idfs, page_0, input_stream)
+//             }
+//             None => Ok(()),
+//         }
+//     }
+// }
 
 impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
@@ -1469,24 +1488,17 @@ impl AssetIO for TiffIO {
     }
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+        let mut input_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
         let mut temp_file = Builder::new()
             .prefix("c2pa_temp")
             .rand_bytes(5)
             .tempfile()?;
 
-        let mut reader = std::fs::File::open(asset_path)?;
-
-        let l = u64::value_from(store_bytes.len())
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-        let entry = IfdClonedEntry {
-            entry_tag: C2PA_TAG,
-            entry_type: C2PA_FIELD_TYPE,
-            value_count: l,
-            value_bytes: store_bytes.to_vec(),
-        };
-
-        tiff_clone_with_tags(&mut temp_file, &mut reader, vec![entry])?;
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
         rename_or_copy(temp_file, asset_path)
@@ -1496,59 +1508,24 @@ impl AssetIO for TiffIO {
         &self,
         asset_path: &std::path::Path,
     ) -> Result<Vec<crate::asset_io::HashObjectPositions>> {
-        add_required_tags(asset_path)?;
+        let mut input_stream =
+            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
 
-        let mut asset_reader = std::fs::File::open(asset_path)?;
-
-        let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut asset_reader)?;
-
-        let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
-            Some(ifd) => ifd,
-            None => return Ok(Vec::new()),
-        };
-
-        // make sure data type is for unstructured data
-        if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
-            return Err(Error::InvalidAsset(
-                "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
-            ));
-        }
-
-        let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-        let manifest_offset = usize::value_from(decoded_offset)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-        let manifest_len = usize::value_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-
-        Ok(vec![HashObjectPositions {
-            offset: manifest_offset,
-            length: manifest_len,
-            htype: HashBlockObjectType::Cai,
-        }])
+        self.get_object_locations_from_stream(&mut input_stream)
     }
 
     fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
+        let mut input_file = std::fs::File::open(asset_path)?;
+
         let mut temp_file = Builder::new()
             .prefix("c2pa_temp")
             .rand_bytes(5)
             .tempfile()?;
 
-        let mut asset_reader = std::fs::File::open(asset_path)?;
+        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
-        let (mut idfs, page_0, e, big_tiff) = map_tiff(&mut asset_reader)?;
-
-        let mut bo = ByteOrdered::new(&mut temp_file, e);
-        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
-
-        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
-            Some(_ifd) => {
-                tc.clone_tiff(&mut idfs, page_0, &mut asset_reader)?;
-
-                // copy temp file to asset
-                rename_or_copy(temp_file, asset_path)
-            }
-            None => Ok(()),
-        }
+        // copy temp file to asset
+        rename_or_copy(temp_file, asset_path)
     }
 
     fn new(_asset_type: &str) -> Self
@@ -1580,6 +1557,87 @@ impl AssetIO for TiffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+}
+
+impl CAIWriter for TiffIO {
+    fn write_cai(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let l = u64::value_from(store_bytes.len())
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+        let entry = IfdClonedEntry {
+            entry_tag: C2PA_TAG,
+            entry_type: C2PA_FIELD_TYPE,
+            value_count: l,
+            value_bytes: store_bytes.to_vec(),
+        };
+
+        tiff_clone_with_tags(output_stream, input_stream, vec![entry])
+    }
+
+    fn get_object_locations_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let len = stream_len(input_stream)?;
+        let vec_cap = usize::value_from(len)
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
+        let output_buf: Vec<u8> = Vec::with_capacity(vec_cap + 100);
+
+        let mut output_stream = Cursor::new(output_buf);
+
+        add_required_tags_to_stream(input_stream, &mut output_stream)?;
+        output_stream.rewind()?;
+
+        let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut output_stream)?;
+
+        let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
+            Some(ifd) => ifd,
+            None => return Ok(Vec::new()),
+        };
+
+        // make sure data type is for unstructured data
+        if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
+            return Err(Error::InvalidAsset(
+                "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+            ));
+        }
+
+        let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+        let manifest_offset = usize::value_from(decoded_offset)
+            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+        let manifest_len = usize::value_from(cai_ifd_entry.value_count)
+            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+
+        Ok(vec![HashObjectPositions {
+            offset: manifest_offset,
+            length: manifest_len,
+            htype: HashBlockObjectType::Cai,
+        }])
+    }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        let (mut idfs, page_0, e, big_tiff) = map_tiff(input_stream)?;
+
+        let mut bo = ByteOrdered::new(output_stream, e);
+        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+
+        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
+            Some(_ifd) => {
+                tc.clone_tiff(&mut idfs, page_0, input_stream)?;
+                Ok(())
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -1750,6 +1808,44 @@ pub mod tests {
         }
     }
 
+    #[test]
+    fn test_get_object_location() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+
+        let temp_dir = tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+
+        let mut success = false;
+        if let Ok(locations) = tiff_io.get_object_locations(&output) {
+            for op in locations {
+                if op.htype == HashBlockObjectType::Cai {
+                    let mut of = std::fs::File::open(&output).unwrap();
+
+                    let mut manifests_buf: Vec<u8> = vec![0u8; op.length];
+                    of.seek(SeekFrom::Start(op.offset as u64)).unwrap();
+                    of.read_exact(manifests_buf.as_mut_slice()).unwrap();
+                    if crate::hash_utils::vec_compare(&manifests_buf, data.as_bytes()) {
+                        success = true;
+                    }
+                }
+            }
+        }
+        assert!(success);
+    }
     /*  disable until I find smaller DNG
     #[test]
     fn test_read_write_dng_manifest() {
