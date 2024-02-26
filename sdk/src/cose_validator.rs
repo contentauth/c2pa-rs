@@ -63,7 +63,7 @@ pub(crate) const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
-/********************** Supported Valiators ***************************************
+/********************** Supported Validators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
     RS384	RSASSA-PKCS1-v1_5 using SHA-384 - not recommended
     RS512	RSASSA-PKCS1-v1_5 using SHA-512 - not recommended
