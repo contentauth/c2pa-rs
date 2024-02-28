@@ -830,7 +830,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
 }
 
 #[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], validation_log: &mut impl StatusTracker))]
-#[deny(dead_code)]
+#[allow(unused)]
 fn check_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
@@ -842,9 +842,9 @@ fn check_trust(
     let verify_result: Result<bool> = if _sync {
         #[cfg(target_arch = "wasm32")]
         {
-            return Err(Error::NotImplemented(
+            Err(Error::NotImplemented(
                 "no trust handler for synchronous wasm32".to_string(),
-            ));
+            ))
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -880,10 +880,12 @@ fn check_trust(
                 Ok(false)
             }
         }
-        Err(_) => {
+        Err(e) => {
             let log_item = log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                 .error(Error::CoseCertUntrusted)
-                .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
+                .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .set_error(&e);
+
             validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
             Ok(false)
         }

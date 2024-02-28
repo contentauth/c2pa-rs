@@ -29,7 +29,7 @@ lazy_static! {
 }
 
 // trait used to validate user input to make sure user supplied configurations are valid
-pub trait SettingsValidate {
+pub(crate) trait SettingsValidate {
     // returns error if settings are invalid
     fn validate(&self) -> Result<()> {
         Ok(())
@@ -363,7 +363,7 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
 
 // Set settings back to the default values.  Current use case is for testing.
 #[allow(unused)]
-pub(crate) fn reset_default_settings() -> Result<()> {
+pub fn reset_default_settings() -> Result<()> {
     if let Ok(default_settings) = Config::try_from(&Settings::default()) {
         match SETTINGS.write() {
             Ok(mut current_settings) => {

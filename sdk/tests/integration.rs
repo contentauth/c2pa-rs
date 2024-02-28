@@ -20,12 +20,15 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, Ingredient, Manifest, ManifestStore, ManifestStoreOptions, Result, Signer,
-        SigningAlg,
+        create_signer, settings, Ingredient, Manifest, ManifestStore, ManifestStoreOptions, Result,
+        Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
     const GENERATOR: &str = "app";
+
+    // prevent tests from polluting the results of each other because of Rust unit test concurrency
+    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1); // prevent tests from polluting the results of each other
 
     fn get_temp_signer() -> Box<dyn Signer> {
         // sign and embed into the target file
@@ -40,6 +43,8 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
+        let _protect = PROTECT.lock().unwrap();
+
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");
@@ -117,6 +122,10 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
+        let _protect = PROTECT.lock().unwrap();
+
+        settings::reset_default_settings().unwrap();
+
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");

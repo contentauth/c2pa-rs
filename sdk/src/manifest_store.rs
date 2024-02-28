@@ -19,6 +19,7 @@ use serde::Serialize;
 
 use crate::{
     claim::ClaimAssetData,
+    settings,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::base64,
@@ -282,19 +283,25 @@ impl ManifestStore {
 
         let mut store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
-        if cfg!(feature = "trust") {
-            if let Some(anchors) = options.anchors {
-                store.add_trust(anchors)?;
-            }
-            if let Some(private_anchors) = options.private_anchors {
-                store.add_private_trust_anchors(private_anchors)?;
-            }
-            if let Some(config) = options.config {
-                store.add_trust_config(config)?;
-            }
-            if let Some(allowed_list) = options.allowed_list {
-                store.add_trust_allowed_list(allowed_list)?;
-            }
+        let mut enable_trust = false;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+            enable_trust = true;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_private_trust_anchors(private_anchors)?;
+            enable_trust = true;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+            enable_trust = true;
+        }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+            enable_trust = true;
+        }
+        if enable_trust {
+            settings::set_settings_value("verify.verify_trust", true)?;
         }
 
         match options.data_dir {
@@ -316,19 +323,25 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
         let mut store = Store::get_store_from_memory(format, image_bytes, &mut validation_log)?;
 
-        if cfg!(feature = "trust") {
-            if let Some(anchors) = options.anchors {
-                store.add_trust(anchors)?;
-            }
-            if let Some(private_anchors) = options.private_anchors {
-                store.add_private_trust_anchors(private_anchors)?;
-            }
-            if let Some(config) = options.config {
-                store.add_trust_config(config)?;
-            }
-            if let Some(allowed_list) = options.allowed_list {
-                store.add_trust_allowed_list(allowed_list)?;
-            }
+        let mut enable_trust = false;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+            enable_trust = true;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_private_trust_anchors(private_anchors)?;
+            enable_trust = true;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+            enable_trust = true;
+        }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+            enable_trust = true;
+        }
+        if enable_trust {
+            settings::set_settings_value("verify.verify_trust", true)?;
         }
 
         // verify the store
@@ -403,19 +416,25 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
-        if cfg!(feature = "trust") {
-            if let Some(anchors) = options.anchors {
-                store.add_trust(anchors)?;
-            }
-            if let Some(private_anchors) = options.private_anchors {
-                store.add_private_trust_anchors(private_anchors)?;
-            }
-            if let Some(config) = options.config {
-                store.add_trust_config(config)?;
-            }
-            if let Some(allowed_list) = options.allowed_list {
-                store.add_trust_allowed_list(allowed_list)?;
-            }
+        let mut enable_trust = false;
+        if let Some(anchors) = options.anchors {
+            store.add_trust(anchors)?;
+            enable_trust = true;
+        }
+        if let Some(private_anchors) = options.private_anchors {
+            store.add_private_trust_anchors(private_anchors)?;
+            enable_trust = true;
+        }
+        if let Some(config) = options.config {
+            store.add_trust_config(config)?;
+            enable_trust = true;
+        }
+        if let Some(allowed_list) = options.allowed_list {
+            store.add_trust_allowed_list(allowed_list)?;
+            enable_trust = true;
+        }
+        if enable_trust {
+            settings::set_settings_value("verify.verify_trust", true)?;
         }
 
         if options.verify {
