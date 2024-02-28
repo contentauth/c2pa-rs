@@ -719,35 +719,38 @@ pub(crate) fn check_ocsp_status(
             }
         }
     } else {
-        // only support fetching with the enabled
-        if let Ok(ocsp_fetch) = get_settings_value::<bool>("verify.ocsp_fetch") {
-            if ocsp_fetch {
-                // get the cert chain
-                let certs = get_sign_certs(&sign1)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // only support fetching with the enabled
+            if let Ok(ocsp_fetch) = get_settings_value::<bool>("verify.ocsp_fetch") {
+                if ocsp_fetch {
+                    // get the cert chain
+                    let certs = get_sign_certs(&sign1)?;
 
-                if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
-                    // fetch_ocsp_response(&certs) {
-                    let ocsp_response_der = ocsp_der;
+                    if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                        // fetch_ocsp_response(&certs) {
+                        let ocsp_response_der = ocsp_der;
 
-                    let signing_time = match &time_stamp_info {
-                        Ok(tst_info) => {
-                            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-                            Some(signing_time)
-                        }
-                        Err(_) => None,
-                    };
-
-                    // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-                    if let Ok(ocsp_data) =
-                        check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
-                    {
-                        // if we get a valid response validate the certs
-                        if ocsp_data.revoked_at.is_none() {
-                            if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                        let signing_time = match &time_stamp_info {
+                            Ok(tst_info) => {
+                                let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+                                Some(signing_time)
                             }
+                            Err(_) => None,
+                        };
+
+                        // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+                        if let Ok(ocsp_data) =
+                            check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
+                        {
+                            // if we get a valid response validate the certs
+                            if ocsp_data.revoked_at.is_none() {
+                                if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                                    check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                                }
+                            }
+                            result = Ok(ocsp_data);
                         }
-                        result = Ok(ocsp_data);
                     }
                 }
             }
@@ -827,6 +830,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
 }
 
 #[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], validation_log: &mut impl StatusTracker))]
+#[deny(dead_code)]
 fn check_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
@@ -835,8 +839,18 @@ fn check_trust(
 ) -> Result<bool> {
     // is the certificate trusted
 
-    let verify_result = if _sync {
-        verify_trust(th, chain_der, cert_der)
+    let verify_result: Result<bool> = if _sync {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return Err(Error::NotImplemented(
+                "no trust handler for synchronous wasm32".to_string(),
+            ));
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            verify_trust(th, chain_der, cert_der)
+        }
     } else {
         #[cfg(target_arch = "wasm32")]
         {
