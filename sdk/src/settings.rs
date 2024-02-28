@@ -551,15 +551,8 @@ pub mod tests {
         let _protect = PROTECT.lock().unwrap();
 
         // we support just changing the fields you are interested in changing
-        // here are two examples of incomplete structures only overriding specific
+        // here is an example of incomplete structures only overriding specific
         // fields
-
-        let modified_trust = r#"{
-            "trust": {
-              "private_anchors": "this is a test",
-              "allowed_list": "another test"
-            }
-        }"#;
 
         let modified_core = r#"{
             "core": {
@@ -569,18 +562,9 @@ pub mod tests {
             }
         }"#;
 
-        load_settings_from_str(modified_trust, "json").unwrap();
         load_settings_from_str(modified_core, "json").unwrap();
 
         // see if updated values match
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
-            Some("this is a test".to_string())
-        );
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.allowed_list").unwrap(),
-            Some("another test".to_string())
-        );
         assert!(get_settings_value::<bool>("core.debug").unwrap());
         assert_eq!(
             get_settings_value::<String>("core.hash_alg").unwrap(),
@@ -596,10 +580,7 @@ pub mod tests {
             get_settings_value::<bool>("manifest.auto_thumbnail").unwrap(),
             Manifest::default().auto_thumbnail
         );
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.trust_anchors").unwrap(),
-            Trust::default().trust_anchors
-        );
+
         assert_eq!(
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes

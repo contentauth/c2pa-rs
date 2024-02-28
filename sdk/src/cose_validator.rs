@@ -12,6 +12,7 @@
 // each license.
 
 use asn1_rs::{Any, Class, Header, Tag};
+use async_generic::async_generic;
 use ciborium::value::Value;
 use conv::*;
 use coset::{
@@ -825,7 +826,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], validation_log: &mut impl StatusTracker))]
 fn check_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
@@ -833,42 +834,22 @@ fn check_trust(
     validation_log: &mut impl StatusTracker,
 ) -> Result<bool> {
     // is the certificate trusted
-    match verify_trust(th, chain_der, cert_der) {
-        Ok(trusted) => {
-            if trusted {
-                let log_item =
-                    log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                        .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED);
-                validation_log.log_silent(log_item);
-                Ok(true)
-            } else {
-                let log_item =
-                    log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                        .error(Error::CoseCertUntrusted)
-                        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
-                validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
-                Ok(false)
-            }
-        }
-        Err(_) => {
-            let log_item = log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .error(Error::CoseCertUntrusted)
-                .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
-            validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
-            Ok(false)
-        }
-    }
-}
 
-#[cfg(target_arch = "wasm32")]
-async fn check_trust_async(
-    th: &dyn TrustHandlerConfig,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    validation_log: &mut impl StatusTracker,
-) -> Result<bool> {
-    // is the certificate trusted
-    match verify_trust_async(th, chain_der, cert_der).await {
+    let verify_result = if _sync {
+        verify_trust(th, chain_der, cert_der)
+    } else {
+        #[cfg(target_arch = "wasm32")]
+        {
+            verify_trust_async(th, chain_der, cert_der).await
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            verify_trust(th, chain_der, cert_der)
+        }
+    };
+
+    match verify_result {
         Ok(trusted) => {
             if trusted {
                 let log_item =
