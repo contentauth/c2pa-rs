@@ -46,6 +46,7 @@ use crate::{
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
     salt::DefaultSalt,
+    settings::get_settings_value,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
@@ -115,7 +116,7 @@ impl Store {
     ///
     /// In most cases, calling [`Store::new()`] is preferred.
     pub fn new_with_label(label: &str) -> Self {
-        Store {
+        let mut store = Store {
             claims_map: HashMap::new(),
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
@@ -125,7 +126,34 @@ impl Store {
             #[cfg(target_arch = "wasm32")]
             trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
             provenance_path: None,
-        }
+        };
+
+        // load the trust handler settings, don't worry about status as these are checked during setting generation
+        let _ = get_settings_value::<Option<String>>("trust.trust_anchors").map(|ta_opt| {
+            if let Some(ta) = ta_opt {
+                let _v = store.add_trust(ta.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.private_anchors").map(|pa_opt| {
+            if let Some(pa) = pa_opt {
+                let _v = store.add_private_trust_anchors(pa.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.trust_config").map(|tc_opt| {
+            if let Some(tc) = tc_opt {
+                let _v = store.add_trust_config(tc.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.allowed_list").map(|al_opt| {
+            if let Some(al) = al_opt {
+                let _v = store.add_trust_allowed_list(al.as_bytes());
+            }
+        });
+
+        store
     }
 
     /// Return label for the store
@@ -471,25 +499,26 @@ impl Store {
 
         cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
             // Sanity check: Ensure that this signature is valid.
-
-            let mut cose_log = OneShotStatusTracker::new();
-            match verify_cose(
-                &sig,
-                &claim_bytes,
-                b"",
-                false,
-                self.trust_handler(),
-                &mut cose_log,
-            ) {
-                Ok(_) => Ok(sig),
-                Err(err) => {
-                    error!(
-                        "Signature that was just generated does not validate: {:#?}",
-                        err
-                    );
-                    Err(err)
+            if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
+                if verify_after_sign {
+                    let mut cose_log = OneShotStatusTracker::new();
+                    if let Err(err) = verify_cose(
+                        &sig,
+                        &claim_bytes,
+                        b"",
+                        false,
+                        self.trust_handler(),
+                        &mut cose_log,
+                    ) {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        return Err(err);
+                    }
                 }
             }
+            Ok(sig)
         })
     }
 
@@ -507,26 +536,30 @@ impl Store {
         match cose_sign_async(signer, &claim_bytes, box_size).await {
             // Sanity check: Ensure that this signature is valid.
             Ok(sig) => {
-                let mut cose_log = OneShotStatusTracker::new();
-                match verify_cose_async(
-                    sig.clone(),
-                    claim_bytes,
-                    b"".to_vec(),
-                    false,
-                    self.trust_handler(),
-                    &mut cose_log,
-                )
-                .await
+                if let Ok(verify_after_sign) =
+                    get_settings_value::<bool>("verify.verify_after_sign")
                 {
-                    Ok(_) => Ok(sig),
-                    Err(err) => {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        Err(err)
+                    if verify_after_sign {
+                        let mut cose_log = OneShotStatusTracker::new();
+                        if let Err(err) = verify_cose_async(
+                            sig.clone(),
+                            claim_bytes,
+                            b"".to_vec(),
+                            false,
+                            self.trust_handler(),
+                            &mut cose_log,
+                        )
+                        .await
+                        {
+                            error!(
+                                "Signature that was just generated does not validate: {:#?}",
+                                err
+                            );
+                            return Err(err);
+                        }
                     }
                 }
+                Ok(sig)
             }
             Err(e) => Err(e),
         }

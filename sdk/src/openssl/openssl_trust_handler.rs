@@ -117,10 +117,6 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         th
     }
 
-    fn is_empty(&self) -> bool {
-        self.trust_store.is_none()
-    }
-
     // add trust anchors
     fn load_trust_anchors_from_data(&mut self, trust_data_reader: &mut dyn Read) -> Result<()> {
         let mut trust_data = Vec::new();
@@ -154,7 +150,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let buf_reader = BufReader::new(reader);
 
         let mut inside_cert_block = false;
-        for l in buf_reader.lines().flatten() {
+        for l in buf_reader.lines().map_while(|v| v.ok()) {
             if l.contains("-----BEGIN") {
                 inside_cert_block = true;
             }

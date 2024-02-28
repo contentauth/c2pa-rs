@@ -98,10 +98,6 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
         th
     }
 
-    fn is_empty(&self) -> bool {
-        self.trust_anchors.is_empty() && self.private_anchors.is_empty()
-    }
-
     // add trust anchors
     fn load_trust_anchors_from_data(&mut self, trust_data_reader: &mut dyn Read) -> Result<()> {
         let mut trust_data = Vec::new();
@@ -183,7 +179,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
                 inside_cert_block = false;
             }
 
-            // sanity check that that is is base64 encoded and outside of certificate block
+            // sanity check that data is base64 encoded and outside of certificate block
             if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
                 self.allowed_cert_set.insert(l);
             }

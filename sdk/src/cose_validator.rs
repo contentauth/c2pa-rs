@@ -29,6 +29,7 @@ use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
     ocsp_utils::{check_ocsp_response, OcspData},
+    settings::get_settings_value,
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
@@ -717,36 +718,36 @@ pub(crate) fn check_ocsp_status(
             }
         }
     } else {
-        // fetch OCSP response if feature "fetch_ocsp_response"
-        // only support fetching with the op
-        #[cfg(feature = "fetch_ocsp_response")]
-        {
-            // get the cert chain
-            let certs = get_sign_certs(&sign1)?;
+        // only support fetching with the enabled
+        if let Ok(ocsp_fetch) = get_settings_value::<bool>("verify.ocsp_fetch") {
+            if ocsp_fetch {
+                // get the cert chain
+                let certs = get_sign_certs(&sign1)?;
 
-            if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
-                // fetch_ocsp_response(&certs) {
-                let ocsp_response_der = ocsp_der;
+                if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                    // fetch_ocsp_response(&certs) {
+                    let ocsp_response_der = ocsp_der;
 
-                let signing_time = match &time_stamp_info {
-                    Ok(tst_info) => {
-                        let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-                        Some(signing_time)
-                    }
-                    Err(_) => None,
-                };
-
-                // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-                if let Ok(ocsp_data) =
-                    check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
-                {
-                    // if we get a valid response validate the certs
-                    if ocsp_data.revoked_at.is_none() {
-                        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                            check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                    let signing_time = match &time_stamp_info {
+                        Ok(tst_info) => {
+                            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
+                            Some(signing_time)
                         }
+                        Err(_) => None,
+                    };
+
+                    // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
+                    if let Ok(ocsp_data) =
+                        check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
+                    {
+                        // if we get a valid response validate the certs
+                        if ocsp_data.revoked_at.is_none() {
+                            if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                                check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                            }
+                        }
+                        result = Ok(ocsp_data);
                     }
-                    result = Ok(ocsp_data);
                 }
             }
         }
@@ -997,12 +998,14 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
-        if cfg!(feature = "trust") {
-            #[cfg(target_arch = "wasm32")]
-            check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
+        if let Ok(verify_trust) = get_settings_value::<bool>("verify.verify_trust") {
+            if verify_trust {
+                #[cfg(target_arch = "wasm32")]
+                check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
 
-            #[cfg(not(target_arch = "wasm32"))]
-            check_trust(th, &certs[1..], der_bytes, validation_log)?;
+                #[cfg(not(target_arch = "wasm32"))]
+                check_trust(th, &certs[1..], der_bytes, validation_log)?;
+            }
         }
 
         // check certificate revocation
@@ -1190,8 +1193,10 @@ pub(crate) fn verify_cose(
         }
 
         // is the certificate trusted
-        if cfg!(feature = "trust") {
-            check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        if let Ok(verify_trust) = get_settings_value::<bool>("verify.verify_trust") {
+            if verify_trust {
+                check_trust(th, &certs[1..], der_bytes, validation_log)?;
+            }
         }
 
         // check certificate revocation
@@ -1325,7 +1330,6 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    #[cfg(feature = "trust")]
     fn test_expired_cert() {
         let mut validation_log = DetailedStatusTracker::new();
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
@@ -1406,7 +1410,6 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "openssl_sign")]
-    #[cfg(feature = "trust")]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();

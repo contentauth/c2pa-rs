@@ -32,11 +32,6 @@ pub(crate) trait TrustHandlerConfig {
     where
         Self: Sized;
 
-    // return list of
-    fn is_empty(&self) -> bool {
-        true
-    }
-
     // add trust anchors
     fn load_trust_anchors_from_data(&mut self, trust_data: &mut dyn Read) -> Result<()>;
 

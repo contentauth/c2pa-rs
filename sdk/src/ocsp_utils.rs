@@ -52,7 +52,6 @@ impl Default for OcspData {
     }
 }
 
-#[cfg(feature = "fetch_ocsp_response")]
 fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> Option<Vec<String>> {
     use x509_parser::der_parser::{oid, Oid};
 
@@ -84,7 +83,6 @@ fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> O
 /// retrieve the OCSPResponse.  If successful returns OcspData containing the DER encoded OCSPResponse and
 /// the DateTime for when this cached response should be refreshed, and the OCSP signer certificate chain.  
 /// None otherwise.
-#[cfg(feature = "fetch_ocsp_response")]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     use std::io::Read;
 
