@@ -38,7 +38,7 @@ use crate::{
     validator::ValidationInfo,
     SigningAlg,
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl_sign")]
 use crate::{
     openssl::verify_trust,
     validator::{get_validator, CoseValidator},
@@ -847,7 +847,7 @@ fn check_trust(
             ))
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "openssl_sign")]
         {
             verify_trust(th, chain_der, cert_der)
         }
@@ -857,7 +857,7 @@ fn check_trust(
             verify_trust_async(th, chain_der, cert_der).await
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "openssl_sign")]
         {
             verify_trust(th, chain_der, cert_der)
         }
