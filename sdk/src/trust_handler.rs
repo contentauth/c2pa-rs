@@ -96,6 +96,7 @@ pub(crate) fn has_allowed_oid<'a>(
 }
 
 // load set of validation EKUs, ignoring unrecognized Oid lines
+#[allow(dead_code)]
 pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> Result<Vec<String>> {
     let mut oid_vec = Vec::new();
 
