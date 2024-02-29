@@ -673,7 +673,6 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    #[cfg(feature = "trust")]
     fn manifest_report_from_file_with_options() {
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
