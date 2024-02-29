@@ -120,7 +120,7 @@ mod signing_alg;
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 pub(crate) mod ocsp_utils;
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 mod openssl;
 
 mod signer;
