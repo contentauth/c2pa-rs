@@ -19,7 +19,7 @@ use std::{
 
 use asn1_rs::{oid, Oid};
 
-use crate::Result;
+use crate::{hash_utils::hash_sha256, utils::base64, Error, Result};
 
 pub(crate) static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
 pub(crate) static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
@@ -107,10 +107,20 @@ pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> Result<Vec<S
     Ok(oid_vec)
 }
 
+pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let mut certs = Vec::new();
+
+    for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
+        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+        certs.push(pem.contents);
+    }
+    Ok(certs)
+}
+
 // Pass through trust for the case of claim signer usage since it has known trust with context
 // configured to all email protection, timestamping, ocsp signing and document signing
 pub(crate) struct TrustPassThrough {
-    allowed_list: HashSet<String>,
+    allowed_cert_set: HashSet<String>,
 }
 
 impl TrustHandlerConfig for TrustPassThrough {
@@ -119,7 +129,7 @@ impl TrustHandlerConfig for TrustPassThrough {
         Self: Sized,
     {
         TrustPassThrough {
-            allowed_list: HashSet::new(),
+            allowed_cert_set: HashSet::new(),
         }
     }
 
@@ -153,11 +163,22 @@ impl TrustHandlerConfig for TrustPassThrough {
         Vec::new()
     }
 
-    fn load_allowed_list(&mut self, _allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
+        let mut buffer = Vec::new();
+        allowed_list.read_to_end(&mut buffer)?;
+
+        if let Ok(cert_list) = load_trust_from_data(&buffer) {
+            for cert_der in &cert_list {
+                let cert_sha256 = hash_sha256(cert_der);
+                let cert_hash_base64 = base64::encode(&cert_sha256);
+
+                self.allowed_cert_set.insert(cert_hash_base64);
+            }
+        }
         Ok(())
     }
 
     fn get_allowed_list(&self) -> &std::collections::HashSet<String> {
-        &self.allowed_list
+        &self.allowed_cert_set
     }
 }

@@ -28,21 +28,13 @@ use crate::{
     cose_validator::*,
     error::{Error, Result},
     hash_utils::hash_sha256,
-    trust_handler::{has_allowed_oid, load_eku_configuration, TrustHandlerConfig},
+    trust_handler::{
+        has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
+    },
     utils::base64,
     wasm::webcrypto_validator::async_validate,
     SigningAlg,
 };
-
-fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let mut certs = Vec::new();
-
-    for pem_result in Pem::iter_from_buffer(trust_data) {
-        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
-        certs.push(pem.contents);
-    }
-    Ok(certs)
-}
 
 // Struct to handle verification of trust chains using WebPki
 pub(crate) struct WebTrustHandlerConfig {
@@ -159,7 +151,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
 
         if let Ok(cert_list) = load_trust_from_data(&buffer) {
             for cert_der in &cert_list {
-                let cert_sha256 = hash_sha256(&cert_der);
+                let cert_sha256 = hash_sha256(cert_der);
                 let cert_hash_base64 = base64::encode(&cert_sha256);
 
                 self.allowed_cert_set.insert(cert_hash_base64);

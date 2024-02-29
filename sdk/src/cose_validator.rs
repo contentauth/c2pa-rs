@@ -28,6 +28,8 @@ use x509_parser::{
 
 #[cfg(feature = "openssl_sign")]
 use crate::openssl::verify_trust;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::validator::{get_validator, CoseValidator};
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
@@ -37,7 +39,7 @@ use crate::{
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
     validation_status,
-    validator::{get_validator, CoseValidator, ValidationInfo},
+    validator::ValidationInfo,
     SigningAlg,
 };
 #[cfg(target_arch = "wasm32")]
@@ -837,10 +839,10 @@ fn check_trust(
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(feature = "openssl_sign"))]
         {
             Err(Error::NotImplemented(
-                "no trust handler for synchronous wasm32".to_string(),
+                "no trust handler for this feature".to_string(),
             ))
         }
 
@@ -857,6 +859,13 @@ fn check_trust(
         #[cfg(feature = "openssl_sign")]
         {
             verify_trust(th, chain_der, cert_der)
+        }
+
+        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
+        {
+            Err(Error::NotImplemented(
+                "no trust handler for this feature".to_string(),
+            ))
         }
     };
 
