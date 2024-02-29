@@ -136,14 +136,14 @@ fn extension_to_mime(extension: &str) -> Option<&'static str> {
     })
 }
 
-fn extension(path: &str) -> Option<&str> {
-    Path::new(path)
+fn extension(path: &Path) -> Option<&str> {
+    path
         .extension()
         .and_then(std::ffi::OsStr::to_str)
 }
 
-fn file_name(path: &str) -> Option<&str> {
-    Path::new(path)
+fn file_name(path: &Path) -> Option<&str> {
+    path
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
 }
@@ -273,8 +273,8 @@ impl MakeTestImages {
         //     "name": "Make Test Images",
         //     "version": env!("CARGO_PKG_VERSION")
         // });
-        let name = file_name(dst).ok_or(Error::BadParam("no filename".to_string()))?;
-        let extension = extension(dst).unwrap_or("jpg");
+        let name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
+        let extension = extension(&dst_path).unwrap_or("jpg");
 
         let format = extension_to_mime(extension).unwrap_or("image/jpeg");
 
@@ -674,7 +674,7 @@ impl MakeTestImages {
         println!("Copying {dst_path:?}");
         let src = recipe.parent.as_deref().unwrap_or_default();
         let dst = recipe.output.as_str();
-        if extension(src) != extension(dst) {
+        if extension(&PathBuf::from(src)) != extension(&PathBuf::from(dst)) {
             let img = image::open(src_path).context(format!("copying {src} to {dst}"))?;
             img.save(&dst_path)
                 .context(format!("copying {src} to {dst}"))?;
