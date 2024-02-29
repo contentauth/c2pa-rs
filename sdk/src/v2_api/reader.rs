@@ -14,8 +14,9 @@
 use async_generic::async_generic;
 
 use crate::{
-    error::Result, manifest_store::ManifestStore, validation_status::ValidationStatus, CAIRead,
-    CAIReadWrite, Manifest,
+    claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
+    status_tracker::DetailedStatusTracker, store::Store, validation_status::ValidationStatus,
+    CAIRead, CAIReadWrite, Manifest,
 };
 
 /// A reader for the manifest store
@@ -24,6 +25,12 @@ pub struct Reader {
 }
 
 impl Reader {
+    pub fn new() -> Self {
+        Self {
+            manifest_store: ManifestStore::new(),
+        }
+    }
+    
     /// Create a manifest store Reader from a stream
     /// # Arguments
     /// * `format` - The format of the stream
@@ -33,12 +40,10 @@ impl Reader {
     /// # Errors
     /// If the stream is not a valid manifest store
     #[async_generic(async_signature(
-        //settings: ReaderSettings,
         format: &str,
         stream: &mut dyn CAIRead,
     ))]
     pub fn from_stream(
-        //settings: ReaderSettings,
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<Reader> {
@@ -49,8 +54,52 @@ impl Reader {
             ManifestStore::from_stream_async(format, stream, verify).await
         }?;
         Ok(Reader {
-            //settings,
             manifest_store: reader,
+        })
+    }
+
+    /// Create a manifest store Reader from existing c2pa_data and a stream
+    /// You can use this to validate a remote manifest or a sidecar manifest
+    /// # Arguments
+    /// * `c2pa_data` - The c2pa data (a manifest store in JUMBF format)
+    /// * `format` - The format of the stream
+    /// * `stream` - The stream to verify the store against
+    /// # Returns
+    /// A reader for the manifest store
+    /// # Errors
+    /// If the c2pa_data is not valid, or severe errors occur in validation
+    /// validation status should be checked for non severe errors
+    #[async_generic(async_signature(
+        c2pa_data: &[u8],
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ))]
+    pub fn from_c2pa_data_and_stream(
+        c2pa_data: &[u8],
+        format: &str,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Reader> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        // first we convert the JUMBF into a usable store
+        let store = Store::from_jumbf(c2pa_data, &mut validation_log)?;
+
+        if _sync {
+            Store::verify_store(
+                &store,
+                &mut ClaimAssetData::Stream(stream, format),
+                &mut validation_log,
+            )?;
+        } else {
+            Store::verify_store_async(
+                &store,
+                &mut ClaimAssetData::Stream(stream, format),
+                &mut validation_log,
+            ).await?;
+        }
+
+        Ok(Reader {
+            manifest_store: ManifestStore::from_store(&store, &validation_log),
         })
     }
 
@@ -81,5 +130,11 @@ impl Reader {
         self.manifest_store
             .get_resource(uri, stream)
             .map(|size| size as usize)
+    }
+}
+
+impl std::fmt::Display for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.json().as_str())
     }
 }

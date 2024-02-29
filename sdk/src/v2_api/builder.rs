@@ -36,6 +36,10 @@ use crate::{
     ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
+/// A Manifest Definition
+/// This is used to define a manifest and is used to build a ManifestStore
+/// A Manifest is a collection of ingredients and assertions
+/// It is used to define a claim that can be signed and embedded into a file
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -95,7 +99,58 @@ fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
 
-/// This is used to build a ManifestStore
+/// A Builder is used to add a signed manifest to an asset.
+///
+/// # Example: Building and signing a manifest
+///
+/// ```
+/// # use c2pa::Result;
+/// use std::path::PathBuf;
+///
+/// use c2pa::{create_signer, Builder, SigningAlg};
+/// use serde::Serialize;
+/// use tempfile::tempdir;
+///
+/// #[derive(Serialize)]
+/// struct Test {
+///     my_tag: usize,
+/// }
+///
+/// # fn main() -> Result<()> {
+/// let mut builder = Builder::from_json(
+///     r#"
+///   {
+///       "claim_generator_info": [
+///          {
+///             "name": "c2pa_test",
+///             "version": "1.0.0"
+///          }
+///       ],
+///       "title": "Test_Manifest",
+///    }
+/// "#,
+/// )?;
+/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+///
+/// let source = PathBuf::from("tests/fixtures/C.jpg");
+/// let dir = tempdir()?;
+/// let dest = dir.path().join("test_file.jpg");
+///
+/// // Create a ps256 signer using certs and key files
+/// let signcert_path = "tests/fixtures/certs/ps256.pub";
+/// let pkey_path = "tests/fixtures/certs/ps256.pem";
+/// let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+///
+/// // embed a manifest using the signer
+/// builder.sign(
+///     "image/jpeg",
+///     &mut std::fs::File::open(&source)?,
+///     &mut std::fs::File::create(&dest)?,
+///     &signer,
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -117,9 +172,8 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Builder {
-            //verify_on_sign: c2pa.verify,
             ..Default::default()
         }
     }
