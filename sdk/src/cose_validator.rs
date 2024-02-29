@@ -26,6 +26,8 @@ use x509_parser::{
     prelude::*,
 };
 
+#[cfg(feature = "openssl_sign")]
+use crate::openssl::verify_trust;
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
@@ -35,13 +37,8 @@ use crate::{
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
     validation_status,
-    validator::ValidationInfo,
+    validator::{get_validator, CoseValidator, ValidationInfo},
     SigningAlg,
-};
-#[cfg(feature = "openssl_sign")]
-use crate::{
-    openssl::verify_trust,
-    validator::{get_validator, CoseValidator},
 };
 #[cfg(target_arch = "wasm32")]
 use crate::{
