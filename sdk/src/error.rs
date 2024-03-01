@@ -153,6 +153,9 @@ pub enum Error {
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
 
+    #[error("COSE Signer does not contain signing certificate")]
+    CoseNoCerts,
+
     #[error("WASM verifier error")]
     WasmVerifier,
 

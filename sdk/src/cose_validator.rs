@@ -104,7 +104,7 @@ fn get_cose_sign1(
     }
 }
 
-fn check_cert(
+pub(crate) fn check_cert(
     ca_der_bytes: &[u8],
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,

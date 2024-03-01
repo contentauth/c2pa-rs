@@ -13,7 +13,7 @@
 
 use std::{
     collections::HashSet,
-    io::{read_to_string, Read},
+    io::{read_to_string, Cursor, Read},
     str::FromStr,
 };
 
@@ -122,6 +122,7 @@ pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
 // configured to all email protection, timestamping, ocsp signing and document signing
 pub(crate) struct TrustPassThrough {
     allowed_cert_set: HashSet<String>,
+    config_store: Vec<u8>,
 }
 
 impl TrustHandlerConfig for TrustPassThrough {
@@ -131,6 +132,7 @@ impl TrustHandlerConfig for TrustPassThrough {
     {
         TrustPassThrough {
             allowed_cert_set: HashSet::new(),
+            config_store: Vec::new(),
         }
     }
 
@@ -147,17 +149,32 @@ impl TrustHandlerConfig for TrustPassThrough {
 
     fn clear(&mut self) {}
 
-    fn load_configuration(&mut self, _config_data: &mut dyn std::io::Read) -> Result<()> {
+    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
+        config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
 
-    fn get_auxillary_ekus(&self) -> Vec<asn1_rs::Oid> {
-        vec![
-            EMAIL_PROTECTION_OID.to_owned(),
-            TIMESTAMPING_OID.to_owned(),
-            OCSP_SIGNING_OID.to_owned(),
-            DOCUMENT_SIGNING_OID.to_owned(),
-        ]
+    // list off auxillary allowed EKU Oid
+    fn get_auxillary_ekus(&self) -> Vec<Oid> {
+        let mut oids = Vec::new();
+        if let Ok(oid_strings) = load_eku_configuration(&mut Cursor::new(&self.config_store)) {
+            for oid_str in &oid_strings {
+                if let Ok(oid) = Oid::from_str(oid_str) {
+                    oids.push(oid);
+                }
+            }
+        }
+        if oids.is_empty() {
+            // return default
+            vec![
+                EMAIL_PROTECTION_OID.to_owned(),
+                TIMESTAMPING_OID.to_owned(),
+                OCSP_SIGNING_OID.to_owned(),
+                DOCUMENT_SIGNING_OID.to_owned(),
+            ]
+        } else {
+            oids
+        }
     }
 
     fn get_anchors(&self) -> Vec<Vec<u8>> {
