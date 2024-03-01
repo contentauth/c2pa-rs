@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
+#[cfg(feature = "file_io")]
+use std::path::Path;
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -19,66 +21,12 @@ use serde::Serialize;
 
 use crate::{
     claim::ClaimAssetData,
-    settings,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::base64,
     validation_status::{status_for_store, ValidationStatus},
     CAIRead, Manifest, Result,
 };
-
-fn configure_trust(store: &mut Store, options: &ManifestStoreOptions<'_>) -> Result<()> {
-    let mut enable_trust = false;
-    if let Some(anchors) = options.anchors {
-        store.add_trust(anchors)?;
-        enable_trust = true;
-    }
-    if let Some(private_anchors) = options.private_anchors {
-        store.add_private_trust_anchors(private_anchors)?;
-        enable_trust = true;
-    }
-    if let Some(config) = options.config {
-        store.add_trust_config(config)?;
-        enable_trust = true;
-    }
-    if let Some(allowed_list) = options.allowed_list {
-        store.add_trust_allowed_list(allowed_list)?;
-        enable_trust = true;
-    }
-    if enable_trust {
-        settings::set_settings_value("verify.verify_trust", true)?;
-    }
-    Ok(())
-}
-
-/// Options used when loading the ManifestStore from an asset
-pub struct ManifestStoreOptions<'a> {
-    /// Set to true if validation should be performed
-    pub verify: bool,
-    /// Root certificates to use for validation trust list
-    pub anchors: Option<&'a [u8]>,
-    /// Trust list private anchors
-    pub private_anchors: Option<&'a [u8]>,
-    // Trusted end-entity certificates
-    pub allowed_list: Option<&'a [u8]>,
-    /// Trust list validation configuration
-    pub config: Option<&'a [u8]>,
-    /// Optional data directory for resources
-    pub data_dir: Option<&'a Path>,
-}
-
-impl<'a> Default for ManifestStoreOptions<'a> {
-    fn default() -> Self {
-        Self {
-            verify: true,
-            anchors: None,
-            private_anchors: None,
-            allowed_list: None,
-            config: None,
-            data_dir: None,
-        }
-    }
-}
 
 #[derive(Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -280,67 +228,17 @@ impl ManifestStore {
         ))
     }
 
-    #[cfg(feature = "file_io")]
-    /// Loads a ManifestStore from a file using options
-    /// Example:
-    ///
-    /// ```
-    /// use std::path::Path;
-    ///
-    /// # use c2pa::Result;
-    /// use c2pa::{ManifestStore, ManifestStoreOptions};
-    /// # fn main() -> Result<()> {
-    /// let options = ManifestStoreOptions {
-    ///     data_dir: Some(Path::new("../target/tmp/manifest_store")),
-    ///     ..Default::default()
-    /// };
-    /// let manifest_store = ManifestStore::from_file_with_options("tests/fixtures/C.jpg", &options)?;
-    /// println!("{}", manifest_store);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn from_file_with_options<P: AsRef<Path>>(
-        path: P,
-        options: &ManifestStoreOptions<'_>,
-    ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
-
-        let mut store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-
-        configure_trust(&mut store, options)?;
-
-        match options.data_dir {
-            Some(data_dir) => Ok(Self::from_store_with_resources(
-                &store,
-                &validation_log,
-                data_dir,
-            )),
-            None => Ok(Self::from_store(&store, &validation_log)),
-        }
-    }
-
     /// Loads a ManifestStore from a file
     pub async fn from_bytes_async(
         format: &str,
         image_bytes: &[u8],
-        options: &ManifestStoreOptions<'_>,
+        verify: bool,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
-        let mut store = Store::get_store_from_memory(format, image_bytes, &mut validation_log)?;
 
-        configure_trust(&mut store, options)?;
-
-        // verify the store
-        if options.verify {
-            // verify store and claims
-            Store::verify_store_async(
-                &store,
-                &mut ClaimAssetData::Bytes(image_bytes, format),
-                &mut validation_log,
-            )
-            .await?;
-        }
-        Ok(Self::from_store(&store, &validation_log))
+        Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
+            .await
+            .map(|store| Self::from_store(&store, &validation_log))
     }
 
     /// Loads a ManifestStore from an init segment and fragment.  This
@@ -369,21 +267,14 @@ impl ManifestStore {
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
     /// ```
-    /// use c2pa::{Result, ManifestStore, ManifestStoreOptions};
+    /// use c2pa::{Result, ManifestStore};
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
     ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
-    ///         let pa = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");    
-    ///         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");  
-    ///         
-    ///         let mut manifest_options = ManifestStoreOptions::default();
-    ///         manifest_options.private_anchors = Some(pa);
-    ///         manifest_options.config = Some(config);
-    ///     
     ///
-    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes, &manifest_options)
+    ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
     ///             .await
     ///             .unwrap();
     ///
@@ -397,21 +288,17 @@ impl ManifestStore {
         manifest_bytes: &[u8],
         format: &str,
         asset_bytes: &[u8],
-        options: &ManifestStoreOptions<'_>,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
-        let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+        let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
-        configure_trust(&mut store, options)?;
+        Store::verify_store_async(
+            &store,
+            &mut ClaimAssetData::Bytes(asset_bytes, format),
+            &mut validation_log,
+        )
+        .await?;
 
-        if options.verify {
-            Store::verify_store_async(
-                &store,
-                &mut ClaimAssetData::Bytes(asset_bytes, format),
-                &mut validation_log,
-            )
-            .await?;
-        }
         Ok(Self::from_store(&store, &validation_log))
     }
 
@@ -564,13 +451,9 @@ mod tests {
     async fn manifest_report_image_async() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
-        let manifest_store = ManifestStore::from_bytes_async(
-            "image/jpeg",
-            image_bytes,
-            &ManifestStoreOptions::default(),
-        )
-        .await
-        .unwrap();
+        let manifest_store = ManifestStore::from_bytes_async("image/jpeg", image_bytes, true)
+            .await
+            .unwrap();
 
         assert!(!manifest_store.manifests.is_empty());
         assert!(manifest_store.active_label().is_some());
@@ -609,7 +492,6 @@ mod tests {
             manifest_bytes,
             "image/jpg",
             asset_bytes,
-            &ManifestStoreOptions::default(),
         )
         .await
         .unwrap();
@@ -626,34 +508,6 @@ mod tests {
             "../target/ms",
         )
         .expect("from_store_with_resources");
-        println!("{manifest_store}");
-
-        assert!(manifest_store.active_label().is_some());
-        assert!(manifest_store.get_active().is_some());
-        assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
-        let manifest = manifest_store.get_active().unwrap();
-        assert!(!manifest.ingredients().is_empty());
-        assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
-        assert!(manifest.time().is_some());
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn manifest_report_from_file_with_options() {
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        let options = ManifestStoreOptions {
-            config: Some(config),
-            anchors: None,
-            private_anchors: Some(priv_trust),
-            data_dir: Some(Path::new("../target/ms")),
-            ..Default::default()
-        };
-        let manifest_store =
-            ManifestStore::from_file_with_options("tests/fixtures/CIE-sig-CA.jpg", &options)
-                .expect("from_store_with_resources");
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());

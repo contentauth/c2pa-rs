@@ -20,8 +20,7 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, settings, Ingredient, Manifest, ManifestStore, ManifestStoreOptions, Result,
-        Signer, SigningAlg,
+        create_signer, settings, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -38,6 +37,54 @@ mod integration_1 {
         pkey_path.push("tests/fixtures/certs/ps256.pem");
         create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
             .expect("get_signer_from_files")
+    }
+
+    fn configure_trust(
+        trust_anchors: Option<String>,
+        allowed_list: Option<String>,
+        trust_config: Option<String>,
+    ) -> Result<()> {
+        let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
+        let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
+        let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
+
+        let mut enable_trust_checks = false;
+        if let Some(trust_list) = trust_anchors {
+            let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
+            let setting = ta.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        if let Some(allowed_list) = allowed_list {
+            let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
+            let setting = al.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        if let Some(trust_config) = trust_config {
+            let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
+            let setting = tc.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        // enable trust checks
+        if enable_trust_checks {
+            c2pa::settings::load_settings_from_str(
+                r#"{"verify": { "verify_trust": true} }"#,
+                "json",
+            )?;
+        }
+
+        Ok(())
     }
 
     #[test]
@@ -98,14 +145,15 @@ mod integration_1 {
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
-        let options = ManifestStoreOptions {
-            config: Some(config),
-            anchors: None,
-            private_anchors: Some(priv_trust),
-            ..Default::default()
-        };
+        // in production code you should check that the file is indeed UTF-8 text.
+        configure_trust(
+            Some(String::from_utf8_lossy(priv_trust).to_string()),
+            None,
+            Some(String::from_utf8_lossy(config).to_string()),
+        )?;
+
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file_with_options(&output_path, &options)?;
+        let manifest_store = ManifestStore::from_file(&output_path)?;
 
         println!("{manifest_store}");
 

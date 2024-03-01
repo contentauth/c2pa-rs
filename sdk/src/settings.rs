@@ -306,7 +306,7 @@ pub fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
-// Load settings form string representation of the configuration.  Format of configuration must be supplied.
+/// Load settings form string representation of the configuration.  Format of configuration must be supplied.
 #[allow(unused)]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
     Settings::from_string(settings_str, format).map(|_| ())
@@ -336,9 +336,20 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
                 .set_override(value_path, value);
 
             if let Ok(updated) = update_config {
-                *c = updated
+                let update_config = updated
                     .build()
                     .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+                let settings = update_config
+                    .clone()
+                    .try_deserialize::<Settings>()
+                    .map_err(|_e| {
+                        Error::BadParam("configuration file contains unrecognized param".into())
+                    })?;
+                settings.validate()?;
+
+                *c = update_config;
+
                 Ok(())
             } else {
                 Err(Error::OtherError("could not save settings".into()))
@@ -469,13 +480,15 @@ pub mod tests {
     fn test_set_val_by_direct_path() {
         let _protect = PROTECT.lock().unwrap();
 
+        let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
         set_settings_value("manifest.auto_thumbnail", false).unwrap();
         set_settings_value(
             "trust.private_anchors",
-            Some("path/to/my/content".to_string()),
+            Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
         .unwrap();
 
@@ -487,7 +500,7 @@ pub mod tests {
         assert!(!get_settings_value::<bool>("manifest.auto_thumbnail").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
-            Some("path/to/my/content".to_string())
+            Some(String::from_utf8(ts.to_vec()).unwrap())
         );
 
         // the current config should be different from the defaults
