@@ -26,7 +26,7 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 use crate::openssl::verify_trust;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::validator::{get_validator, CoseValidator};
@@ -762,7 +762,7 @@ pub(crate) fn check_ocsp_status(
 // internal util function to dump the cert chain in PEM format
 #[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "openssl")]
     {
         let mut out_buf: Vec<u8> = Vec::new();
 
@@ -780,7 +780,7 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
         Ok(out_buf)
     }
 
-    #[cfg(not(feature = "openssl_sign"))]
+    #[cfg(not(feature = "openssl"))]
     {
         let out_buf: Vec<u8> = Vec::new();
         Ok(out_buf)
@@ -835,18 +835,18 @@ fn check_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     validation_log: &mut impl StatusTracker,
-) -> Result<bool> {
+) -> Result<()> {
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(not(feature = "openssl"))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
             ))
         }
 
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(feature = "openssl")]
         {
             verify_trust(th, chain_der, cert_der)
         }
@@ -856,12 +856,12 @@ fn check_trust(
             verify_trust_async(th, chain_der, cert_der).await
         }
 
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(feature = "openssl")]
         {
             verify_trust(th, chain_der, cert_der)
         }
 
-        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
@@ -876,14 +876,14 @@ fn check_trust(
                     log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
                         .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED);
                 validation_log.log_silent(log_item);
-                Ok(true)
+                Ok(())
             } else {
                 let log_item =
                     log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                         .error(Error::CoseCertUntrusted)
                         .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
                 validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
-                Ok(false)
+                Err(Error::CoseCertUntrusted)
             }
         }
         Err(e) => {
@@ -893,7 +893,7 @@ fn check_trust(
                 .set_error(&e);
 
             validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
-            Ok(false)
+            Err(e)
         }
     }
 }
@@ -941,7 +941,7 @@ pub(crate) async fn verify_cose_async(
         Err(_) => {
             let log_item = log_item!(
                 "Cose_Sign1",
-                "unsupported or missing Cose algorithhm",
+                "unsupported or missing Cose algorithm",
                 "verify_cose_async"
             )
             .error(Error::CoseSignatureAlgorithmNotSupported)
@@ -1135,7 +1135,7 @@ pub(crate) fn verify_cose(
         Err(_) => {
             let log_item = log_item!(
                 "Cose_Sign1",
-                "unsupported or missing Cose algorithhm",
+                "unsupported or missing Cose algorithm",
                 "verify_cose"
             )
             .error(Error::CoseSignatureAlgorithmNotSupported)

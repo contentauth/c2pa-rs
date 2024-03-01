@@ -121,11 +121,11 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            #[cfg(feature = "openssl_sign")]
+            #[cfg(feature = "openssl")]
             trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
+            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
             trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
+            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
         };

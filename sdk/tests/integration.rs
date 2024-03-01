@@ -100,6 +100,17 @@ mod integration_1 {
         let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         ingredient_path.push("tests/fixtures/libpng-test.png");
 
+        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
+        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
+        // configure before first use so that trust settings are used for all call
+        // in production code you should check that the file is indeed UTF-8 text.
+        configure_trust(
+            Some(String::from_utf8_lossy(priv_trust).to_string()),
+            None,
+            Some(String::from_utf8_lossy(config).to_string()),
+        )?;
+
         // create a new Manifest
         let mut manifest = Manifest::new(GENERATOR.to_owned());
 
@@ -141,16 +152,6 @@ mod integration_1 {
         // sign and embed into the target file
         let signer = get_temp_signer();
         manifest.embed(&parent_path, &output_path, &*signer)?;
-
-        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // in production code you should check that the file is indeed UTF-8 text.
-        configure_trust(
-            Some(String::from_utf8_lossy(priv_trust).to_string()),
-            None,
-            Some(String::from_utf8_lossy(config).to_string()),
-        )?;
 
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
