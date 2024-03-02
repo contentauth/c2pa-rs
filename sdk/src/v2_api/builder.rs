@@ -126,7 +126,7 @@ fn default_vec<T>() -> Vec<T> {
 ///             "version": "1.0.0"
 ///          }
 ///       ],
-///       "title": "Test_Manifest",
+///       "title": "Test_Manifest"
 ///    }
 /// "#,
 /// )?;
@@ -146,7 +146,7 @@ fn default_vec<T>() -> Vec<T> {
 ///     "image/jpeg",
 ///     &mut std::fs::File::open(&source)?,
 ///     &mut std::fs::File::create(&dest)?,
-///     &signer,
+///     signer.as_ref(),
 /// )?;
 /// # Ok(())
 /// # }
@@ -348,6 +348,7 @@ impl Builder {
                         format!("Invalid ingredient index {}", index),
                     ))))?; // todo add specific error
                 }
+                println!("adding ingredient {}/{}", index, id);
                 builder.definition.ingredients[index]
                     .resources_mut()
                     .add(id, data)?;
@@ -424,7 +425,11 @@ impl Builder {
         // add all ingredients to the claim
         for ingredient in &definition.ingredients {
             //let ingredient = ingredient_builder.build(self)?;
-            let uri = ingredient.add_to_claim(&mut claim, definition.redactions.clone())?;
+            let uri = ingredient.add_to_claim(
+                &mut claim,
+                definition.redactions.clone(),
+                Some(&self.resources),
+            )?;
             ingredient_map.insert(ingredient.instance_id().to_string(), uri);
         }
 
@@ -434,7 +439,11 @@ impl Builder {
                 let mut stream = self.resources.open(ingredient_ref)?;
                 let mut ingredient = Ingredient::from_stream(&ingredient_ref.format, &mut *stream)?;
                 ingredient.set_title(&ingredient_ref.identifier);
-                let uri = ingredient.add_to_claim(&mut claim, definition.redactions.clone())?;
+                let uri = ingredient.add_to_claim(
+                    &mut claim,
+                    definition.redactions.clone(),
+                    Some(&self.resources),
+                )?;
                 ingredient_map.insert(ingredient.instance_id().to_string(), uri);
             }
         }
@@ -910,7 +919,7 @@ mod tests {
 
         // unzip the manifest builder from the zipped stream
         zipped.rewind().unwrap();
-        let mut builder = Builder::unzip(&mut zipped).unwrap();
+        let mut _builder = Builder::unzip(&mut zipped).unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
         let signer = temp_signer();

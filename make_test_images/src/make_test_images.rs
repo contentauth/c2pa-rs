@@ -137,15 +137,11 @@ fn extension_to_mime(extension: &str) -> Option<&'static str> {
 }
 
 fn extension(path: &Path) -> Option<&str> {
-    path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
+    path.extension().and_then(std::ffi::OsStr::to_str)
 }
 
 fn file_name(path: &Path) -> Option<&str> {
-    path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
+    path.file_name().and_then(std::ffi::OsStr::to_str)
 }
 
 /// Generate a blake3 hash over the image in path using a fixed buffer

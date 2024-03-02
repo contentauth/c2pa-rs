@@ -130,6 +130,7 @@ mod integration_v2 {
         }
 
         println!("{}", reader.json());
+        #[cfg(not(target_arch = "wasm32"))] // todo: remove this check when wasm supports ed25519
         assert!(reader.status().is_none());
         assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 

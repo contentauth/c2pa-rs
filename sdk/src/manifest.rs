@@ -762,7 +762,7 @@ impl Manifest {
         let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
-            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone(), None)?;
             ingredient_map.insert(ingredient.instance_id(), uri);
         }
 

@@ -111,9 +111,9 @@ mod resource_store;
 pub use resource_store::{ResourceRef, ResourceStore};
 
 mod v2_api;
-pub use v2_api::{Builder, C2pa, Reader};
 #[cfg(feature = "file_io")]
 pub use v2_api::format_from_path;
+pub use v2_api::{Builder, C2pa, Reader};
 
 mod signing_alg;
 #[cfg(feature = "file_io")]

@@ -86,7 +86,17 @@ impl ManifestStore {
             None => self.get_active(),
         };
         if let Some(manifest) = manifest {
-            manifest.resources().write_stream(uri, stream)
+            let mut resources = manifest.resources();
+            if !resources.exists(uri) {
+                // also search ingredients to support Reader model
+                for ingredient in manifest.ingredients() {
+                    if ingredient.resources().exists(uri) {
+                        resources = ingredient.resources();
+                        break;
+                    }
+                }
+            }
+            resources.write_stream(uri, stream)
         } else {
             Err(Error::ResourceNotFound(uri.to_owned()))
         }

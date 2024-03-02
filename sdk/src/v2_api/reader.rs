@@ -30,7 +30,7 @@ impl Reader {
             manifest_store: ManifestStore::new(),
         }
     }
-    
+
     /// Create a manifest store Reader from a stream
     /// # Arguments
     /// * `format` - The format of the stream
@@ -43,10 +43,7 @@ impl Reader {
         format: &str,
         stream: &mut dyn CAIRead,
     ))]
-    pub fn from_stream(
-        format: &str,
-        stream: &mut dyn CAIRead,
-    ) -> Result<Reader> {
+    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Reader> {
         let verify = true; // todo: get this from config
         let reader = if _sync {
             ManifestStore::from_stream(format, stream, verify)
@@ -95,7 +92,8 @@ impl Reader {
                 &store,
                 &mut ClaimAssetData::Stream(stream, format),
                 &mut validation_log,
-            ).await?;
+            )
+            .await?;
         }
 
         Ok(Reader {
@@ -130,6 +128,12 @@ impl Reader {
         self.manifest_store
             .get_resource(uri, stream)
             .map(|size| size as usize)
+    }
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

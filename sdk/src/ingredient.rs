@@ -1064,8 +1064,17 @@ impl Ingredient {
         &self,
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
+        resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
     ) -> Result<HashedUri> {
         let mut thumbnail = None;
+        // for Builder model, ingredient resources may be in the manifest
+        let get_resource = |id: &str| {
+            self.resources.get(id).or_else(|_| {
+                resources
+                    .ok_or_else(|| Error::NotFound)
+                    .and_then(|r| r.get(id))
+            })
+        };
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
@@ -1088,7 +1097,7 @@ impl Ingredient {
                 };
 
                 // get the c2pa manifest bytes
-                let manifest_data = self.resources.get(&resource_ref.identifier)?;
+                let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store = Store::load_ingredient_to_claim(
@@ -1160,7 +1169,10 @@ impl Ingredient {
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
-                    let data = self.thumbnail_bytes()?;
+                    let data = match self.thumbnail.as_ref() {
+                        Some(thumbnail) => get_resource(&thumbnail.identifier),
+                        None => Err(Error::NotFound),
+                    }?;
                     if self.is_v2() {
                         // v2 ingredients use databoxes for thumbnails
                         claim.add_databox(
@@ -1184,7 +1196,7 @@ impl Ingredient {
 
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let box_data = self.resources.get(&data_ref.identifier)?;
+            let box_data = get_resource(&data_ref.identifier)?;
             let hash_url = claim.add_databox(
                 &data_ref.format,
                 box_data.into_owned(),

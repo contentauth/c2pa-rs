@@ -12,12 +12,18 @@
 // each license.
 
 //! Example App that generates a manifest store listing for a given file
-use std::io::Read;
+
 use anyhow::Result;
-use c2pa::{format_from_path, Error, Reader};
+#[cfg(target_arch = "wasm32")]
+fn main() -> Result<()> {
+    Ok(())
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
+    use std::io::Read;
+
+    use c2pa::{format_from_path, Error, Reader};
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
@@ -28,10 +34,13 @@ fn main() -> Result<()> {
         let external_manifest = path.with_extension("c2pa");
         let reader = if external_manifest.exists() {
             println!("Using external manifest: {}", external_manifest.display());
-            let c2pa_data = std::fs::read(&external_manifest)?;   
-            let format = path.extension().and_then(|ext| ext.to_str()).ok_or(Error::UnsupportedType)?;
-            Reader::from_c2pa_data_and_stream(&c2pa_data, &format, &mut file)
-        } else { 
+            let c2pa_data = std::fs::read(&external_manifest)?;
+            let format = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .ok_or(Error::UnsupportedType)?;
+            Reader::from_c2pa_data_and_stream(&c2pa_data, format, &mut file)
+        } else {
             match Reader::from_stream(&format, &mut file) {
                 Ok(reader) => Ok(reader),
                 Err(Error::RemoteManifestUrl(url)) => {
@@ -41,9 +50,7 @@ fn main() -> Result<()> {
                     resp.into_reader().read_to_end(&mut c2pa_data)?;
                     Reader::from_c2pa_data_and_stream(&c2pa_data, &format, &mut file)
                 }
-                Err(e) => {
-                    Err(e.into())
-                }
+                Err(e) => Err(e),
             }
         }?;
         println!("{reader}");

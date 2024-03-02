@@ -23,7 +23,7 @@ pub use builder::Builder;
 
 #[cfg(feature = "file_io")]
 pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
-    path.as_ref().extension().map(|ext| 
-        crate::utils::mime::format_to_mime(ext.to_string_lossy().as_ref())
-    )
+    path.as_ref()
+        .extension()
+        .map(|ext| crate::utils::mime::format_to_mime(ext.to_string_lossy().as_ref()))
 }
