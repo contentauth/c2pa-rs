@@ -836,6 +836,16 @@ fn check_trust(
     cert_der: &[u8],
     validation_log: &mut impl StatusTracker,
 ) -> Result<()> {
+    // just return is trust checks are disabled or misconfigured
+    match get_settings_value::<bool>("verify.verify_trust") {
+        Ok(verify_trust) => {
+            if !verify_trust {
+                return Ok(());
+            }
+        }
+        Err(e) => return Err(e),
+    }
+
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
@@ -1001,15 +1011,11 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
-        if let Ok(verify_trust) = get_settings_value::<bool>("verify.verify_trust") {
-            if verify_trust {
-                #[cfg(target_arch = "wasm32")]
-                check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
+        #[cfg(target_arch = "wasm32")]
+        check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
 
-                #[cfg(not(target_arch = "wasm32"))]
-                check_trust(th, &certs[1..], der_bytes, validation_log)?;
-            }
-        }
+        #[cfg(not(target_arch = "wasm32"))]
+        check_trust(th, &certs[1..], der_bytes, validation_log)?;
 
         // check certificate revocation
         check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
@@ -1196,11 +1202,7 @@ pub(crate) fn verify_cose(
         }
 
         // is the certificate trusted
-        if let Ok(verify_trust) = get_settings_value::<bool>("verify.verify_trust") {
-            if verify_trust {
-                check_trust(th, &certs[1..], der_bytes, validation_log)?;
-            }
-        }
+        check_trust(th, &certs[1..], der_bytes, validation_log)?;
 
         // check certificate revocation
         check_ocsp_status(cose_bytes, data, th, validation_log)?;

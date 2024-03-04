@@ -103,8 +103,8 @@ mod integration_1 {
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
-        // configure before first use so that trust settings are used for all call
-        // in production code you should check that the file is indeed UTF-8 text.
+        // Configure before first use so that trust settings are used for all calls.
+        // In production code you should check that the file is indeed UTF-8 text.
         configure_trust(
             Some(String::from_utf8_lossy(priv_trust).to_string()),
             None,
