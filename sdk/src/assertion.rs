@@ -595,7 +595,7 @@ pub enum AssertionDecodeErrorCause {
     #[error("the assertion version is too new: expected no later than {max}, found {found}")]
     AssertionTooNew { max: usize, found: usize },
 
-    /// Binary data could not be interepreted as UTF-8.
+    /// Binary data could not be interpreted as UTF-8.
     #[error("binary data could not be interpreted as UTF-8")]
     BinaryDataNotUtf8,
 
@@ -625,7 +625,7 @@ pub mod tests {
             "left": 0,
             "right": 2000,
             "top": 1000,
-            "botton": 4000
+            "bottom": 4000
         }"#;
         let json = AssertionData::Json(test_json.to_string());
         let json2 = AssertionData::Json(test_json.to_string());

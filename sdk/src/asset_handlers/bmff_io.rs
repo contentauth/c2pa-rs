@@ -744,8 +744,8 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                     }
                 };
 
-                // read constuction method
-                let constuction_method = if version == 1 || version == 2 {
+                // read construction method
+                let construction_method = if version == 1 || version == 2 {
                     let mut cm_bytes = [0u8, 2];
                     output.read_exact(&mut cm_bytes)?;
 
@@ -771,7 +771,7 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                 };
 
                 // patch the offsets if needed
-                if constuction_method == 0 {
+                if construction_method == 0 {
                     // file offset construction method
                     if base_offset_size == 4 {
                         let new_offset = if adjust < 0 {
@@ -838,7 +838,7 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                     };
 
                     // no base offset so just adjust the raw extent_offset value
-                    if constuction_method == 0 && base_offset == 0 && extent_offset != 0 {
+                    if construction_method == 0 && base_offset == 0 && extent_offset != 0 {
                         output.seek(SeekFrom::Start(extent_offset_file_pos))?;
                         match offset_size {
                             4 => {
@@ -1260,7 +1260,7 @@ impl AssetIO for BmffIO {
 
         // get ftyp location
         // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
+        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
         let ftyp_info = &bmff_tree[ftyp_token[0]].data;
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;

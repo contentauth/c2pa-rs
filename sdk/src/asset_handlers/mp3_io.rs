@@ -250,7 +250,7 @@ impl CAIWriter for Mp3IO {
 
         let mut out_tag = Tag::new();
 
-        // wrapper to protect imput stream from being gobbled
+        // wrapper to protect input stream from being gobbled
         let reader = CAIReadWrapper {
             reader: input_stream,
         };

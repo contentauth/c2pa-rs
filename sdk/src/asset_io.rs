@@ -258,7 +258,7 @@ pub trait ComposedManifestRef {
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }
 
-/// Utility funtion to rename or copy a temp file to a permanent location.
+/// Utility function to rename or copy a temp file to a permanent location.
 ///
 /// If the rename is not possible, due to cross volume references & etc, it will copy instead.
 pub fn rename_or_copy<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>

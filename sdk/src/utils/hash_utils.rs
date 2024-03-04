@@ -92,7 +92,7 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
 /// Generate hash of type hash_type for supplied data array.  The
 /// hash_type are those specified in the multihash specification.  Currently
 /// we only support Sha2-256/512 or Sha2-256/512.
-/// Returns hash or None if incomptible type
+/// Returns hash or None if incompatible type
 pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
     match hash_type {
         0x12 => Some(Sha2_256::digest(data)),
@@ -123,7 +123,7 @@ impl Hasher {
         }
     }
 
-    // comsume hasher and return the final digest
+    // consume hasher and return the final digest
     pub fn finalize(hasher_enum: Hasher) -> Vec<u8> {
         use Hasher::*;
         // return the hash
@@ -423,7 +423,7 @@ pub fn verify_by_alg(
     vec_compare(hash, &data_hash)
 }
 
-// verify the hash using the specified alogrithm
+// verify the hash using the specified algorithm
 pub fn verify_asset_by_alg(
     alg: &str,
     hash: &[u8],
