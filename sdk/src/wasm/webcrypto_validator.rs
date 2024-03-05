@@ -283,7 +283,10 @@ pub(crate) async fn async_validate(
             )
             .await
         }
-        "ED25519" => ed25519_validate(sig, data, pkey),
+        "ED25519" => {
+            web_sys::console::debug_1("validating ed25519".into());
+            ed25519_validate(sig, data, pkey)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
