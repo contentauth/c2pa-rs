@@ -162,6 +162,29 @@ fn pss_padding_from_hash(hash: &str, salt_len: &u32) -> Result<PaddingScheme> {
     }
 }
 
+// Validate an Ed25519 signature for the provided data.  The pkey must
+// be the raw bytes representing CompressedEdwardsY.  The length must 32 bytes.
+fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH};
+
+    if pkey.len() == PUBLIC_KEY_LENGTH {
+        let ed_sig = Signature::from_slice(&sig).unwrap();
+
+        // convert to VerifyingKey
+        let mut cert_slice: [u8; 32] = Default::default();
+        cert_slice.copy_from_slice(&pkey[0..PUBLIC_KEY_LENGTH]);
+
+        let vk = VerifyingKey::from_bytes(&cert_slice).map_err(|_| Error::CoseInvalidCert)?;
+
+        match vk.verify(&data, &ed_sig) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    } else {
+        Err(Error::CoseInvalidCert)
+    }
+}
+
 pub(crate) async fn async_validate(
     algo: String,
     hash: String,
@@ -260,10 +283,12 @@ pub(crate) async fn async_validate(
             )
             .await
         }
+        "ED25519" => ed25519_validate(sig, data, pkey),
         _ => Err(Error::UnsupportedType),
     }
 }
 
+// This interface is called from CoseValidator. RSA validation not supported here.
 pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
     web_sys::console::debug_2(&"Validating with algorithm".into(), &alg.to_string().into());
 
@@ -367,8 +392,17 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
             )
             .await
         }
-        // TODO: Can we cover Ed25519?
-        _ => return Err(Error::UnsupportedType),
+        SigningAlg::Ed25519 => {
+            async_validate(
+                "ED25519".to_string(),
+                "SHA-512".to_string(),
+                0,
+                pkey.to_vec(),
+                sig.to_vec(),
+                data.to_vec(),
+            )
+            .await
+        }
     }
 }
 

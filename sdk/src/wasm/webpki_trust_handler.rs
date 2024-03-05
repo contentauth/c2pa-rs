@@ -317,7 +317,7 @@ async fn verify_data(
             "ps256" => ("RSA-PSS".to_string(), "SHA-256".to_string(), 32),
             "ps384" => ("RSA-PSS".to_string(), "SHA-384".to_string(), 48),
             "ps512" => ("RSA-PSS".to_string(), "SHA-512".to_string(), 64),
-            //"Ed25519" => return false,
+            "ed25519" => ("ED25519".to_string(), "SHA-512".to_string(), 0),
             _ => return Err(Error::UnsupportedType),
         };
 
@@ -561,7 +561,7 @@ pub mod tests {
         let es256 = include_bytes!("../../tests/fixtures/certs/es256.pub");
         let es384 = include_bytes!("../../tests/fixtures/certs/es384.pub");
         let es512 = include_bytes!("../../tests/fixtures/certs/es512.pub");
-        //let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
+        let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 
         let ps256_certs = load_trust_from_data(ps256).unwrap();
         let ps384_certs = load_trust_from_data(ps384).unwrap();
@@ -569,7 +569,7 @@ pub mod tests {
         let es256_certs = load_trust_from_data(es256).unwrap();
         let es384_certs = load_trust_from_data(es384).unwrap();
         let es512_certs = load_trust_from_data(es512).unwrap();
-        //let _ed25519_certs = load_trust_from_data(ed25519).unwrap();
+        let ed25519_certs = load_trust_from_data(ed25519).unwrap();
 
         assert!(verify_trust_async(&th, &ps256_certs[1..], &ps256_certs[0])
             .await
@@ -589,7 +589,11 @@ pub mod tests {
         assert!(verify_trust_async(&th, &es512_certs[1..], &es512_certs[0])
             .await
             .unwrap());
-        //assert!(verify_trust_async(&th, &ed25519_certs[1..], &ed25519_certs[0]).await..unwrap());
+        assert!(
+            verify_trust_async(&th, &ed25519_certs[1..], &ed25519_certs[0])
+                .await
+                .unwrap()
+        );
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -608,7 +612,7 @@ pub mod tests {
         let es256 = include_bytes!("../../tests/fixtures/certs/es256.pub");
         let es384 = include_bytes!("../../tests/fixtures/certs/es384.pub");
         let es512 = include_bytes!("../../tests/fixtures/certs/es512.pub");
-        //let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
+        let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 
         let ps256_certs = load_trust_from_data(ps256).unwrap();
         let ps384_certs = load_trust_from_data(ps384).unwrap();
@@ -616,7 +620,7 @@ pub mod tests {
         let es256_certs = load_trust_from_data(es256).unwrap();
         let es384_certs = load_trust_from_data(es384).unwrap();
         let es512_certs = load_trust_from_data(es512).unwrap();
-        //let _ed25519_certs = load_trust_from_data(ed25519).unwrap();
+        let ed25519_certs = load_trust_from_data(ed25519).unwrap();
 
         assert!(!verify_trust_async(&th, &ps256_certs[2..], &ps256_certs[0])
             .await
@@ -636,6 +640,10 @@ pub mod tests {
         assert!(!verify_trust_async(&th, &es512_certs[2..], &es512_certs[0])
             .await
             .unwrap());
-        //assert!(!verify_trust_async(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
+        assert!(
+            !verify_trust_async(&th, &ed25519_certs[2..], &ed25519_certs[0])
+                .await
+                .unwrap()
+        );
     }
 }
