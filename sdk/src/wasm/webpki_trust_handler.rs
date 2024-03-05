@@ -27,7 +27,7 @@ use x509_parser::{
 use crate::{
     cose_validator::*,
     error::{Error, Result},
-    hash_utils::hash_sha256,
+    hash_utils::{hash_sha256, vec_compare},
     trust_handler::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
@@ -468,10 +468,16 @@ async fn on_trust_list(
         return Ok(true);
     }
 
-    let mut full_chain: Vec<Vec<u8>> = Vec::new();
-    full_chain.push(ee_der.to_vec());
-    let mut in_chain = certs.to_vec();
-    full_chain.append(&mut in_chain);
+    // add ee cert if needed to the chain
+    let full_chain = if vec_compare(ee_der, &certs[0]) {
+        certs.to_vec()
+    } else {
+        let mut full_chain: Vec<Vec<u8>> = Vec::new();
+        full_chain.push(ee_der.to_vec());
+        let mut in_chain = certs.to_vec();
+        full_chain.append(&mut in_chain);
+        full_chain
+    };
 
     // make sure chain is in the correct order and valid
     check_chain_order(&full_chain).await?;
