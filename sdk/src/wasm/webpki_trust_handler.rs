@@ -469,7 +469,7 @@ async fn on_trust_list(
     }
 
     // add ee cert if needed to the chain
-    let full_chain = if vec_compare(ee_der, &certs[0]) {
+    let full_chain = if !certs.is_empty() && vec_compare(ee_der, &certs[0]) {
         certs.to_vec()
     } else {
         let mut full_chain: Vec<Vec<u8>> = Vec::new();
