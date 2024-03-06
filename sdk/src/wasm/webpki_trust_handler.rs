@@ -341,7 +341,7 @@ async fn verify_data(
                     PublicKey::Unknown(u) => u.to_vec(),
                     _ => {
                         return Err(Error::OtherError(
-                            "could not unwrap Ed25519 public key as DSA".into(),
+                            "could not unwrap Ed25519 public key".into(),
                         ))
                     }
                 },
