@@ -200,7 +200,7 @@ pub struct Claim {
 
     // internal scratch objects
     #[serde(skip_deserializing, skip_serializing)]
-    box_prefix: String, // where in JUMBF heirachy should this claim exist
+    box_prefix: String, // where in JUMBF hierarchy should this claim exist
 
     #[serde(skip_deserializing, skip_serializing)]
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
