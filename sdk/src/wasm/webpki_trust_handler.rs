@@ -22,6 +22,7 @@ use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     oid_registry::Oid,
     prelude::*,
+    public_key::PublicKey,
 };
 
 use crate::{
@@ -327,23 +328,36 @@ async fn verify_data(
                 .map_err(|_| Error::UnknownAlgorithm)?;
             match der_to_p1363(&sig, parsed_alg_string) {
                 Some(p1363) => p1363,
-                None => sig.to_vec(),
+                None => sig,
             }
         } else {
-            sig.to_vec()
+            sig
         };
 
-        async_validate(
-            algo,
-            hash,
-            salt_len,
-            certificate_public_key.raw.to_vec(),
-            adjusted_sig,
-            data,
-        )
-        .await
+        // pull out raw Ed code points
+        let adjusted_key = if cert_alg_string == "ed25519" {
+            match certificate_public_key.parsed() {
+                Ok(key) => match key {
+                    PublicKey::Unknown(u) => u.to_vec(),
+                    _ => {
+                        return Err(Error::OtherError(
+                            "could not unwrap Ed25519 public key as DSA".into(),
+                        ))
+                    }
+                },
+                Err(_) => {
+                    return Err(Error::OtherError(
+                        "could not unwrap Ed25519 public key".into(),
+                    ))
+                }
+            }
+        } else {
+            certificate_public_key.raw.to_vec()
+        };
+
+        async_validate(algo, hash, salt_len, adjusted_key, adjusted_sig, data).await
     } else {
-        return Err(Error::CoseInvalidCert);
+        return Err(Error::BadParam("unknown alg processing cert".to_string()));
     }
 }
 // convert der signatures to P1363 format: r | s
@@ -445,10 +459,10 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
         match result {
             Ok(b) => {
                 if !b {
-                    return Err(Error::CoseInvalidCert);
+                    return Err(Error::OtherError("cert chain order invalid".into()));
                 }
             }
-            Err(_) => return Err(Error::CoseInvalidCert),
+            Err(e) => return Err(e),
         }
     }
     Ok(())
@@ -589,12 +603,14 @@ pub mod tests {
         assert!(verify_trust_async(&th, &es256_certs[1..], &es256_certs[0])
             .await
             .unwrap());
+
         assert!(verify_trust_async(&th, &es384_certs[1..], &es384_certs[0])
             .await
             .unwrap());
         assert!(verify_trust_async(&th, &es512_certs[1..], &es512_certs[0])
             .await
             .unwrap());
+
         assert!(
             verify_trust_async(&th, &ed25519_certs[1..], &ed25519_certs[0])
                 .await

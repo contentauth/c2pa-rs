@@ -168,7 +168,7 @@ fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> 
     use ed25519_dalek::{Signature, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH};
 
     if pkey.len() == PUBLIC_KEY_LENGTH {
-        let ed_sig = Signature::from_slice(&sig).unwrap();
+        let ed_sig = Signature::from_slice(&sig).map_err(|_| Error::CoseInvalidCert)?;
 
         // convert to VerifyingKey
         let mut cert_slice: [u8; 32] = Default::default();
@@ -181,6 +181,10 @@ fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> 
             Err(_) => Ok(false),
         }
     } else {
+        web_sys::console::debug_2(
+            &"Ed25519 public key incorrect length: ".into(),
+            &pkey.len().to_string().into(),
+        );
         Err(Error::CoseInvalidCert)
     }
 }
@@ -269,7 +273,10 @@ pub(crate) async fn async_validate(
             let promise = subtle_crypto
                 .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
                 .map_err(|_err| Error::WasmKey)?;
-            let crypto_key: CryptoKey = JsFuture::from(promise).await.unwrap().into();
+            let crypto_key: CryptoKey = JsFuture::from(promise)
+                .await
+                .map_err(|_| Error::CoseInvalidCert)?
+                .into();
             web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
 
             // Create verifier
@@ -283,10 +290,7 @@ pub(crate) async fn async_validate(
             )
             .await
         }
-        "ED25519" => {
-            web_sys::console::debug_1(&"validating ed25519".into());
-            ed25519_validate(sig, data, pkey)
-        }
+        "ED25519" => ed25519_validate(sig, data, pkey),
         _ => Err(Error::UnsupportedType),
     }
 }
