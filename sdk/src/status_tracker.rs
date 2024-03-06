@@ -73,10 +73,10 @@ pub trait StatusTracker {
     // should we stop on the first error
     fn stop_on_error(&self) -> bool;
 
-    // return refernce to current set of validation items
+    // return reference to current set of validation items
     fn get_log(&self) -> &Vec<LogItem>;
 
-    // return mutable refernce to current set of validation items
+    // return mutable reference to current set of validation items
     fn get_log_mut(&mut self) -> &mut Vec<LogItem>;
 
     // Log an item.  Returns err if available

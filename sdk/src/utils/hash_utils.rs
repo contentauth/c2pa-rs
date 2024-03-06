@@ -22,7 +22,7 @@ use std::{
 use log::warn;
 // multihash versions
 use multibase::{decode, encode};
-use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
+use multihash::{wrap, Code, Multihash, Sha1, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
@@ -92,7 +92,7 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
 /// Generate hash of type hash_type for supplied data array.  The
 /// hash_type are those specified in the multihash specification.  Currently
 /// we only support Sha2-256/512 or Sha2-256/512.
-/// Returns hash or None if incomptible type
+/// Returns hash or None if incompatible type
 pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
     match hash_type {
         0x12 => Some(Sha2_256::digest(data)),
@@ -123,7 +123,7 @@ impl Hasher {
         }
     }
 
-    // comsume hasher and return the final digest
+    // consume hasher and return the final digest
     pub fn finalize(hasher_enum: Hasher) -> Vec<u8> {
         use Hasher::*;
         // return the hash
@@ -423,7 +423,7 @@ pub fn verify_by_alg(
     vec_compare(hash, &data_hash)
 }
 
-// verify the hash using the specified alogrithm
+// verify the hash using the specified algorithm
 pub fn verify_asset_by_alg(
     alg: &str,
     hash: &[u8],
@@ -464,6 +464,12 @@ pub fn hash256(data: &[u8]) -> String {
 
     // Return Base-64 encoded hash.
     encode(multibase::Base::Base64, wrapped.as_bytes())
+}
+
+pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
+    let mh = Sha1::digest(data);
+    let digest = mh.digest();
+    digest.to_vec()
 }
 
 /// Verify muiltihash against input data.  True if match,

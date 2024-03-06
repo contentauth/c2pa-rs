@@ -114,7 +114,6 @@ mod signing_alg;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "openssl_sign")]
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl_sign")]
 mod openssl;
@@ -141,6 +140,7 @@ pub(crate) mod hashed_uri;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
 pub(crate) mod salt;
+pub(crate) mod settings;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
