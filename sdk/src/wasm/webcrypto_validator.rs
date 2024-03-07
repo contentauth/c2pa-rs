@@ -290,7 +290,30 @@ pub(crate) async fn async_validate(
             )
             .await
         }
-        "ED25519" => ed25519_validate(sig, data, pkey),
+        "ED25519" => {
+            use x509_parser::{prelude::*, public_key::PublicKey};
+
+            // pull out raw Ed code points
+            if let Ok((_, certificate_public_key)) = SubjectPublicKeyInfo::from_der(&pkey) {
+                match certificate_public_key.parsed() {
+                    Ok(key) => match key {
+                        PublicKey::Unknown(raw_key) => {
+                            ed25519_validate(sig, data, raw_key.to_vec())
+                        }
+                        _ => Err(Error::OtherError(
+                            "could not unwrap Ed25519 public key".into(),
+                        )),
+                    },
+                    Err(_) => Err(Error::OtherError(
+                        "could not recognize Ed25519 public key".into(),
+                    )),
+                }
+            } else {
+                Err(Error::OtherError(
+                    "could not parse Ed25519 public key".into(),
+                ))
+            }
+        }
         _ => Err(Error::UnsupportedType),
     }
 }

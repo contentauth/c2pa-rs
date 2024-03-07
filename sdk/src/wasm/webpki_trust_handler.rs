@@ -22,7 +22,6 @@ use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     oid_registry::Oid,
     prelude::*,
-    public_key::PublicKey,
 };
 
 use crate::{
@@ -334,28 +333,15 @@ async fn verify_data(
             sig
         };
 
-        // pull out raw Ed code points
-        let adjusted_key = if cert_alg_string == "ed25519" {
-            match certificate_public_key.parsed() {
-                Ok(key) => match key {
-                    PublicKey::Unknown(u) => u.to_vec(),
-                    _ => {
-                        return Err(Error::OtherError(
-                            "could not unwrap Ed25519 public key".into(),
-                        ))
-                    }
-                },
-                Err(_) => {
-                    return Err(Error::OtherError(
-                        "could not unwrap Ed25519 public key".into(),
-                    ))
-                }
-            }
-        } else {
-            certificate_public_key.raw.to_vec()
-        };
-
-        async_validate(algo, hash, salt_len, adjusted_key, adjusted_sig, data).await
+        async_validate(
+            algo,
+            hash,
+            salt_len,
+            certificate_public_key.raw.to_vec(),
+            adjusted_sig,
+            data,
+        )
+        .await
     } else {
         return Err(Error::BadParam("unknown alg processing cert".to_string()));
     }
