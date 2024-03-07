@@ -531,8 +531,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         let curr_offset = self.offset()?;
         if curr_offset % 4 != 0 {
             let padding = [0, 0, 0];
-            let padd_len = 4 - (curr_offset % 4);
-            self.writer.write_all(&padding[..padd_len as usize])?;
+            let pad_len = 4 - (curr_offset % 4);
+            self.writer.write_all(&padding[..pad_len as usize])?;
         }
 
         Ok(())
