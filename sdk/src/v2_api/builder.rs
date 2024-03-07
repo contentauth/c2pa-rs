@@ -348,7 +348,6 @@ impl Builder {
                         format!("Invalid ingredient index {}", index),
                     ))))?; // todo add specific error
                 }
-                println!("adding ingredient {}/{}", index, id);
                 builder.definition.ingredients[index]
                     .resources_mut()
                     .add(id, data)?;

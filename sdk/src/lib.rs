@@ -110,6 +110,9 @@ pub use manifest_store_report::ManifestStoreReport;
 mod resource_store;
 pub use resource_store::{ResourceRef, ResourceStore};
 
+mod settings;
+pub use settings::load_settings_from_str;
+
 mod v2_api;
 #[cfg(feature = "file_io")]
 pub use v2_api::format_from_path;
@@ -147,7 +150,6 @@ pub(crate) mod hashed_uri;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
 pub(crate) mod salt;
-pub(crate) mod settings;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;

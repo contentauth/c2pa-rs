@@ -15,7 +15,7 @@
 use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{create_callback_signer, Builder, Reader, SigningAlg};
+use c2pa::{create_callback_signer, load_settings_from_str, Builder, Reader, SigningAlg};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -72,6 +72,16 @@ fn main() -> Result<()> {
     let format = "image/jpeg";
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
+
+    let modified_core = r#"{
+        "core": {
+            "debug": true,
+            "hash_alg": "sha512",
+            "max_memory_usage": 123456
+        }
+    }"#;
+
+    load_settings_from_str(modified_core, "json")?;
 
     let json = manifest_def(title, format);
 
