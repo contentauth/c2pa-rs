@@ -196,6 +196,16 @@ impl Manifest {
         self.credentials.as_deref()
     }
 
+    /// Returns the remote_manifest Url if there is one
+    /// This is only used when creating a manifest, it will always be None when reading
+    pub fn remote_manifest_url(&self) -> Option<&str> {
+        match self.remote_manifest.as_ref() {
+            Some(RemoteManifest::Remote(url)) => Some(url.as_str()),
+            Some(RemoteManifest::EmbedWithRemote(url)) => Some(url.as_str()),
+            _ => None,
+        }
+    }
+
     /// Sets the vendor prefix to be used when generating manifest labels
     /// Optional prefix added to the generated Manifest Label
     /// This is typically a lower case Internet domain name for the vendor (i.e. `adobe`)
@@ -1832,6 +1842,7 @@ pub(crate) mod tests {
         assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
+
     #[cfg(feature = "file_io")]
     #[actix::test]
     /// Verify that an ingredient with error is reported on the ingredient and not on the manifest_store
@@ -1880,10 +1891,12 @@ pub(crate) mod tests {
         let parent = Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting parent");
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
-        manifest.set_remote_manifest(url);
+        manifest.set_remote_manifest(url.clone());
         let _c2pa_data = manifest
             .embed(&source, &output, signer.as_ref())
             .expect("embed");
+
+        assert_eq!(manifest.remote_manifest_url().unwrap(), url.to_string());
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
