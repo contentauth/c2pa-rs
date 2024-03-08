@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.29.2
+_08 March 2024_
+
+* add a thumb resource when referencing an embedded uri ([#419](https://github.com/contentauth/c2pa-rs/pull/419))
+
+## 0.29.1
+_07 March 2024_
+
+* Adds Manifest.remote_manifest_url() (CAI-5437) ([#418](https://github.com/contentauth/c2pa-rs/pull/418))
+* Fix use of deprecated method `chrono::NaiveDateTime::timestamp` ([#417](https://github.com/contentauth/c2pa-rs/pull/417))
+* Fix up some random typos. ([#353](https://github.com/contentauth/c2pa-rs/pull/353))
+
 ## 0.29.0
 _26 February 2024_
 
