@@ -45,6 +45,7 @@ use crate::{
     jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    trust_handler::TrustHandlerConfig,
     utils::{
         base64,
         hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -1018,10 +1019,11 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub async fn verify_claim_async<'a>(
+    pub(crate) async fn verify_claim_async<'a>(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1055,6 +1057,7 @@ impl Claim {
             claim_data,
             additional_bytes,
             !is_provenance,
+            th,
             validation_log,
         )
         .await;
@@ -1064,10 +1067,11 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub fn verify_claim(
+    pub(crate) fn verify_claim(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1096,7 +1100,14 @@ impl Claim {
             return Err(Error::ClaimDecoding);
         };
 
-        let verified = verify_cose(sig, data, &additional_bytes, !is_provenance, validation_log);
+        let verified = verify_cose(
+            sig,
+            data,
+            &additional_bytes,
+            !is_provenance,
+            th,
+            validation_log,
+        );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
