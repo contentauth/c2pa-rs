@@ -58,13 +58,13 @@ impl std::fmt::Debug for WebTrustHandlerConfig {
 impl WebTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
         // load config store
-        let config = include_bytes!("../../tests/fixtures/certs/trust/store.cfg");
+        let config = include_bytes!("./store.cfg");
         let mut config_reader = Cursor::new(config);
         self.load_configuration(&mut config_reader)?;
 
         // load debug/test private trust anchors
         if cfg!(test) {
-            let pa = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+            let pa = include_bytes!("./test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
 
             self.append_private_trust_data(&mut pa_reader)?;
