@@ -361,21 +361,38 @@ pub(crate) fn check_ocsp_response(
                                                 Utc,
                                             );
 
-                                        let msg =
-                                            format!("certificate revoked at: {}", utc_with_offset);
-                                        let log_item =
-                                            log_item!("OCSP_RESPONSE", &msg, "check_ocsp_response")
-                                                .error(Error::CoseCertRevoked)
-                                                .validation_status(
-                                                    validation_status::SIGNING_CREDENTIAL_REVOKED,
-                                                );
-                                        validation_log.log_silent(log_item);
+                                        // check to see if cert was signed before revocation
+                                        let in_range = if let Some(st) = signing_time {
+                                            st.timestamp() < utc_with_offset.timestamp()
+                                        } else {
+                                            false
+                                        };
 
-                                        output.revoked_at =
-                                            Some(DateTime::from_naive_utc_and_offset(
-                                                revoked_at_native,
-                                                Utc,
-                                            ));
+                                        if !in_range {
+                                            let msg = format!(
+                                                "certificate revoked at: {}",
+                                                utc_with_offset
+                                            );
+                                            let log_item = log_item!(
+                                                "OCSP_RESPONSE",
+                                                &msg,
+                                                "check_ocsp_response"
+                                            )
+                                            .error(Error::CoseCertRevoked)
+                                            .validation_status(
+                                                validation_status::SIGNING_CREDENTIAL_REVOKED,
+                                            );
+                                            validation_log.log_silent(log_item);
+
+                                            output.revoked_at =
+                                                Some(DateTime::from_naive_utc_and_offset(
+                                                    revoked_at_native,
+                                                    Utc,
+                                                ));
+                                        } else {
+                                            found_good = true;
+                                            break; // found good match so break
+                                        }
                                     }
                                 } else {
                                     let log_item = log_item!(
@@ -437,7 +454,7 @@ pub mod tests {
 
         let mut validation_log = DetailedStatusTracker::default();
 
-        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
         let ocsp_data =
             check_ocsp_response(rsp_data, Some(test_time), &mut validation_log).unwrap();
