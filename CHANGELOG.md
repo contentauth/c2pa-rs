@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.30.1
+_08 March 2024_
+
+* Fix include_byte references that were not available in external crate builds
+
 ## 0.30.0
 _08 March 2024_
 
