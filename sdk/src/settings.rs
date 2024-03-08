@@ -11,13 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{path::Path, sync::RwLock};
+use std::{
+    io::{BufRead, BufReader, Cursor},
+    path::Path,
+    sync::RwLock,
+};
 
 use config::{Config, FileFormat};
 use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{utils::base64, Error, Result};
 
 lazy_static! {
     static ref SETTINGS: RwLock<Config> =
@@ -25,7 +29,7 @@ lazy_static! {
 }
 
 // trait used to validate user input to make sure user supplied configurations are valid
-pub trait SettingsValidate {
+pub(crate) trait SettingsValidate {
     // returns error if settings are invalid
     fn validate(&self) -> Result<()> {
         Ok(())
@@ -35,19 +39,84 @@ pub trait SettingsValidate {
 // Settings for trust list feature
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Trust {
+pub(crate) struct Trust {
     private_anchors: Option<String>,
     trust_anchors: Option<String>,
     trust_config: Option<String>,
     allowed_list: Option<String>,
 }
 
-impl SettingsValidate for Trust {}
+impl Trust {
+    // load PEMs
+    fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut certs = Vec::new();
+
+        for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
+            let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+            certs.push(pem.contents);
+        }
+        Ok(certs)
+    }
+
+    // sanity check to see if can parse trust settings
+    fn test_load_trust(&self, allowed_list: &[u8]) -> Result<()> {
+        // check pems
+        if let Ok(cert_list) = self.load_trust_from_data(allowed_list) {
+            if !cert_list.is_empty() {
+                return Ok(());
+            }
+        }
+
+        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
+        let reader = Cursor::new(allowed_list);
+        let buf_reader = BufReader::new(reader);
+        let mut found_der_hash = false;
+
+        let mut inside_cert_block = false;
+        for l in buf_reader.lines().map_while(|v| v.ok()) {
+            if l.contains("-----BEGIN") {
+                inside_cert_block = true;
+            }
+            if l.contains("-----END") {
+                inside_cert_block = false;
+            }
+
+            // sanity check that that is is base64 encoded and outside of certificate block
+            if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
+                found_der_hash = true;
+            }
+        }
+
+        if found_der_hash {
+            Ok(())
+        } else {
+            Err(Error::NotFound)
+        }
+    }
+}
+
+impl SettingsValidate for Trust {
+    fn validate(&self) -> Result<()> {
+        if let Some(ta) = &self.trust_anchors {
+            self.test_load_trust(ta.as_bytes())?;
+        }
+
+        if let Some(pa) = &self.private_anchors {
+            self.test_load_trust(pa.as_bytes())?;
+        }
+
+        if let Some(al) = &self.allowed_list {
+            self.test_load_trust(al.as_bytes())?;
+        }
+
+        Ok(())
+    }
+}
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Core {
+pub(crate) struct Core {
     debug: bool,
     hash_alg: String,
     salt_jumbf_boxes: bool,
@@ -83,7 +152,7 @@ impl SettingsValidate for Core {
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Verify {
+pub(crate) struct Verify {
     verify_after_sign: bool,
     verify_trust: bool,
     ocsp_fetch: bool,
@@ -93,7 +162,7 @@ pub struct Verify {
 impl Default for Verify {
     fn default() -> Self {
         Self {
-            verify_after_sign: false,
+            verify_after_sign: true,
             verify_trust: false,
             ocsp_fetch: false,
             remote_manifest_fetch: true,
@@ -106,7 +175,7 @@ impl SettingsValidate for Verify {}
 // Settings for manifest API options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Manifest {
+pub(crate) struct Manifest {
     auto_thumbnail: bool,
 }
 
@@ -237,7 +306,7 @@ pub fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     load_settings_from_str(&String::from_utf8_lossy(&setting_buf), &ext)
 }
 
-// Load settings form string representation of the configuration.  Format of configuration must be supplied.
+/// Load settings form string representation of the configuration.  Format of configuration must be supplied.
 #[allow(unused)]
 pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
     Settings::from_string(settings_str, format).map(|_| ())
@@ -267,9 +336,20 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
                 .set_override(value_path, value);
 
             if let Ok(updated) = update_config {
-                *c = updated
+                let update_config = updated
                     .build()
                     .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+
+                let settings = update_config
+                    .clone()
+                    .try_deserialize::<Settings>()
+                    .map_err(|_e| {
+                        Error::BadParam("configuration file contains unrecognized param".into())
+                    })?;
+                settings.validate()?;
+
+                *c = update_config;
+
                 Ok(())
             } else {
                 Err(Error::OtherError("could not save settings".into()))
@@ -294,7 +374,7 @@ pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
 
 // Set settings back to the default values.  Current use case is for testing.
 #[allow(unused)]
-pub(crate) fn reset_default_settings() -> Result<()> {
+pub fn reset_default_settings() -> Result<()> {
     if let Ok(default_settings) = Config::try_from(&Settings::default()) {
         match SETTINGS.write() {
             Ok(mut current_settings) => {
@@ -400,13 +480,15 @@ pub mod tests {
     fn test_set_val_by_direct_path() {
         let _protect = PROTECT.lock().unwrap();
 
+        let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
         set_settings_value("manifest.auto_thumbnail", false).unwrap();
         set_settings_value(
             "trust.private_anchors",
-            Some("path/to/my/content".to_string()),
+            Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
         .unwrap();
 
@@ -418,7 +500,7 @@ pub mod tests {
         assert!(!get_settings_value::<bool>("manifest.auto_thumbnail").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
-            Some("path/to/my/content".to_string())
+            Some(String::from_utf8(ts.to_vec()).unwrap())
         );
 
         // the current config should be different from the defaults
@@ -482,15 +564,8 @@ pub mod tests {
         let _protect = PROTECT.lock().unwrap();
 
         // we support just changing the fields you are interested in changing
-        // here are two examples of incomplete structures only overriding specific
+        // here is an example of incomplete structures only overriding specific
         // fields
-
-        let modified_trust = r#"{
-            "trust": {
-              "private_anchors": "this is a test",
-              "allowed_list": "another test"
-            }
-        }"#;
 
         let modified_core = r#"{
             "core": {
@@ -500,18 +575,9 @@ pub mod tests {
             }
         }"#;
 
-        load_settings_from_str(modified_trust, "json").unwrap();
         load_settings_from_str(modified_core, "json").unwrap();
 
         // see if updated values match
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
-            Some("this is a test".to_string())
-        );
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.allowed_list").unwrap(),
-            Some("another test".to_string())
-        );
         assert!(get_settings_value::<bool>("core.debug").unwrap());
         assert_eq!(
             get_settings_value::<String>("core.hash_alg").unwrap(),
@@ -527,10 +593,7 @@ pub mod tests {
             get_settings_value::<bool>("manifest.auto_thumbnail").unwrap(),
             Manifest::default().auto_thumbnail
         );
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.trust_anchors").unwrap(),
-            Trust::default().trust_anchors
-        );
+
         assert_eq!(
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes

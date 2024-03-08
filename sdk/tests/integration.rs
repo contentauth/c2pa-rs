@@ -20,11 +20,14 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
+        create_signer, settings, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
     const GENERATOR: &str = "app";
+
+    // prevent tests from polluting the results of each other because of Rust unit test concurrency
+    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1); // prevent tests from polluting the results of each other
 
     fn get_temp_signer() -> Box<dyn Signer> {
         // sign and embed into the target file
@@ -36,9 +39,59 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
+    fn configure_trust(
+        trust_anchors: Option<String>,
+        allowed_list: Option<String>,
+        trust_config: Option<String>,
+    ) -> Result<()> {
+        let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
+        let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
+        let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
+
+        let mut enable_trust_checks = false;
+        if let Some(trust_list) = trust_anchors {
+            let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
+            let setting = ta.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        if let Some(allowed_list) = allowed_list {
+            let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
+            let setting = al.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        if let Some(trust_config) = trust_config {
+            let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
+            let setting = tc.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        // enable trust checks
+        if enable_trust_checks {
+            c2pa::settings::load_settings_from_str(
+                r#"{"verify": { "verify_trust": true} }"#,
+                "json",
+            )?;
+        }
+
+        Ok(())
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
+        let _protect = PROTECT.lock().unwrap();
+
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");
@@ -46,6 +99,17 @@ mod integration_1 {
         parent_path.push("tests/fixtures/earth_apollo17.jpg");
         let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         ingredient_path.push("tests/fixtures/libpng-test.png");
+
+        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
+        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+
+        // Configure before first use so that trust settings are used for all calls.
+        // In production code you should check that the file is indeed UTF-8 text.
+        configure_trust(
+            Some(String::from_utf8_lossy(priv_trust).to_string()),
+            None,
+            Some(String::from_utf8_lossy(config).to_string()),
+        )?;
 
         // create a new Manifest
         let mut manifest = Manifest::new(GENERATOR.to_owned());
@@ -107,6 +171,10 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
+        let _protect = PROTECT.lock().unwrap();
+
+        settings::reset_default_settings().unwrap();
+
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");

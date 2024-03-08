@@ -6,6 +6,7 @@ Cargo.lock
 
 .DS_Store
 .idea
+.cargo/config.toml
 
 .vscode
 

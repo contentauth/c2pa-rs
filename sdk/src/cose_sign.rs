@@ -15,6 +15,8 @@
 
 #![deny(missing_docs)]
 
+use std::io::Cursor;
+
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
@@ -25,11 +27,13 @@ use coset::{
 
 use crate::{
     claim::Claim,
-    cose_validator::verify_cose,
+    cose_validator::{check_cert, verify_cose},
+    settings::get_settings_value,
     status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
+    trust_handler::TrustHandlerConfig,
     AsyncSigner, Error, Result, Signer, SigningAlg,
 };
 
@@ -70,8 +74,16 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
             let mut cose_log = OneShotStatusTracker::new();
+            let passthrough_tb = crate::trust_handler::TrustPassThrough::new();
 
-            match verify_cose(&signed_bytes, claim_bytes, b"", false, &mut cose_log) {
+            match verify_cose(
+                &signed_bytes,
+                claim_bytes,
+                b"",
+                true,
+                &passthrough_tb,
+                &mut cose_log,
+            ) {
                 Ok(r) => {
                     if !r.validated {
                         Err(Error::CoseSignature)
@@ -84,6 +96,20 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         }
         Err(err) => Err(err),
     }
+}
+
+fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
+    // make sure signer certs are valid
+    let mut cose_log = OneShotStatusTracker::default();
+    let mut passthrough_tb = crate::trust_handler::TrustPassThrough::new();
+
+    // allow user EKUs through this check if configured
+    if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
+        let mut reader = Cursor::new(trust_config.as_bytes());
+        passthrough_tb.load_configuration(&mut reader)?;
+    }
+
+    check_cert(signing_cert, &passthrough_tb, &mut cose_log, None)
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
@@ -115,6 +141,14 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
            strings is used, with each certificate being in its own byte
            string.
     */
+
+    // make sure the signing cert is valid
+    let certs = signer.certs()?;
+    if let Some(signing_cert) = certs.first() {
+        signing_cert_valid(signing_cert)?;
+    } else {
+        return Err(Error::CoseNoCerts);
+    }
 
     let alg = signer.alg();
 
