@@ -951,15 +951,13 @@ mod tests {
             "sample1.wav",
             "test.avi",
             //"sample1.mp3",
-             //"sample1.avif",
+            //"sample1.avif",
             //"sample1.heic",
             //"sample1.heif",
             //"video1.mp4",
             //"cloud_manifest.c2pa",
-
         ];
         for file_name in TESTFILES {
-
             let extension = file_name.split('.').last().unwrap();
             let format = extension;
 
