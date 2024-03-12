@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Cursor;
+
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
 use ciborium::value::Value;
@@ -760,31 +762,22 @@ pub(crate) fn check_ocsp_status(
 }
 
 // internal util function to dump the cert chain in PEM format
-#[allow(unused_variables)]
 fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
-    #[cfg(feature = "openssl")]
-    {
-        let mut out_buf: Vec<u8> = Vec::new();
+    let mut out_buf: Vec<u8> = Vec::new();
+    let mut writer = Cursor::new(out_buf);
 
-        for der_bytes in certs {
-            let c =
-                openssl::x509::X509::from_der(der_bytes).map_err(|_e| Error::UnsupportedType)?;
-            let mut c_pem = c.to_pem().map_err(|_e| Error::UnsupportedType)?;
-
-            out_buf.append(&mut c_pem);
-        }
-
-        if let Some(op) = output_path {
-            std::fs::write(op, &out_buf).map_err(Error::IoError)?;
-        }
-        Ok(out_buf)
+    for der_bytes in certs {
+        let c = x509_certificate::X509Certificate::from_der(der_bytes)
+            .map_err(|_e| Error::UnsupportedType)?;
+        c.write_pem(&mut writer)?;
     }
 
-    #[cfg(not(feature = "openssl"))]
-    {
-        let out_buf: Vec<u8> = Vec::new();
-        Ok(out_buf)
+    out_buf = writer.into_inner();
+    if let Some(op) = output_path {
+        std::fs::write(op, &out_buf).map_err(Error::IoError)?;
     }
+
+    Ok(out_buf)
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
@@ -1086,37 +1079,22 @@ pub(crate) fn get_signing_info(
         Ok(sign1)
     });
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        ValidationInfo {
-            alg,
-            date,
-            cert_serial_number,
-            issuer_org,
-            validated: false,
-            cert_chain: Vec::new(),
-            revocation_status: None,
-        }
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let certs = match sign1 {
-            Ok(s) => match get_sign_certs(&s) {
-                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
-                Err(_) => Vec::new(),
-            },
-            Err(_e) => Vec::new(),
-        };
+    let certs = match sign1 {
+        Ok(s) => match get_sign_certs(&s) {
+            Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        },
+        Err(_e) => Vec::new(),
+    };
 
-        ValidationInfo {
-            issuer_org,
-            date,
-            alg,
-            validated: false,
-            cert_chain: certs,
-            cert_serial_number,
-            revocation_status: None,
-        }
+    ValidationInfo {
+        issuer_org,
+        date,
+        alg,
+        validated: false,
+        cert_chain: certs,
+        cert_serial_number,
+        revocation_status: None,
     }
 }
 
