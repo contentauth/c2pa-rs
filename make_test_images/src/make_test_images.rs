@@ -445,6 +445,79 @@ impl MakeTestImages {
         Ok(dst_path)
     }
 
+    fn manifest_def(title: &str, format: &str) -> String {
+        json!({
+            "title": title,
+            "format": format,
+            "claim_generator_info": [
+                {
+                    "name": "Make Test Images",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            ],
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.edited",
+                                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+                                "softwareAgent": {
+                                    "name": "My AI Tool",
+                                    "version": "0.1.0"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }).to_string()
+    }
+
+    fn sign_image(&self, recipe: &Recipe) -> Result<PathBuf> {
+        let src = recipe.parent.as_deref();
+        let dst = recipe.output.as_str();
+        let dst_path = self.make_path(dst);
+        println!("Signing {dst_path:?}");
+
+        let src = match src {
+            Some(src) => src,
+            None => return Err(Error::BadParam("no parent".to_string()).into()),
+        };
+
+        let name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
+        let extension = extension(&dst_path).unwrap_or("jpg");
+
+        let format = extension_to_mime(extension).unwrap_or("image/jpeg");
+
+        let json = Self::manifest_def(name, format);
+
+        let src_path = &self.make_path(src);
+        let mut source = fs::File::open(src_path).context("opening ingredient")?;
+
+        let mut builder = Builder::from_json(&json)?;
+
+        let parent_name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
+        builder.add_ingredient(
+            json!({
+                "title": parent_name,
+                "relationship": "parentOf"
+            })
+            .to_string(),
+            extension,
+            &mut source,
+        )?;
+
+        let mut dest = fs::File::create(&dst_path)?;
+        let signer = self.config.get_signer()?;
+        builder
+            .sign(format, &mut source, &mut dest, signer.as_ref())
+            .context("signing")?;
+
+        Ok(dst_path)
+    }
+
     /// Creates a test image with optional source and ingredients, out to dest
     // #[allow(dead_code)]
     // fn make_image_v1(&self, recipe: &Recipe) -> Result<PathBuf> {
@@ -682,6 +755,9 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
+
+        let supported = c2pa::jumbf_io::get_supported_types();
+        println!("Supported types: {:#?}", supported);
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
         };
@@ -693,7 +769,8 @@ impl MakeTestImages {
         let recipes = &self.config.recipes;
         for recipe in recipes {
             let dst_path = match recipe.op.as_str() {
-                "make" => self.make_image_v2(recipe)?,
+                "make" => self.make_image(recipe)?,
+                "sign"  => self.sign_image(recipe)?,
                 "ogp" => self.make_ogp(recipe)?,
                 "dat" | "sig" | "uri" | "clm" | "prv" => self.make_err(recipe)?,
                 "copy" => self.make_copy(recipe)?,

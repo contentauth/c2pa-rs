@@ -939,6 +939,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_builder_sign_assets() {
+        const TESTFILES: &[&str] = &[
+            "IMG_0003.jpg",
+            "sample1.png",
+            "sample1.webp",
+            "tuscany.tif",
+            "sample1.svg",
+            "APC_0808.dng",
+            "sample1.wav",
+            "test.avi",
+            //"sample1.mp3",
+             //"sample1.avif",
+            //"sample1.heic",
+            //"sample1.heif",
+            //"video1.mp4",
+            //"cloud_manifest.c2pa",
+
+        ];
+        for file_name in TESTFILES {
+
+            let extension = file_name.split('.').last().unwrap();
+            let format = extension;
+
+            let path = format!("tests/fixtures/{}", file_name);
+            println!("path: {}", path);
+            let mut source = std::fs::File::open(path).unwrap();
+            let mut dest = Cursor::new(Vec::new());
+
+            let mut builder = Builder::from_json(JSON).unwrap();
+            builder
+                .add_ingredient(PARENT_JSON, format, &mut source)
+                .unwrap();
+
+            builder
+                .resources
+                .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+                .unwrap();
+
+            // sign the ManifestStoreBuilder and write it to the output stream
+            let signer = temp_signer();
+            builder
+                .sign(format, &mut source, &mut dest, signer.as_ref())
+                .unwrap();
+
+            // read and validate the signed manifest store
+            dest.rewind().unwrap();
+            let manifest_store =
+                crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+
+            println!("{}", manifest_store);
+            assert!(manifest_store.validation_status().is_none());
+            assert_eq!(
+                manifest_store.get_active().unwrap().title().unwrap(),
+                "Test_Manifest"
+            );
+        }
+    }
+
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_builder_remote_sign() {
