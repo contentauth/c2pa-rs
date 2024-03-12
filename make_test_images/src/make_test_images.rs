@@ -257,8 +257,7 @@ impl MakeTestImages {
         )
     }
 
-    #[allow(dead_code)]
-    fn make_image_v2(&self, recipe: &Recipe) -> Result<PathBuf> {
+    fn make_image(&self, recipe: &Recipe) -> Result<PathBuf> {
         let src = recipe.parent.as_deref();
         let dst = recipe.output.as_str();
         let dst_path = self.make_path(dst);
@@ -755,7 +754,6 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-
         let supported = c2pa::jumbf_io::get_supported_types();
         println!("Supported types: {:#?}", supported);
         if !self.output_dir.exists() {
@@ -770,7 +768,7 @@ impl MakeTestImages {
         for recipe in recipes {
             let dst_path = match recipe.op.as_str() {
                 "make" => self.make_image(recipe)?,
-                "sign"  => self.sign_image(recipe)?,
+                "sign" => self.sign_image(recipe)?,
                 "ogp" => self.make_ogp(recipe)?,
                 "dat" | "sig" | "uri" | "clm" | "prv" => self.make_err(recipe)?,
                 "copy" => self.make_copy(recipe)?,
