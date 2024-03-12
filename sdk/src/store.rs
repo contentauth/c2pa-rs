@@ -1795,7 +1795,7 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
 
-        let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
+        let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
     }
@@ -1850,7 +1850,7 @@ impl Store {
 
         patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(jumbf_bytes, format)
+        Self::get_composed_manifest(jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The manifest are only supported
@@ -2020,7 +2020,7 @@ impl Store {
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.   
-    pub fn get_composed_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+    pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         if let Some(h) = get_assetio_handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
                 return composed_data_handler.compose_manifest(manifest_bytes, format);
@@ -4874,7 +4874,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
@@ -4955,7 +4955,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();

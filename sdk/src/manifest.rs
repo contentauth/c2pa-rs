@@ -1242,7 +1242,7 @@ impl Manifest {
         let mut store = self.to_store()?;
         let mut cm = store.get_box_hashed_embeddable_manifest(signer)?;
         if let Some(format) = format {
-            cm = store.get_composed_manifest(&cm, format)?;
+            cm = Store::get_composed_manifest(&cm, format)?;
         }
         Ok(cm)
     }
@@ -1251,8 +1251,7 @@ impl Manifest {
     ///
     /// For instance, this would return one or JPEG App11 segments containing the manifest
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        let store = Store::new(); // store isn't used here so don't rebuild it.
-        store.get_composed_manifest(manifest_bytes, format)
+        Store::get_composed_manifest(manifest_bytes, format)
     }
 }
 
