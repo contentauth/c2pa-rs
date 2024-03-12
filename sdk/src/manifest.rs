@@ -1246,6 +1246,14 @@ impl Manifest {
         }
         Ok(cm)
     }
+
+    /// Formats a signed manifest for embedding in the given format
+    ///
+    /// For instance, this would return one or JPEG App11 segments containing the manifest
+    pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        let store = Store::new(); // store isn't used here so don't rebuild it.
+        store.get_composed_manifest(manifest_bytes, format)
+    }
 }
 
 impl std::fmt::Display for Manifest {
@@ -2388,12 +2396,15 @@ pub(crate) mod tests {
             .data_hash_embeddable_manifest_remote(
                 &dh,
                 signer.as_ref(),
-                "image/jpeg",
+                "c2pa", // force an uncomposed manifest - you could send this to the cloud
                 Some(&mut output_file),
             )
             .await
             .unwrap();
 
+        // test composed manifest here to ensure it works
+        let signed_manifest =
+            Manifest::composed_manifest(&signed_manifest, "image/jpeg").expect("composed_manifest");
         use std::io::{Seek, SeekFrom, Write};
 
         // path in new composed manifest
