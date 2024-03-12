@@ -683,13 +683,14 @@ pub mod tests {
 
             let mut output_stream = File::create(&output).unwrap();
 
-            riff_io.write_cai(&mut source, &mut output_stream, more_data).unwrap();
+            riff_io
+                .write_cai(&mut source, &mut output_stream, more_data)
+                .unwrap();
 
             let mut source = File::open(output).unwrap();
-            let  read_test_data = riff_io.read_cai(&mut source).unwrap();
+            let read_test_data = riff_io.read_cai(&mut source).unwrap();
             assert!(vec_compare(more_data, &read_test_data));
         }
-        assert!(true)
     }
 
     #[test]
