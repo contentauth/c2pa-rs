@@ -14,7 +14,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{create_callback_signer, Builder, C2pa, SigningAlg};
+    use c2pa::{create_callback_signer, Builder, Reader, SigningAlg};
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -77,13 +77,9 @@ mod integration_v2 {
         let json = get_manifest_def(title, format);
 
         // don't try to verify on wasm since it doesn't support ed25519 yet
-        let mut c2pa = C2pa::new();
-        c2pa.verify = !cfg!(target_arch = "wasm32");
 
-        let mut builder = c2pa.builder();
-        builder
-            .with_json(&json)?
-            .add_ingredient(PARENT_JSON, format, &mut source)?;
+        let mut builder = Builder::from_json(&json)?;
+        builder.add_ingredient(PARENT_JSON, format, &mut source)?;
 
         // add a manifest thumbnail ( just reuse the image for now )
         source.rewind()?;
@@ -114,7 +110,7 @@ mod integration_v2 {
             dest
         };
 
-        let reader = c2pa.read(format, &mut dest)?;
+        let reader = Reader::from_stream(format, &mut dest)?;
 
         // extract a thumbnail image from the ManifestStore
         let mut thumbnail = Cursor::new(Vec::new());
