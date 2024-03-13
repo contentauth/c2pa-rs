@@ -27,7 +27,7 @@ pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9)
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 // Trait for supply configuration and handling of trust lists and EKU configuration store
-pub(crate) trait TrustHandlerConfig {
+pub(crate) trait TrustHandlerConfig: Send {
     fn new() -> Self
     where
         Self: Sized;
