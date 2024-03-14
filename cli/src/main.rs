@@ -24,7 +24,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
-use clap::{AppSettings, Parser};
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 mod info;
@@ -34,7 +34,7 @@ use signer::SignConfig;
 
 /// Tool for displaying and creating C2PA manifests.
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None, setting = AppSettings::ArgRequiredElseHelp)]
+#[command(author, version, about, long_about = None, arg_required_else_help(true))]
 struct CliArgs {
     /// Path to manifest definition JSON file.
     #[clap(short, long, requires = "output")]
@@ -83,9 +83,33 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
+    /// Do not perform validation of signature after signing
+    #[clap(long = "no_signing_verify")]
+    no_signing_verify: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Show manifest size, XMP url and other stats.
     #[clap(long)]
     info: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Trust {
+        /// Path to file containing list of trust anchors in PEM format
+        #[clap(long = "trust_anchors")]
+        trust_anchors: Option<PathBuf>,
+
+        /// Path to file containing specific manifest signing certificates in PEM format to implicitly trust
+        #[clap(long = "allowed_list")]
+        allowed_list: Option<PathBuf>,
+
+        /// Path to file containing configured EKUs in Oid dot notation
+        #[clap(long = "trust_config")]
+        trust_config: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -145,6 +169,71 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     }
 }
 
+fn configure_sdk(args: &CliArgs) -> Result<()> {
+    let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
+    let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
+    let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
+    let vs = r#"{"verify": { "verify_after_sign": replacement_val } }"#;
+
+    let mut enable_trust_checks = false;
+
+    match &args.command {
+        Some(Commands::Trust {
+            trust_anchors,
+            allowed_list,
+            trust_config,
+        }) => {
+            if let Some(trust_list) = &trust_anchors {
+                let data = std::fs::read_to_string(trust_list)?;
+                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+                let setting = ta.replace("replacement_val", &replacement_val);
+
+                c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+                enable_trust_checks = true;
+            }
+
+            if let Some(allowed_list) = &allowed_list {
+                let data = std::fs::read_to_string(allowed_list)?;
+                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+                let setting = al.replace("replacement_val", &replacement_val);
+
+                c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+                enable_trust_checks = true;
+            }
+
+            if let Some(trust_config) = &trust_config {
+                let data = std::fs::read_to_string(trust_config)?;
+                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+                let setting = tc.replace("replacement_val", &replacement_val);
+
+                c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+                enable_trust_checks = true;
+            }
+        }
+        None => {}
+    }
+
+    // if any trust setting is provided enable the trust checks
+    if enable_trust_checks {
+        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
+    } else {
+        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": false} }"#, "json")?;
+    }
+
+    // enable or disable verification after signing
+    {
+        let replacement_val = serde_json::Value::Bool(!args.no_signing_verify).to_string();
+        let setting = vs.replace("replacement_val", &replacement_val);
+
+        c2pa::settings::load_settings_from_str(&setting, "json")?;
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -169,6 +258,9 @@ fn main() -> Result<()> {
         ManifestStoreReport::dump_tree(path)?;
         return Ok(());
     }
+
+    // configure the SDK
+    configure_sdk(&args).context("could not configure c2pa-rs")?;
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
