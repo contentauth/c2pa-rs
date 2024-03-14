@@ -47,13 +47,17 @@ pub struct BoxMap {
 }
 
 /// Helper class to create BoxHash assertion
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxHash {
     boxes: Vec<BoxMap>,
 }
 
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
+
+    pub fn new() -> Self {
+        BoxHash::default()
+    }
 
     pub fn verify_hash(
         &self,
@@ -164,6 +168,17 @@ impl BoxHash {
         Ok(())
     }
 
+    pub fn generate_box_hash(
+        &mut self,
+        asset_path: &Path,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+        minimal_form: bool,
+    ) -> Result<()> {
+        let mut file = std::fs::File::open(asset_path)?;
+        self.generate_box_hash_from_stream(&mut file, alg, bhp, minimal_form)
+    }
+
     #[allow(dead_code)]
     pub fn generate_box_hash_from_stream(
         &mut self,
@@ -237,7 +252,17 @@ impl BoxHash {
                 }
             }
 
-            self.boxes = vec![before_c2pa, c2pa_box, after_c2pa];
+            let mut boxes = Vec::<BoxMap>::new();
+            if before_c2pa.range_len > 0 {
+                boxes.push(before_c2pa);
+            }
+            if c2pa_box.range_len > 0 {
+                boxes.push(c2pa_box);
+            }
+            if after_c2pa.range_len > 0 {
+                boxes.push(after_c2pa);
+            }
+            self.boxes = boxes;
 
             // compute the hashes
             for bm in self.boxes.iter_mut() {
@@ -279,7 +304,6 @@ impl BoxHash {
                 self.boxes.push(bm);
             }
         }
-
         Ok(())
     }
 }

@@ -913,6 +913,10 @@ impl Claim {
         Ok(())
     }
 
+    pub(crate) fn update_box_hash(&mut self, box_hash: BoxHash) -> Result<()> {
+        self.replace_assertion(box_hash.to_assertion()?)
+    }
+
     // Crate private function to allow for patching a data hash with final contents.
     pub(crate) fn update_data_hash(&mut self, mut data_hash: DataHash) -> Result<()> {
         let dh_name = data_hash.name.clone();
