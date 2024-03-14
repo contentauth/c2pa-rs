@@ -913,8 +913,17 @@ impl Claim {
         Ok(())
     }
 
-    pub(crate) fn update_box_hash(&mut self, box_hash: BoxHash) -> Result<()> {
-        self.replace_assertion(box_hash.to_assertion()?)
+    // Replaces the existing box hash assertion with a new one.
+    pub(crate) fn replace_box_hash(&mut self, box_hash: BoxHash) -> Result<()> {
+        self.update_assertion(
+            box_hash.to_assertion()?,
+            // No need for additional search criteria; the default search
+            // compares against label, and there should only be one box hash
+            // assertion.
+            |_: &ClaimAssertion| true,
+            // Do a full replacement (no update).
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
     }
 
     // Crate private function to allow for patching a data hash with final contents.

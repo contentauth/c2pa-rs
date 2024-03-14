@@ -2401,7 +2401,7 @@ impl Store {
                         box_hash_handler,
                         false,
                     )?;
-                    pc.update_box_hash(box_hash)?;
+                    pc.replace_box_hash(box_hash)?;
                 }
                 // Otherwise, fall back to data hashing.
                 else {
@@ -2643,7 +2643,7 @@ impl Store {
                             box_hash_handler,
                             false,
                         )?;
-                        pc.update_box_hash(box_hash)?;
+                        pc.replace_box_hash(box_hash)?;
                     }
                     // Otherwise, fall back to data hashing.
                     else {
@@ -3198,7 +3198,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
+        assertions::{labels::BOX_HASH, Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
         status_tracker::*,
