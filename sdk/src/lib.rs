@@ -82,7 +82,10 @@
 //! # }
 //! ```
 
-pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
+#[cfg(feature = "v1_api")]
+pub use assertion::AssertionCbor;
+#[cfg(feature = "v1_api")]
+pub use assertion::{Assertion, AssertionBase, AssertionJson};
 pub mod assertions;
 
 mod cose_validator;
@@ -94,6 +97,7 @@ mod error;
 pub use error::{Error, Result};
 
 mod ingredient;
+#[cfg(feature = "v1_api")]
 pub use ingredient::Ingredient;
 pub mod jumbf_io;
 mod manifest;
@@ -102,12 +106,15 @@ mod manifest_assertion;
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 
 mod manifest_store;
+#[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
 
 mod manifest_store_report;
+#[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
 
 mod resource_store;
+#[cfg(feature = "v1_api")]
 pub use resource_store::{ResourceRef, ResourceStore};
 
 mod settings;
@@ -119,8 +126,8 @@ pub use v2_api::format_from_path;
 pub use v2_api::{Builder, C2pa, Reader};
 
 mod signing_alg;
-#[cfg(feature = "file_io")]
-pub use ingredient::{DefaultOptions, IngredientOptions};
+//#[cfg(feature = "file_io")]
+//pub(crate) use ingredient::{DefaultOptions, IngredientOptions};
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
@@ -155,8 +162,10 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
+#[cfg(feature = "v1_api")]
 pub use hash_utils::HashRange;
 pub(crate) use utils::{cbor_types, hash_utils};
+#[cfg(feature = "v1_api")]
 pub use utils::{cbor_types::DateT, hash_utils::hash_stream_by_alg};
 pub(crate) mod validator;
 #[cfg(target_arch = "wasm32")]

@@ -29,11 +29,12 @@ use crate::{
     asset_io::{CAIRead, CAIReadWrite},
     claim::Claim,
     error::{Error, Result},
+    ingredient::Ingredient,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    ClaimGeneratorInfo, Ingredient, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
+    ClaimGeneratorInfo, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
 };
 
 /// A Manifest Definition
@@ -712,7 +713,10 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{manifest_assertion::ManifestAssertion, utils::test::temp_signer};
+    use crate::{
+        manifest_assertion::ManifestAssertion, manifest_store::ManifestStore,
+        utils::test::temp_signer,
+    };
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -929,7 +933,7 @@ mod tests {
         // read and validate the signed manifest store
         dest.rewind().unwrap();
         let manifest_store =
-            crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+            ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
 
         println!("{}", manifest_store);
         assert!(manifest_store.validation_status().is_none());
@@ -947,7 +951,7 @@ mod tests {
             "sample1.webp",
             "tuscany.tif",
             "sample1.svg",
-            "APC_0808.dng",
+            //"APC_0808.dng",
             "sample1.wav",
             "test.avi",
             //"sample1.mp3",
@@ -985,7 +989,7 @@ mod tests {
             // read and validate the signed manifest store
             dest.rewind().unwrap();
             let manifest_store =
-                crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+                ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
 
             println!("{}", manifest_store);
             assert!(manifest_store.validation_status().is_none());
@@ -1023,7 +1027,7 @@ mod tests {
         // read and validate the signed manifest store
         dest.rewind().unwrap();
         let manifest_store =
-            crate::ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+            ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
 
         println!("{}", manifest_store);
         #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working

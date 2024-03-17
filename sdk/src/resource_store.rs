@@ -369,8 +369,10 @@ impl ResourceResolver for ResourceStore {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    use std::io::Cursor;
+
     use super::*;
-    use crate::{utils::test::temp_signer, Manifest};
+    use crate::{utils::test::temp_signer, Builder, Reader};
 
     #[test]
     #[cfg(feature = "openssl_sign")]
@@ -406,28 +408,31 @@ mod tests {
             }]
         }"#;
 
-        let mut manifest = Manifest::from_json(json).expect("from json");
-        manifest
-            .resources_mut()
-            .add("abc123", *value)
+        let mut builder = Builder::from_json(json).expect("from json");
+        builder
+            .add_resource("abc123", &mut Cursor::new(value))
             .expect("add_resource");
-        let ingredient = &mut manifest.ingredients_mut()[0];
-        ingredient
-            .resources_mut()
-            .add("cba321", *value)
+        builder
+            .add_resource("cba321", &mut Cursor::new(value))
             .expect("add_resource");
-        println!("{manifest}");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_from_memory("jpeg", image, signer.as_ref())
-            .expect("embed_stream");
+        let mut output_image = Cursor::new(Vec::new());
+        builder
+            .sign(
+                "image/jpeg",
+                &mut Cursor::new(image),
+                &mut output_image,
+                &*signer,
+            )
+            .expect("sign");
 
-        let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
-        // println!("{manifest_store}");
+        output_image.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output_image).expect("from_bytes");
+        let _json = reader.json();
+        println!("{_json}");
     }
 }

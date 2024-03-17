@@ -55,6 +55,7 @@ impl ManifestStore {
     }
 
     /// Returns a reference to the active manifest label or None
+    #[cfg(feature = "v1_api")]
     pub fn active_label(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
@@ -69,6 +70,7 @@ impl ManifestStore {
     }
 
     /// Returns a reference to manifest HashMap
+    #[cfg(feature = "v1_api")]
     pub fn manifests(&self) -> &HashMap<String, Manifest> {
         &self.manifests
     }
@@ -119,6 +121,7 @@ impl ManifestStore {
 
     /// creates a ManifestStore from a Store writing resources to resource_path
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn from_store_with_resources(
         store: &Store,
         validation_log: &impl StatusTracker,
@@ -164,6 +167,7 @@ impl ManifestStore {
     }
 
     /// Creates a new Manifest Store from a Manifest
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use crate::status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
@@ -176,6 +180,7 @@ impl ManifestStore {
     }
 
     /// Generate a Store from a format string and bytes.
+    #[cfg(feature = "v1_api")]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -231,6 +236,7 @@ impl ManifestStore {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "v1_api")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -254,6 +260,7 @@ impl ManifestStore {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "v1_api")]
     pub fn from_file_with_resources<P: AsRef<Path>>(
         path: P,
         resource_path: P,
@@ -269,6 +276,7 @@ impl ManifestStore {
     }
 
     /// Loads a ManifestStore from a file
+    #[cfg(feature = "v1_api")]
     pub async fn from_bytes_async(
         format: &str,
         image_bytes: &[u8],
@@ -284,6 +292,7 @@ impl ManifestStore {
     /// Loads a ManifestStore from an init segment and fragment.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate assets.
+    #[cfg(feature = "v1_api")]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -324,6 +333,7 @@ impl ManifestStore {
     /// #    Ok(())
     /// }
     /// ```
+    #[cfg(feature = "v1_api")]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -361,7 +371,7 @@ impl ManifestStore {
     /// #
     /// #    Ok(())
     /// }
-    /// ```
+    #[cfg(feature = "v1_api")]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,
@@ -470,6 +480,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_report_image() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
@@ -488,6 +499,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(feature = "v1_api")]
     async fn manifest_report_image_async() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
 
@@ -508,6 +520,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_report_from_file() {
         let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
         println!("{manifest_store}");
@@ -524,6 +537,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
@@ -542,6 +556,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_report_from_file_with_resources() {
         let manifest_store = ManifestStore::from_file_with_resources(
             "tests/fixtures/CIE-sig-CA.jpg",
@@ -561,6 +576,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_report_from_stream() {
         let image_bytes: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
         let mut stream = std::io::Cursor::new(image_bytes);

@@ -37,6 +37,7 @@ fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
+v1_api = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -45,14 +46,19 @@ diagnostics = []
 #[cfg(not(target_arch = "wasm32"))]
 [[example]]
 name = "client"
-required-features = ["file_io"]
+required-features = ["file_io", "v1_api"]
 
 [[example]]
 name = "show"
-required-features = ["file_io"]
+required-features = ["file_io", "v1_api"]
 
 [[example]]
 name = "custom_assertion"
+required-features = ["v1_api"]
+
+[[example]]
+name = "data_hash"
+required-features = ["v1_api"]
 
 [lib]
 crate-type = ["lib"]

@@ -11,8 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Cursor;
+
 use async_generic::async_generic;
 
+#[cfg(feature = "file_io")]
+use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
     status_tracker::DetailedStatusTracker, store::Store, validation_status::ValidationStatus,
@@ -53,6 +57,30 @@ impl Reader {
         Ok(Reader {
             manifest_store: reader,
         })
+    }
+
+    /// Create a manifest store Reader from bytes
+    pub fn from_bytes(format: &str, bytes: &[u8]) -> Result<Reader> {
+        let mut stream = Cursor::new(bytes);
+        Self::from_stream(format, &mut stream)
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Create a manifest store Reader from a file
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
+        let path = path.as_ref();
+        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
+        let mut file = std::fs::File::open(path)?;
+        let result = Self::from_stream(&format, &mut file);
+        if let Err(Error::JumbfNotFound) = result {
+            // if not embedded or cloud, check for sidecar first and load if it exists
+            let potential_sidecar_path = path.with_extension("c2pa");
+            if potential_sidecar_path.exists() {
+                let manifest_data = std::fs::read(potential_sidecar_path)?;
+                return Self::from_c2pa_data_and_stream(&manifest_data, &format, &mut file);
+            }
+        }
+        result
     }
 
     /// Create a manifest store Reader from existing c2pa_data and a stream

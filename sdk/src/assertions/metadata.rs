@@ -248,7 +248,8 @@ pub enum ReviewCode {
     Other(String),
 }
 
-/// A rating on an [`Assertion`].
+#[cfg(feature = "v1_api")]
+/// A rating on an Assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review>.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]

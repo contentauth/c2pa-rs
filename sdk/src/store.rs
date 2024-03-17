@@ -45,13 +45,14 @@ use crate::{
         get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
+    manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
         hash_utils::{hash256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
+    validation_status, AsyncSigner, RemoteSigner, Signer,
 };
 #[cfg(feature = "file_io")]
 use crate::{
@@ -378,6 +379,7 @@ impl Store {
     }
 
     /// Return certificate chain for the provenance claim
+    #[cfg(feature = "v1_api")]
     pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 

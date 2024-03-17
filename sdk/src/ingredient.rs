@@ -24,6 +24,8 @@ use uuid::Uuid;
 
 #[cfg(feature = "file_io")]
 use crate::utils::mime::extension_to_mime;
+#[cfg(doc)]
+use crate::Manifest;
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
     assertions::{self, labels, Metadata, Relationship, Thumbnail},
@@ -276,8 +278,6 @@ impl Ingredient {
     /// if one exists.
     ///
     /// If `None`, the ingredient has no [`Manifest`]s.
-    ///
-    /// [`Manifest`]: crate::Manifest
     pub fn active_manifest(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }

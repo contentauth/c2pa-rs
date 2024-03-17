@@ -13,6 +13,7 @@ c2pa = { path = "../sdk", features = [
 	"add_thumbnails",
 	"openssl",
 	"xmp_write",
+	#"v1_api"
 ] }
 env_logger = "0.10"
 log = "0.4.8" 

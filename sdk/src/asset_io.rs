@@ -13,7 +13,7 @@
 
 use std::{
     fmt,
-    io::{Read, Seek, Write},
+    io::{Cursor, Read, Seek, Write},
     path::Path,
 };
 
@@ -43,6 +43,12 @@ pub struct HashObjectPositions {
 pub trait CAIRead: Read + Seek + Send {}
 
 impl<T> CAIRead for T where T: Read + Seek + Send {}
+
+impl From<String> for Box<dyn CAIRead> {
+    fn from(val: String) -> Self {
+        Box::new(Cursor::new(val))
+    }
+}
 
 // Helper struct to create a concrete type for CAIRead when
 // that is required.  For example a function defined like this
