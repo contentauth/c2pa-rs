@@ -64,8 +64,8 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
+//! builder.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
 //! let source = PathBuf::from("tests/fixtures/C.jpg");
 //! let dir = tempdir()?;
@@ -77,7 +77,7 @@
 //! let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
 //!
 //! // embed a manifest using the signer
-//! manifest.embed(&source, &dest, &*signer)?;
+//! builder.sign_file(&source, &dest, &*signer)?;
 //! # Ok(())
 //! # }
 //! ```
