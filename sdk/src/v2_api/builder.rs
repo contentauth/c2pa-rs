@@ -608,6 +608,28 @@ impl Builder {
         Ok(store)
     }
 
+    #[cfg(feature = "add_thumbnails")]
+    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        if self.definition.thumbnail.is_none() {
+            stream.rewind()?;
+            if let Ok((format, image)) =
+                crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
+            {
+                stream.rewind()?;
+                self.resources
+                    .add(&self.definition.instance_id.clone(), image)?;
+                self.definition.thumbnail = Some(ResourceRef::new(
+                    format,
+                    self.definition.instance_id.clone(),
+                ));
+            }
+        }
+        Ok(self)
+    }
+
     /// Embed a signed manifest into a stream using a supplied signer.
     /// # Arguments
     /// * `format` - The format of the stream
@@ -632,20 +654,7 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        {
-            if self.definition.thumbnail.is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(&format, source)
-                {
-                    self.resources
-                        .add(&self.definition.instance_id.clone(), image)?;
-                    self.definition.thumbnail = Some(ResourceRef::new(
-                        format,
-                        self.definition.instance_id.clone(),
-                    ));
-                }
-            }
-        }
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -677,20 +686,7 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        {
-            if self.definition.thumbnail.is_none() {
-                if let Ok((format, image)) =
-                    crate::utils::thumbnail::make_thumbnail_from_stream(format, source)
-                {
-                    self.resources
-                        .add(&self.definition.instance_id.clone(), image)?;
-                    self.definition.thumbnail = Some(ResourceRef::new(
-                        format,
-                        self.definition.instance_id.clone(),
-                    ));
-                }
-            }
-        }
+        self.maybe_add_thumbnail(format, source)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -699,6 +695,48 @@ impl Builder {
         store
             .save_to_stream_remote_signed(format, source, dest, signer)
             .await
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Sign a file using a supplied signer
+    /// # Arguments
+    /// * `source` - The path to the file to read from
+    /// * `dest` - The path to the file to write to (this must not already exist)
+    /// * `signer` - The signer to use
+    /// # Returns
+    /// * The bytes of c2pa_manifest that was created
+    /// # Errors
+    /// * If the manifest cannot be signed
+    pub fn sign_file<S, D>(&mut self, source: S, dest: D, signer: &dyn Signer) -> Result<Vec<u8>>
+    where
+        S: AsRef<std::path::Path>,
+        D: AsRef<std::path::Path>,
+    {
+        let source = source.as_ref();
+        let dest = dest.as_ref();
+        // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
+        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        if format != format_dest {
+            return Err(crate::Error::BadParam(
+                "Source and destination file formats must match".to_string(),
+            ));
+        }
+        let mut source = std::fs::File::open(source)?;
+        if !dest.exists() {
+            // ensure the path to the file exists
+            if let Some(output_dir) = dest.parent() {
+                std::fs::create_dir_all(output_dir)?;
+            }
+        } else {
+            // if the file exists, we need to remove it to avoid appending to it
+            return Err(crate::Error::BadParam(
+                "Destination file already exists".to_string(),
+            ));
+        };
+        let mut dest = std::fs::File::create(dest)?;
+
+        self.sign(&format, &mut source, &mut dest, signer)
     }
 }
 
@@ -893,6 +931,10 @@ mod tests {
 
     #[test]
     fn test_builder_sign() {
+        #[derive(Serialize, Deserialize)]
+        struct TestAssertion {
+            answer: usize,
+        }
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -901,16 +943,14 @@ mod tests {
         builder
             .add_ingredient(PARENT_JSON, format, &mut source)
             .unwrap();
-        // builder.ingredients.push(
-        //     Ingredient::from_json(PARENT_JSON)
-        //         .unwrap()
-        //         .add_stream(format, &mut source)
-        //         .unwrap(),
-        // );
 
         builder
             .resources
             .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .unwrap();
+
+        builder
+            .add_assertion("org.life.meaning", &TestAssertion { answer: 42 })
             .unwrap();
 
         // write the manifest builder to a zipped stream
@@ -934,6 +974,36 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store =
             ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+
+        println!("{}", manifest_store);
+        assert!(manifest_store.validation_status().is_none());
+        assert!(manifest_store.get_active().is_some());
+        let manifest = manifest_store.get_active().unwrap();
+        assert_eq!(manifest.title().unwrap(), "Test_Manifest");
+        let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
+        assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_builder_sign_file() {
+        let source = "tests/fixtures/CA.jpg";
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("test_file.jpg");
+
+        let mut builder = Builder::from_json(JSON).unwrap();
+
+        builder
+            .resources
+            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
+        let signer = temp_signer();
+        builder.sign_file(source, &dest, signer.as_ref()).unwrap();
+
+        // read and validate the signed manifest store
+        let manifest_store = ManifestStore::from_file(&dest).expect("from_bytes");
 
         println!("{}", manifest_store);
         assert!(manifest_store.validation_status().is_none());

@@ -1308,7 +1308,7 @@ pub(crate) mod tests {
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
-        Manifest, Reader, Result, SigningAlg,
+        Manifest, Reader, Result,
     };
     #[cfg(feature = "file_io")]
     use crate::{
@@ -1625,7 +1625,7 @@ pub(crate) mod tests {
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
         let async_signer =
-            crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+            crate::openssl::temp_signer_async::AsyncSignerAdapter::new(crate::SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         manifest

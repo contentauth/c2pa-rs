@@ -32,13 +32,13 @@
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::{assertions::Actions, ManifestStore};
+//! use c2pa::{assertions::Actions, Reader};
 //!
 //! # fn main() -> Result<()> {
-//! let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
+//! let manifest_store = Reader::from_file("tests/fixtures/C.jpg")?;
 //! println!("{}", manifest_store);
 //!
-//! if let Some(manifest) = manifest_store.get_active() {
+//! if let Some(manifest) = manifest_store.active_manifest() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
 //!         println!("{}\n", action.action());
@@ -162,7 +162,6 @@ pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod utils;
 pub mod validation_status;
-#[cfg(feature = "v1_api")]
 pub use hash_utils::HashRange;
 pub(crate) use utils::{cbor_types, hash_utils};
 #[cfg(feature = "v1_api")]

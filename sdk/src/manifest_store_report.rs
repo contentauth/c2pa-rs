@@ -200,7 +200,9 @@ impl ManifestStoreReport {
         // recurse down ingredients
         for i in claim.ingredient_assertions() {
             let ingredient_assertion =
-                <crate::assertions::Ingredient as crate::AssertionBase>::from_assertion(i)?;
+                <crate::assertions::Ingredient as crate::assertion::AssertionBase>::from_assertion(
+                    i,
+                )?;
 
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
