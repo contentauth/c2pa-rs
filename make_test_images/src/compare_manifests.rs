@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::{fs, path::Path};
 
-use c2pa::{Error, ManifestStore, Result};
+use c2pa::{v1::ManifestStore, Error, Result};
 
 /// Compares all the files in two directories and returns a list of issues
 pub fn compare_folders<P: AsRef<Path>, Q: AsRef<Path>>(folder1: P, folder2: Q) -> Result<()> {

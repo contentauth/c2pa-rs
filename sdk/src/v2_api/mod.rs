@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod c2pa;
-pub use c2pa::C2pa;
+// mod c2pa;
+// pub use c2pa::C2pa;
 mod reader;
 pub use reader::Reader;
 mod builder;

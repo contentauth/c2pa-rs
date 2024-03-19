@@ -34,11 +34,11 @@ use crate::{
     error::{Error, Result},
     ingredient::Ingredient,
     jumbf,
+    manifest_assertion::ManifestAssertion,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    ClaimGeneratorInfo, HashRange, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
-    SigningAlg,
+    AssertionKind, ClaimGeneratorInfo, HashRange, RemoteSigner, Signer, SigningAlg,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -629,7 +629,7 @@ impl Manifest {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
-                                .set_kind(ManifestAssertionKind::Json);
+                                .set_kind(AssertionKind::Json);
 
                             manifest.assertions.push(ma);
                         }
@@ -898,25 +898,25 @@ impl Manifest {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
+                    AssertionKind::Cbor => claim.add_assertion_with_salt(
                         &UserCbor::new(
                             manifest_assertion.label(),
                             serde_cbor::to_vec(&manifest_assertion.value()?)?,
                         ),
                         &salt,
                     ),
-                    ManifestAssertionKind::Json => claim.add_assertion_with_salt(
+                    AssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
                             &serde_json::to_string(&manifest_assertion.value()?)?,
                         ),
                         &salt,
                     ),
-                    ManifestAssertionKind::Binary => {
+                    AssertionKind::Binary => {
                         // todo: Support binary kinds
                         return Err(Error::AssertionEncoding);
                     }
-                    ManifestAssertionKind::Uri => {
+                    AssertionKind::Uri => {
                         // todo: Support binary kinds
                         return Err(Error::AssertionEncoding);
                     }

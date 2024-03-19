@@ -15,6 +15,7 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
 };
 
@@ -24,7 +25,7 @@ use anyhow::{Context, Result};
 //     create_signer, jumbf_io, ClaimGeneratorInfo, Error, Ingredient, IngredientOptions, Manifest,
 //     ManifestStore, Builder, C2pa, Signer, SigningAlg,
 // };
-use c2pa::{create_signer, jumbf_io, Builder, C2pa, Error, Signer, SigningAlg};
+use c2pa::{create_signer, get_supported_types, Builder, Error, Reader, Signer, SigningAlg};
 use memchr::memmem;
 use nom::AsBytes;
 use serde::Deserialize;
@@ -167,7 +168,6 @@ fn file_name(path: &Path) -> Option<&str> {
 pub struct MakeTestImages {
     config: Config,
     output_dir: PathBuf,
-    c2pa: C2pa,
 }
 
 impl MakeTestImages {
@@ -176,7 +176,6 @@ impl MakeTestImages {
         Self {
             config,
             output_dir: PathBuf::from(output),
-            c2pa: C2pa::new(),
         }
     }
 
@@ -286,8 +285,7 @@ impl MakeTestImages {
         })
         .to_string();
 
-        let mut builder = self.c2pa.builder();
-        builder.with_json(&manifest_def)?;
+        let mut builder = Builder::from_json(&manifest_def)?;
 
         // keep track of ingredient instances so we don't duplicate them
         let mut ingredient_table = HashMap::new();
@@ -672,8 +670,15 @@ impl MakeTestImages {
         let src_path = &self.make_path(src);
         let dst_path = self.make_path(recipe.output.as_str());
         println!("Creating {dst_path:?}");
+        let format = src_path
+            .extension()
+            .ok_or(Error::BadParam("no extension".to_owned()))?
+            .to_string_lossy()
+            .into_owned();
 
-        let jumbf = jumbf_io::load_jumbf_from_file(&PathBuf::from(src_path))
+        let mut source = std::fs::File::open(src_path).context("opening OGP source")?;
+        let jumbf = c2pa::load_jumbf_from_stream(&format, &mut source)
+            .context("loading OGP")
             .context(format!("loading OGP {src_path:?}"))?;
         // save the edited image to our destination file
         let mut img =
@@ -681,8 +686,10 @@ impl MakeTestImages {
         img = img.grayscale();
         img.save(&dst_path)
             .context(format!("saving OGP image{:?}", &dst_path))?;
+        let image = std::fs::read(&dst_path).context("reading OGP image")?;
+        let mut dest = std::fs::File::create(&dst_path).context("creating OGP image")?;
         // write the original claim data to the edited image
-        jumbf_io::save_jumbf_to_file(&jumbf, &PathBuf::from(&dst_path), Some(&dst_path))
+        c2pa::save_jumbf_to_stream(&format, &mut Cursor::new(image), &mut dest, &jumbf)
             .context(format!("OGP save_jumbf_to_file {:?}", &dst_path))?;
         // The image library does not preserve any metadata so we have to write it ourselves.
         // todo: should preserve all metadata and update instanceId.
@@ -754,7 +761,7 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-        let supported = c2pa::jumbf_io::get_supported_types();
+        let supported = get_supported_types();
         println!("Supported types: {:#?}", supported);
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
@@ -781,7 +788,7 @@ impl MakeTestImages {
                     .extension()
                     .and_then(|s| s.to_str())
                     .unwrap_or("jpg");
-                let reader = self.c2pa.read(format, &mut file)?;
+                let reader = Reader::from_stream(format, &mut file)?;
                 let json = reader.json();
 
                 let json_path = json_dir

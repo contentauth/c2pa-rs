@@ -399,7 +399,7 @@ mod tests {
     #[cfg(feature = "v1_api")]
     use std::fs;
 
-    use crate::{utils::test::fixture_path, ManifestStoreReport};
+    use crate::{manifest_store_report::ManifestStoreReport, utils::test::fixture_path};
 
     #[test]
     fn manifest_store_report() {

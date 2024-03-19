@@ -509,9 +509,7 @@ impl Ingredient {
     /// Generates an `Ingredient` from a file path, including XMP info
     /// from the file if available.
     ///
-    /// This is used for making asset ingredients that should not load [`ManifestStore`]s.
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
+    /// This does not read c2pa_data in a file, it only reads XMP
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         // get required information from the file path

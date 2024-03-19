@@ -90,13 +90,13 @@ lazy_static! {
     };
 }
 
-#[cfg(feature = "file_io")]
-pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
+pub fn is_bmff_format(asset_type: &str) -> bool {
     let bmff_io = BmffIO::new("");
     bmff_io.supported_types().contains(&asset_type)
 }
 
 /// Return jumbf block from in memory asset
+#[allow(dead_code)]
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 

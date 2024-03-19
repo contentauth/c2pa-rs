@@ -23,7 +23,7 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::{
     assertions::{c2pa_action, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson},
-    create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest, ManifestStore, SigningAlg,
+    create_signer, hash_stream_by_alg, HashRange, Ingredient, Manifest, Reader, SigningAlg,
 };
 
 fn main() {
@@ -148,7 +148,7 @@ fn user_data_hash_with_sdk_hashing() {
     output_file.write_all(&final_manifest).unwrap();
 
     // make sure the output file is correct
-    let manifest_store = ManifestStore::from_file(&dest).unwrap();
+    let manifest_store = Reader::from_file(&dest).unwrap();
 
     // example of how to print out the whole manifest as json
     println!("{manifest_store}\n");
@@ -263,7 +263,7 @@ fn user_data_hash_with_user_hashing() {
     output_file.write_all(&after_buf).unwrap();
 
     // make sure the output file is correct
-    let manifest_store = ManifestStore::from_file(&dest).unwrap();
+    let manifest_store = Reader::from_file(&dest).unwrap();
 
     // example of how to print out the whole manifest as json
     println!("{manifest_store}\n");

@@ -141,9 +141,30 @@ impl Reader {
         self.manifest_store.validation_status()
     }
 
-    /// Get the active manifest if there is one
+    /// Get the active manifest
+    /// # Returns
+    /// The active manifest if it exists
     pub fn active_manifest(&self) -> Option<&Manifest> {
         self.manifest_store.get_active()
+    }
+
+    /// Get the active manifest label
+    pub fn active_label(&self) -> Option<&str> {
+        self.manifest_store.active_label()
+    }
+
+    /// Return a Manifest for a given label (backward compatibility)
+    pub fn get_active(&self) -> Option<&Manifest> {
+        self.manifest_store.get_active()
+    }
+
+    /// Return a Manifest for a given label
+    /// # Arguments
+    /// * `label` - The label of the manifest to return
+    /// # Returns
+    /// The manifest if it exists
+    pub fn get(&self, label: &str) -> Option<&Manifest> {
+        self.manifest_store.get(label)
     }
 
     /// Write a resource identified by uri to the given stream

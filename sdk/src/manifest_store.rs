@@ -55,7 +55,6 @@ impl ManifestStore {
     }
 
     /// Returns a reference to the active manifest label or None
-    #[cfg(feature = "v1_api")]
     pub fn active_label(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
@@ -167,7 +166,7 @@ impl ManifestStore {
     }
 
     /// Creates a new Manifest Store from a Manifest
-    #[cfg(feature = "v1_api")]
+    #[allow(dead_code)]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use crate::status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
@@ -229,7 +228,7 @@ impl ManifestStore {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::ManifestStore;
+    /// use c2pa::v1::ManifestStore;
     /// # fn main() -> Result<()> {
     /// let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
     /// println!("{}", manifest_store);
@@ -250,7 +249,7 @@ impl ManifestStore {
     ///
     /// ```
     /// # use c2pa::Result;
-    /// use c2pa::ManifestStore;
+    /// use c2pa::v1::ManifestStore;
     /// # fn main() -> Result<()> {
     /// let manifest_store = ManifestStore::from_file_with_resources(
     ///     "tests/fixtures/C.jpg",
@@ -260,7 +259,7 @@ impl ManifestStore {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "v1_api")]
+    #[allow(dead_code)]
     pub fn from_file_with_resources<P: AsRef<Path>>(
         path: P,
         resource_path: P,
@@ -276,7 +275,7 @@ impl ManifestStore {
     }
 
     /// Loads a ManifestStore from a file
-    #[cfg(feature = "v1_api")]
+    #[allow(dead_code)]
     pub async fn from_bytes_async(
         format: &str,
         image_bytes: &[u8],
@@ -292,7 +291,6 @@ impl ManifestStore {
     /// Loads a ManifestStore from an init segment and fragment.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate assets.
-    #[cfg(feature = "v1_api")]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -316,7 +314,7 @@ impl ManifestStore {
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
     /// ```
-    /// use c2pa::{Result, ManifestStore};
+    /// use c2pa::{Result, v1::ManifestStore};
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
@@ -333,7 +331,6 @@ impl ManifestStore {
     /// #    Ok(())
     /// }
     /// ```
-    #[cfg(feature = "v1_api")]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -356,7 +353,7 @@ impl ManifestStore {
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset
     /// ```
-    /// use c2pa::{Result, ManifestStore};
+    /// use c2pa::{Result, v1::ManifestStore};
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
@@ -371,7 +368,6 @@ impl ManifestStore {
     /// #
     /// #    Ok(())
     /// }
-    #[cfg(feature = "v1_api")]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,

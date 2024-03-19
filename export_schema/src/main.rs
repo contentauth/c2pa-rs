@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use c2pa::ManifestStore;
+use c2pa::v1::ManifestStore;
 use schemars::gen::SchemaSettings;
 
 fn main() -> Result<()> {

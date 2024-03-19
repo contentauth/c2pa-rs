@@ -3038,6 +3038,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
@@ -3050,7 +3051,7 @@ pub mod tests {
                 write_jpeg_placeholder_file,
             },
         },
-        AssertionJson, SigningAlg,
+        SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {

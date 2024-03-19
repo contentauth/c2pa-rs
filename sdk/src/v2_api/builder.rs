@@ -30,11 +30,12 @@ use crate::{
     claim::Claim,
     error::{Error, Result},
     ingredient::Ingredient,
+    manifest_assertion::ManifestAssertion,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    ClaimGeneratorInfo, ManifestAssertion, ManifestAssertionKind, RemoteSigner, Signer,
+    AssertionKind, ClaimGeneratorInfo, RemoteSigner, Signer,
 };
 
 /// A Manifest Definition
@@ -570,25 +571,25 @@ impl Builder {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
+                    AssertionKind::Cbor => claim.add_assertion_with_salt(
                         &UserCbor::new(
                             manifest_assertion.label(),
                             serde_cbor::to_vec(&manifest_assertion.value()?)?,
                         ),
                         &salt,
                     ),
-                    ManifestAssertionKind::Json => claim.add_assertion_with_salt(
+                    AssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
                             &serde_json::to_string(&manifest_assertion.value()?)?,
                         ),
                         &salt,
                     ),
-                    ManifestAssertionKind::Binary => {
+                    AssertionKind::Binary => {
                         // todo: Support binary kinds
                         return Err(Error::AssertionEncoding);
                     }
-                    ManifestAssertionKind::Uri => {
+                    AssertionKind::Uri => {
                         // todo: Support binary kinds
                         return Err(Error::AssertionEncoding);
                     }

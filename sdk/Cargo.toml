@@ -53,10 +53,6 @@ name = "show"
 required-features = ["file_io", "v1_api"]
 
 [[example]]
-name = "custom_assertion"
-required-features = ["v1_api"]
-
-[[example]]
 name = "data_hash"
 required-features = ["v1_api"]
 

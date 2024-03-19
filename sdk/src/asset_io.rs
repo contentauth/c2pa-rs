@@ -222,7 +222,7 @@ pub trait AssetBoxHash {
 
 // Type of remote reference to embed.  Some of the listed
 // emums are for future uses and experiments.
-#[allow(unused_variables)]
+#[allow(dead_code)]
 pub enum RemoteRefEmbedType {
     Xmp(String),
     StegoS(String),
