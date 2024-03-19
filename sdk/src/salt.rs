@@ -63,9 +63,10 @@ impl SaltGenerator for DefaultSalt {
         }
         #[cfg(not(feature = "openssl_sign"))]
         {
-            use ring::rand::SecureRandom;
+            use rand::prelude::*;
             let mut salt = vec![0u8; self.salt_len];
-            ring::rand::SystemRandom::new().fill(&mut salt).ok()?;
+            let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
+            rng.fill_bytes(&mut salt);
             Some(salt)
         }
     }

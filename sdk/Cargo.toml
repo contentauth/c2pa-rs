@@ -89,6 +89,8 @@ multibase = "0.9.0"
 multihash = "0.11.4"
 mp4 = "0.13.0"
 png_pong = "0.8.2"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 range-set = "0.0.9"
 rasn-ocsp = "0.12.4"
 rasn-pkix = "0.12.4"
@@ -125,7 +127,6 @@ getrandom = { version = "0.2.7", features = ["js"] }
 # to handle certificate timestamp checking correctly.
 instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
-rand = "0.8.5"
 rsa = "0.6.1"
 serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"
