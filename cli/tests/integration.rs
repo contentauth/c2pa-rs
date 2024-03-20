@@ -13,7 +13,9 @@
 
 use std::{error::Error, fs, fs::create_dir_all, path::PathBuf, process::Command};
 
-use assert_cmd::prelude::*; // Add methods on commands
+// Add methods on commands
+use assert_cmd::prelude::*;
+use predicate::str;
 use predicates::prelude::*;
 use serde_json::Value;
 
@@ -25,12 +27,12 @@ fn fixture_path(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/fixtures");
     path.push(name);
-    std::fs::canonicalize(path).expect("canonicalize")
+    fs::canonicalize(path).expect("canonicalize")
 }
 
 fn temp_path(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-    std::fs::create_dir_all(&path).ok();
+    create_dir_all(&path).ok();
     path.join(name)
 }
 
@@ -38,9 +40,7 @@ fn temp_path(name: &str) -> PathBuf {
 fn tool_not_found() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::cargo_bin("c2patool")?;
     cmd.arg("test/file/notfound.jpg");
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("os error"));
+    cmd.assert().failure().stderr(str::contains("os error"));
     Ok(())
 }
 
@@ -50,7 +50,7 @@ fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
     cmd.arg("test/file/notfound.jpg").arg("--info");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("file not found"));
+        .stderr(str::contains("file not found"));
     Ok(())
 }
 
@@ -60,7 +60,7 @@ fn tool_jpeg_no_report() -> Result<(), Box<dyn Error>> {
     cmd.arg(fixture_path(TEST_IMAGE));
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("No claim found"));
+        .stderr(str::contains("No claim found"));
     Ok(())
 }
 
@@ -70,7 +70,7 @@ fn tool_info() -> Result<(), Box<dyn Error>> {
     cmd.arg(fixture_path("C.jpg")).arg("--info");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Validated\nOne manifest"));
+        .stdout(str::contains("Validated\nOne manifest"));
     Ok(())
 }
 
@@ -87,7 +87,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .success() // should this be a failure?
-        .stdout(predicate::str::contains("My Title"));
+        .stdout(str::contains("My Title"));
     Ok(())
 }
 
@@ -101,7 +101,7 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains(format!(
+        .stdout(str::contains(format!(
             "Manifest report written to the directory {path:?}"
         )));
 
@@ -133,7 +133,7 @@ fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> 
         .arg("-d")
         .assert()
         .success()
-        .stdout(predicate::str::contains(format!(
+        .stdout(str::contains(format!(
             "Manifest report written to the directory {path:?}"
         )));
 
@@ -157,7 +157,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
         .arg(&path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
+        .stderr(str::contains(
             "Error: Output already exists, use -f/force to force write",
         ));
     Ok(())
@@ -175,7 +175,7 @@ fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Manifest report written"));
+        .stdout(str::contains("Manifest report written"));
     // then read it back in
     let json =
         std::fs::read_to_string(out_path.join("manifest_store.json")).expect("read manifest");
@@ -196,7 +196,7 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Ingredient report written"));
+        .stdout(str::contains("Ingredient report written"));
     // then read it back in
     let json = std::fs::read_to_string(out_path.join("ingredient.json")).expect("read manifest");
     assert!(json.contains("manifest_data"));
@@ -217,7 +217,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Ingredient report written"));
+        .stdout(str::contains("Ingredient report written"));
 
     let json_path = out_path.join("ingredient.json");
 
@@ -233,7 +233,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("My Title"));
+        .stdout(str::contains("My Title"));
     Ok(())
 }
 
@@ -249,9 +249,9 @@ fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("ingredients.jpg"))
-        .stdout(predicate::str::contains("test ingredient"))
-        .stdout(predicate::str::contains("earth_apollo17.jpg"));
+        .stdout(str::contains("ingredients.jpg"))
+        .stdout(str::contains("test ingredient"))
+        .stdout(str::contains("earth_apollo17.jpg"));
     Ok(())
 }
 
@@ -266,15 +266,14 @@ fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
         .arg(&path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "Output type must match source type",
-        ));
+        .stderr(str::contains("Output type must match source type"));
     Ok(())
 }
 
 #[test]
 fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./similar.JpEg");
+
     Command::cargo_bin("c2patool")?
         .arg(fixture_path("C.jpg"))
         .arg("-m")
@@ -284,12 +283,12 @@ fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .success()
-        .stdout(predicate::str::contains("similar."));
+        .stdout(str::contains("similar."));
     Ok(())
 }
 
 #[test]
-fn tool_fail_if_thumnail_missing() -> Result<(), Box<dyn Error>> {
+fn tool_fail_if_thumbnail_missing() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
         .arg(fixture_path(TEST_IMAGE))
         .arg("-c")
@@ -299,6 +298,107 @@ fn tool_fail_if_thumnail_missing() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("resource not found"));
+        .stderr(str::contains("resource not found"));
+    Ok(())
+}
+
+#[test]
+fn test_succeed_using_example_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("./output_external.jpg");
+
+    // We are calling a cargo/bin here that successfully signs claim bytes. We are using
+    // a cargo/bin because it works on all OSs, we like Rust, and our example external signing
+    // code is compiled and verified during every test of this project.
+    let mut successful_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    successful_process.push("target/debug/signer-path-success");
+
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("earth_apollo17.jpg"))
+        .arg("--signer-path")
+        .arg(&successful_process)
+        .arg("--reserve-size")
+        .arg("20248")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .success();
+
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("./output_external.jpg");
+
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("earth_apollo17.jpg"))
+        .arg("--signer-path")
+        .arg("./executable-not-found-test")
+        .arg("--reserve-size")
+        .arg("10248")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .stderr(str::contains("Failed to run command at"))
+        .failure();
+
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("./output_external.jpg");
+
+    let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    failing_process.push("target/debug/signer-path-fail");
+
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("earth_apollo17.jpg"))
+        .arg("--signer-path")
+        .arg(&failing_process)
+        .arg("--reserve-size")
+        .arg("20248")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .stderr(str::contains("User supplied signer process failed"))
+        // Ensures stderr from user executable is revealed to client.
+        .stderr(str::contains("signer-path-fail-stderr"))
+        .failure();
+
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_external_signer_success_without_stdout() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("./output_external.jpg");
+
+    let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    failing_process.push("target/debug/signer-path-no-stdout");
+
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path("earth_apollo17.jpg"))
+        .arg("--signer-path")
+        .arg(&failing_process)
+        .arg("--reserve-size")
+        .arg("10248")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .stderr(str::contains("User supplied process succeeded, but the external process did not write signature bytes to stdout"))
+        .failure();
+
     Ok(())
 }

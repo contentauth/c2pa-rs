@@ -1,6 +1,6 @@
 name: CI
 
-on:  
+on:
   pull_request:
   push:
     branches: main
@@ -15,13 +15,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable]
+        os: [ windows-latest, macos-latest, ubuntu-latest ]
+        rust_version: [ stable ]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -37,7 +37,7 @@ jobs:
       - name: Generate code coverage
         env:
           RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
 
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
@@ -52,7 +52,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -113,7 +113,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 

@@ -11,6 +11,7 @@
 // each license.
 
 #![doc = include_str!("../README.md")]
+
 /// Tool to display and create C2PA manifests
 ///
 /// A file path to an asset must be provided
@@ -26,11 +27,17 @@ use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
+use signer::SignConfig;
+
+use crate::{
+    callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
+    info::info,
+};
 
 mod info;
-use info::info;
+
+mod callback_signer;
 mod signer;
-use signer::SignConfig;
 
 /// Tool for displaying and creating C2PA manifests.
 #[derive(Parser, Debug)]
@@ -93,6 +100,30 @@ struct CliArgs {
     /// Show manifest size, XMP url and other stats.
     #[clap(long)]
     info: bool,
+
+    /// Path to an executable that will sign the claim bytes.
+    #[clap(long)]
+    signer_path: Option<PathBuf>,
+
+    /// To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) +
+    /// the size of cert provided in the manifest definition's `sign_cert` field + the size of the
+    /// signature of the Time Stamp Authority response. For example:
+    ///
+    /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
+    /// your manifest description:
+    ///
+    ///     1024 + sign_cert.len()
+    ///
+    /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
+    /// reserve size like this:
+    ///
+    ///     1024 + sign_cert.len() + tsa_signature_response.len()
+    ///
+    /// Note:
+    /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
+    /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
+    #[clap(long, default_value("20000"))]
+    reserve_size: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -371,7 +402,19 @@ fn main() -> Result<()> {
                 bail!("Missing extension output");
             }
 
-            let signer = sign_config.signer()?;
+            let signer = if let Some(signer_process_name) = args.signer_path {
+                let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+
+                let process_runner = Box::new(ExternalProcessRunner::new(
+                    cb_config.clone(),
+                    signer_process_name,
+                ));
+                let signer = CallbackSigner::new(process_runner, cb_config);
+
+                Box::new(signer)
+            } else {
+                sign_config.signer()?
+            };
 
             manifest
                 .embed(&args.path, &output, signer.as_ref())
@@ -450,6 +493,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
     const CONFIG: &str = r#"{
         "alg": "es256",
         "private_key": "es256_private.key",
