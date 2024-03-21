@@ -3423,21 +3423,9 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // JUMBF generation should fail because the certificate won't validate.
-        let _r = store.save_to_asset(&ap, &signer, &op);
-        #[cfg(not(feature = "no_verify_on_sign"))]
-        {
-            assert!(_r.is_err());
-            assert_eq!(
-                _r.err().unwrap().to_string(),
-                "COSE certificate has expired"
-            );
-        }
-        #[cfg(feature = "no_verify_on_sign")]
-        {
-            store
-                .verify_from_path(&op, &mut OneShotStatusTracker::new())
-                .expect_err("Should not verify");
-        }
+        let r = store.save_to_asset(&ap, &signer, &op);
+        assert!(r.is_err());
+        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
     }
 
     #[test]
