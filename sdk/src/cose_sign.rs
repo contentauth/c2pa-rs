@@ -426,12 +426,5 @@ mod tests {
 
         #[cfg(not(feature = "no_verify_on_sign"))]
         assert!(_cose_sign1.is_err());
-        #[cfg(feature = "cose_no_verify")]
-        {
-            let claim_bytes = _cose_sign1.unwrap();
-            let mut cose_log = OneShotStatusTracker::new();
-            let result = verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log);
-            assert!(result.is_err());
-        }
     }
 }
