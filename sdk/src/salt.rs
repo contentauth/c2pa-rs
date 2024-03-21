@@ -65,7 +65,6 @@ impl SaltGenerator for DefaultSalt {
         }
         #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
         {
-
             let salt = crate::wasm::util::get_random_values(self.salt_len).ok()?;
 
             Some(salt)
