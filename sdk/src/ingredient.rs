@@ -582,12 +582,23 @@ impl Ingredient {
                                 .rsplit_once('.')
                                 .map(|(_, ext)| format!("image/{}", ext))
                                 .unwrap_or_else(|| "image/jpeg".to_string()); // default to jpeg??
-                            let mut thumb = crate::resource_store::ResourceRef::new(format, uri);
+                            let mut thumb = crate::resource_store::ResourceRef::new(format, &uri);
                             // keep track of the alg and hash for reuse
                             thumb.alg = hashed_uri.alg();
                             let hash = base64::encode(&hashed_uri.hash());
                             thumb.hash = Some(hash);
                             self.set_thumbnail_ref(thumb)?;
+
+                            // add a resource to give clients access, but don't directly reference it.
+                            // this way a client can view the thumbnail without needing to load the manifest
+                            // but the the embedded thumbnail is still the primary reference
+                            let claim_assertion = store.get_claim_assertion_from_uri(&uri)?;
+                            let thumbnail = Thumbnail::from_assertion(claim_assertion.assertion())?;
+                            self.resources.add_uri(
+                                &uri,
+                                &thumbnail.content_type,
+                                thumbnail.data,
+                            )?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -744,7 +755,6 @@ impl Ingredient {
                 ingredient.set_thumbnail(format, image)?;
             }
         }
-
         Ok(ingredient)
     }
 
@@ -1338,8 +1348,6 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::assertions::Metadata;
-
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1600,6 +1608,11 @@ mod tests_file_io {
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         assert!(ingredient.thumbnail_ref().is_some()); // we don't generate this thumbnail
+        assert!(ingredient
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("self#jumbf="));
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
     }
@@ -1753,6 +1766,12 @@ mod tests_file_io {
 
         // verify  manifest_data exists
         assert!(ingredient.manifest_data_ref().is_some());
+        assert_eq!(ingredient.thumbnail_ref().unwrap().format, "image/jpeg");
+        assert!(ingredient
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("self#jumbf="));
     }
 
     #[test]
