@@ -36,7 +36,7 @@ fetch_remote_manifests = ["file_io"]
 openssl_sign = ["openssl"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
-no_cose_verify = []
+no_verify_on_sign = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.

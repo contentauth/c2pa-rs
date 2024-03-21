@@ -424,7 +424,7 @@ mod tests {
 
         let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        #[cfg(not(feature = "no_cose_verify"))]
+        #[cfg(not(feature = "no_verify_on_sign"))]
         assert!(_cose_sign1.is_err());
         #[cfg(feature = "cose_no_verify")]
         {
