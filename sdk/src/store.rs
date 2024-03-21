@@ -32,7 +32,8 @@ use crate::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
-    cose_validator::check_ocsp_status,
+    cose_sign::cose_sign,
+    cose_validator::{check_ocsp_status, verify_cose},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -46,7 +47,10 @@ use crate::{
     },
     salt::DefaultSalt,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
-    utils::{hash_utils::HashRange, patch::patch_bytes},
+    utils::{
+        hash_utils::{hash256, HashRange},
+        patch::patch_bytes,
+    },
     validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
 };
 #[cfg(feature = "file_io")]
@@ -361,6 +365,18 @@ impl Store {
         })
     }
 
+    // Returns placeholder that will be searched for and replaced
+    // with actual signature data.
+    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
+        let placeholder_str = format!("signature placeholder:{}", claim.label());
+        let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
+
+        use std::cmp::max;
+        placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
+
+        placeholder
+    }
+
     /// Return certificate chain for the provenance claim
     pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
@@ -399,6 +415,70 @@ impl Store {
             }
         } else {
             None
+        }
+    }
+
+    /// Sign the claim and return signature.
+    pub fn sign_claim(
+        &self,
+        claim: &Claim,
+        signer: &dyn Signer,
+        box_size: usize,
+    ) -> Result<Vec<u8>> {
+        let claim_bytes = claim.data()?;
+
+        cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
+            // Sanity check: Ensure that this signature is valid.
+
+            let mut cose_log = OneShotStatusTracker::new();
+            match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
+                Ok(_) => Ok(sig),
+                Err(err) => {
+                    error!(
+                        "Signature that was just generated does not validate: {:#?}",
+                        err
+                    );
+                    Err(err)
+                }
+            }
+        })
+    }
+
+    /// Sign the claim asynchronously and return signature.
+    pub async fn sign_claim_async(
+        &self,
+        claim: &Claim,
+        signer: &dyn AsyncSigner,
+        box_size: usize,
+    ) -> Result<Vec<u8>> {
+        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
+
+        let claim_bytes = claim.data()?;
+
+        match cose_sign_async(signer, &claim_bytes, box_size).await {
+            // Sanity check: Ensure that this signature is valid.
+            Ok(sig) => {
+                let mut cose_log = OneShotStatusTracker::new();
+                match verify_cose_async(
+                    sig.clone(),
+                    claim_bytes,
+                    b"".to_vec(),
+                    false,
+                    &mut cose_log,
+                )
+                .await
+                {
+                    Ok(_) => Ok(sig),
+                    Err(err) => {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        Err(err)
+                    }
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -652,7 +732,7 @@ impl Store {
                     let mut sigb = CAISignatureBox::new();
                     let signed_data = match claim.signature_val().is_empty() {
                         false => claim.signature_val().clone(), // existing claims have sig values
-                        true => claim.sign_placeholder(min_reserve_size), /* empty is the new sig to be replaced */
+                        true => Store::sign_claim_placeholder(claim, min_reserve_size), /* empty is the new sig to be replaced */
                     };
 
                     let sigc = JUMBFCBORContentBox::new(signed_data);
@@ -1686,9 +1766,9 @@ impl Store {
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = pc.sign(signer, signer.reserve_size())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
 
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
@@ -1716,9 +1796,11 @@ impl Store {
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = pc.sign_async(signer, signer.reserve_size()).await?;
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
 
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
@@ -1749,7 +1831,7 @@ impl Store {
         let claim_bytes = pc.data()?;
         let sig = signer.sign_remote(&claim_bytes).await?;
 
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
@@ -1774,8 +1856,8 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = pc.sign(signer, signer.reserve_size())?;
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
@@ -1810,8 +1892,10 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = pc.sign_async(signer, signer.reserve_size()).await?;
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
@@ -1857,8 +1941,8 @@ impl Store {
         )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = pc.sign(signer, signer.reserve_size())?;
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match self.finish_save_stream(
             jumbf_bytes,
@@ -1902,7 +1986,7 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = remote_signer.sign_remote(&pc.data()?).await?;
-        let sig_placeholder = pc.sign_placeholder(remote_signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
 
         match self.finish_save_to_memory(
             jumbf_bytes,
@@ -1942,8 +2026,8 @@ impl Store {
         let jumbf_bytes = self.start_save(asset_path, &temp_file, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = pc.sign(signer, signer.reserve_size())?;
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
@@ -1997,8 +2081,10 @@ impl Store {
         let jumbf_bytes = self.start_save(asset_path, &temp_file, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = pc.sign_async(signer, signer.reserve_size()).await?;
-        let sig_placeholder = pc.sign_placeholder(signer.reserve_size());
+        let sig = self
+            .sign_claim_async(pc, signer, signer.reserve_size())
+            .await?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
@@ -2054,7 +2140,7 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = remote_signer.sign_remote(&pc.data()?).await?;
 
-        let sig_placeholder = pc.sign_placeholder(remote_signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {

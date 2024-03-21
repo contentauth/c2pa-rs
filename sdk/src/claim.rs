@@ -13,7 +13,6 @@
 
 use std::{collections::HashMap, fmt, path::Path};
 
-use async_generic::async_generic;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -30,7 +29,6 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash,
     },
     asset_io::CAIRead,
-    cose_sign::cose_sign,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -49,11 +47,11 @@ use crate::{
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     utils::{
         base64,
-        hash_utils::{hash256, hash_by_alg, vec_compare, verify_by_alg},
+        hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     },
     validation_status,
     validator::ValidationInfo,
-    AsyncSigner, ClaimGeneratorInfo, Signer,
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -1959,52 +1957,6 @@ impl Claim {
             jumbf::labels::to_manifest_uri(manifest_label),
             Self::LABEL
         )
-    }
-
-    // Returns placeholder that will be searched for and replaced
-    // with actual signature data.
-    pub(crate) fn sign_placeholder(&self, min_reserve_size: usize) -> Vec<u8> {
-        let placeholder_str = format!("signature placeholder:{}", self.label());
-        let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
-
-        use std::cmp::max;
-        placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
-
-        placeholder
-    }
-
-    /// Sign the claim and return signature.
-    #[async_generic(async_signature(
-        &self,
-        signer: &dyn AsyncSigner,
-        box_size: usize
-    ))]
-    pub fn sign(&self, signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
-        let claim_bytes = self.data()?;
-
-        let sig = if _sync {
-            cose_sign(signer, &claim_bytes, box_size)
-        } else {
-            crate::cose_sign::cose_sign_async(signer, &claim_bytes, box_size).await
-        }?;
-
-        #[cfg(not(feature = "no_cose_verify"))]
-        if _sync {
-            // Sanity check: Ensure that this signature is valid.
-            let mut cose_log = OneShotStatusTracker::new();
-            verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log)
-        } else {
-            let mut cose_log = OneShotStatusTracker::new();
-            verify_cose_async(sig.clone(), claim_bytes, b"".to_vec(), false, &mut cose_log).await
-        }
-        .map_err(|e| {
-            log::error!(
-                "Signature that was just generated does not validate: {:#?}",
-                e
-            );
-            e
-        })?;
-        Ok(sig)
     }
 }
 

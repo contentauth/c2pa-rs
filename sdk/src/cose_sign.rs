@@ -25,6 +25,8 @@ use coset::{
 
 use crate::{
     claim::Claim,
+    cose_validator::verify_cose,
+    status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
@@ -54,11 +56,33 @@ use crate::{
     box_size: usize
 ))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
-    let claim: Claim = serde_cbor::from_slice(claim_bytes).map_err(|_err| Error::ClaimDecoding)?;
-    if _sync {
-        claim.sign(signer, box_size)
+    // Must be a valid claim.
+    let label = "dummy_label";
+    let _claim = Claim::from_data(label, claim_bytes)?;
+
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size)
     } else {
-        claim.sign_async(signer, box_size).await
+        cose_sign_async(signer, claim_bytes, box_size).await
+    };
+
+    match signed_bytes {
+        Ok(signed_bytes) => {
+            // Sanity check: Ensure that this signature is valid.
+            let mut cose_log = OneShotStatusTracker::new();
+
+            match verify_cose(&signed_bytes, claim_bytes, b"", false, &mut cose_log) {
+                Ok(r) => {
+                    if !r.validated {
+                        Err(Error::CoseSignature)
+                    } else {
+                        Ok(signed_bytes)
+                    }
+                }
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -346,6 +370,10 @@ mod tests {
 
         fn reserve_size(&self) -> usize {
             1024
+        }
+
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
         }
     }
 

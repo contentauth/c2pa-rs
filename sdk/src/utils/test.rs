@@ -284,6 +284,10 @@ impl crate::Signer for TestGoodSigner {
     fn reserve_size(&self) -> usize {
         1024
     }
+
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
+    }
 }
 
 pub(crate) struct AsyncTestGoodSigner {}
@@ -305,6 +309,13 @@ impl crate::AsyncSigner for AsyncTestGoodSigner {
 
     fn reserve_size(&self) -> usize {
         1024
+    }
+
+    async fn send_timestamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
     }
 }
 
