@@ -37,6 +37,7 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::add_provenance,
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -574,11 +575,53 @@ impl RemoteRefEmbed for JpegIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                pub const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?> <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" > </rdf:Description></rdf:RDF> </x:xmpmeta> "#;
+                let mut buf = Vec::new();
+                // read the whole asset
+                source_stream.rewind()?;
+                source_stream
+                    .read_to_end(&mut buf)
+                    .map_err(Error::IoError)?;
+                let mut jpeg =
+                    Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+                // first extract the xmp from APP1 markers
+                let app1_segs = jpeg.segments_by_marker(markers::APP1);
+                let mut xmp: String = app1_segs.filter_map(extract_xmp).collect();
+
+                // remove existing XMP segments
+                let segments = jpeg.segments_mut();
+                segments.retain(|seg| {
+                    !(seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE))
+                });
+
+                if xmp.is_empty() {
+                    xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                    // init with minimal xmp segment
+                    // todo: add format and other minimal metadata
+                };
+                let xmp = add_provenance(&xmp, &manifest_uri)?;
+                println!("xmp: {}", xmp);
+                let xmp_bytes = Bytes::from(xmp);
+                let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
+                segments.insert(1, segment);
+
+                output_stream.rewind()?;
+                jpeg.encoder()
+                    .write_to(output_stream)
+                    .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+                Ok(())
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
@@ -1125,6 +1168,45 @@ pub mod tests {
             .get_reader()
             .read_xmp(&mut file_reader)
             .unwrap();
+
+        assert!(read_xmp.contains(test_msg));
+    }
+
+    #[test]
+    fn test_xmp_read_write_stream() {
+        let source = crate::utils::test::fixture_path("CA.jpg");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+
+        let test_msg = "this some test xmp data";
+        let handler = JpegIO::new("");
+
+        let assetio_handler = handler.get_handler("jpg");
+
+        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+
+        let mut source_stream = std::fs::File::open(source).unwrap();
+        let mut output_stream = std::fs::File::create(&output).unwrap();
+        remote_ref_handler
+            .embed_reference_to_stream(
+                &mut source_stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_msg.to_string()),
+            )
+            .unwrap();
+
+        output_stream.flush().unwrap();
+        drop(output_stream);
+
+        // read back in XMP
+        let mut file_reader = std::fs::File::open(&output).unwrap();
+        let read_xmp = assetio_handler
+            .get_reader()
+            .read_xmp(&mut file_reader)
+            .unwrap();
+
+        //std::fs::copy(output, "../target/xmp_write.jpg").unwrap();
 
         assert!(read_xmp.contains(test_msg));
     }
