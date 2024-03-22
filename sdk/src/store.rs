@@ -5374,16 +5374,13 @@ pub mod tests {
                             // find box I am looking for
                             if box_name == "com.mycompany.myassertion" {
                                 if let Some(db) = next_box.data_box() {
-                                    let search_bytes = db.data;
+                                    let data_offset = db.offset_within_superbox(&sb).unwrap();
                                     let replace_bytes =
                                         r#"{"my_tag": "some value was replaced!!"}"#.to_string();
 
+                                    // I'm not checking here but data len must be same len as replacement bytes.
                                     let mut new_manifest_store = manifest_store.to_vec();
-                                    patch_bytes(
-                                        &mut new_manifest_store,
-                                        search_bytes,
-                                        replace_bytes.as_bytes(),
-                                    )?;
+                                    new_manifest_store.splice(data_offset..data_offset + replace_bytes.len(), replace_bytes.as_bytes().iter().cloned());
 
                                     return Ok(new_manifest_store);
                                 }
