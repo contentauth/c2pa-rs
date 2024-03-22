@@ -347,7 +347,7 @@ pub(crate) fn check_cert(
     // check cert values
     let tbscert = &signcert.tbs_certificate;
 
-    let is_self_signed = tbscert.is_ca() && tbscert.issuer_uid == tbscert.subject_uid;
+    let is_self_signed = tbscert.is_ca() && tbscert.issuer() == tbscert.subject();
 
     // self signed certs are disallowed
     if is_self_signed {

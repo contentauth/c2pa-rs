@@ -35,6 +35,7 @@ use crate::{
     cose_sign::cose_sign,
     cose_validator::{check_ocsp_status, verify_cose},
     error::{Error, Result},
+    external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
         self,
@@ -47,7 +48,7 @@ use crate::{
     },
     salt::DefaultSalt,
     settings::get_settings_value,
-    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
         hash_utils::{hash_sha256, HashRange},
@@ -2073,6 +2074,154 @@ impl Store {
         }
     }
 
+    /// This function is used to pre-generate a manifest as if it were added to input_stream. All values
+    /// are complete including the hash bindings, except for the signature.  The signature is completed during
+    /// the actual embedding using `embed_placed_manifest `.   The Signature box reserved size is based on the size required by
+    /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
+    /// in conjunction with `embed_placed_manifest`.  `embed_placed_manifest` will accept the manifest to sign and place
+    /// in the output.
+    pub fn get_placed_manifest(
+        &mut self,
+        reserve_size: usize,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+    ) -> Result<Vec<u8>> {
+        let intermediate_output: Vec<u8> = Vec::new();
+        let mut intermediate_stream = Cursor::new(intermediate_output);
+
+        self.start_save_stream(format, input_stream, &mut intermediate_stream, reserve_size)
+    }
+
+    /// Embed the manifest store into an asset. If a ManifestPatchCallback is present the caller
+    /// is given an opportunity to adjust most assertions.  This function will not generate hash
+    /// binding for the manifest.  It is assumed the user called get_box_hashed_embeddable_manifest
+    /// hash or provided a box hash binding.  
+    /// When called, the stream should contain an asset matching format.
+    /// on return, the stream will contain the new manifest signed with signer
+    /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+    pub fn embed_placed_manifest(
+        manifest_bytes: &[u8],
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+        manifest_callbacks: &[Box<dyn ManifestPatchCallback>],
+    ) -> Result<Vec<u8>> {
+        // todo: Consider how we would add XMP for this case
+
+        let disallowed_assertions = [
+            labels::DATA_HASH,
+            labels::BOX_HASH,
+            labels::BMFF_HASH,
+            labels::ACTIONS,
+            labels::INGREDIENT,
+        ];
+
+        let mut validation_log = DetailedStatusTracker::new();
+        let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
+
+        // todo: what kinds of validation can we do here since the file is not finailized;
+
+        let pc_mut = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // save the current assertions set so that we can check them after callback;
+        let claim_assertions = pc_mut.claim_assertion_store().clone();
+
+        let manifest_bytes_updated = if !manifest_callbacks.is_empty() {
+            let mut updated = manifest_bytes.to_vec();
+
+            // callback to all patch functions
+            for mpc in manifest_callbacks {
+                updated = mpc.patch_manifest(&updated)?;
+            }
+
+            // make sure the size is correct
+            if updated.len() != manifest_bytes.len() {
+                return Err(Error::OtherError("patched manifest size incorrect".into()));
+            }
+
+            // make sure we can load the patched manifest
+            let mut new_store = Store::from_jumbf(&updated, &mut validation_log)?;
+
+            let new_pc = new_store
+                .provenance_claim_mut()
+                .ok_or(Error::ClaimEncoding)?;
+
+            // make sure the claim has not changed
+            if !vec_compare(&pc_mut.data()?, &new_pc.data()?) {
+                return Err(Error::OtherError(
+                    "patched manifest changed the Claim structure".into(),
+                ));
+            }
+
+            // check to make sure assertion changes are OK and nothing else changed.
+            if claim_assertions.len() != new_pc.claim_assertion_store().len() {
+                return Err(Error::OtherError(
+                    "patched manifest assertion list has changed".into(),
+                ));
+            }
+
+            // get the list of assertions that need patching
+            for ca in claim_assertions {
+                if let Some(updated_ca) = new_pc.get_claim_assertion(&ca.label_raw(), ca.instance())
+                {
+                    // if hashes are different then this assertion has changed so attempt fixup
+                    if !vec_compare(ca.hash(), updated_ca.hash()) {
+                        if disallowed_assertions
+                            .iter()
+                            .find(|&&l| l == &updated_ca.label_raw())
+                            .is_some()
+                        {
+                            return Err(Error::OtherError(
+                                "patched manifest changed a disallowed assertion".into(),
+                            ));
+                        }
+
+                        // update original
+                        pc_mut.update_assertion(
+                            updated_ca.assertion().clone(),
+                            |_: &ClaimAssertion| true,
+                            |target_assertion: &ClaimAssertion, a: Assertion| {
+                                if target_assertion.assertion().data().len() == a.data().len() {
+                                    Ok(a)
+                                } else {
+                                    Err(Error::OtherError(
+                                        "patched manifest assertion size differ in size".into(),
+                                    ))
+                                }
+                            },
+                        )?;
+                    }
+                } else {
+                    return Err(Error::OtherError(
+                        "patched manifest assertion list has changed".into(),
+                    ));
+                }
+            }
+
+            store.to_jumbf_internal(signer.reserve_size())?
+        } else {
+            manifest_bytes.to_vec()
+        };
+
+        // sign the updated manfiest
+        let pc = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = store.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        match store.finish_save_stream(
+            manifest_bytes_updated,
+            format,
+            input_stream,
+            output_stream,
+            sig,
+            &sig_placeholder,
+        ) {
+            Ok((_, m)) => Ok(m),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Async RemoteSigner used to embed the claims store and  returns memory representation of the
     /// asset and manifest. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
@@ -2295,40 +2444,44 @@ impl Store {
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
+        let ah = match get_assetio_handler(format) {
+            Some(h) => h,
+            None => return Err(Error::XmpNotSupported),
+        };
+
+        let manifest_writer = match ah.get_writer(format) {
+            Some(h) => h,
+            None => return Err(Error::XmpNotSupported),
+        };
+
+        // clear manifest first since we cannot shrink streams
+        manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+
         // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         match pc.remote_manifest() {
             crate::claim::RemoteManifest::Remote(url) => {
-                if let Some(h) = get_assetio_handler(format) {
-                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
-                        // remove any previous c2pa manifest from the asset
-                        let tmp_output: Vec<u8> = Vec::new();
-                        let mut tmp_stream = Cursor::new(tmp_output);
+                if let Some(external_ref_writer) = ah.remote_ref_writer_ref() {
+                    let tmp_output: Vec<u8> = Vec::new();
+                    let mut tmp_stream = Cursor::new(tmp_output);
 
-                        if let Some(manifest_writer) = h.get_writer(format) {
-                            manifest_writer
-                                .remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+                    // add external ref if possible
+                    external_ref_writer.embed_reference_to_stream(
+                        &mut intermediate_stream,
+                        &mut tmp_stream,
+                        RemoteRefEmbedType::Xmp(url),
+                    )?;
 
-                            // add external ref if possible
-                            external_ref_writer.embed_reference_to_stream(
-                                &mut tmp_stream,
-                                &mut intermediate_stream,
-                                RemoteRefEmbedType::Xmp(url),
-                            )?;
-                        } else {
-                            return Err(Error::XmpNotSupported);
-                        }
-                    } else {
-                        return Err(Error::XmpNotSupported);
-                    }
+                    // swap streams
+                    let inner = tmp_stream.into_inner();
+                    intermediate_stream = Cursor::new(inner);
                 } else {
-                    return Err(Error::UnsupportedType);
+                    return Err(Error::XmpNotSupported);
                 }
             }
             _ => {
-                // just clone stream
                 input_stream.rewind()?;
-                std::io::copy(input_stream, &mut intermediate_stream)?;
+                intermediate_stream.rewind()?;
             }
         }
 
@@ -5196,6 +5349,125 @@ pub mod tests {
 
         let mut report = DetailedStatusTracker::new();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+    }
+
+    struct PlacedCallback {
+        path: String,
+    }
+
+    impl ManifestPatchCallback for PlacedCallback {
+        fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
+            use ::jumbf::parser::SuperBox;
+
+            if let Ok((_raw, sb)) = SuperBox::from_slice(manifest_store) {
+                let components: Vec<&str> = self.path.trim_start_matches("/").split('/').collect();
+
+                let mut current_box = &sb;
+                for component in components[1..].into_iter() {
+                    if let Some(next_box) = current_box.find_by_label(*component) {
+                        println!("{:?}", next_box);
+
+                        if let Some(box_name) = next_box.desc.label {
+                            // find box I am looking for
+                            if box_name == "com.mycompany.myassertion" {
+                                if let Some(db) = next_box.data_box() {
+                                    let search_bytes = db.data;
+                                    let replace_bytes =
+                                        r#"{"my_tag": "some value was replaced!!"}"#.to_string();
+
+                                    let mut new_manifest_store = manifest_store.to_vec();
+                                    patch_bytes(
+                                        &mut new_manifest_store,
+                                        search_bytes,
+                                        replace_bytes.as_bytes(),
+                                    )?;
+
+                                    return Ok(new_manifest_store);
+                                }
+                            }
+                        }
+                        current_box = next_box;
+                    } else {
+                        break;
+                    }
+                }
+                return Err(Error::NotFound);
+            } else {
+                Err(Error::JumbfParseError(JumbfParseError::InvalidJumbBox))
+            }
+        }
+    }
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_placed_manifest() {
+        use crate::jumbf::labels::to_normalized_uri;
+
+        let signer = temp_signer();
+
+        // test adding to actual image
+        let ap = fixture_path("C.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "C-placed.jpg");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let mut claim = create_test_claim().unwrap();
+
+        // add test assertion assertion with data I will replace
+        let my_content = r#"{"my_tag": "some value I will replace"}"#;
+        let my_label = "com.mycompany.myassertion";
+        let user = crate::assertions::User::new(my_label, my_content);
+        let my_assertion = claim.add_assertion(&user).unwrap();
+
+        store.commit_claim(claim).unwrap();
+
+        // get the embeddable manifest
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+        let placed_manifest = store
+            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
+            .unwrap();
+
+        // insert manifest into output asset
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&op)
+            .unwrap();
+        input_stream.rewind().unwrap();
+
+        // my manifest callback handler
+        // set some data needed by callback to do what it needs to
+        // for this example lets tell it which jumbf box we can to change
+        let my_assertion_path = to_normalized_uri(&to_absolute_uri(
+            &store.provenance_label().unwrap(),
+            &my_assertion.url(),
+        ));
+        let my_callback = PlacedCallback {
+            path: my_assertion_path,
+        };
+
+        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
+
+        // add manifest back into data
+        Store::embed_placed_manifest(
+            &placed_manifest,
+            "jpg",
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &callbacks,
+        )
+        .unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());

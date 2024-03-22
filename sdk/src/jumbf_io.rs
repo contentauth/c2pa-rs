@@ -13,7 +13,7 @@
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -116,7 +116,7 @@ pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) 
 }
 /// writes the jumbf data in store_bytes
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
-pub fn save_jumbf_to_stream(
+pub(crate) fn save_jumbf_to_stream(
     asset_type: &str,
     input_stream: &mut dyn CAIRead,
     output_stream: &mut dyn CAIReadWrite,
@@ -129,7 +129,11 @@ pub fn save_jumbf_to_stream(
 }
 
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
-pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn save_jumbf_to_memory(
+    asset_type: &str,
+    data: &[u8],
+    store_bytes: &[u8],
+) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
     let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
     let mut output_stream = Cursor::new(output_vec);
@@ -143,25 +147,25 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
     Ok(output_stream.into_inner())
 }
 
-pub fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
+pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
     ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
+pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
     ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
+pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
     ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
+pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
 
     CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
@@ -237,7 +241,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
 #[cfg(test)] // this only used in unit tests
-pub fn update_file_jumbf(
+pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],
     replace_bytes: &[u8],
@@ -257,11 +261,8 @@ pub fn update_file_jumbf(
 pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
-    match get_cailoader_handler(&ext) {
-        Some(asset_handler) => {
-            let mut f = File::open(in_path)?;
-            asset_handler.read_cai(&mut f)
-        }
+    match get_assetio_handler(&ext) {
+        Some(asset_handler) => asset_handler.read_cai_store(in_path),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -291,7 +292,7 @@ pub fn object_locations_from_stream(
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
-pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
+pub(crate) fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.remove_cai_store(path),

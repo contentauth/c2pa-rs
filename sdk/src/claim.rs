@@ -859,7 +859,7 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    fn update_assertion<MatchFn, PatchFn>(
+    pub(crate) fn update_assertion<MatchFn, PatchFn>(
         &mut self,
         replace_with: Assertion,
         match_fn: MatchFn,

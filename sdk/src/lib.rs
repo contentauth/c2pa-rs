@@ -93,6 +93,7 @@ pub mod create_signer;
 mod error;
 pub use error::{Error, Result};
 
+pub mod external_manifest;
 mod ingredient;
 pub use ingredient::Ingredient;
 pub mod jumbf_io;
@@ -143,6 +144,7 @@ pub(crate) mod salt;
 pub mod settings;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
+pub use store::Store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;
 pub(crate) mod utils;
