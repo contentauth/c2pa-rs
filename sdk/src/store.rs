@@ -5368,8 +5368,6 @@ pub mod tests {
                 let mut current_box = &sb;
                 for component in components[1..].into_iter() {
                     if let Some(next_box) = current_box.find_by_label(*component) {
-                        println!("{:?}", next_box);
-
                         if let Some(box_name) = next_box.desc.label {
                             // find box I am looking for
                             if box_name == "com.mycompany.myassertion" {
