@@ -639,7 +639,13 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(_) | AssertionData::Cbor(_) => {
+                        AssertionData::Cbor(_) => {
+                            let value = assertion.as_json_object()?;
+                            let ma = ManifestAssertion::new(base_label, value)
+                                .set_instance(claim_assertion.instance());
+                            manifest.assertions.push(ma);
+                        }
+                        AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
