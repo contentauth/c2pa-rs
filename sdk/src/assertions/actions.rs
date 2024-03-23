@@ -158,8 +158,7 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) ||
-        self.changes.is_some() // only defined for v2
+        ) || self.changes.is_some() // only defined for v2
     }
 
     /// Returns the label for this action.
