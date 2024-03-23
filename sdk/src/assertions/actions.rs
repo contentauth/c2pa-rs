@@ -158,7 +158,8 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        ) || self.changed.is_some() // was a String in v1 but never used so presume v2 if see it
+        ) ||
+        self.changes.is_some() // only defined for v2
     }
 
     /// Returns the label for this action.
@@ -249,7 +250,6 @@ impl Action {
 
     /// Sets the list of the parts of the resource that were changed
     /// since the previous event history.
-    #[deprecated(since = "0.33.0", note = "Use add_changed instead")]
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
@@ -523,6 +523,7 @@ pub mod tests {
             .unwrap()
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
+            .set_changed(Some(&["this", "that"].to_vec()))
             .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
             .set_actors(Some(
                 &[Actor::new(

@@ -1484,9 +1484,7 @@ pub(crate) mod tests {
         let store = manifest.to_store().expect("valid action to_store");
         let m2 = Manifest::from_store(&store, &store.provenance_label().unwrap(), None)
             .expect("from_store");
-        //println!("{m2:?}");
-        // todo:: this looks correct, but it isn't since it is stored as a JSON assertion instead of CBOR
-        let actions: Actions = m2.find_assertion("c2pa.actions").expect("find_assertion");
+        let actions: Actions = m2.find_assertion("c2pa.actions.v2").expect("find_assertion");
         assert_eq!(actions.actions()[0].action(), "c2pa.edited");
         assert_eq!(actions.actions()[1].action(), "c2pa.dubbed");
     }
