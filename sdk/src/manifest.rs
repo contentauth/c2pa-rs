@@ -1424,6 +1424,68 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    /// test assertion validation on actions, should generate an error
+    fn ws_valid_labeled_assertion() {
+        // copy an image to use as our target for embedding
+        let ap = fixture_path(TEST_SMALL_JPEG);
+        let temp_dir = tempdir().expect("temp dir");
+        let test_output = temp_dir_path(&temp_dir, "ws_bad_assertion.jpg");
+        std::fs::copy(ap, test_output).expect("copy");
+
+        let mut manifest = test_manifest();
+
+        manifest
+            .add_labeled_assertion(
+                "c2pa.actions",
+                &serde_json::json!({
+                    "actions": [
+                        {
+                            "action": "c2pa.edited",
+                            "parameters": {
+                                "description": "gradient",
+                                "name": "any value"
+                            },
+                            "softwareAgent": "TestApp"
+                        },
+                        {
+                            "action": "c2pa.dubbed",
+                            "changes": [
+                                {
+                                    "description": "translated to klingon",
+                                    "region": [
+                                        {
+                                            "type": "temporal",
+                                            "time": {}
+                                        },
+                                        {
+                                            "type": "identified",
+                                            "item": {
+                                                "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                                                "value": "lips"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }),
+            )
+            .expect("add_assertion");
+
+        // convert to store
+        let store = manifest.to_store().expect("valid action to_store");
+        let m2 = Manifest::from_store(&store, &store.provenance_label().unwrap(), None)
+            .expect("from_store");
+        //println!("{m2:?}");
+        // todo:: this looks correct, but it isn't since it is stored as a JSON assertion instead of CBOR
+        let actions: Actions = m2.find_assertion("c2pa.actions").expect("find_assertion");
+        assert_eq!(actions.actions()[0].action(), "c2pa.edited");
+        assert_eq!(actions.actions()[1].action(), "c2pa.dubbed");
+    }
+
+    #[test]
     fn test_verifiable_credential() {
         let mut manifest = test_manifest();
         let vc: serde_json::Value = serde_json::from_str(TEST_VC).unwrap();
@@ -1974,7 +2036,25 @@ pub(crate) mod tests {
                                     "identifier": "sample1.svg"
                                 },
                                 "something": "else"
-                            }
+                            },
+                            "changes": [
+                                {
+                                    "region" : [
+                                        {
+                                            "type" : "temporal",
+                                            "time" : {}
+                                        },
+                                        {
+                                            "type" : "identified",
+                                            "item" : {
+                                              "identifier" : "https://bioportal.bioontology.org/ontologies/FMA",
+                                              "value" : "lips"
+                                            }
+                                        }
+                                    ],
+                                    "description": "lip synced area"
+                                }
+                            ]
                         }
                     ],
                     "templates": [

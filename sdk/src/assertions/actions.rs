@@ -105,11 +105,17 @@ pub struct Action {
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     ///
+    /// This is deprecated in favor of the `changes` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed: Option<String>,
+
+    /// A list of the regions of interest of the resource that were changed.
+    ///
     /// If not present, presumed to be undefined.
     /// When tracking changes and the scope of the changed components is unknown,
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changed: Option<String>,
+    changes: Option<Vec<serde_json::Value>>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
     #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
@@ -152,7 +158,7 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        )
+        ) || self.changed.is_some() // was a String in v1 but never used so presume v2 if see it
     }
 
     /// Returns the label for this action.
@@ -243,6 +249,7 @@ impl Action {
 
     /// Sets the list of the parts of the resource that were changed
     /// since the previous event history.
+    #[deprecated(since = "0.33.0", note = "Use add_changed instead")]
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
@@ -516,7 +523,6 @@ pub mod tests {
             .unwrap()
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
-            .set_changed(Some(&["this", "that"].to_vec()))
             .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
             .set_actors(Some(
                 &[Actor::new(
@@ -703,19 +709,19 @@ pub mod tests {
     fn test_json_v2_round_trip() {
         let json = serde_json::json!({
             "actions": [
-                  {
+                {
                     "action": "c2pa.edited",
                     "parameters": {
-                      "description": "gradient",
-                      "name": "any value"
+                        "description": "gradient",
+                        "name": "any value"
                     },
                     "softwareAgent": "TestApp"
-                  },
-                  {
+                },
+                {
                     "action": "c2pa.opened",
                     "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
-                      "description": "import"
+                        "description": "import"
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {
@@ -723,10 +729,32 @@ pub mod tests {
                         "version": "1.0",
                         "something": "else"
                     },
-                  },
-                  {
+                },
+                {
                     "action": "com.joesphoto.filter",
-                  }
+                },
+                {
+                    "action": "c2pa.dubbed",
+                    "changes": [
+                        {
+                            "description": "translated to klingon",
+                            "region": [
+                                {
+                                    "type": "temporal",
+                                    "time": {}
+                                },
+                                {
+                                    "type": "identified",
+                                    "item": {
+                                        "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                                        "value": "lips"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+
             ],
             "templates": [
                 {
@@ -754,6 +782,12 @@ pub mod tests {
         assert_eq!(
             result.actions[0].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())
+        );
+        assert_eq!(
+            result.actions[3].changes.as_deref().unwrap()[0]
+                .get("description")
+                .unwrap(),
+            "translated to klingon"
         );
     }
 }
