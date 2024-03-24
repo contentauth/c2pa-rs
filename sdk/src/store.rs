@@ -18,6 +18,7 @@ use std::{
 #[cfg(feature = "file_io")]
 use std::{fs, path::Path};
 
+use async_generic::async_generic;
 use log::error;
 
 use crate::{
@@ -2091,6 +2092,16 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+
+    #[async_generic(
+        async_signature(
+            manifest_bytes: &[u8],
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn AsyncSigner,
+        manifest_callbacks: &[Box<dyn ManifestPatchCallback>],
+        ))]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,
@@ -2242,7 +2253,13 @@ impl Store {
 
         // sign the updated manfiest
         let pc = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = store.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = if _sync {
+            store.sign_claim(pc, signer, signer.reserve_size())?
+        } else {
+            store
+                .sign_claim_async(pc, signer, signer.reserve_size())
+                .await?
+        };
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match store.finish_save_stream(
