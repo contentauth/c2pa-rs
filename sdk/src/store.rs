@@ -1292,14 +1292,10 @@ impl Store {
                     };
 
                     // get the 1.1-1.2 box hash
-                    let no_hash: Vec<u8> = Vec::new();
-                    let box_hash = store
-                        .manifest_box_hash_cache
-                        .get(&label)
-                        .unwrap_or(&no_hash);
+                    let box_hash = store.get_manifest_box_hash(ingredient);
 
                     // test for 1.1 hash then 1.0 version
-                    if !vec_compare(&c2pa_manifest.hash(), box_hash)
+                    if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
@@ -1410,14 +1406,10 @@ impl Store {
                     };
 
                     // get the 1.1-1.2 box hash
-                    let no_hash: Vec<u8> = Vec::new();
-                    let box_hash = store
-                        .manifest_box_hash_cache
-                        .get(&label)
-                        .unwrap_or(&no_hash);
+                    let box_hash = store.get_manifest_box_hash(ingredient);
 
                     // test for 1.1 hash then 1.0 version
-                    if !vec_compare(&c2pa_manifest.hash(), box_hash)
+                    if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
@@ -2141,17 +2133,62 @@ impl Store {
             }
 
             // make sure we can load the patched manifest
-            let mut new_store = Store::from_jumbf(&updated, &mut validation_log)?;
+            let new_store = Store::from_jumbf(&updated, &mut validation_log)?;
 
-            let new_pc = new_store
-                .provenance_claim_mut()
-                .ok_or(Error::ClaimEncoding)?;
+            let new_pc = new_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
             // make sure the claim has not changed
             if !vec_compare(&pc_mut.data()?, &new_pc.data()?) {
                 return Err(Error::OtherError(
                     "patched manifest changed the Claim structure".into(),
                 ));
+            }
+
+            // check that other manifests have not changed
+            // check expected ingredients against those in the new updated store
+            for i in pc_mut.ingredient_assertions() {
+                let ingredient_assertion = Ingredient::from_assertion(i)?;
+
+                // is this an ingredient
+                if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
+                    let label = Store::manifest_label_from_path(&c2pa_manifest.url());
+
+                    if let Some(ingredient) = new_store.get_claim(&label) {
+                        let alg = match c2pa_manifest.alg() {
+                            Some(a) => a,
+                            None => ingredient.alg().to_owned(),
+                        };
+
+                        // get the 1.1-1.2 box hash
+                        let box_hash = new_store.get_manifest_box_hash(&ingredient.clone());
+
+                        // test for 1.1 hash then 1.0 version
+                        if !vec_compare(&c2pa_manifest.hash(), &box_hash)
+                            && !verify_by_alg(
+                                &alg,
+                                &c2pa_manifest.hash(),
+                                &ingredient.data()?,
+                                None,
+                            )
+                        {
+                            let log_item = log_item!(
+                                &c2pa_manifest.url(),
+                                "ingredient hash incorrect",
+                                "embed_placed_manifest"
+                            )
+                            .error(Error::HashMismatch(
+                                "ingredient hash does not match found ingredient".to_string(),
+                            ))
+                            .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
+                            validation_log.log(
+                                log_item,
+                                Some(Error::HashMismatch(
+                                    "ingredient hash does not match found ingredient".to_string(),
+                                )),
+                            )?;
+                        }
+                    }
+                }
             }
 
             // check to make sure assertion changes are OK and nothing else changed.
@@ -2169,8 +2206,7 @@ impl Store {
                     if !vec_compare(ca.hash(), updated_ca.hash()) {
                         if disallowed_assertions
                             .iter()
-                            .find(|&&l| l == &updated_ca.label_raw())
-                            .is_some()
+                            .any(|&l| l == updated_ca.label_raw())
                         {
                             return Err(Error::OtherError(
                                 "patched manifest changed a disallowed assertion".into(),
@@ -5363,11 +5399,11 @@ pub mod tests {
             use ::jumbf::parser::SuperBox;
 
             if let Ok((_raw, sb)) = SuperBox::from_slice(manifest_store) {
-                let components: Vec<&str> = self.path.trim_start_matches("/").split('/').collect();
+                let components: Vec<&str> = self.path.trim_start_matches('/').split('/').collect();
 
                 let mut current_box = &sb;
-                for component in components[1..].into_iter() {
-                    if let Some(next_box) = current_box.find_by_label(*component) {
+                for component in components[1..].iter() {
+                    if let Some(next_box) = current_box.find_by_label(component) {
                         if let Some(box_name) = next_box.desc.label {
                             // find box I am looking for
                             if box_name == "com.mycompany.myassertion" {
@@ -5378,7 +5414,10 @@ pub mod tests {
 
                                     // I'm not checking here but data len must be same len as replacement bytes.
                                     let mut new_manifest_store = manifest_store.to_vec();
-                                    new_manifest_store.splice(data_offset..data_offset + replace_bytes.len(), replace_bytes.as_bytes().iter().cloned());
+                                    new_manifest_store.splice(
+                                        data_offset..data_offset + replace_bytes.len(),
+                                        replace_bytes.as_bytes().iter().cloned(),
+                                    );
 
                                     return Ok(new_manifest_store);
                                 }
@@ -5389,12 +5428,13 @@ pub mod tests {
                         break;
                     }
                 }
-                return Err(Error::NotFound);
+                Err(Error::NotFound)
             } else {
                 Err(Error::JumbfParseError(JumbfParseError::InvalidJumbBox))
             }
         }
     }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_placed_manifest() {
@@ -5422,7 +5462,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // get the embeddable manifest
-        let mut input_stream = std::fs::File::open(&ap).unwrap();
+        let mut input_stream = std::fs::File::open(ap).unwrap();
         let placed_manifest = store
             .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
             .unwrap();
