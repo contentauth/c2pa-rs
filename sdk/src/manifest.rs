@@ -928,7 +928,9 @@ impl Manifest {
     }
 
     // Convert a Manifest into a Store
-    pub(crate) fn to_store(&self) -> Result<Store> {
+    // TEMPORARY while working on external manifest: make this public
+    // SHOULD BE pub(crate)
+    pub fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
         // commit the claim
         let mut store = Store::new();
