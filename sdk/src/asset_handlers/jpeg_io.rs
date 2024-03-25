@@ -37,7 +37,7 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::add_provenance,
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -581,7 +581,6 @@ impl RemoteRefEmbed for JpegIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                pub const MIN_XMP: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?> <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" > </rdf:Description></rdf:RDF> </x:xmpmeta> "#;
                 let mut buf = Vec::new();
                 // read the whole asset
                 source_stream.rewind()?;
@@ -602,9 +601,10 @@ impl RemoteRefEmbed for JpegIO {
                 });
 
                 if xmp.is_empty() {
+                    // Init with minimal xmp segment
+                    // JPEG APP1 segment with XMP are defined with this null terminated string
+                    // todo: add format and other minimal metadata to xmp ?
                     xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
-                    // init with minimal xmp segment
-                    // todo: add format and other minimal metadata
                 };
                 let xmp = add_provenance(&xmp, &manifest_uri)?;
                 println!("xmp: {}", xmp);
@@ -1078,6 +1078,9 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
     use super::*;
     #[test]
     fn test_extract_xmp() {
@@ -1172,12 +1175,10 @@ pub mod tests {
         assert!(read_xmp.contains(test_msg));
     }
 
-    #[test]
-    fn test_xmp_read_write_stream() {
-        let source = crate::utils::test::fixture_path("CA.jpg");
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_xmp_read_write_stream() {
+        let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
         let test_msg = "this some test xmp data";
         let handler = JpegIO::new("");
@@ -1186,8 +1187,8 @@ pub mod tests {
 
         let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
 
-        let mut source_stream = std::fs::File::open(source).unwrap();
-        let mut output_stream = std::fs::File::create(&output).unwrap();
+        let mut source_stream = Cursor::new(source_bytes.to_vec());
+        let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
             .embed_reference_to_stream(
                 &mut source_stream,
@@ -1196,17 +1197,17 @@ pub mod tests {
             )
             .unwrap();
 
-        output_stream.flush().unwrap();
-        drop(output_stream);
+        output_stream.set_position(0);
 
         // read back in XMP
-        let mut file_reader = std::fs::File::open(&output).unwrap();
         let read_xmp = assetio_handler
             .get_reader()
-            .read_xmp(&mut file_reader)
+            .read_xmp(&mut output_stream)
             .unwrap();
 
-        //std::fs::copy(output, "../target/xmp_write.jpg").unwrap();
+        output_stream.set_position(0);
+
+        //std::fs::write("../target/xmp_write.jpg", output_stream.into_inner()).unwrap();
 
         assert!(read_xmp.contains(test_msg));
     }
