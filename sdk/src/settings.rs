@@ -222,7 +222,7 @@ impl Settings {
             "json5" => FileFormat::Json5,
             "ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
-            "yaml" => FileFormat::Yaml,
+            //"yaml" => FileFormat::Yaml,
             "ron" => FileFormat::Ron,
             _ => return Err(Error::UnsupportedType),
         };
