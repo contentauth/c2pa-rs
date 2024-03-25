@@ -71,7 +71,7 @@ chrono = { version = "0.4.27", default-features = false, features = [
 	"wasmbind",
 ] }
 ciborium = "0.2.0"
-config = "0.14.0"
+config = {version = "0.14.0", features = ["json", "json5", "toml"]}
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"

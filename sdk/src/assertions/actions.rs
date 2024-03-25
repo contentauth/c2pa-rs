@@ -104,7 +104,6 @@ pub struct Action {
     software_agent: Option<SoftwareAgent>,
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
-    ///
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
 
