@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.31.1
+_25 March 2024_
+
+* Adds Action changes field as option vec of serde_json value ([#431](https://github.com/contentauth/c2pa-rs/pull/431))
+
 ## 0.31.0
 _13 March 2024_
 
