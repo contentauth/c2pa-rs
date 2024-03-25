@@ -105,7 +105,6 @@ pub struct Action {
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
     ///
-    /// This is deprecated in favor of the `changes` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<String>,
 
