@@ -607,7 +607,6 @@ impl RemoteRefEmbed for JpegIO {
                     xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
                 };
                 let xmp = add_provenance(&xmp, &manifest_uri)?;
-                println!("xmp: {}", xmp);
                 let xmp_bytes = Bytes::from(xmp);
                 let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
                 segments.insert(1, segment);
