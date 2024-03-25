@@ -251,6 +251,7 @@ fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
         .success()
         .stdout(str::contains("ingredients.jpg"))
         .stdout(str::contains("test ingredient"))
+        .stdout(str::contains("temporal"))
         .stdout(str::contains("earth_apollo17.jpg"));
     Ok(())
 }

@@ -18,16 +18,70 @@
         {
             "label": "c2pa.actions",
             "data": {
-                "actions": [{
-                    "action": "c2pa.created",
-                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
-                    "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
-                    "softwareAgent": {
-                        "name": "TestApp",
-                        "version": "1.0",
-                        "something": "else"
+                "actions": [
+                    {
+                        "action": "c2pa.created",
+                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "something": "else"
+                        }
+                    },
+                    {
+                        "action": "c2pa.opened",
+                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "parameters": {
+                            "description": "import"
+                        },
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            },
+                            "something": "else"
+                        },
+                        "changes": [
+                            {
+                                "region" : [
+                                    {
+                                        "type" : "temporal",
+                                        "time" : {}
+                                    },
+                                    {
+                                        "type" : "identified",
+                                        "item" : {
+                                        "identifier" : "https://bioportal.bioontology.org/ontologies/FMA",
+                                        "value" : "lips"
+                                        }
+                                    }
+                                ],
+                                "description": "lip synced area"
+                            }
+                        ]
+                    },
+                    {
+                        "action" : "c2pa.edited",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits",
+                        "changes" : [
+                            {
+                                "region" : [
+                                    {
+                                        "type" : "identified",
+                                        "item" : {
+                                            "identifier" : "track_id",
+                                            "value" : "transcript"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
                     }
-                }]
+                ]
             }
         },
         {
@@ -41,10 +95,11 @@
                         "name": "Joe Bloggs"
                     }
                 ]
-            }
+            },
+            "kind": "Json"
         },
         {
-            "label": "c2pa.training-mining",
+            "label": "cawg.training-mining",
             "data": {
                 "entries": {
                     "c2pa.ai_training" : {
@@ -74,3 +129,4 @@
         "C.jpg", "ingredient/ingredient.json"
     ]
 }
+
