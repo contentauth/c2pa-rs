@@ -1242,7 +1242,7 @@ impl Manifest {
         let mut store = self.to_store()?;
         let mut cm = store.get_box_hashed_embeddable_manifest(signer)?;
         if let Some(format) = format {
-            cm = store.get_composed_manifest(&cm, format)?;
+            cm = Store::get_composed_manifest(&cm, format)?;
         }
         Ok(cm)
     }
