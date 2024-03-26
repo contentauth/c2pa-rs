@@ -20,7 +20,8 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, settings, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
+        create_signer, settings, Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore,
+        Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -209,6 +210,113 @@ mod integration_1 {
         } else {
             panic!("no manifest in store");
         }
+        Ok(())
+    }
+
+    struct PlacedCallback {
+        path: String,
+    }
+
+    impl ManifestPatchCallback for PlacedCallback {
+        fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {
+            use ::jumbf::parser::SuperBox;
+
+            if let Ok((_raw, sb)) = SuperBox::from_slice(manifest_store) {
+                if let Some(my_box) = sb.find_by_label(&self.path) {
+                    // find box I am looking for
+                    if let Some(db) = my_box.data_box() {
+                        let data_offset = db.offset_within_superbox(&sb).unwrap();
+                        let replace_bytes = r#"{"my_tag": "some value replaced!"}"#.to_string();
+
+                        if db.data.len() != replace_bytes.len() {
+                            return Err(Error::OtherError("replacement data size mismatch".into()));
+                        }
+
+                        // sanity check to make sure offset code is working
+                        let offset = memchr::memmem::find(manifest_store, db.data).unwrap();
+                        if offset != data_offset {
+                            return Err(Error::OtherError("data box offset incorrect".into()));
+                        }
+
+                        let mut new_manifest_store = manifest_store.to_vec();
+                        new_manifest_store.splice(
+                            data_offset..data_offset + replace_bytes.len(),
+                            replace_bytes.as_bytes().iter().cloned(),
+                        );
+
+                        return Ok(new_manifest_store);
+                    }
+                }
+
+                Err(Error::NotFound)
+            } else {
+                Err(Error::OtherError("could not parse JUMBF".into()))
+            }
+        }
+    }
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_placed_manifest() -> Result<()> {
+        // set up parent and destination paths
+
+        use std::io::Seek;
+        let dir = tempdir()?;
+        let output_path = dir.path().join("test_file.jpg");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("manifest.json");
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("earth_apollo17.jpg");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut manifest = Manifest::from_json(&json)?;
+        manifest.with_base_path(fixture_path.canonicalize()?)?;
+
+        // sign and embed into the target file
+        let signer = get_temp_signer();
+
+        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output_path)
+            .unwrap();
+
+        // get placed manifest
+        let (placed_manifest, label) = manifest
+            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
+            .unwrap();
+
+        // my manifest callback handler
+        // set some data needed by callback to do what it needs to
+        // for this example let's tell it which jumbf box we can to change
+        // There is currently no what to get this directly from Manifest so I am using a hack
+        // to get_placed_manifest to return the manifest UUID.
+        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
+
+        let my_callback = PlacedCallback {
+            path: path.to_string(),
+        };
+
+        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
+
+        // add manifest back into data
+        input_stream.rewind().unwrap();
+        Manifest::embed_placed_manifest(
+            &placed_manifest,
+            "jpg",
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &callbacks,
+        )
+        .unwrap();
+
         Ok(())
     }
 }

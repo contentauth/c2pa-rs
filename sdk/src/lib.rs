@@ -93,7 +93,9 @@ pub mod create_signer;
 mod error;
 pub use error::{Error, Result};
 
-pub mod external_manifest;
+mod external_manifest;
+pub use external_manifest::ManifestPatchCallback;
+
 mod ingredient;
 pub use ingredient::Ingredient;
 pub mod jumbf_io;

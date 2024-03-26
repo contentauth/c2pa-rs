@@ -37,7 +37,7 @@ use crate::{
     salt::DefaultSalt,
     store::Store,
     ClaimGeneratorInfo, HashRange, Ingredient, ManifestAssertion, ManifestAssertionKind,
-    RemoteSigner, Signer,
+    ManifestPatchCallback, RemoteSigner, Signer,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -1245,6 +1245,48 @@ impl Manifest {
             cm = store.get_composed_manifest(&cm, format)?;
         }
         Ok(cm)
+    }
+
+    /// Generate a placed manifest.  The returned manifest is complete
+    /// as if it were inserted into the asset specified by input_stream
+    /// expect that it has not been placed into an output asset and has not
+    /// been signed.  Use embed_placed_manifest to insert into an asset
+    /// referenced by input_stream
+    pub fn get_placed_manifest(
+        &mut self,
+        reserve_size: usize,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+    ) -> Result<(Vec<u8>, String)> {
+        let mut store = self.to_store()?;
+
+        Ok((
+            store.get_placed_manifest(reserve_size, format, input_stream)?,
+            store.provenance_label().ok_or(Error::NotFound)?,
+        ))
+    }
+
+    /// Signs and embeds the manifest specified by manifest_bytes into output_stream. format
+    /// specifies the format of the asset. The input_stream should point to the same asset
+    /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
+    /// traits to make any modifications to assertions.  The callbacks are processed before
+    /// the manifest is signed.  
+    pub fn embed_placed_manifest(
+        manifest_bytes: &[u8],
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+        manifest_callbacks: &[Box<dyn ManifestPatchCallback>],
+    ) -> Result<Vec<u8>> {
+        Store::embed_placed_manifest(
+            manifest_bytes,
+            format,
+            input_stream,
+            output_stream,
+            signer,
+            manifest_callbacks,
+        )
     }
 }
 

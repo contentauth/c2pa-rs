@@ -241,6 +241,7 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
 #[cfg(test)] // this only used in unit tests
+#[allow(dead_code)]
 pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],
@@ -292,6 +293,7 @@ pub fn object_locations_from_stream(
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
+#[allow(dead_code)]
 pub(crate) fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
