@@ -301,18 +301,20 @@ impl AssertionBase for BoxHash {
     }
 }
 
+#[cfg(feature = "file_io")]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    #[cfg(test)]
     use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
 
     #[test]
     fn test_hash_verify_jpg() {
         let ap = fixture_path("CA.jpg");
 
-        let bhp = get_assetio_handler_from_path(&ap)
+        let bhp = crate::jumbf_io::get_assetio_handler_from_path(&ap)
             .unwrap()
             .asset_box_hash_ref()
             .unwrap();

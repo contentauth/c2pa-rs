@@ -114,9 +114,9 @@ mod integration_v2 {
 
         // extract a thumbnail image from the ManifestStore
         let mut thumbnail = Cursor::new(Vec::new());
-        if let Some(manifest) = reader.active_manifest() {
+        if let Some(manifest) = reader.active() {
             if let Some(thumbnail_ref) = manifest.thumbnail_ref() {
-                reader.resource(&thumbnail_ref.identifier, &mut thumbnail)?;
+                reader.resource_to_stream(&thumbnail_ref.identifier, &mut thumbnail)?;
                 println!(
                     "wrote thumbnail {} of size {}",
                     thumbnail_ref.format,
@@ -127,8 +127,8 @@ mod integration_v2 {
 
         println!("{}", reader.json());
         #[cfg(not(target_arch = "wasm32"))] // todo: remove this check when wasm supports ed25519
-        assert!(reader.status().is_none());
-        assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
+        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.active().unwrap().title().unwrap(), title);
 
         Ok(())
     }

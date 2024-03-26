@@ -37,7 +37,7 @@
 //! let manifest_store = Reader::from_file("tests/fixtures/C.jpg")?;
 //! println!("{}", manifest_store.json());
 //!
-//! if let Some(manifest) = manifest_store.active_manifest() {
+//! if let Some(manifest) = manifest_store.active() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
 //!         println!("{}\n", action.action());
@@ -76,7 +76,7 @@
 //!
 //! // embed a manifest using the signer
 //! std::fs::remove_file("target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//! builder.sign_file("tests/fixtures/C.jpg", "target/tmp/lib_sign.jpg", &*signer)?;
+//! builder.sign_file("tests/fixtures/C.jpg", "../target/tmp/lib_sign.jpg", &*signer)?;
 //! # Ok(())
 //! # }
 //! ```

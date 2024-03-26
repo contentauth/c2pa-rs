@@ -45,6 +45,16 @@ impl Reader {
     /// A reader for the manifest store
     /// # Errors
     /// If the stream is not a valid manifest store
+    /// validation status should be checked for non severe errors
+    /// # Example
+    /// ```no_run
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa::Reader;
+    /// let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg").to_vec());
+    /// let reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+    /// println!("{}", reader.json());
+    /// ```
     #[async_generic(async_signature(
         format: &str,
         stream: &mut dyn CAIRead,
@@ -62,6 +72,20 @@ impl Reader {
     }
 
     /// Create a manifest store Reader from bytes
+    /// # Arguments
+    /// * `format` - The format of the bytes
+    /// * `bytes` - The bytes to read from
+    /// # Returns
+    /// A reader for the manifest store
+    /// # Errors
+    /// If the bytes are do not contain a manifest store
+    /// validation status should be checked for non severe errors
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let bytes = include_bytes!("../../tests/fixtures/CA.jpg").to_vec();
+    /// let reader = Reader::from_bytes("image/jpeg", &bytes).unwrap();
+    /// ```
     pub fn from_bytes(format: &str, bytes: &[u8]) -> Result<Reader> {
         let mut stream = Cursor::new(bytes);
         Self::from_stream(format, &mut stream)
@@ -69,6 +93,22 @@ impl Reader {
 
     #[cfg(feature = "file_io")]
     /// Create a manifest store Reader from a file
+    /// # Arguments
+    /// * `path` - The path to the file
+    /// # Returns
+    /// A reader for the manifest store
+    /// # Errors
+    /// If the file is not a valid manifest store
+    /// validation status should be checked for non severe errors
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// ```
+    /// # Note
+    /// If the file does not have a manifest store, the function will check for a sidecar manifest
+    /// with the same name and a .c2pa extension
+    /// If the sidecar manifest exists, it will be used instead
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
@@ -137,25 +177,31 @@ impl Reader {
     }
 
     /// Get the validation status of the manifest store
-    pub fn status(&self) -> Option<&[ValidationStatus]> {
+    /// # Returns
+    /// The validation status of the manifest store
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let reader =
+    ///     Reader::from_bytes("image/jpeg", include_bytes!("../../tests/fixtures/CA.jpg")).unwrap();
+    /// let status = reader.validation_status();
+    /// ```
+    /// # Note
+    /// The validation status should be checked for non severe errors`
+    pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.manifest_store.validation_status()
     }
 
     /// Get the active manifest
     /// # Returns
     /// The active manifest if it exists
-    pub fn active_manifest(&self) -> Option<&Manifest> {
+    pub fn active(&self) -> Option<&Manifest> {
         self.manifest_store.get_active()
     }
 
     /// Get the active manifest label
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
-    }
-
-    /// Return a Manifest for a given label (backward compatibility)
-    pub fn get_active(&self) -> Option<&Manifest> {
-        self.manifest_store.get_active()
     }
 
     /// Return a Manifest for a given label
@@ -175,7 +221,7 @@ impl Reader {
     /// The number of bytes written
     /// # Errors
     /// If the resource does not exist
-    pub fn resource(&self, uri: &str, stream: &mut dyn CAIReadWrite) -> Result<usize> {
+    pub fn resource_to_stream(&self, uri: &str, stream: &mut dyn CAIReadWrite) -> Result<usize> {
         self.manifest_store
             .get_resource(uri, stream)
             .map(|size| size as usize)
