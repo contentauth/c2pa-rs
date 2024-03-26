@@ -226,8 +226,8 @@ mod integration_1 {
                     // find box I am looking for
                     if let Some(db) = my_box.data_box() {
                         let data_offset = db.offset_within_superbox(&sb).unwrap();
-                        let replace_bytes = r#"{"my_tag": "some value replaced!"}"#.to_string();
-
+                        let replace_bytes = r#"{"some_tag": "some value is replaced"}"#;
+                        
                         if db.data.len() != replace_bytes.len() {
                             return Err(Error::OtherError("replacement data size mismatch".into()));
                         }
