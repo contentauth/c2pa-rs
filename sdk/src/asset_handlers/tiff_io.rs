@@ -32,6 +32,7 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 const II: [u8; 2] = *b"II";
@@ -1647,16 +1648,23 @@ impl RemoteRefEmbed for TiffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let l = u64::value_from(manifest_uri.len())
+                let xmp = match self.get_reader().read_xmp(source_stream) {
+                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
+                    None => {
+                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        add_provenance(&xmp, &manifest_uri)?
+                    }
+                };
+
+                let l = u64::value_from(xmp.len())
                     .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
                 let entry = IfdClonedEntry {
                     entry_tag: XMP_TAG,
                     entry_type: IFDEntryType::Byte as u16,
                     value_count: l,
-                    value_bytes: manifest_uri.as_bytes().to_vec(),
+                    value_bytes: xmp.as_bytes().to_vec(),
                 };
-
                 tiff_clone_with_tags(output_stream, source_stream, vec![entry])
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
@@ -1727,7 +1735,8 @@ pub mod tests {
 
         // read data back
         let mut output_stream = std::fs::File::open(&output).unwrap();
-        let loaded = tiff_io.read_xmp(&mut output_stream).unwrap();
+        let xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 
         assert_eq!(&loaded, data);
     }
