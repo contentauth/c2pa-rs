@@ -41,8 +41,15 @@ mod ed_validator;
 #[cfg(feature = "openssl")]
 pub(crate) use ed_validator::EdValidator;
 
+#[cfg(feature = "openssl")]
+mod openssl_trust_handler;
 #[cfg(test)]
 pub(crate) mod temp_signer;
+
+#[cfg(feature = "openssl")]
+pub(crate) use openssl_trust_handler::verify_trust;
+#[cfg(feature = "openssl")]
+pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
@@ -51,7 +58,7 @@ pub(crate) mod temp_signer_async;
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
 #[cfg(feature = "openssl")]
 pub(crate) fn check_chain_order(certs: &[X509]) -> bool {

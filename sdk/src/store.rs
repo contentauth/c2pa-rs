@@ -33,7 +33,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
     cose_sign::cose_sign,
-    cose_validator::check_ocsp_status,
+    cose_validator::{check_ocsp_status, verify_cose},
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -47,9 +47,11 @@ use crate::{
     },
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
+    settings::get_settings_value,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    trust_handler::TrustHandlerConfig,
     utils::{
-        hash_utils::{hash256, HashRange},
+        hash_utils::{hash_sha256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, RemoteSigner, Signer,
@@ -76,6 +78,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
+    trust_handler: Box<dyn TrustHandlerConfig>,
 }
 
 struct ManifestInfo<'a> {
@@ -114,18 +117,87 @@ impl Store {
     ///
     /// In most cases, calling [`Store::new()`] is preferred.
     pub fn new_with_label(label: &str) -> Self {
-        Store {
+        let mut store = Store {
             claims_map: HashMap::new(),
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
+            #[cfg(feature = "openssl")]
+            trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
+            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
+            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
+            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+            trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
-        }
+        };
+
+        // load the trust handler settings, don't worry about status as these are checked during setting generation
+        let _ = get_settings_value::<Option<String>>("trust.trust_anchors").map(|ta_opt| {
+            if let Some(ta) = ta_opt {
+                let _v = store.add_trust(ta.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.private_anchors").map(|pa_opt| {
+            if let Some(pa) = pa_opt {
+                let _v = store.add_private_trust_anchors(pa.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.trust_config").map(|tc_opt| {
+            if let Some(tc) = tc_opt {
+                let _v = store.add_trust_config(tc.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.allowed_list").map(|al_opt| {
+            if let Some(al) = al_opt {
+                let _v = store.add_trust_allowed_list(al.as_bytes());
+            }
+        });
+
+        store
     }
 
     /// Return label for the store
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Load set of trust anchors used for certificate validation. [u8] containing the
+    /// trust anchors is passed in the trust_vec variable.
+    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .load_trust_anchors_from_data(&mut trust_reader)
+    }
+
+    // Load set of private trust anchors used for certificate validation. [u8] to the
+    /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
+    /// if there are additional trust stores.
+    pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .append_private_trust_data(&mut trust_reader)
+    }
+
+    pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler.load_configuration(&mut trust_reader)
+    }
+
+    pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(allowed_vec);
+        self.trust_handler.load_allowed_list(&mut trust_reader)
+    }
+
+    /// Clear all existing trust anchors
+    pub fn clear_trust_anchors(&mut self) {
+        self.trust_handler.clear();
+    }
+
+    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
+        self.trust_handler.as_ref()
     }
 
     /// Get the provenance if available.
@@ -370,7 +442,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
+        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
@@ -403,7 +475,7 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::new();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, &mut validation_log) {
+        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
@@ -429,7 +501,29 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
-        cose_sign(signer, &claim_bytes, box_size)
+        cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
+            // Sanity check: Ensure that this signature is valid.
+            if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
+                if verify_after_sign {
+                    let mut cose_log = OneShotStatusTracker::new();
+                    if let Err(err) = verify_cose(
+                        &sig,
+                        &claim_bytes,
+                        b"",
+                        false,
+                        self.trust_handler(),
+                        &mut cose_log,
+                    ) {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        return Err(err);
+                    }
+                }
+            }
+            Ok(sig)
+        })
     }
 
     /// Sign the claim asynchronously and return signature.
@@ -439,11 +533,40 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::cose_sign::cose_sign_async;
+        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
 
         let claim_bytes = claim.data()?;
 
-        cose_sign_async(signer, &claim_bytes, box_size).await
+        match cose_sign_async(signer, &claim_bytes, box_size).await {
+            // Sanity check: Ensure that this signature is valid.
+            Ok(sig) => {
+                if let Ok(verify_after_sign) =
+                    get_settings_value::<bool>("verify.verify_after_sign")
+                {
+                    if verify_after_sign {
+                        let mut cose_log = OneShotStatusTracker::new();
+                        if let Err(err) = verify_cose_async(
+                            sig.clone(),
+                            claim_bytes,
+                            b"".to_vec(),
+                            false,
+                            self.trust_handler(),
+                            &mut cose_log,
+                        )
+                        .await
+                        {
+                            error!(
+                                "Signature that was just generated does not validate: {:#?}",
+                                err
+                            );
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(sig)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// return the current provenance claim label if available
@@ -1199,7 +1322,13 @@ impl Store {
 
                     // make sure
                     // verify the ingredient claim
-                    Claim::verify_claim(ingredient, asset_data, false, validation_log)?;
+                    Claim::verify_claim(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1309,8 +1438,14 @@ impl Store {
                         )?;
                     }
                     // verify the ingredient claim
-                    Claim::verify_claim_async(ingredient, asset_data, false, validation_log)
-                        .await?;
+                    Claim::verify_claim_async(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )
+                    .await?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1358,7 +1493,14 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
+        Claim::verify_claim_async(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )
+        .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
@@ -1389,7 +1531,13 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, validation_log)?;
+        Claim::verify_claim(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 
@@ -1649,7 +1797,7 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
 
-        let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
+        let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
     }
@@ -1704,7 +1852,7 @@ impl Store {
 
         patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(jumbf_bytes, format)
+        Self::get_composed_manifest(jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The manifest are only supported
@@ -1874,7 +2022,7 @@ impl Store {
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.   
-    pub fn get_composed_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+    pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         if let Some(h) = get_assetio_handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
                 return composed_data_handler.compose_manifest(manifest_bytes, format);
@@ -2775,7 +2923,7 @@ impl Store {
             })
     }
 
-    fn get_store_from_memory(
+    pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
@@ -3318,12 +3466,8 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         let r = store.save_to_asset(&ap, &signer, &op);
-        assert!(r.is_ok());
-        // Note this used to fail when we ran validation after signing, now we need to validate separately
-        let r = Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new());
         assert!(r.is_err());
-        assert_eq!(r.err().unwrap().to_string(), "COSE signature invalid");
-        //assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
     }
 
     #[test]
@@ -4772,7 +4916,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
@@ -4853,7 +4997,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();

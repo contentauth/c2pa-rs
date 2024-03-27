@@ -26,6 +26,33 @@ use crate::{
     utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, Error, Result, SigningAlg,
 };
 
+pub struct RsaHashedImportParams {
+    name: String,
+    hash: String,
+}
+
+impl RsaHashedImportParams {
+    pub fn new(name: &str, hash: &str) -> Self {
+        RsaHashedImportParams {
+            name: name.to_owned(),
+            hash: hash.to_owned(),
+        }
+    }
+
+    pub fn as_js_object(&self) -> Object {
+        let obj = Object::new();
+        Reflect::set(&obj, &"name".into(), &self.name.clone().into()).expect("not valid name");
+
+        let inner_obj = Object::new();
+        Reflect::set(&inner_obj, &"name".into(), &self.hash.clone().into())
+            .expect("not valid name");
+
+        Reflect::set(&obj, &"hash".into(), &inner_obj).expect("not valid name");
+
+        obj
+    }
+}
+
 pub struct EcKeyImportParams {
     name: String,
     named_curve: String,
@@ -135,7 +162,34 @@ fn pss_padding_from_hash(hash: &str, salt_len: &u32) -> Result<PaddingScheme> {
     }
 }
 
-async fn async_validate(
+// Validate an Ed25519 signature for the provided data.  The pkey must
+// be the raw bytes representing CompressedEdwardsY.  The length must 32 bytes.
+fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH};
+
+    if pkey.len() == PUBLIC_KEY_LENGTH {
+        let ed_sig = Signature::from_slice(&sig).map_err(|_| Error::CoseInvalidCert)?;
+
+        // convert to VerifyingKey
+        let mut cert_slice: [u8; 32] = Default::default();
+        cert_slice.copy_from_slice(&pkey[0..PUBLIC_KEY_LENGTH]);
+
+        let vk = VerifyingKey::from_bytes(&cert_slice).map_err(|_| Error::CoseInvalidCert)?;
+
+        match vk.verify(&data, &ed_sig) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    } else {
+        web_sys::console::debug_2(
+            &"Ed25519 public key incorrect length: ".into(),
+            &pkey.len().to_string().into(),
+        );
+        Err(Error::CoseInvalidCert)
+    }
+}
+
+pub(crate) async fn async_validate(
     algo: String,
     hash: String,
     salt_len: u32,
@@ -149,6 +203,33 @@ async fn async_validate(
     let data_array_buf = data_as_array_buffer(&data);
 
     match algo.as_ref() {
+        "RSASSA-PKCS1-v1_5" => {
+            // used for certificate validation
+            // Create Key
+            let algorithm = RsaHashedImportParams::new(&algo, &hash).as_js_object();
+            let key_array_buf = data_as_array_buffer(&pkey);
+            let usages = Array::new();
+            usages.push(&"verify".into());
+
+            let promise = subtle_crypto
+                .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
+                .map_err(|_err| Error::WasmKey)?;
+            let crypto_key: CryptoKey = JsFuture::from(promise)
+                .await
+                .map_err(|_err| Error::WasmKey)?
+                .into();
+            web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
+
+            // Create verifier
+            crypto_is_verified(
+                &subtle_crypto,
+                &algorithm,
+                &crypto_key,
+                &sig_array_buf,
+                &data_array_buf,
+            )
+            .await
+        }
         "RSA-PSS" => {
             let spki = SubjectPublicKeyInfo::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
@@ -192,7 +273,10 @@ async fn async_validate(
             let promise = subtle_crypto
                 .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
                 .map_err(|_err| Error::WasmKey)?;
-            let crypto_key: CryptoKey = JsFuture::from(promise).await.unwrap().into();
+            let crypto_key: CryptoKey = JsFuture::from(promise)
+                .await
+                .map_err(|_| Error::CoseInvalidCert)?
+                .into();
             web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
 
             // Create verifier
@@ -206,10 +290,35 @@ async fn async_validate(
             )
             .await
         }
+        "ED25519" => {
+            use x509_parser::{prelude::*, public_key::PublicKey};
+
+            // pull out raw Ed code points
+            if let Ok((_, certificate_public_key)) = SubjectPublicKeyInfo::from_der(&pkey) {
+                match certificate_public_key.parsed() {
+                    Ok(key) => match key {
+                        PublicKey::Unknown(raw_key) => {
+                            ed25519_validate(sig, data, raw_key.to_vec())
+                        }
+                        _ => Err(Error::OtherError(
+                            "could not unwrap Ed25519 public key".into(),
+                        )),
+                    },
+                    Err(_) => Err(Error::OtherError(
+                        "could not recognize Ed25519 public key".into(),
+                    )),
+                }
+            } else {
+                Err(Error::OtherError(
+                    "could not parse Ed25519 public key".into(),
+                ))
+            }
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
 
+// This interface is called from CoseValidator. RSA validation not supported here.
 pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
     web_sys::console::debug_2(&"Validating with algorithm".into(), &alg.to_string().into());
 
@@ -313,8 +422,17 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
             )
             .await
         }
-        // TODO: Can we cover Ed25519?
-        _ => return Err(Error::UnsupportedType),
+        SigningAlg::Ed25519 => {
+            async_validate(
+                "ED25519".to_string(),
+                "SHA-512".to_string(),
+                0,
+                pkey.to_vec(),
+                sig.to_vec(),
+                data.to_vec(),
+            )
+            .await
+        }
     }
 }
 

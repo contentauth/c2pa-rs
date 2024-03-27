@@ -6,6 +6,48 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.31.1
+_25 March 2024_
+
+* Adds Action changes field as option vec of serde_json value ([#431](https://github.com/contentauth/c2pa-rs/pull/431))
+
+## 0.31.0
+_13 March 2024_
+
+* (MINOR) Adds Send trait to TrustHandlerConfig ([#426](https://github.com/contentauth/c2pa-rs/pull/426))
+
+## 0.30.3
+_12 March 2024_
+
+* Roll back rasn-* version requirements since 0.12.6 was yanked ([#425](https://github.com/contentauth/c2pa-rs/pull/425))
+
+## 0.30.2
+_12 March 2024_
+
+* Adds a Manifest::composed manifest method ([#424](https://github.com/contentauth/c2pa-rs/pull/424))
+* Allow cert dump to work in WASM ([#420](https://github.com/contentauth/c2pa-rs/pull/420))
+* Update minimum dependency of rasn-* crates ([#423](https://github.com/contentauth/c2pa-rs/pull/423))
+
+## 0.30.1
+_08 March 2024_
+
+* Fix include_byte references that were not available in external crate builds
+
+## 0.30.0
+_08 March 2024_
+
+* (MINOR) Remove testing function that was inadvertently public ([#421](https://github.com/contentauth/c2pa-rs/pull/421))
+
+## 0.29.3
+_08 March 2024_
+
+* Trust support ([#415](https://github.com/contentauth/c2pa-rs/pull/415))
+
+## 0.29.2
+_08 March 2024_
+
+* add a thumb resource when referencing an embedded uri ([#419](https://github.com/contentauth/c2pa-rs/pull/419))
+
 ## 0.29.1
 _07 March 2024_
 

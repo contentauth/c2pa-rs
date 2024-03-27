@@ -625,7 +625,13 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(_) | AssertionData::Cbor(_) => {
+                        AssertionData::Cbor(_) => {
+                            let value = assertion.as_json_object()?;
+                            let ma = ManifestAssertion::new(base_label, value)
+                                .set_instance(claim_assertion.instance());
+                            manifest.assertions.push(ma);
+                        }
+                        AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
@@ -1242,9 +1248,16 @@ impl Manifest {
         let mut store = self.to_store()?;
         let mut cm = store.get_box_hashed_embeddable_manifest(signer)?;
         if let Some(format) = format {
-            cm = store.get_composed_manifest(&cm, format)?;
+            cm = Store::get_composed_manifest(&cm, format)?;
         }
         Ok(cm)
+    }
+
+    /// Formats a signed manifest for embedding in the given format
+    ///
+    /// For instance, this would return one or JPEG App11 segments containing the manifest
+    pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format)
     }
 }
 
@@ -1433,6 +1446,68 @@ pub(crate) mod tests {
 
         println!("{result:?}");
         assert!(result.is_err())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    /// test assertion validation on actions, should generate an error
+    fn ws_valid_labeled_assertion() {
+        // copy an image to use as our target for embedding
+        let ap = fixture_path(TEST_SMALL_JPEG);
+        let temp_dir = tempdir().expect("temp dir");
+        let test_output = temp_dir_path(&temp_dir, "ws_bad_assertion.jpg");
+        std::fs::copy(ap, test_output).expect("copy");
+
+        let mut manifest = test_manifest();
+
+        manifest
+            .add_labeled_assertion(
+                "c2pa.actions",
+                &serde_json::json!({
+                    "actions": [
+                        {
+                            "action": "c2pa.edited",
+                            "parameters": {
+                                "description": "gradient",
+                                "name": "any value"
+                            },
+                            "softwareAgent": "TestApp"
+                        },
+                        {
+                            "action": "c2pa.dubbed",
+                            "changes": [
+                                {
+                                    "description": "translated to klingon",
+                                    "region": [
+                                        {
+                                            "type": "temporal",
+                                            "time": {}
+                                        },
+                                        {
+                                            "type": "identified",
+                                            "item": {
+                                                "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                                                "value": "lips"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }),
+            )
+            .expect("add_assertion");
+
+        // convert to store
+        let store = manifest.to_store().expect("valid action to_store");
+        let m2 = Manifest::from_store(&store, &store.provenance_label().unwrap(), None)
+            .expect("from_store");
+        let actions: Actions = m2
+            .find_assertion("c2pa.actions.v2")
+            .expect("find_assertion");
+        assert_eq!(actions.actions()[0].action(), "c2pa.edited");
+        assert_eq!(actions.actions()[1].action(), "c2pa.dubbed");
     }
 
     #[test]
@@ -1970,7 +2045,25 @@ pub(crate) mod tests {
                                     "identifier": "sample1.svg"
                                 },
                                 "something": "else"
-                            }
+                            },
+                            "changes": [
+                                {
+                                    "region" : [
+                                        {
+                                            "type" : "temporal",
+                                            "time" : {}
+                                        },
+                                        {
+                                            "type" : "identified",
+                                            "item" : {
+                                              "identifier" : "https://bioportal.bioontology.org/ontologies/FMA",
+                                              "value" : "lips"
+                                            }
+                                        }
+                                    ],
+                                    "description": "lip synced area"
+                                }
+                            ]
                         }
                     ],
                     "templates": [
@@ -2389,12 +2482,15 @@ pub(crate) mod tests {
             .data_hash_embeddable_manifest_remote(
                 &dh,
                 signer.as_ref(),
-                "image/jpeg",
+                "c2pa", // force an uncomposed manifest - you could send this to the cloud
                 Some(&mut output_file),
             )
             .await
             .unwrap();
 
+        // test composed manifest here to ensure it works
+        let signed_manifest =
+            Manifest::composed_manifest(&signed_manifest, "image/jpeg").expect("composed_manifest");
         use std::io::{Seek, SeekFrom, Write};
 
         // path in new composed manifest

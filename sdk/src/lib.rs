@@ -76,7 +76,11 @@
 //!
 //! // embed a manifest using the signer
 //! std::fs::remove_file("target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//! builder.sign_file("tests/fixtures/C.jpg", "../target/tmp/lib_sign.jpg", &*signer)?;
+//! builder.sign_file(
+//!     "tests/fixtures/C.jpg",
+//!     "../target/tmp/lib_sign.jpg",
+//!     &*signer,
+//! )?;
 //! # Ok(())
 //! # }
 //! ```
@@ -159,6 +163,7 @@ pub(crate) mod salt;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
+pub(crate) mod trust_handler;
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 pub(crate) mod validator;

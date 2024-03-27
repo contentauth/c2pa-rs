@@ -15,8 +15,8 @@ use std::{fs::File, path::Path};
 
 use crate::{
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions,
+        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
 };
@@ -127,6 +127,17 @@ impl AssetIO for C2paIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+}
+
+impl ComposedManifestRef for C2paIO {
+    // Return entire CAI block as Vec<u8>
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        Ok(manifest_data.to_vec())
     }
 }
 
