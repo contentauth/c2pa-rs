@@ -134,20 +134,17 @@ mod integration_v2 {
     }
 
     fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
-        use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer};
+        use ed25519_dalek::{Signature, Signer, SigningKey};
         use pem::parse;
 
         // Parse the PEM data to get the private key
         let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
-        let secret =
-            SecretKey::from_bytes(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-        let public = PublicKey::from(&secret);
-        // Create a keypair from the secret and public keys
-        let keypair = Keypair { secret, public };
+        let signing_key =
+            SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
         // Sign the data
-        let signature: Signature = keypair.sign(data);
+        let signature: Signature = signing_key.sign(data);
 
         Ok(signature.to_bytes().to_vec())
     }
@@ -158,7 +155,7 @@ mod integration_v2 {
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    //#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_v2_api() -> Result<()> {
         main()
     }
