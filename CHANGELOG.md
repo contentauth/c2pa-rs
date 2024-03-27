@@ -6,6 +6,66 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.31.1
+_25 March 2024_
+
+* Adds Action changes field as option vec of serde_json value ([#431](https://github.com/contentauth/c2pa-rs/pull/431))
+
+## 0.31.0
+_13 March 2024_
+
+* (MINOR) Adds Send trait to TrustHandlerConfig ([#426](https://github.com/contentauth/c2pa-rs/pull/426))
+
+## 0.30.3
+_12 March 2024_
+
+* Roll back rasn-* version requirements since 0.12.6 was yanked ([#425](https://github.com/contentauth/c2pa-rs/pull/425))
+
+## 0.30.2
+_12 March 2024_
+
+* Adds a Manifest::composed manifest method ([#424](https://github.com/contentauth/c2pa-rs/pull/424))
+* Allow cert dump to work in WASM ([#420](https://github.com/contentauth/c2pa-rs/pull/420))
+* Update minimum dependency of rasn-* crates ([#423](https://github.com/contentauth/c2pa-rs/pull/423))
+
+## 0.30.1
+_08 March 2024_
+
+* Fix include_byte references that were not available in external crate builds
+
+## 0.30.0
+_08 March 2024_
+
+* (MINOR) Remove testing function that was inadvertently public ([#421](https://github.com/contentauth/c2pa-rs/pull/421))
+
+## 0.29.3
+_08 March 2024_
+
+* Trust support ([#415](https://github.com/contentauth/c2pa-rs/pull/415))
+
+## 0.29.2
+_08 March 2024_
+
+* add a thumb resource when referencing an embedded uri ([#419](https://github.com/contentauth/c2pa-rs/pull/419))
+
+## 0.29.1
+_07 March 2024_
+
+* Adds Manifest.remote_manifest_url() (CAI-5437) ([#418](https://github.com/contentauth/c2pa-rs/pull/418))
+* Fix use of deprecated method `chrono::NaiveDateTime::timestamp` ([#417](https://github.com/contentauth/c2pa-rs/pull/417))
+* Fix up some random typos. ([#353](https://github.com/contentauth/c2pa-rs/pull/353))
+
+## 0.29.0
+_26 February 2024_
+
+* SDK configuration settings support (infrastructure) ([#408](https://github.com/contentauth/c2pa-rs/pull/408))
+* Support streaming writes for TIFF ([#410](https://github.com/contentauth/c2pa-rs/pull/410))
+* Fixed typo in comment ([#409](https://github.com/contentauth/c2pa-rs/pull/409))
+* (MINOR) Update `xmp_toolkit` to v1.7.1, remove Ring dependency, fix build errors ([#407](https://github.com/contentauth/c2pa-rs/pull/407))
+* Crate udate to fix jpeg parsing error ([#402](https://github.com/contentauth/c2pa-rs/pull/402))
+* allows builds to pass ([#403](https://github.com/contentauth/c2pa-rs/pull/403))
+* Ocsp support ([#371](https://github.com/contentauth/c2pa-rs/pull/371))
+
 ## 0.28.5
 _06 February 2024_
 
@@ -48,7 +108,7 @@ _17 November 2023_
 _01 November 2023_
 
 * (PATCH) switches af relationship for a reference to the c2pa data to an array of references, one of which is the c2pa spec ([#333](https://github.com/contentauth/c2pa-rs/pull/333))
-* Restore async versions of embedd functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
+* Restore async versions of embed functions ([#327](https://github.com/contentauth/c2pa-rs/pull/327))
 * (MINOR) Support databox thumbnails CAI-4142 ([#325](https://github.com/contentauth/c2pa-rs/pull/325))
 * (MINOR) Reuse claim thumbnail as ingredient thumbnail if the store is valid ([#322](https://github.com/contentauth/c2pa-rs/pull/322))
 * (MINOR) Use JUMBF URIs for ManifestStore identifiers ([#323](https://github.com/contentauth/c2pa-rs/pull/323))

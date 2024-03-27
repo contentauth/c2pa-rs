@@ -313,7 +313,8 @@ impl crate::AsyncSigner for AsyncTestGoodSigner {
 /// # Returns
 ///
 /// Returns a boxed [`Signer`] instance.
-pub fn temp_signer() -> Box<dyn Signer> {
+#[cfg(test)]
+pub(crate) fn temp_signer() -> Box<dyn Signer> {
     #[cfg(feature = "openssl_sign")]
     {
         #![allow(clippy::expect_used)]
