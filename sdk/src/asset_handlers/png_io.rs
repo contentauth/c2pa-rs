@@ -19,6 +19,7 @@ use std::{
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
+use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
@@ -30,11 +31,13 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 const PNG_ID: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 const CAI_CHUNK: [u8; 4] = *b"caBX";
 const IMG_HDR: [u8; 4] = *b"IHDR";
+const ITXT_CHUNK: [u8; 4] = *b"iTXt";
 const XMP_KEY: &str = "XML:com.adobe.xmp";
 const PNG_END: [u8; 4] = *b"IEND";
 const PNG_HDR_LEN: u64 = 12;
@@ -206,8 +209,6 @@ impl CAIReader for PngIO {
 
     // Get XMP block
     fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        const ITXT_CHUNK: [u8; 4] = *b"iTXt";
-
         let ps = get_png_chunk_positions(asset_reader).ok()?;
         let mut xmp_str: Option<String> = None;
 
@@ -576,24 +577,67 @@ impl AssetIO for PngIO {
     }
 }
 
-impl RemoteRefEmbed for PngIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
-                {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
+    let ps = get_png_chunk_positions(asset_reader).ok()?;
+
+    let xmp_box = ps.iter().find(|pcp| {
+        if pcp.name == ITXT_CHUNK {
+            // seek to start of chunk
+            if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                // move +8 to get past header
+                return false;
+            }
+
+            // parse the iTxt block
+            if let Ok(key) = read_string(asset_reader, pcp.length) {
+                if key.is_empty() || key.len() > 79 {
+                    return false;
                 }
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
+                // is this an XMP key
+                if key == XMP_KEY {
+                    return true;
                 }
+            }
+            false
+        } else {
+            false
+        }
+    });
+
+    if let Some(xmp) = xmp_box {
+        // overwrite existing box
+        Some((xmp.start, xmp.length))
+    } else {
+        // insert after IHDR
+        if let Some(img_hdr) = ps.iter().find(|png_cp| png_cp.name == IMG_HDR) {
+            Some((img_hdr.end(), 0))
+        } else {
+            return None;
+        }
+    }
+}
+impl RemoteRefEmbed for PngIO {
+    #[allow(unused_variables)]
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                let output_buf = Vec::new();
+                let mut output_stream = Cursor::new(output_buf);
+
+                // do here so source file is closed after update
+                {
+                    let mut source_stream = std::fs::File::open(asset_path)?;
+                    self.embed_reference_to_stream(
+                        &mut source_stream,
+                        &mut output_stream,
+                        RemoteRefEmbedType::Xmp(manifest_uri),
+                    )?;
+                }
+
+                std::fs::write(asset_path, &output_stream.into_inner())?;
+
+                Ok(())
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
@@ -603,16 +647,79 @@ impl RemoteRefEmbed for PngIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                source_stream.rewind()?;
+
+                let xmp = match self.read_xmp(source_stream) {
+                    Some(s) => s,
+                    None => format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP),
+                };
+
+                // update XMP
+                let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
+
+                // make XMP chunk
+                let mut xmp_data = Vec::new();
+                let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
+
+                let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
+                    key: XMP_KEY.to_string(),
+                    langtag: "".to_string(),
+                    transkey: "".to_string(),
+                    val: updated_xmp,
+                    compressed: false,
+                });
+                xmp_encoder
+                    .encode(&mut xmp_chunk)
+                    .map_err(|_| Error::EmbeddingError)?;
+
+                // patch output stream
+                let mut png_buf = Vec::new();
+                source_stream.rewind()?;
+                source_stream
+                    .read_to_end(&mut png_buf)
+                    .map_err(Error::IoError)?;
+
+                if let Some((start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+                    let mut png_buf = Vec::new();
+                    source_stream.rewind()?;
+                    source_stream
+                        .read_to_end(&mut png_buf)
+                        .map_err(Error::IoError)?;
+
+                    // replace existing XMP
+                    let xmp_start = usize::value_from(start)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
+
+                    let xmp_end = usize::value_from(start + xmp_len as u64)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
+
+                    png_buf.splice(xmp_start..xmp_end, xmp_data.iter().cloned());
+
+                    output_stream.rewind()?;
+                    output_stream.write_all(&png_buf)?;
+
+                    Ok(())
+                } else {
+                    Err(Error::EmbeddingError)
+                }
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
 impl AssetBoxHash for PngIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        input_stream.rewind()?;
+
         let ps = get_png_chunk_positions(input_stream)?;
 
         let mut box_maps = Vec::new();
@@ -690,7 +797,7 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
-    use crate::utils::test;
+    use crate::utils::test::{self, temp_dir_path};
 
     #[test]
     fn test_png_xmp() {
@@ -706,6 +813,44 @@ pub mod tests {
 
         assert!(provenance.contains("libpng-test"));
     }
+
+    #[test]
+    fn test_png_xmp_write() {
+        let ap = test::fixture_path("libpng-test.png");
+        let mut source_stream = std::fs::File::open(&ap).unwrap();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "out.png");
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&output)
+            .unwrap();
+
+        let png_io = PngIO {};
+        //let _orig_xmp = png_io
+        //    .read_xmp(&mut source_stream )
+        //    .unwrap();
+
+        // change the xmp
+        let eh = png_io.remote_ref_writer_ref().unwrap();
+        eh.embed_reference_to_stream(
+            &mut source_stream,
+            &mut output_stream,
+            RemoteRefEmbedType::Xmp("some test data".to_string()),
+        )
+        .unwrap();
+
+        output_stream.rewind().unwrap();
+        let new_xmp = png_io.read_xmp(&mut output_stream).unwrap();
+        // make sure we can parse it
+        let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&new_xmp).unwrap();
+
+        assert!(provenance.contains("some test data"));
+    }
+
     #[test]
     fn test_png_parse() {
         let ap = test::fixture_path("libpng-test.png");
