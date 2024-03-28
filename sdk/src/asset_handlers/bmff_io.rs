@@ -1097,7 +1097,7 @@ fn get_uuid_token(
             // make sure it is UUID box
             if box_info.data.box_type == BoxType::UuidBox {
                 if let Some(found_uuid) = &box_info.data.user_type {
-                    // make sure it is a C2PA ContentProvenanceBox box
+                    // make sure uuids match
                     if vec_compare(uuid, found_uuid) {
                         return Some(*uuid_token);
                     }
