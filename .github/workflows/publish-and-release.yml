@@ -131,11 +131,14 @@ jobs:
         experimental: [false]
         include:
         - os: macos-latest
-          artifact_name: c2patool_mac_universal-${{ needs.repo-prep.outputs.new-tag }}.zip
+          artifact_name: c2patool_mac_universal.zip
+          uploaded_asset_name: c2patool_mac_universal-${{ needs.repo-prep.outputs.new-tag }}.zip
         - os: ubuntu-latest
-          artifact_name: c2patool_linux_intel-${{ needs.repo-prep.outputs.new-tag }}.tar.gz
+          artifact_name: c2patool_linux_intel.tar.gz
+          uploaded_asset_name: c2patool_linux_intel-${{ needs.repo-prep.outputs.new-tag }}.tar.gz
         - os: windows-latest
-          artifact_name: c2patool_win_intel-${{ needs.repo-prep.outputs.new-tag }}.zip
+          artifact_name: c2patool_win_intel.zip
+          uploaded_asset_name: c2patool_win_intel-${{ needs.repo-prep.outputs.new-tag }}.zip
 
     steps:
     - name: Checkout repository
@@ -160,6 +163,6 @@ jobs:
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: target/${{ matrix.artifact_name }}
-        asset_name: ${{ matrix.artifact_name }}
+        asset_name: ${{ matrix.uploaded_asset_name }}
         tag: ${{ needs.repo-prep.outputs.new-tag }}
         overwrite: true
