@@ -1523,7 +1523,9 @@ impl CAIWriter for BmffIO {
 
                 (uuid_info.offset, Some(uuid_info.size))
             } else {
-                return Ok(()); // no box to remove
+                input_stream.rewind()?;
+                std::io::copy(input_stream, output_stream)?;
+                return Ok(()); // no box to remove, propagate source to output
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
