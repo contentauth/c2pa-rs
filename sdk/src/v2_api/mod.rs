@@ -21,7 +21,6 @@ pub use builder::Builder;
 // #[cfg(feature = "file_io")]
 // pub use crate::{Error, Result};
 
-#[cfg(feature = "file_io")]
 pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
     path.as_ref()
         .extension()

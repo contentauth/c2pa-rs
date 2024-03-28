@@ -26,6 +26,7 @@ use crate::{
 };
 
 /// A reader for the manifest store
+#[derive(Debug)]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
 }
@@ -123,6 +124,19 @@ impl Reader {
             }
         }
         result
+    }
+
+    /// Create a manifest store Reader from a JSON string
+    /// # Arguments
+    /// * `json` - The JSON string
+    /// # Returns
+    /// A reader for the manifest store
+    /// # Note
+    /// This should only be used for testing
+    /// Any referenced resources will not be available
+    pub fn from_json(json: &str) -> Result<Reader> {
+        let manifest_store = serde_json::from_str(json)?;
+        Ok(Reader { manifest_store })
     }
 
     /// Create a manifest store Reader from existing c2pa_data and a stream

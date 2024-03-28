@@ -30,7 +30,7 @@ use crate::{
     CAIRead, CAIReadWrite, Error, Manifest, Result,
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A Container for a set of Manifests and a ValidationStatus list
 pub struct ManifestStore {
@@ -120,8 +120,7 @@ impl ManifestStore {
 
     /// creates a ManifestStore from a Store writing resources to resource_path
     #[cfg(feature = "file_io")]
-    #[cfg(feature = "v1_api")]
-    pub fn from_store_with_resources(
+    pub(crate) fn from_store_with_resources(
         store: &Store,
         validation_log: &impl StatusTracker,
         resource_path: &Path,

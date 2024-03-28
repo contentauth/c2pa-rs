@@ -138,9 +138,7 @@ pub use manifest_assertion::{
 pub use settings::load_settings_from_str;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use signing_alg::SigningAlg;
-#[cfg(feature = "file_io")]
-pub use v2_api::format_from_path;
-pub use v2_api::{Builder, Reader};
+pub use v2_api::{format_from_path, Builder, Reader};
 pub mod validation_status;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
