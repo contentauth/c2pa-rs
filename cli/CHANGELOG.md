@@ -6,6 +6,10 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.8.2
+_28 March 2024_
+
+* fixed c2patool asset name ([contentauth/c2patool#171](https://github.com/contentauth/c2patool/pull/171))
 ## 0.8.1
 _25 March 2024_
 
