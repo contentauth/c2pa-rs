@@ -1778,7 +1778,7 @@ impl RemoteRefEmbed for BmffIO {
                     (end, end)
                 };
 
-                // write content before ContentProvenanceBox
+                // write content before XMP box
                 input_stream.rewind()?;
                 let mut before_manifest = input_stream.take(start as u64);
                 std::io::copy(&mut before_manifest, output_stream)?;
@@ -1791,12 +1791,12 @@ impl RemoteRefEmbed for BmffIO {
                     new_xmp_box_size as i32
                 } else {
                     // value could be negative if box is truncated
-                    let existing_c2pa_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_c2pa_box_size as i32;
+                    let existing_xmp_box_size = end - start;
+                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
                     pad_size
                 };
 
-                // write content after ContentProvenanceBox
+                // write content after XMP box
                 input_stream.seek(SeekFrom::Start(end as u64))?;
                 std::io::copy(input_stream, output_stream)?;
 
