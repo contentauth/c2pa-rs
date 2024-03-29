@@ -11,7 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap, io::Cursor};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    io::{Cursor, Read, Seek, Write},
+};
 #[cfg(feature = "file_io")]
 use std::{
     fs::{create_dir_all, read, write},
@@ -23,8 +27,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::AssetType, claim::Claim, hashed_uri::HashedUri, CAIRead, CAIReadWrite, Error,
-    Result,
+    assertions::AssetType, asset_io::CAIRead, claim::Claim, hashed_uri::HashedUri, Error, Result,
 };
 
 /// Function that is used by serde to determine whether or not we should serialize
@@ -299,7 +302,11 @@ impl ResourceStore {
         )
     }
 
-    pub fn write_stream(&self, id: &str, stream: &mut dyn CAIReadWrite) -> Result<u64> {
+    pub fn write_stream(
+        &self,
+        id: &str,
+        mut stream: impl Write + Read + Seek + Send,
+    ) -> Result<u64> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -307,7 +314,7 @@ impl ResourceStore {
                     // read from, the file to stream
                     let path = base.join(id);
                     let mut file = std::fs::File::open(path)?;
-                    return std::io::copy(&mut file, stream).map_err(Error::IoError);
+                    return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
                 None => return Err(Error::ResourceNotFound(id.to_string())),
             }

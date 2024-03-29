@@ -11,9 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
 #[cfg(feature = "file_io")]
 use std::path::Path;
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, Write},
+};
 
 use async_generic::async_generic;
 #[cfg(feature = "json_schema")]
@@ -27,7 +30,7 @@ use crate::{
     store::Store,
     utils::base64,
     validation_status::{status_for_store, ValidationStatus},
-    CAIRead, CAIReadWrite, Error, Manifest, Result,
+    Error, Manifest, Result,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,7 +83,7 @@ impl ManifestStore {
     }
 
     // writes a resource identified uri to the given stream
-    pub fn get_resource(&self, uri: &str, stream: &mut dyn CAIReadWrite) -> Result<u64> {
+    pub fn get_resource(&self, uri: &str, stream: impl Write + Read + Seek + Send) -> Result<u64> {
         // get the manifest referenced by the uri, or the active one if None
         let manifest = match manifest_label_from_uri(uri) {
             Some(label) => self.get(&label),
@@ -189,30 +192,30 @@ impl ManifestStore {
     /// Generate a Store from a format string and stream.
     #[async_generic(async_signature(
         format: &str,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek + Send,
         verify: bool,
     ))]
     pub fn from_stream(
         format: &str,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek + Send,
         verify: bool,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let manifest_bytes = Store::load_jumbf_from_stream(format, stream)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
         if verify {
             // verify store and claims
             if _sync {
                 Store::verify_store(
                     &store,
-                    &mut ClaimAssetData::Stream(stream, format),
+                    &mut ClaimAssetData::Stream(&mut stream, format),
                     &mut validation_log,
                 )?;
             } else {
                 Store::verify_store_async(
                     &store,
-                    &mut ClaimAssetData::Stream(stream, format),
+                    &mut ClaimAssetData::Stream(&mut stream, format),
                     &mut validation_log,
                 )
                 .await?;
@@ -574,8 +577,8 @@ mod tests {
     #[cfg(feature = "v1_api")]
     fn manifest_report_from_stream() {
         let image_bytes: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-        let mut stream = std::io::Cursor::new(image_bytes);
-        let manifest_store = ManifestStore::from_stream("image/jpeg", &mut stream, true).unwrap();
+        let stream = std::io::Cursor::new(image_bytes);
+        let manifest_store = ManifestStore::from_stream("image/jpeg", stream, true).unwrap();
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());

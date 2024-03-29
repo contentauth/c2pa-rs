@@ -3,10 +3,11 @@ mod test_signer;
 
 use std::{
     fs,
+    io::{Read, Seek},
     path::{Path, PathBuf},
 };
 
-use c2pa::{format_from_path, CAIRead, Reader, Result};
+use c2pa::{format_from_path, Reader, Result};
 pub use compare_readers::compare_readers;
 #[allow(unused)]
 pub use test_signer::test_signer;
@@ -62,8 +63,8 @@ pub fn compare_to_known_good<P: AsRef<Path>>(reader: &Reader, file_name: P) -> R
 }
 
 #[allow(unused)]
-pub fn compare_stream_to_known_good<P: AsRef<Path>>(
-    stream: &mut dyn CAIRead,
+pub fn compare_stream_to_known_good<P: AsRef<Path>, S: Read + Seek + Send>(
+    stream: &mut S,
     format: &str,
     known_file: P,
 ) -> Result<()> {

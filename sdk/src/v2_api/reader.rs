@@ -13,7 +13,7 @@
 
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, Write};
 
 use async_generic::async_generic;
 
@@ -22,7 +22,7 @@ use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
     status_tracker::DetailedStatusTracker, store::Store, validation_status::ValidationStatus,
-    CAIRead, CAIReadWrite, Manifest,
+    Manifest,
 };
 
 /// A reader for the manifest store
@@ -58,14 +58,14 @@ impl Reader {
     /// ```
     #[async_generic(async_signature(
         format: &str,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek + Send,
     ))]
-    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Reader> {
+    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = true; // todo: get this from config
         let reader = if _sync {
-            ManifestStore::from_stream(format, stream, verify)
+            ManifestStore::from_stream(format, &mut stream, verify)
         } else {
-            ManifestStore::from_stream_async(format, stream, verify).await
+            ManifestStore::from_stream_async(format, &mut stream, verify).await
         }?;
         Ok(Reader {
             manifest_store: reader,
@@ -88,8 +88,8 @@ impl Reader {
     /// let reader = Reader::from_bytes("image/jpeg", &bytes).unwrap();
     /// ```
     pub fn from_bytes(format: &str, bytes: &[u8]) -> Result<Reader> {
-        let mut stream = Cursor::new(bytes);
-        Self::from_stream(format, &mut stream)
+        let stream = Cursor::new(bytes);
+        Self::from_stream(format, stream)
     }
 
     #[cfg(feature = "file_io")]
@@ -120,7 +120,7 @@ impl Reader {
             let potential_sidecar_path = path.with_extension("c2pa");
             if potential_sidecar_path.exists() {
                 let manifest_data = read(potential_sidecar_path)?;
-                return Self::from_c2pa_data_and_stream(&manifest_data, &format, &mut file);
+                return Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file);
             }
         }
         result
@@ -153,12 +153,12 @@ impl Reader {
     #[async_generic(async_signature(
         c2pa_data: &[u8],
         format: &str,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek + Send,
     ))]
-    pub fn from_c2pa_data_and_stream(
+    pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
         let mut validation_log = DetailedStatusTracker::new();
 
@@ -168,13 +168,13 @@ impl Reader {
         if _sync {
             Store::verify_store(
                 &store,
-                &mut ClaimAssetData::Stream(stream, format),
+                &mut ClaimAssetData::Stream(&mut stream, format),
                 &mut validation_log,
             )?;
         } else {
             Store::verify_store_async(
                 &store,
-                &mut ClaimAssetData::Stream(stream, format),
+                &mut ClaimAssetData::Stream(&mut stream, format),
                 &mut validation_log,
             )
             .await?;
@@ -235,9 +235,13 @@ impl Reader {
     /// The number of bytes written
     /// # Errors
     /// If the resource does not exist
-    pub fn resource_to_stream(&self, uri: &str, stream: &mut dyn CAIReadWrite) -> Result<usize> {
+    pub fn resource_to_stream(
+        &self,
+        uri: &str,
+        mut stream: impl Write + Read + Seek + Send,
+    ) -> Result<usize> {
         self.manifest_store
-            .get_resource(uri, stream)
+            .get_resource(uri, &mut stream)
             .map(|size| size as usize)
     }
 }

@@ -2505,10 +2505,10 @@ pub(crate) mod tests {
             .expect("embeddable_manifest");
 
         // Validate the embeddable manifest against the asset bytes
-        let reader = Reader::from_c2pa_data_and_stream(
+        let reader = Reader::from_manifest_data_and_stream(
             &embeddable,
             "image/jpeg",
-            &mut std::io::Cursor::new(asset_bytes),
+            Cursor::new(asset_bytes),
         )
         .unwrap();
         println!("{reader}");

@@ -26,7 +26,6 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionBase,
     assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
-    asset_io::{CAIRead, CAIReadWrite},
     claim::Claim,
     error::{Error, Result},
     ingredient::Ingredient,
@@ -228,12 +227,16 @@ impl Builder {
     /// * A mutable reference to the builder
     /// # Errors
     /// * If the ingredient is not valid
-    pub fn add_ingredient<T: Into<String>>(
+    pub fn add_ingredient<T, R>(
         &mut self,
         ingredient_json: T,
         format: &str,
-        stream: &mut dyn CAIRead,
-    ) -> Result<&mut Self> {
+        stream: &mut R,
+    ) -> Result<&mut Self>
+    where
+        T: Into<String>,
+        R: Read + Seek + Send,
+    {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = ingredient.with_stream(format, stream)?;
         self.definition.ingredients.push(ingredient);
@@ -249,7 +252,10 @@ impl Builder {
     /// * A mutable reference to the builder
     /// # Errors
     /// * If the resource is not valid
-    pub fn add_resource(&mut self, id: &str, stream: &mut dyn CAIRead) -> Result<&mut Self> {
+    pub fn add_resource<R>(&mut self, id: &str, stream: &mut R) -> Result<&mut Self>
+    where
+        R: Read + Seek + Send,
+    {
         if self.resources.exists(id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
         }
@@ -641,13 +647,17 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was embedded
     /// # Errors
     /// * If the manifest cannot be signed
-    pub fn sign(
+    pub fn sign<R, W>(
         &mut self,
         format: &str,
-        source: &mut dyn CAIRead,
-        dest: &mut dyn CAIReadWrite,
+        source: &mut R,
+        dest: &mut W,
         signer: &dyn Signer,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>>
+    where
+        R: Read + Seek + Send,
+        W: Write + Read + Seek + Send,
+    {
         let format = format_to_mime(format);
         self.definition.format = format.clone();
         // todo:: read instance_id from xmp from stream ?
@@ -674,13 +684,17 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was embedded
     /// # Errors
     /// * If the manifest cannot be signed
-    pub async fn sign_remote(
+    pub async fn sign_remote<R, W>(
         &mut self,
         format: &str,
-        source: &mut dyn CAIRead,
-        dest: &mut dyn CAIReadWrite,
+        source: &mut R,
+        dest: &mut W,
         signer: &dyn RemoteSigner,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Vec<u8>>
+    where
+        R: Read + Seek + Send,
+        W: Write + Read + Seek + Send,
+    {
         self.definition.format = format_to_mime(format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());

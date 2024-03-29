@@ -100,7 +100,6 @@ pub mod validation_status;
 pub mod wasm;
 
 // Public exports
-pub use asset_io::{CAIRead, CAIReadWrite};
 pub use callback_signer::{create_callback_signer, SignerCallback};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // put these behind a feature flag for the remote signer

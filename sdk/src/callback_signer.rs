@@ -89,6 +89,19 @@ impl Signer for CallbackSigner {
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+
+        self.time_authority_url()
+            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
 }
 
 /// Creates a callback signer
