@@ -406,6 +406,10 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
+
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
+        }
     }
 
     #[test]
@@ -419,8 +423,9 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        assert!(cose_sign1.is_err());
+        #[cfg(feature = "openssl")] // there is no verify on sign when openssl is disabled
+        assert!(_cose_sign1.is_err());
     }
 }

@@ -32,6 +32,7 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 const II: [u8; 2] = *b"II";
@@ -65,6 +66,7 @@ static SUPPORTED_TYPES: [&str; 10] = [
 ];
 
 // The type of an IFD entry
+#[derive(Debug, PartialEq)]
 enum IFDEntryType {
     Byte = 1,       // 8-bit unsigned integer
     Ascii = 2,      // 8-bit byte that contains a 7-bit ASCII code; the last byte must be zero
@@ -1372,6 +1374,11 @@ where
         None => return None,
     };
 
+    // make sure the tag type is correct
+    if IFDEntryType::from_u16(xmp_ifd_entry.entry_type)? != IFDEntryType::Byte {
+        return None;
+    }
+
     // move read point to start of entry
     let decoded_offset = decode_offset(xmp_ifd_entry.value_offset, e, big_tiff).ok()?;
     asset_reader.seek(SeekFrom::Start(decoded_offset)).ok()?;
@@ -1611,15 +1618,22 @@ impl RemoteRefEmbed for TiffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
+                let output_buf = Vec::new();
+                let mut output_stream = Cursor::new(output_buf);
+
+                // block so that source file is closed after embed
                 {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
+                    let mut source_stream = std::fs::File::open(asset_path)?;
+                    self.embed_reference_to_stream(
+                        &mut source_stream,
+                        &mut output_stream,
+                        RemoteRefEmbedType::Xmp(manifest_uri),
+                    )?;
                 }
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
-                }
+                // write will replace exisiting contents
+                std::fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
@@ -1629,11 +1643,35 @@ impl RemoteRefEmbed for TiffIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                let xmp = match self.get_reader().read_xmp(source_stream) {
+                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
+                    None => {
+                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        add_provenance(&xmp, &manifest_uri)?
+                    }
+                };
+
+                let l = u64::value_from(xmp.len())
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                let entry = IfdClonedEntry {
+                    entry_tag: XMP_TAG,
+                    entry_type: IFDEntryType::Byte as u16,
+                    value_count: l,
+                    value_bytes: xmp.as_bytes().to_vec(),
+                };
+                tiff_clone_with_tags(output_stream, source_stream, vec![entry])
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
@@ -1679,26 +1717,29 @@ pub mod tests {
     }
 
     #[test]
-    fn test_read_write_manifest_stream() {
+    fn test_write_xmp() {
         let data = "some data";
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
-        let mut source = std::fs::File::open(source).unwrap();
-        let mut dest = std::io::Cursor::new(Vec::new()); //std::fs::File::create(&output).unwrap();
+        let temp_dir = tempdir().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io
-            .write_cai(&mut source, &mut dest, data.as_bytes())
+        let eh = tiff_io.remote_ref_writer_ref().unwrap();
+        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
             .unwrap();
 
-        dest.set_position(0);
         // read data back
-        let loaded = tiff_io.read_cai(&mut dest).unwrap();
+        let mut output_stream = std::fs::File::open(&output).unwrap();
+        let xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 
-        assert_eq!(&loaded, data.as_bytes());
+        assert_eq!(&loaded, data);
     }
 
     #[test]
