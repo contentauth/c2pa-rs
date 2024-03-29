@@ -436,10 +436,6 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
-        // verify the resource referenced exists
-        // if !self.resources.exists(&data_ref.identifier) {
-        //     return Err(Error::NotFound);
-        // };
         self.manifest_data = Some(data_ref);
         Ok(self)
     }

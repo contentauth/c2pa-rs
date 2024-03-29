@@ -661,24 +661,6 @@ impl Manifest {
             None => None,
         };
 
-        // // set up signature info
-        // let issuer = claim.signing_issuer();
-        // let time = claim
-        //     .signing_time()
-        //     .map(|signing_time| signing_time.to_rfc3339());
-        // let cert_serial_number = claim.signing_cert_serial();
-
-        // let cert_chain = claim.get_cert_chain()
-        //     .and_then(|chain| String::from_utf8(chain)
-        //     .map_err(|_e| Error::CoseInvalidCert))?;
-
-        // manifest.signature_info = Some(SignatureInfo {
-        //         issuer,
-        //         time,
-        //         cert_serial_number,
-        //         cert_chain,
-        // });
-
         Ok(manifest)
     }
 

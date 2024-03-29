@@ -30,17 +30,7 @@ fn main() -> Result<()> {
         let path = std::path::PathBuf::from(&args[1]);
         let format = format_from_path(&path).ok_or(Error::UnsupportedType)?;
         let mut file = std::fs::File::open(&path)?;
-        // check for a sidecar first
-        // let external_manifest = path.with_extension("c2pa");
-        // let reader = if external_manifest.exists() {
-        //     println!("Using external manifest: {}", external_manifest.display());
-        //     let c2pa_data = std::fs::read(&external_manifest)?;
-        //     let format = path
-        //         .extension()
-        //         .and_then(|ext| ext.to_str())
-        //         .ok_or(Error::UnsupportedType)?;
-        //     Reader::from_c2pa_data_and_stream(&c2pa_data, format, &mut file)
-        // } else {
+
         let reader = match Reader::from_stream(&format, &mut file) {
             Ok(reader) => Ok(reader),
             Err(Error::RemoteManifestUrl(url)) => {
@@ -73,16 +63,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-
-// #[cfg(test)]
-// pub(crate) mod tests {
-//     #![allow(clippy::expect_used)]
-//     #![allow(clippy::unwrap_used)]
-
-//     use super::*;
-//     //use crate::utils::test::{fixture_path, temp_signer};
-
-//     fn show_no_jumbf() {
-//         assert!(true);
-//     }
-// }

@@ -20,7 +20,8 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, settings, Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
+        create_signer, load_settings_from_str, Ingredient, Manifest, ManifestStore, Result, Signer,
+        SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -53,7 +54,7 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
             let setting = ta.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
@@ -62,7 +63,7 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
             let setting = al.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
@@ -71,17 +72,14 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
             let setting = tc.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
 
         // enable trust checks
         if enable_trust_checks {
-            c2pa::settings::load_settings_from_str(
-                r#"{"verify": { "verify_trust": true} }"#,
-                "json",
-            )?;
+            load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
         }
 
         Ok(())
@@ -173,7 +171,7 @@ mod integration_1 {
     fn test_embed_json_manifest() -> Result<()> {
         let _protect = PROTECT.lock().unwrap();
 
-        settings::reset_default_settings().unwrap();
+        c2pa::reset_default_settings().unwrap();
 
         // set up parent and destination paths
         let dir = tempdir()?;

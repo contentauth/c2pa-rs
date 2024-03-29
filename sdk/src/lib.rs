@@ -115,7 +115,7 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
-pub use settings::load_settings_from_str;
+pub use settings::{load_settings_from_str, reset_default_settings};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use signing_alg::SigningAlg;
 pub use v2_api::{format_from_path, Builder, Reader};

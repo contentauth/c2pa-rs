@@ -155,14 +155,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// struct EdCallbackSigner {}
-
-// impl SignerCallback for EdCallbackSigner {
-//     fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
-//         ed_sign(data, PRIVATE_KEY)
-//     }
-// }
-
+// Sign the data using the Ed25519 algorithm
 fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
     use ed25519_dalek::{Signature, Signer, SigningKey};
     use pem::parse;

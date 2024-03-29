@@ -60,11 +60,6 @@ impl CAIWriter for C2paIO {
         &self,
         __input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        // let hop = HashObjectPositions {
-        //     offset: 0,
-        //     length: 0,
-        //     htype: HashBlockObjectType::Cai,
-        // };
         // there is no data to hash
         Ok(vec![])
     }
