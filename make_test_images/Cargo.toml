@@ -9,11 +9,10 @@ rust-version = "1.73.0"
 [dependencies]
 anyhow = "1.0.40"
 blake3 = "1.5.0"
-c2pa = { path = "../sdk", features = [
+c2pa = { path = "../sdk", default-features = false, features = [
 	"add_thumbnails",
 	"openssl",
 	"xmp_write",
-	#"v1_api"
 ] }
 env_logger = "0.10"
 log = "0.4.8" 

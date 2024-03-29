@@ -5,7 +5,6 @@ use c2pa::{Builder, Result};
 mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
 
-#[cfg(feature = "file_io")]
 #[test]
 fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;

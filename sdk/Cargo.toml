@@ -25,7 +25,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = []
+default = ["v1_api"]
 add_thumbnails = ["image"]
 psxxx_ocsp_stapling_experimental = []
 file_io = ["openssl_sign"]
@@ -45,15 +45,15 @@ diagnostics = []
 #[cfg(not(target_arch = "wasm32"))]
 [[example]]
 name = "client"
-required-features = ["file_io", "v1_api"]
+required-features = ["file_io"]
 
 [[example]]
 name = "show"
-required-features = ["file_io", "v1_api"]
+required-features = ["file_io"]
 
 [[example]]
 name = "data_hash"
-required-features = ["v1_api"]
+
 
 [lib]
 crate-type = ["lib"]

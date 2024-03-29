@@ -9,6 +9,7 @@
 
 /// complete functional integration test with acquisitions and ingredients
 // isolate from wasm by wrapping in module
+#[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
 
     use std::io::{Cursor, Seek};
@@ -68,8 +69,8 @@ mod integration_v2 {
     }).to_string()
     }
 
-    //#[cfg(not(target_arch = "wasm32"))]
-    fn main() -> Result<()> {
+    #[test]
+    fn test_v2_integration() -> Result<()> {
         let title = "CA.jpg";
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -126,7 +127,6 @@ mod integration_v2 {
         }
 
         println!("{}", reader.json());
-        #[cfg(not(target_arch = "wasm32"))] // todo: remove this check when wasm supports ed25519
         assert!(reader.validation_status().is_none());
         assert_eq!(reader.active().unwrap().title().unwrap(), title);
 
@@ -147,16 +147,5 @@ mod integration_v2 {
         let signature: Signature = signing_key.sign(data);
 
         Ok(signature.to_bytes().to_vec())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::*;
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    //#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    async fn test_v2_api() -> Result<()> {
-        main()
     }
 }

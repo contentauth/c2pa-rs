@@ -91,38 +91,16 @@ pub const NAME: &str = "c2pa-rs";
 /// The version of this C2PA SDK
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(feature = "v1_api")]
-pub mod v1 {
-    pub use crate::{
-        manifest_assertion::ManifestAssertion, manifest_store::ManifestStore,
-        manifest_store_report::ManifestStoreReport,
-    };
-}
-
-pub(crate) mod v2_api;
-
-pub(crate) mod callback_signer;
-pub(crate) mod claim_generator_info;
-pub(crate) mod cose_sign;
-pub(crate) mod cose_validator;
-pub(crate) mod error;
-pub(crate) mod ingredient;
-pub(crate) mod jumbf_io;
-pub(crate) mod manifest;
-pub(crate) mod manifest_assertion;
-pub(crate) mod manifest_store;
-pub(crate) mod manifest_store_report;
-#[cfg(feature = "openssl")]
-pub(crate) mod openssl;
-pub(crate) mod resource_store;
-pub(crate) mod settings;
-pub(crate) mod signer;
-pub(crate) mod signing_alg;
-
+// Public modules
 pub mod assertions;
-pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "openssl_sign")]
 pub mod create_signer;
+pub mod validation_status;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
+// Public exports
+pub use asset_io::{CAIRead, CAIReadWrite};
 pub use callback_signer::{create_callback_signer, SignerCallback};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // put these behind a feature flag for the remote signer
@@ -132,36 +110,52 @@ pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use ingredient::Ingredient;
 pub use jumbf_io::{get_supported_types, load_jumbf_from_stream, save_jumbf_to_stream};
 pub use manifest::Manifest;
-pub use manifest_assertion::{
-    ManifestAssertion as Assertion, ManifestAssertionKind as AssertionKind,
-};
+pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
+#[cfg(feature = "v1_api")]
+pub use manifest_store::ManifestStore;
+#[cfg(feature = "v1_api")]
+pub use manifest_store_report::ManifestStoreReport;
 pub use settings::load_settings_from_str;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use signing_alg::SigningAlg;
 pub use v2_api::{format_from_path, Builder, Reader};
-pub mod validation_status;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
 // Internal modules
-
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+pub(crate) mod callback_signer;
 pub(crate) mod claim;
+pub(crate) mod claim_generator_info;
+pub(crate) mod cose_sign;
+pub(crate) mod cose_validator;
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
+pub(crate) mod error;
 pub(crate) mod hashed_uri;
+pub(crate) mod ingredient;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
+pub(crate) mod jumbf_io;
+pub(crate) mod manifest;
+pub(crate) mod manifest_assertion;
+pub(crate) mod manifest_store;
+pub(crate) mod manifest_store_report;
 pub(crate) mod ocsp_utils;
+#[cfg(feature = "openssl")]
+pub(crate) mod openssl;
+pub(crate) mod resource_store;
 pub(crate) mod salt;
+pub(crate) mod settings;
+pub(crate) mod signer;
+pub(crate) mod signing_alg;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
+pub(crate) mod v2_api;
 pub(crate) mod validator;

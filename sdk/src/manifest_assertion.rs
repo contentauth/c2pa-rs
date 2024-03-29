@@ -123,7 +123,7 @@ impl ManifestAssertion {
     ///
     ///```
     /// # use c2pa::Result;
-    /// use c2pa::v1::ManifestAssertion;
+    /// use c2pa::ManifestAssertion;
     /// use serde_json::json;
     /// # fn main() -> Result<()> {
     /// let value = json!({"my_tag": "Anything I want"});
@@ -149,11 +149,11 @@ impl ManifestAssertion {
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
-    ///     Assertion,
+    ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let _ma = Assertion::from_labeled_assertion(Actions::LABEL, &actions)?;
+    /// let _ma = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -172,11 +172,11 @@ impl ManifestAssertion {
     /// # use c2pa::Result;
     /// use c2pa::{
     ///     assertions::{c2pa_action, Action, Actions},
-    ///     Assertion,
+    ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let manifest_assertion = Assertion::from_labeled_assertion(Actions::LABEL, &actions)?;
+    /// let manifest_assertion = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
     /// for action in actions.actions {
