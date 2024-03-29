@@ -20,6 +20,8 @@ use std::{fs, path::Path};
 
 use log::error;
 
+#[cfg(feature = "openssl")]
+use crate::cose_validator::{verify_cose, verify_cose_async};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -32,8 +34,8 @@ use crate::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
-    cose_sign::cose_sign,
-    cose_validator::{check_ocsp_status, verify_cose},
+    cose_sign::{cose_sign, cose_sign_async},
+    cose_validator::check_ocsp_status,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -501,6 +503,7 @@ impl Store {
 
         cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
             // Sanity check: Ensure that this signature is valid.
+            #[cfg(feature = "openssl")]
             if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
                 if verify_after_sign {
                     let mut cose_log = OneShotStatusTracker::new();
@@ -531,13 +534,12 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
-
         let claim_bytes = claim.data()?;
 
         match cose_sign_async(signer, &claim_bytes, box_size).await {
             // Sanity check: Ensure that this signature is valid.
             Ok(sig) => {
+                #[cfg(feature = "openssl")]
                 if let Ok(verify_after_sign) =
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
