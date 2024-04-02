@@ -613,7 +613,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
         if let Some(img_hdr) = ps.iter().find(|png_cp| png_cp.name == IMG_HDR) {
             Some((img_hdr.end(), 0))
         } else {
-            return None;
+            return None
         }
     }
 }
@@ -635,7 +635,7 @@ impl RemoteRefEmbed for PngIO {
                     )?;
                 }
 
-                std::fs::write(asset_path, &output_stream.into_inner())?;
+                std::fs::write(asset_path, output_stream.into_inner())?;
 
                 Ok(())
             }
@@ -788,10 +788,10 @@ impl ComposedManifestRef for PngIO {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
+#[allow(clippy::unwrap_used)]
 pub mod tests {
-    #![allow(clippy::panic)]
-    #![allow(clippy::unwrap_used)]
-
+  
     use std::io::Write;
 
     use memchr::memmem;
@@ -817,7 +817,7 @@ pub mod tests {
     #[test]
     fn test_png_xmp_write() {
         let ap = test::fixture_path("libpng-test.png");
-        let mut source_stream = std::fs::File::open(&ap).unwrap();
+        let mut source_stream = std::fs::File::open(ap).unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "out.png");
