@@ -613,7 +613,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
         if let Some(img_hdr) = ps.iter().find(|png_cp| png_cp.name == IMG_HDR) {
             Some((img_hdr.end(), 0))
         } else {
-            return None
+            None
         }
     }
 }
