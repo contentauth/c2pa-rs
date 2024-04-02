@@ -610,11 +610,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
         Some((xmp.start, xmp.length))
     } else {
         // insert after IHDR
-        if let Some(img_hdr) = ps.iter().find(|png_cp| png_cp.name == IMG_HDR) {
-            Some((img_hdr.end(), 0))
-        } else {
-            None
-        }
+        ps.iter().find(|png_cp| png_cp.name == IMG_HDR).map(|img_hdr| (img_hdr.end(), 0))
     }
 }
 impl RemoteRefEmbed for PngIO {
