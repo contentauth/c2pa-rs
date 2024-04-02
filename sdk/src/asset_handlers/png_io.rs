@@ -791,7 +791,6 @@ impl ComposedManifestRef for PngIO {
 #[allow(clippy::panic)]
 #[allow(clippy::unwrap_used)]
 pub mod tests {
-  
     use std::io::Write;
 
     use memchr::memmem;
