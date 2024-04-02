@@ -826,7 +826,7 @@ pub mod tests {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&output)
+            .open(output)
             .unwrap();
 
         let png_io = PngIO {};
