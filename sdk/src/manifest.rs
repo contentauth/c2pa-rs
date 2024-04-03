@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap, io::Cursor};
+use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
@@ -32,6 +32,7 @@ use crate::{
     asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
+    hashed_uri::HashedUri,
     jumbf,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
@@ -87,6 +88,10 @@ pub struct Manifest {
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
     assertions: Vec<ManifestAssertion>,
+
+    /// A list of assertion hash references.
+    #[serde(skip)]
+    assertion_references: Vec<HashedUri>,
 
     /// A list of redactions - URIs to a redacted assertions
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +194,11 @@ impl Manifest {
     /// Returns Assertions for this Manifest
     pub fn assertions(&self) -> &[ManifestAssertion] {
         &self.assertions
+    }
+
+    /// Returns raw assertion references
+    pub fn assertion_references(&self) -> Iter<HashedUri> {
+        self.assertion_references().iter()
     }
 
     /// Returns Verifiable Credentials
@@ -569,6 +579,8 @@ impl Manifest {
         }
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
+
+        manifest.assertion_references = claim.assertions().clone();
 
         for assertion in claim.assertions() {
             let claim_assertion = store.get_claim_assertion_from_uri(

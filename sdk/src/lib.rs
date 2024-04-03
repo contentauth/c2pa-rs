@@ -140,7 +140,10 @@ pub mod cose_sign;
 
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
+
 pub(crate) mod hashed_uri;
+pub use hashed_uri::HashedUri;
+
 #[allow(dead_code)]
 pub(crate) mod jumbf;
 pub(crate) mod salt;
