@@ -199,6 +199,23 @@ impl Builder {
         self
     }
 
+    pub fn set_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        // just read into a buffer until resource store handles reading streams
+        let mut resource = Vec::new();
+        stream.read_to_end(&mut resource)?;
+        // add the resource and set the resource reference
+        self.resources
+            .add(&self.definition.instance_id.clone(), resource)?;
+        self.definition.thumbnail = Some(ResourceRef::new(
+            format,
+            self.definition.instance_id.clone(),
+        ));
+        Ok(self)
+    }
+
     /// Adds an assertion to the manifest
     /// # Arguments
     /// * `label` - A label for the assertion
