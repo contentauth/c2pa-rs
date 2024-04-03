@@ -198,7 +198,7 @@ impl Manifest {
 
     /// Returns raw assertion references
     pub fn assertion_references(&self) -> Iter<HashedUri> {
-        self.assertion_references().iter()
+        self.assertion_references.iter()
     }
 
     /// Returns Verifiable Credentials
