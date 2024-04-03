@@ -1,11 +1,11 @@
-use c2pa::{create_callback_signer, Result, Signer, SigningAlg};
+use c2pa::{CallbackSigner, SigningAlg};
 
 const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
 
-pub fn test_signer() -> Result<Box<dyn Signer>> {
-    let ed_signer = |data: &[u8]| ed_sign(data, PRIVATE_KEY);
-    create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)
+pub fn test_signer() -> CallbackSigner {
+    let ed_signer = |_context: &dyn std::any::Any, data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
 }
 
 fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {

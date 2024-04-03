@@ -12,10 +12,13 @@
 // each license.
 
 //! Example App showing how to use the new v2 API
-use std::io::{Cursor, Seek};
+use std::{
+    any::Any,
+    io::{Cursor, Seek},
+};
 
 use anyhow::Result;
-use c2pa::{create_callback_signer, load_settings_from_str, Builder, Reader, SigningAlg};
+use c2pa::{load_settings_from_str, Builder, CallbackSigner, Reader, SigningAlg};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -121,14 +124,13 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    //let signer = create_signer::from_keys(CERTS, PRIVATE_KEY, SigningAlg::Es256, None)?;
-    let ed_signer = |data: &[u8]| ed_sign(data, PRIVATE_KEY);
-    let signer = create_callback_signer(SigningAlg::Ed25519, CERTS, ed_signer, None)?;
+    let ed_signer = |_context: &dyn Any, data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
     let mut builder = Builder::unzip(&mut zipped)?;
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(format, &mut source, &mut dest, signer.as_ref())?;
+    builder.sign(format, &mut source, &mut dest, &signer)?;
 
     // read and validate the signed manifest store
     dest.rewind()?;

@@ -157,8 +157,7 @@ impl ManifestAssertion {
     /// # Ok(())
     /// # }
     /// ```
-    /// removing this entirely since it requires exposing AssertionBase
-    pub(crate) fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
+    pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         Ok(Self::new(
             data.label().to_owned(),
             serde_json::to_value(data).map_err(|_err| Error::AssertionEncoding)?,

@@ -100,13 +100,15 @@ pub mod validation_status;
 pub mod wasm;
 
 // Public exports
-pub use callback_signer::{create_callback_signer, SignerCallback};
+pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // put these behind a feature flag for the remote signer
 pub use cose_sign::{sign_claim, sign_claim_async};
 pub use error::{Error, Result};
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use ingredient::Ingredient;
+#[cfg(feature = "file_io")]
+pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use jumbf_io::{get_supported_types, load_jumbf_from_stream, save_jumbf_to_stream};
 pub use manifest::Manifest;
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
