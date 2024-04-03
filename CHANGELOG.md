@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.31.2
+_03 April 2024_
+
+* Fixed temp file auto delete ([#438](https://github.com/contentauth/c2pa-rs/pull/438))
+* Add `Sync` trait to `TrustHandlerConfig` ([#440](https://github.com/contentauth/c2pa-rs/pull/440))
+* remove file_io dependency on fetch_remote_manifests ([#434](https://github.com/contentauth/c2pa-rs/pull/434))
+* Remove verify after signing when compiling without openssl ([#404](https://github.com/contentauth/c2pa-rs/pull/404))
+* Streaming write support for BMFF ([#435](https://github.com/contentauth/c2pa-rs/pull/435))
+* Added support for XMP streaming writes for TIFF/DNG ([#433](https://github.com/contentauth/c2pa-rs/pull/433))
+* Implements embed_reference_to_stream for jpeg ([#430](https://github.com/contentauth/c2pa-rs/pull/430))
+
 ## 0.31.1
 _25 March 2024_
 
