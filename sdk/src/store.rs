@@ -21,6 +21,8 @@ use std::{fs, path::Path};
 use async_generic::async_generic;
 use log::error;
 
+#[cfg(feature = "openssl")]
+use crate::cose_validator::{verify_cose, verify_cose_async};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -33,8 +35,8 @@ use crate::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
-    cose_sign::cose_sign,
-    cose_validator::{check_ocsp_status, verify_cose},
+    cose_sign::{cose_sign, cose_sign_async},
+    cose_validator::check_ocsp_status,
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -503,6 +505,7 @@ impl Store {
 
         cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
             // Sanity check: Ensure that this signature is valid.
+            #[cfg(feature = "openssl")]
             if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
                 if verify_after_sign {
                     let mut cose_log = OneShotStatusTracker::new();
@@ -533,13 +536,12 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
-
         let claim_bytes = claim.data()?;
 
         match cose_sign_async(signer, &claim_bytes, box_size).await {
             // Sanity check: Ensure that this signature is valid.
             Ok(sig) => {
+                #[cfg(feature = "openssl")]
                 if let Ok(verify_after_sign) =
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
@@ -2885,7 +2887,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "fetch_remote_manifests")]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
         use ureq::Error as uError;
@@ -2933,30 +2935,14 @@ impl Store {
     }
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
-    #[cfg(feature = "file_io")]
     fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
-        let is_remote_url = Store::is_valid_remote_url(ext_ref);
-
-        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-            Store::fetch_remote_manifest(ext_ref)
-        } else {
-            // return an error with the url that should be read
-            if is_remote_url {
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
-            } else {
-                Err(Error::JumbfNotFound)
+        if Store::is_valid_remote_url(ext_ref) {
+            #[cfg(feature = "fetch_remote_manifests")]
+            {
+                Store::fetch_remote_manifest(ext_ref)
             }
-        }
-    }
-
-    /// Handles remote manifests for Wasm or when the file_io/fetch_remote_manifests feature is disabled
-    #[cfg(not(feature = "file_io"))]
-    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
-        // verify provenance path is remote url
-        let is_remote_url = Store::is_valid_remote_url(ext_ref);
-
-        if is_remote_url {
+            #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
             Err(Error::JumbfNotFound)
