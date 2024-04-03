@@ -350,6 +350,17 @@ impl Manifest {
         Ok(self)
     }
 
+    /// TO DO: Add docs
+    pub fn add_cbor_assertion<S: Into<String>, T: Serialize>(
+        &mut self,
+        label: S,
+        data: &T,
+    ) -> Result<&mut Self> {
+        self.assertions
+            .push(ManifestAssertion::from_cbor_assertion(label, data)?);
+        Ok(self)
+    }
+
     /// Adds ManifestAssertions from existing assertions
     /// The data for standard assertions must be in correct format
     ///
@@ -639,7 +650,14 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Json(_) | AssertionData::Cbor(_) => {
+                        AssertionData::Cbor(_) => {
+                            let value = assertion.as_json_object()?;
+                            let ma = ManifestAssertion::new(base_label, value)
+                                .set_instance(claim_assertion.instance());
+
+                            manifest.assertions.push(ma);
+                        }
+                        AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance())
@@ -898,13 +916,21 @@ impl Manifest {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
-                        &UserCbor::new(
-                            manifest_assertion.label(),
-                            serde_cbor::to_vec(&manifest_assertion.value()?)?,
-                        ),
+                    ManifestAssertionKind::Cbor => {
+                        let cbor = match manifest_assertion.value() {
+                            Ok(value) => serde_cbor::to_vec(value)?,
+                            Err(_) => manifest_assertion.binary()?.to_vec(),
+                        };
+
+                        claim.add_assertion_with_salt(
+                        
+                                &UserCbor::new(
+                                    manifest_assertion.label(),
+                                    cbor,
+                                ),
                         &salt,
-                    ),
+                    )
+                    },
                     ManifestAssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
