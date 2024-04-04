@@ -71,7 +71,13 @@ chrono = { version = "0.4.27", default-features = false, features = [
 	"wasmbind",
 ] }
 ciborium = "0.2.0"
-config = {version = "0.14.0", default-features = false, features = ["json", "json5", "toml", "ron", "ini"]}
+config = { version = "0.14.0", default-features = false, features = [
+	"json",
+	"json5",
+	"toml",
+	"ron",
+	"ini",
+] }
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
@@ -88,7 +94,7 @@ memchr = "2.7.1"
 multibase = "0.9.0"
 multihash = "0.11.4"
 mp4 = "0.13.0"
-png_pong = "0.9.0"
+png_pong = "0.9.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.9"
