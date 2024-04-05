@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.31.3
+_05 April 2024_
+
+* Add `video/quicktime` to the list of BMFF MIME types ([#441](https://github.com/contentauth/c2pa-rs/pull/441))
+* Streaming XMP write support for PNG ([#439](https://github.com/contentauth/c2pa-rs/pull/439))
+
 ## 0.31.2
 _03 April 2024_
 
