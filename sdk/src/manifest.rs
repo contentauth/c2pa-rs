@@ -580,7 +580,12 @@ impl Manifest {
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
 
-        manifest.assertion_references = claim.assertions().clone();
+        manifest.assertion_references = claim.assertions().iter()
+            .map(|h| {
+                let alg = h.alg().or_else(|| Some(claim.alg().to_string()));
+                HashedUri::new(h.url(), alg, &h.hash())
+            }
+            ).collect();
 
         for assertion in claim.assertions() {
             let claim_assertion = store.get_claim_assertion_from_uri(

@@ -131,7 +131,6 @@ pub(crate) mod asset_io;
 pub use asset_io::{CAIRead, CAIReadWrite};
 /// crate private declarations
 pub(crate) mod claim;
-pub use claim::Claim; // TEMPORARY(?) while experimenting with identity assertion space
 
 mod claim_generator_info;
 pub use claim_generator_info::ClaimGeneratorInfo;
