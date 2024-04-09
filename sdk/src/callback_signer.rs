@@ -22,7 +22,14 @@ use crate::{
 };
 
 /// Defines a context for a signer
-pub type SignerContext = dyn std::any::Any;
+//pub type SignerContext = dyn std::any::Any;#[repr(C)]
+#[derive(Debug, Default)]
+#[repr(C)]
+/// An Opaque struct to hold a context value for the sign callbacks
+pub struct SignerContext {
+    _priv: (),
+}
+unsafe impl Send for SignerContext {}
 
 /// Defines a callback function interface for a signer
 /// The callback should return a signature for the given data
@@ -59,7 +66,7 @@ impl CallbackSigner {
         let certs = certs.into();
         let reserve_size = 10000 + certs.len();
         Self {
-            context: Box::new(()),
+            context: Box::<SignerContext>::default(),
             callback: Box::new(callback),
             alg,
             certs,
@@ -79,7 +86,7 @@ impl CallbackSigner {
 impl Default for CallbackSigner {
     fn default() -> Self {
         Self {
-            context: Box::new(()),
+            context: Box::<SignerContext>::default(),
             callback: Box::new(|_, _| Err(Error::UnsupportedType)),
             alg: SigningAlg::Es256,
             certs: Vec::new(),
@@ -91,7 +98,7 @@ impl Default for CallbackSigner {
 
 impl Signer for CallbackSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        (self.callback)(&*self.context, data)
+        (self.callback)(&self.context, data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -110,17 +117,28 @@ impl Signer for CallbackSigner {
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-
-        self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
-        None
-    }
 }
+
+// #[async_trait::async_trait]
+// impl AsyncSigner for CallbackSigner {
+//     async fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+//         (self.callback)(&*self.context, data)
+//     }
+
+//     fn alg(&self) -> SigningAlg {
+//         self.alg
+//     }
+
+//     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+//         let mut pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
+//         Ok(pems.drain(..).map(|p| p.into_contents()).collect())
+//     }
+
+//     fn reserve_size(&self) -> usize {
+//         self.reserve_size
+//     }
+
+//     fn time_authority_url(&self) -> Option<String> {
+//         self.tsa_url.clone()
+//     }
+// }

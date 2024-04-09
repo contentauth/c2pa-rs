@@ -12,13 +12,10 @@
 // each license.
 
 //! Example App showing how to use the new v2 API
-use std::{
-    any::Any,
-    io::{Cursor, Seek},
-};
+use std::io::{Cursor, Seek};
 
 use anyhow::Result;
-use c2pa::{load_settings_from_str, Builder, CallbackSigner, Reader, SigningAlg};
+use c2pa::{load_settings_from_str, Builder, CallbackSigner, Reader, SignerContext, SigningAlg};
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -124,7 +121,7 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    let ed_signer = |_context: &dyn Any, data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    let ed_signer = |_context: &SignerContext, data: &[u8]| ed_sign(data, PRIVATE_KEY);
     let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
     let mut builder = Builder::unzip(&mut zipped)?;

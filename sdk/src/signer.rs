@@ -57,7 +57,9 @@ pub trait Signer {
             .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
     }
     #[cfg(target_arch = "wasm32")]
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
 
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.

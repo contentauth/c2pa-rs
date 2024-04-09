@@ -241,15 +241,15 @@ impl Builder {
     /// * `format` - The format of the ingredient
     /// * `stream` - A stream to read the ingredient from
     /// # Returns
-    /// * A mutable reference to the builder
+    /// * A mutable reference to the Ingredient
     /// # Errors
     /// * If the ingredient is not valid
-    pub fn add_ingredient<T, R>(
-        &mut self,
+    pub fn add_ingredient<'a, T, R>(
+        &'a mut self,
         ingredient_json: T,
         format: &str,
         stream: &mut R,
-    ) -> Result<&mut Self>
+    ) -> Result<&'a mut Ingredient>
     where
         T: Into<String>,
         R: Read + Seek + Send,
@@ -257,7 +257,8 @@ impl Builder {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
         let ingredient = ingredient.with_stream(format, stream)?;
         self.definition.ingredients.push(ingredient);
-        Ok(self)
+        #[allow(clippy::unwrap_used)]
+        Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
     }
 
     /// Adds a resource to the manifest

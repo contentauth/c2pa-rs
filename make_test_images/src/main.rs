@@ -16,6 +16,7 @@
 //! cargo run --release --bin make_test_images
 mod compare_manifests;
 mod make_test_images;
+mod make_thumbnail;
 use anyhow::{Context, Result};
 
 fn main() -> Result<()> {

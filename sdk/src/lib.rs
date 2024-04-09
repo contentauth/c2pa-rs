@@ -100,7 +100,7 @@ pub mod validation_status;
 pub mod wasm;
 
 // Public exports
-pub use callback_signer::{CallbackFunc, CallbackSigner};
+pub use callback_signer::{CallbackFunc, CallbackSigner, SignerContext};
 pub use claim_generator_info::ClaimGeneratorInfo;
 // put these behind a feature flag for the remote signer
 pub use cose_sign::{sign_claim, sign_claim_async};

@@ -15,7 +15,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Cursor,
+    io::{Cursor, Seek},
     path::{Path, PathBuf},
 };
 
@@ -26,7 +26,7 @@ use nom::AsBytes;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::compare_manifests::compare_folders;
+use crate::{compare_manifests::compare_folders, make_thumbnail::make_thumbnail_from_stream};
 
 const IMAGE_WIDTH: u32 = 2048;
 const IMAGE_HEIGHT: u32 = 1365;
@@ -223,7 +223,14 @@ impl MakeTestImages {
             "relationship": relationship,
         })
         .to_string();
-        builder.add_ingredient(&json, format, &mut source)?;
+
+        let ingredient = builder.add_ingredient(&json, format, &mut source)?;
+        if ingredient.thumbnail_ref().is_none() {
+            source.rewind()?;
+            let (format, thumbnail) =
+                make_thumbnail_from_stream(format, &mut source).context("making thumbnail")?;
+            ingredient.set_thumbnail(format, thumbnail)?;
+        }
 
         Ok(
             builder.definition.ingredients[builder.definition.ingredients.len() - 1]
@@ -388,7 +395,6 @@ impl MakeTestImages {
         }
 
         let mut temp = tempfile::tempfile()?;
-        use std::io::Seek;
 
         use image::ImageFormat;
         let image_format = ImageFormat::from_extension(extension)
@@ -406,6 +412,14 @@ impl MakeTestImages {
                 }
             ),
         )?;
+
+        // generate a thumbnail and set it in the image
+        // make sure do do this last,on the generated image so that it reflects the output
+        let (thumb_format, image) =
+            make_thumbnail_from_stream(format, &mut temp).context("making thumbnail")?;
+        builder.set_thumbnail(&thumb_format, &mut Cursor::new(image))?;
+
+        temp.rewind()?;
 
         // now sign manifest and embed in target
         let signer = self.config.get_signer()?;
