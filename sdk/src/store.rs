@@ -2170,7 +2170,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2225,7 +2225,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2282,7 +2282,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
