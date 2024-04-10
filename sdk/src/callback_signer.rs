@@ -21,29 +21,21 @@ use crate::{
     Signer, SigningAlg,
 };
 
-/// Defines a context for a signer
-//pub type SignerContext = dyn std::any::Any;#[repr(C)]
-#[derive(Debug, Default)]
-#[repr(C)]
-/// An Opaque struct to hold a context value for the sign callbacks
-pub struct SignerContext {
-    _priv: (),
-}
-unsafe impl Send for SignerContext {}
+/// Defines a callback function interface for a signer.
+///
+/// The callback should return a signature for the given data.
+/// The signature should be in the format expected by the `Signer`.
+/// The callback should return an error if the data cannot be signed.
+pub type CallbackFunc = dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error>;
 
-/// Defines a callback function interface for a signer
-/// The callback should return a signature for the given data
-/// The signature should be in the format expected by the `Signer`
-/// The callback should return an error if the data cannot be signed
-pub type CallbackFunc = dyn Fn(&SignerContext, &[u8]) -> std::result::Result<Vec<u8>, Error>;
-
-/// Defines a signer that uses a callback to sign data
-/// The private key should only be known by the callback
-/// This structure is private to this module
-/// Should only be created using the `create_callback_signer` function
+/// Defines a signer that uses a callback to sign data.
+///
+/// The private key should only be known by the callback.
+/// This structure is private to this module.
+/// Should only be created using the `create_callback_signer` function.
 pub struct CallbackSigner {
     /// An opaque context for the signer, used to store any necessary state
-    pub context: Box<SignerContext>,
+    pub context: *const (),
     /// The callback to use to sign data
     pub callback: Box<CallbackFunc>,
     /// The signing algorithm to use
@@ -60,13 +52,13 @@ impl CallbackSigner {
     /// Create a new callback signer
     pub fn new<F, T>(callback: F, alg: SigningAlg, certs: T) -> Self
     where
-        F: Fn(&SignerContext, &[u8]) -> std::result::Result<Vec<u8>, Error> + 'static,
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + 'static,
         T: Into<Vec<u8>>,
     {
         let certs = certs.into();
         let reserve_size = 10000 + certs.len();
         Self {
-            context: Box::<SignerContext>::default(),
+            context: std::ptr::null(),
             callback: Box::new(callback),
             alg,
             certs,
@@ -80,13 +72,23 @@ impl CallbackSigner {
         self.tsa_url = Some(url.into());
         self
     }
+
+    /// Set a context value for the signer.
+    ///
+    /// This can be used to store any necessary state for the callback
+    /// Safety: The context must be valid for the lifetime of the signer
+    /// There is no Rust memory management for the context since it may also come from FFI     
+    pub fn set_context(mut self, context: *const ()) -> Self {
+        self.context = context;
+        self
+    }
 }
 
-// this default is only for for struct completion, do not use on its own
+// this default is only intended for struct completion, do not use on its own
 impl Default for CallbackSigner {
     fn default() -> Self {
         Self {
-            context: Box::<SignerContext>::default(),
+            context: std::ptr::null(),
             callback: Box::new(|_, _| Err(Error::UnsupportedType)),
             alg: SigningAlg::Es256,
             certs: Vec::new(),
@@ -98,7 +100,7 @@ impl Default for CallbackSigner {
 
 impl Signer for CallbackSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        (self.callback)(&self.context, data)
+        (self.callback)(self.context, data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -119,6 +121,7 @@ impl Signer for CallbackSigner {
     }
 }
 
+// this isn't working yet
 // #[async_trait::async_trait]
 // impl AsyncSigner for CallbackSigner {
 //     async fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {

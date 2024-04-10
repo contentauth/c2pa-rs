@@ -1,11 +1,12 @@
-use c2pa::{CallbackSigner, SignerContext, SigningAlg};
+use c2pa::{CallbackSigner, SigningAlg};
 
 const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
 
 pub fn test_signer() -> CallbackSigner {
-    let ed_signer = |_context: &SignerContext, data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    let ed_signer = |_context: *const _, data: &[u8]| ed_sign(data, PRIVATE_KEY);
     CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
+        .set_context("test" as *const _ as *const ())
 }
 
 fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {

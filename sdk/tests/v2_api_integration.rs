@@ -15,7 +15,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{Builder, CallbackSigner, Reader, SignerContext, SigningAlg};
+    use c2pa::{Builder, CallbackSigner, Reader, SigningAlg};
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -98,7 +98,7 @@ mod integration_v2 {
         zipped.rewind()?;
 
         let mut dest = {
-            let ed_signer = |_context: &SignerContext, data: &[u8]| ed_sign(data, PRIVATE_KEY);
+            let ed_signer = |_context: *const _, data: &[u8]| ed_sign(data, PRIVATE_KEY);
             let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
             let mut builder = Builder::unzip(&mut zipped)?;
             // sign the ManifestStoreBuilder and write it to the output stream

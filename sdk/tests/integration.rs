@@ -20,8 +20,9 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, load_settings_from_str, Ingredient, Manifest, ManifestStore, Result, Signer,
-        SigningAlg,
+        create_signer,
+        settings::load_settings_from_str,
+        Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -171,7 +172,7 @@ mod integration_1 {
     fn test_embed_json_manifest() -> Result<()> {
         let _protect = PROTECT.lock().unwrap();
 
-        c2pa::reset_default_settings().unwrap();
+        c2pa::settings::reset_default_settings().unwrap();
 
         // set up parent and destination paths
         let dir = tempdir()?;

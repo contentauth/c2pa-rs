@@ -20,7 +20,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use c2pa::{create_signer, get_supported_types, Builder, Error, Reader, Signer, SigningAlg};
+use c2pa::{
+    create_signer,
+    jumbf_io::{load_jumbf_from_stream, save_jumbf_to_stream},
+    Builder, Error, Reader, Signer, SigningAlg,
+};
 use memchr::memmem;
 use nom::AsBytes;
 use serde::Deserialize;
@@ -518,7 +522,7 @@ impl MakeTestImages {
             .into_owned();
 
         let mut source = std::fs::File::open(src_path).context("opening OGP source")?;
-        let jumbf = c2pa::load_jumbf_from_stream(&format, &mut source)
+        let jumbf = load_jumbf_from_stream(&format, &mut source)
             .context("loading OGP")
             .context(format!("loading OGP {src_path:?}"))?;
         // save the edited image to our destination file
@@ -530,7 +534,7 @@ impl MakeTestImages {
         let image = std::fs::read(&dst_path).context("reading OGP image")?;
         let mut dest = std::fs::File::create(&dst_path).context("creating OGP image")?;
         // write the original claim data to the edited image
-        c2pa::save_jumbf_to_stream(&format, &mut Cursor::new(image), &mut dest, &jumbf)
+        save_jumbf_to_stream(&format, &mut Cursor::new(image), &mut dest, &jumbf)
             .context(format!("OGP save_jumbf_to_file {:?}", &dst_path))?;
         // The image library does not preserve any metadata so we have to write it ourselves.
         // todo: should preserve all metadata and update instanceId.
@@ -602,8 +606,8 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-        let supported = get_supported_types();
-        println!("Supported types: {:#?}", supported);
+        // let supported = get_supported_types();
+        // println!("Supported types: {:#?}", supported);
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
         };

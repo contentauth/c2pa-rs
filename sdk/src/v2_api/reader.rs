@@ -21,8 +21,8 @@ use async_generic::async_generic;
 use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    status_tracker::DetailedStatusTracker, store::Store, validation_status::ValidationStatus,
-    Manifest,
+    settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
+    validation_status::ValidationStatus, Manifest,
 };
 
 /// A reader for the manifest store
@@ -52,8 +52,8 @@ impl Reader {
     /// use std::io::Cursor;
     ///
     /// use c2pa::Reader;
-    /// let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg").to_vec());
-    /// let reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
+    /// let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
     #[async_generic(async_signature(
@@ -61,7 +61,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
     ))]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let verify = true; // todo: get this from config
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let reader = if _sync {
             ManifestStore::from_stream(format, &mut stream, verify)
         } else {
@@ -84,12 +84,11 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let bytes = include_bytes!("../../tests/fixtures/CA.jpg").to_vec();
-    /// let reader = Reader::from_bytes("image/jpeg", &bytes).unwrap();
+    /// let bytes = include_bytes!("../../tests/fixtures/CA.jpg");
+    /// let reader = Reader::from_bytes("image/jpeg", bytes).unwrap();
     /// ```
     pub fn from_bytes(format: &str, bytes: &[u8]) -> Result<Reader> {
-        let stream = Cursor::new(bytes);
-        Self::from_stream(format, stream)
+        Self::from_stream(format, Cursor::new(bytes))
     }
 
     #[cfg(feature = "file_io")]
@@ -196,12 +195,12 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let reader =
-    ///     Reader::from_bytes("image/jpeg", include_bytes!("../../tests/fixtures/CA.jpg")).unwrap();
+    /// let stream = std::io::Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg"));
+    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// let status = reader.validation_status();
     /// ```
     /// # Note
-    /// The validation status should be checked for non severe errors`
+    /// The validation status should be checked for validation errors`
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.manifest_store.validation_status()
     }
@@ -229,12 +228,21 @@ impl Reader {
 
     /// Write a resource identified by uri to the given stream
     /// # Arguments
-    /// * `uri` - The URI of the resource to write
+    /// * `uri` - The URI of the resource to write (from an identifier field)
     /// * `stream` - The stream to write to
     /// # Returns
     /// The number of bytes written
     /// # Errors
     /// If the resource does not exist
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let stream = std::io::Cursor::new(Vec::new());
+    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// let manifest = reader.active().unwrap();
+    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    /// let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
+    /// ```
     pub fn resource_to_stream(
         &self,
         uri: &str,

@@ -103,17 +103,17 @@ pub struct ResourceRef {
     /// Relative JUMBF URIs will be resolved with the manifest label.
     /// Relative file paths will be resolved with the base path if provided.
     pub identifier: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
 
     /// More detailed data types as defined in the C2PA spec.
-    pub data_types: Option<Vec<AssetType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 
     /// The algorithm used to hash the resource (if applicable).
-    pub alg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub alg: Option<String>,
 
     /// The hash of the resource (if applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }
 

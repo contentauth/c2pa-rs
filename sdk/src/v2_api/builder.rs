@@ -1047,6 +1047,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
             "IMG_0003.jpg",
@@ -1100,6 +1101,15 @@ mod tests {
                 manifest_store.get_active().unwrap().title().unwrap(),
                 "Test_Manifest"
             );
+
+            // enable to write the signed manifests to a file for debugging
+            // let dest_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            //     .join("../target")
+            //     .join("signed")
+            //     .join(file_name);
+
+            // std::fs::create_dir_all(dest_path.parent().unwrap()).unwrap();
+            // std::fs::write(&dest_path, dest.get_ref()).unwrap();
         }
     }
 

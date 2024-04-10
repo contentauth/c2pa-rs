@@ -1750,7 +1750,7 @@ pub(crate) mod tests {
             .expect("embed");
 
         let manifest_store =
-            Reader::from_bytes("application/c2pa", &c2pa_data).expect("from_bytes");
+            Reader::from_stream("application/c2pa", Cursor::new(c2pa_data)).expect("from_bytes");
         assert_eq!(
             manifest_store.active().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
@@ -1789,7 +1789,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_bytes("image/jpeg", &out_vec).unwrap();
+        let manifest_store = Reader::from_stream("image/jpeg", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1824,7 +1824,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_bytes("image/png", &out_vec).unwrap();
+        let manifest_store = Reader::from_stream("image/png", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1860,7 +1860,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_bytes("image/webp", &out_vec).unwrap();
+        let manifest_store = Reader::from_stream("image/webp", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1896,7 +1896,8 @@ pub(crate) mod tests {
             .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let reader = Reader::from_bytes("jpeg", &output.into_inner()).expect("from_bytes");
+        stream.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         assert_eq!(reader.active().unwrap().title().unwrap(), "EmbedStream");
         #[cfg(feature = "add_thumbnails")]
         assert!(reader.active().unwrap().thumbnail().is_some());
@@ -2132,7 +2133,8 @@ pub(crate) mod tests {
             .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let reader = Reader::from_bytes("jpeg", &output.into_inner()).expect("from_bytes");
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         println!("manifest_store = {reader}");
         let m = reader.active().unwrap();
 
@@ -2187,7 +2189,7 @@ pub(crate) mod tests {
             .embed_from_memory("jpeg", image, signer.as_ref())
             .expect("embed_stream");
 
-        let reader = Reader::from_bytes("jpeg", &output_image).expect("from_bytes");
+        let reader = Reader::from_stream("jpeg", Cursor::new(output_image)).expect("from_bytes");
         println!("manifest_store = {reader}");
         let m = reader.active().unwrap();
 
