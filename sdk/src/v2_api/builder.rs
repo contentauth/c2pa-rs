@@ -777,7 +777,7 @@ impl Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use std::io::{Cursor, Seek};
+    use std::io::Cursor;
 
     use serde_json::Value;
     #[cfg(target_arch = "wasm32")]
@@ -785,7 +785,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        manifest_assertion::ManifestAssertion, manifest_store::ManifestStore,
+        manifest_store::ManifestStore,
         utils::test::temp_signer,
     };
     #[cfg(target_arch = "wasm32")]

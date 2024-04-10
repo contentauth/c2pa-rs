@@ -376,7 +376,6 @@ impl ResourceResolver for ResourceStore {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use std::io::Cursor;
 
     use super::*;
     use crate::{utils::test::temp_signer, Builder, Reader};

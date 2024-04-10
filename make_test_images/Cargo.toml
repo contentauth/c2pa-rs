@@ -8,7 +8,6 @@ rust-version = "1.73.0"
 
 [dependencies]
 anyhow = "1.0.40"
-blake3 = "1.5.0"
 c2pa = { path = "../sdk", default-features = false, features = [
 	"openssl",
 	"xmp_write",

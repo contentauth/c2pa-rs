@@ -159,6 +159,7 @@ pub trait AssetIO: Sync + Send {
     }
 
     // Return entire CAI block as Vec<u8>
+    #[allow(dead_code)]
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
 
     // Write the CAI block to an asset
