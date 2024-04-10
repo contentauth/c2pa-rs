@@ -784,10 +784,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{
-        manifest_store::ManifestStore,
-        utils::test::temp_signer,
-    };
+    use crate::{manifest_store::ManifestStore, utils::test::temp_signer};
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
