@@ -18,9 +18,6 @@ log = "0.4.8"
 image = { version = "0.24.7", default-features = false, features = [
 	"jpeg",
 	"png",
-	"tiff",
-	"webp",
-	"avif"
 ] }
 memchr = "2.7.1"
 nom = "7.1.3"
