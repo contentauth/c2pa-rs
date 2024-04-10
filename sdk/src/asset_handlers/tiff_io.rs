@@ -1015,7 +1015,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.seek(SeekFrom::Start(curr_pos))?;
             self.writer.write_u32(0)?;
         }
-
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -1302,7 +1302,7 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     }
 
     tc.clone_tiff(&mut tiff_tree, page_0, asset_reader)?;
-    bo.flush()?;
+
     Ok(())
 }
 fn add_required_tags_to_stream(

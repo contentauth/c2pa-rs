@@ -1,17 +1,21 @@
 {
-  "active_manifest": "contentauth:urn:uuid:60343236-1dea-400d-a54b-6f03deb62d0b",
+  "active_manifest": "contentauth:urn:uuid:5bc1a923-cdfc-4c73-8135-a1e5f7aed911",
   "manifests": {
-    "contentauth:urn:uuid:60343236-1dea-400d-a54b-6f03deb62d0b": {
-      "claim_generator": "make_test_images/0.29.0-dev c2pa-rs/0.29.0-dev",
+    "contentauth:urn:uuid:5bc1a923-cdfc-4c73-8135-a1e5f7aed911": {
+      "claim_generator": "make_test_images/0.31.3 c2pa-rs/0.31.3",
       "claim_generator_info": [
         {
           "name": "make_test_images",
-          "version": "0.29.0-dev"
+          "version": "0.31.3"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.31.3"
         }
       ],
       "title": "CAI.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:aafef09e-7192-442e-9473-5379863f0c57",
+      "instance_id": "xmp:iid:07d45e4a-7dff-4494-8282-44eac8eeeba6",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
@@ -93,11 +97,12 @@
         }
       ],
       "signature_info": {
+        "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-01-30T21:27:31+00:00"
+        "time": "2024-04-10T16:33:40+00:00"
       },
-      "label": "contentauth:urn:uuid:60343236-1dea-400d-a54b-6f03deb62d0b"
+      "label": "contentauth:urn:uuid:5bc1a923-cdfc-4c73-8135-a1e5f7aed911"
     }
   }
 }
