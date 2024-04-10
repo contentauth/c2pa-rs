@@ -1050,7 +1050,7 @@ mod tests {
             "IMG_0003.jpg",
             "sample1.png",
             "sample1.webp",
-            "tuscany.tif",
+            "TUSCANY.TIF",
             "sample1.svg",
             //"APC_0808.dng",
             "sample1.wav",
