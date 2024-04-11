@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::convert::TryFrom;
-
 use async_generic::async_generic;
 use bcder::decode::Constructed;
 use coset::{sig_structure_data, ProtectedHeader};
@@ -98,7 +96,7 @@ pub(crate) fn cose_sigtst_to_tstinfos(
 
 /// internal only function to work around bug in serialization of TimeStampResponse
 /// so we just return the data directly
-#[cfg(feature = "openssl_sign")]
+#[cfg(not(target_arch = "wasm32"))]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
@@ -175,22 +173,22 @@ fn time_stamp_request_http(
 /// This is a wrapper around [time_stamp_request_http] that constructs the low-level
 /// ASN.1 request object with reasonable defaults.
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn time_stamp_message_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
 ) -> Result<Vec<u8>> {
-    use ring::rand::SecureRandom;
+    use rand::{thread_rng, Rng};
 
     let mut h = digest_algorithm.digester();
     h.update(message);
     let digest = h.finish();
 
     let mut random = [0u8; 8];
-    ring::rand::SystemRandom::new()
-        .fill(&mut random)
+    thread_rng()
+        .try_fill(&mut random)
         .map_err(|_| Error::CoseTimeStampGeneration)?;
 
     let request = crate::asn1::rfc3161::TimeStampReq {
@@ -220,7 +218,7 @@ impl std::ops::Deref for TimeStampResponse {
 
 impl TimeStampResponse {
     /// Whether the time stamp request was successful.
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
@@ -281,13 +279,12 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
     }
 }
 
-#[allow(unused_variables)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
 ) -> Result<Vec<u8>> {
-    #[cfg(feature = "openssl_sign")]
     {
         let ts = time_stamp_message_http(
             url,
@@ -300,10 +297,6 @@ pub fn default_rfc3161_request(
         verify_timestamp(&ts, data)?;
 
         Ok(ts)
-    }
-    #[cfg(not(feature = "openssl_sign"))]
-    {
-        Err(Error::WasmNoCrypto)
     }
 }
 

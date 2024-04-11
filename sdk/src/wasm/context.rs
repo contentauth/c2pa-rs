@@ -12,7 +12,7 @@
 // each license.
 
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
-use web_sys::{SubtleCrypto, Window, WorkerGlobalScope};
+use web_sys::{Crypto, SubtleCrypto, Window, WorkerGlobalScope};
 
 use crate::{Error, Result};
 
@@ -51,13 +51,17 @@ impl WindowOrWorker {
         }
     }
 
-    pub fn subtle_crypto(&self) -> Result<SubtleCrypto> {
-        let crypto = match self {
+    pub fn crypto(&self) -> Result<Crypto> {
+        match self {
             Self::Window(window) => window.crypto(),
             Self::Worker(worker) => worker.crypto(),
-        };
-        let subtle_crypto = crypto.map_err(|_err| Error::WasmNoCrypto)?.subtle();
+        }
+        .map_err(|_err| Error::WasmNoCrypto)
+    }
 
-        Ok(subtle_crypto)
+    pub fn subtle_crypto(&self) -> Result<SubtleCrypto> {
+        let crypto = self.crypto()?;
+
+        Ok(crypto.subtle())
     }
 }

@@ -13,7 +13,6 @@
 
 use std::{
     collections::HashMap,
-    convert::{From, TryFrom},
     fs::File,
     io::{BufReader, Cursor, Write},
     path::*,
@@ -38,6 +37,7 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -575,11 +575,52 @@ impl RemoteRefEmbed for JpegIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                let mut buf = Vec::new();
+                // read the whole asset
+                source_stream.rewind()?;
+                source_stream
+                    .read_to_end(&mut buf)
+                    .map_err(Error::IoError)?;
+                let mut jpeg =
+                    Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+                // first extract the xmp from APP1 markers
+                let app1_segs = jpeg.segments_by_marker(markers::APP1);
+                let mut xmp: String = app1_segs.filter_map(extract_xmp).collect();
+
+                // remove existing XMP segments
+                let segments = jpeg.segments_mut();
+                segments.retain(|seg| {
+                    !(seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE))
+                });
+
+                if xmp.is_empty() {
+                    // Init with minimal xmp segment
+                    // JPEG APP1 segment with XMP are defined with this null terminated string
+                    // todo: add format and other minimal metadata to xmp ?
+                    xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                };
+                let xmp = add_provenance(&xmp, &manifest_uri)?;
+                let xmp_bytes = Bytes::from(xmp);
+                let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
+                segments.insert(1, segment);
+
+                output_stream.rewind()?;
+                jpeg.encoder()
+                    .write_to(output_stream)
+                    .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+                Ok(())
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
 
@@ -713,7 +754,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -725,7 +766,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -763,7 +804,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position - 2,
+                                range_start: seg.position,
                                 range_len: raw_bytes.len() + 4,
                             };
 
@@ -779,7 +820,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 alg: None,
                                 hash: ByteBuf::from(Vec::new()),
                                 pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position - 2,
+                                range_start: seg.position,
                                 range_len: 0,
                             };
 
@@ -801,7 +842,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -813,7 +854,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -825,7 +866,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -837,7 +878,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -849,7 +890,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -865,7 +906,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -877,7 +918,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -889,7 +930,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -902,7 +943,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -918,7 +959,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position - 2,
+                    range_start: seg.position,
                     range_len: 0,
                 };
 
@@ -1036,11 +1077,10 @@ pub mod tests {
 
     use std::io::{Read, Seek};
 
-    use img_parts::Bytes;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::asset_io::RemoteRefEmbedType;
-
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -1130,6 +1170,43 @@ pub mod tests {
             .get_reader()
             .read_xmp(&mut file_reader)
             .unwrap();
+
+        assert!(read_xmp.contains(test_msg));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_xmp_read_write_stream() {
+        let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
+
+        let test_msg = "this some test xmp data";
+        let handler = JpegIO::new("");
+
+        let assetio_handler = handler.get_handler("jpg");
+
+        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+
+        let mut source_stream = Cursor::new(source_bytes.to_vec());
+        let mut output_stream = Cursor::new(Vec::new());
+        remote_ref_handler
+            .embed_reference_to_stream(
+                &mut source_stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_msg.to_string()),
+            )
+            .unwrap();
+
+        output_stream.set_position(0);
+
+        // read back in XMP
+        let read_xmp = assetio_handler
+            .get_reader()
+            .read_xmp(&mut output_stream)
+            .unwrap();
+
+        output_stream.set_position(0);
+
+        //std::fs::write("../target/xmp_write.jpg", output_stream.into_inner()).unwrap();
 
         assert!(read_xmp.contains(test_msg));
     }

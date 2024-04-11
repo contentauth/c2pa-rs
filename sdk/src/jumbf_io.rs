@@ -376,23 +376,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_no_writer() {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(C2paIO::new("")),
-            Box::new(BmffIO::new("")),
-            Box::new(TiffIO::new("")),
-        ];
-
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                assert!(get_caiwriter_handler(supported_type).is_none());
-            }
-        }
-    }
-
-    #[test]
     fn test_get_supported_list() {
         let supported = get_supported_types();
 

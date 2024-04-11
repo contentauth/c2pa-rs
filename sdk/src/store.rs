@@ -20,6 +20,8 @@ use std::{fs, path::Path};
 
 use log::error;
 
+#[cfg(feature = "openssl")]
+use crate::cose_validator::{verify_cose, verify_cose_async};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -32,8 +34,8 @@ use crate::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData},
-    cose_sign::cose_sign,
-    cose_validator::verify_cose,
+    cose_sign::{cose_sign, cose_sign_async},
+    cose_validator::check_ocsp_status,
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     jumbf::{
@@ -46,9 +48,11 @@ use crate::{
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
     salt::DefaultSalt,
+    settings::get_settings_value,
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    trust_handler::TrustHandlerConfig,
     utils::{
-        hash_utils::{hash256, HashRange},
+        hash_utils::{hash_sha256, HashRange},
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
@@ -75,6 +79,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
+    trust_handler: Box<dyn TrustHandlerConfig>,
 }
 
 struct ManifestInfo<'a> {
@@ -113,18 +118,87 @@ impl Store {
     ///
     /// In most cases, calling [`Store::new()`] is preferred.
     pub fn new_with_label(label: &str) -> Self {
-        Store {
+        let mut store = Store {
             claims_map: HashMap::new(),
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
+            #[cfg(feature = "openssl")]
+            trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
+            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
+            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
+            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+            trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
-        }
+        };
+
+        // load the trust handler settings, don't worry about status as these are checked during setting generation
+        let _ = get_settings_value::<Option<String>>("trust.trust_anchors").map(|ta_opt| {
+            if let Some(ta) = ta_opt {
+                let _v = store.add_trust(ta.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.private_anchors").map(|pa_opt| {
+            if let Some(pa) = pa_opt {
+                let _v = store.add_private_trust_anchors(pa.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.trust_config").map(|tc_opt| {
+            if let Some(tc) = tc_opt {
+                let _v = store.add_trust_config(tc.as_bytes());
+            }
+        });
+
+        let _ = get_settings_value::<Option<String>>("trust.allowed_list").map(|al_opt| {
+            if let Some(al) = al_opt {
+                let _v = store.add_trust_allowed_list(al.as_bytes());
+            }
+        });
+
+        store
     }
 
     /// Return label for the store
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Load set of trust anchors used for certificate validation. [u8] containing the
+    /// trust anchors is passed in the trust_vec variable.
+    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .load_trust_anchors_from_data(&mut trust_reader)
+    }
+
+    // Load set of private trust anchors used for certificate validation. [u8] to the
+    /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
+    /// if there are additional trust stores.
+    pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler
+            .append_private_trust_data(&mut trust_reader)
+    }
+
+    pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(trust_vec);
+        self.trust_handler.load_configuration(&mut trust_reader)
+    }
+
+    pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
+        let mut trust_reader = Cursor::new(allowed_vec);
+        self.trust_handler.load_allowed_list(&mut trust_reader)
+    }
+
+    /// Clear all existing trust anchors
+    pub fn clear_trust_anchors(&mut self) {
+        self.trust_handler.clear();
+    }
+
+    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
+        self.trust_handler.as_ref()
     }
 
     /// Get the provenance if available.
@@ -369,7 +443,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash256(placeholder_str.as_bytes()).as_bytes().to_vec();
+        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
@@ -378,12 +452,43 @@ impl Store {
     }
 
     /// Return certificate chain for the provenance claim
-    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+    pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
         match claim.get_cert_chain() {
             Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Return OCSP info if available
+    // Currently only called from manifest_store behind a feature flag but this is allowable
+    // anywhere so allow dead code here for future uses to compile
+    #[allow(dead_code)]
+    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+        let claim = self
+            .provenance_claim()
+            .ok_or(Error::ProvenanceMissing)
+            .ok()?;
+
+        let sig = claim.signature_val();
+        let data = claim.data().ok()?;
+        let mut validation_log = OneShotStatusTracker::new();
+
+        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
+            if let Some(revoked_at) = &info.revoked_at {
+                Some(format!(
+                    "Certificate Status: Revoked, revoked at: {}",
+                    revoked_at
+                ))
+            } else {
+                Some(format!(
+                    "Certificate Status: Good, next update: {}",
+                    info.next_update
+                ))
+            }
+        } else {
+            None
         }
     }
 
@@ -398,18 +503,27 @@ impl Store {
 
         cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
             // Sanity check: Ensure that this signature is valid.
-
-            let mut cose_log = OneShotStatusTracker::new();
-            match verify_cose(&sig, &claim_bytes, b"", false, &mut cose_log) {
-                Ok(_) => Ok(sig),
-                Err(err) => {
-                    error!(
-                        "Signature that was just generated does not validate: {:#?}",
-                        err
-                    );
-                    Err(err)
+            #[cfg(feature = "openssl")]
+            if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
+                if verify_after_sign {
+                    let mut cose_log = OneShotStatusTracker::new();
+                    if let Err(err) = verify_cose(
+                        &sig,
+                        &claim_bytes,
+                        b"",
+                        false,
+                        self.trust_handler(),
+                        &mut cose_log,
+                    ) {
+                        error!(
+                            "Signature that was just generated does not validate: {:#?}",
+                            err
+                        );
+                        return Err(err);
+                    }
                 }
             }
+            Ok(sig)
         })
     }
 
@@ -420,32 +534,36 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
     ) -> Result<Vec<u8>> {
-        use crate::{cose_sign::cose_sign_async, cose_validator::verify_cose_async};
-
         let claim_bytes = claim.data()?;
 
         match cose_sign_async(signer, &claim_bytes, box_size).await {
             // Sanity check: Ensure that this signature is valid.
             Ok(sig) => {
-                let mut cose_log = OneShotStatusTracker::new();
-                match verify_cose_async(
-                    sig.clone(),
-                    claim_bytes,
-                    b"".to_vec(),
-                    false,
-                    &mut cose_log,
-                )
-                .await
+                #[cfg(feature = "openssl")]
+                if let Ok(verify_after_sign) =
+                    get_settings_value::<bool>("verify.verify_after_sign")
                 {
-                    Ok(_) => Ok(sig),
-                    Err(err) => {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        Err(err)
+                    if verify_after_sign {
+                        let mut cose_log = OneShotStatusTracker::new();
+                        if let Err(err) = verify_cose_async(
+                            sig.clone(),
+                            claim_bytes,
+                            b"".to_vec(),
+                            false,
+                            self.trust_handler(),
+                            &mut cose_log,
+                        )
+                        .await
+                        {
+                            error!(
+                                "Signature that was just generated does not validate: {:#?}",
+                                err
+                            );
+                            return Err(err);
+                        }
                     }
                 }
+                Ok(sig)
             }
             Err(e) => Err(e),
         }
@@ -1204,7 +1322,13 @@ impl Store {
 
                     // make sure
                     // verify the ingredient claim
-                    Claim::verify_claim(ingredient, asset_data, false, validation_log)?;
+                    Claim::verify_claim(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1314,8 +1438,14 @@ impl Store {
                         )?;
                     }
                     // verify the ingredient claim
-                    Claim::verify_claim_async(ingredient, asset_data, false, validation_log)
-                        .await?;
+                    Claim::verify_claim_async(
+                        ingredient,
+                        asset_data,
+                        false,
+                        store.trust_handler(),
+                        validation_log,
+                    )
+                    .await?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1363,7 +1493,14 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, validation_log).await?;
+        Claim::verify_claim_async(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )
+        .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
@@ -1394,7 +1531,13 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, validation_log)?;
+        Claim::verify_claim(
+            claim,
+            asset_data,
+            true,
+            store.trust_handler(),
+            validation_log,
+        )?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 
@@ -1640,7 +1783,7 @@ impl Store {
 
         // if user did not supply a hash
         if pc.hash_assertions().is_empty() {
-            // create placholder DataHash large enough for 10 Exclusions
+            // create placeholder DataHash large enough for 10 Exclusions
             let mut ph = DataHash::new("jumbf manifest", pc.alg());
             for _ in 0..10 {
                 ph.add_exclusion(HashRange::new(0, 2));
@@ -1654,7 +1797,7 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
 
-        let composed = self.get_composed_manifest(&jumbf_bytes, format)?;
+        let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
     }
@@ -1681,17 +1824,17 @@ impl Store {
             ));
         }
 
-        let mut adusted_dh = DataHash::new("jumbf manifest", pc.alg());
-        adusted_dh.exclusions = dh.exclusions.clone();
-        adusted_dh.hash = dh.hash.clone();
+        let mut adjusted_dh = DataHash::new("jumbf manifest", pc.alg());
+        adjusted_dh.exclusions = dh.exclusions.clone();
+        adjusted_dh.hash = dh.hash.clone();
 
         if let Some(reader) = asset_reader {
             // calc hashes
-            adusted_dh.gen_hash_from_stream(reader)?;
+            adjusted_dh.gen_hash_from_stream(reader)?;
         }
 
         // update the placeholder hash
-        pc.update_data_hash(adusted_dh)?;
+        pc.update_data_hash(adjusted_dh)?;
 
         self.to_jumbf_internal(reserve_size)
     }
@@ -1709,17 +1852,17 @@ impl Store {
 
         patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
 
-        self.get_composed_manifest(jumbf_bytes, format)
+        Self::get_composed_manifest(jumbf_bytes, format)
     }
 
-    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// Returns a finalized, signed manifest.  The manifest are only supported
     /// for cases when the client has provided a data hash content hash binding.  Note,
     /// this function will not work for cases like BMFF where the position
     /// of the content is also encoded.  This function is not compatible with
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.  
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
@@ -1742,14 +1885,14 @@ impl Store {
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
 
-    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// Returns a finalized, signed manifest.  The manifest are only supported
     /// for cases when the client has provided a data hash content hash binding.  Note,
     /// this function will not work for cases like BMFF where the position
     /// of the content is also encoded.  This function is not compatible with
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.  
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
@@ -1774,14 +1917,14 @@ impl Store {
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
 
-    /// Returns a finalized, signed manifest.  The manfiest are only supported
+    /// Returns a finalized, signed manifest.  The manifest are only supported
     /// for cases when the client has provided a data hash content hash binding.  Note,
     /// this function will not work for cases like BMFF where the position
     /// of the content is also encoded.  This function is not compatible with
     /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
     /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
     /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calulations, otherwise the function uses the caller supplied values.  
+    /// the hash calculations, otherwise the function uses the caller supplied values.  
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.  
@@ -1876,10 +2019,10 @@ impl Store {
         Ok(jumbf_bytes)
     }
 
-    /// Returns the supplied manifest composed to be directly compatibile with the desired format.
-    /// For example, if format is JPEG funtion will return the set of APP11 segments that contains
+    /// Returns the supplied manifest composed to be directly compatible with the desired format.
+    /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.   
-    pub fn get_composed_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+    pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         if let Some(h) = get_assetio_handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
                 return composed_data_handler.compose_manifest(manifest_bytes, format);
@@ -1985,7 +2128,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2013,7 +2156,7 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
-                // do we need to make a C2PA file in addtion to standard embedded output
+                // do we need to make a C2PA file in addition to standard embedded output
                 if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
                     pc_mut.remote_manifest()
                 {
@@ -2040,7 +2183,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2070,7 +2213,7 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
-                // do we need to make a C2PA file in addtion to standard embedded output
+                // do we need to make a C2PA file in addition to standard embedded output
                 if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
                     pc_mut.remote_manifest()
                 {
@@ -2097,7 +2240,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2126,7 +2269,7 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
-                // do we need to make a C2PA file in addtion to standard embedded output
+                // do we need to make a C2PA file in addition to standard embedded output
                 if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
                     pc_mut.remote_manifest()
                 {
@@ -2538,7 +2681,7 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "fetch_remote_manifests")]
     fn fetch_remote_manifest(url: &str) -> Result<Vec<u8>> {
         use conv::ValueFrom;
         use ureq::Error as uError;
@@ -2586,30 +2729,14 @@ impl Store {
     }
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
-    #[cfg(feature = "file_io")]
     fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
         // verify provenance path is remote url
-        let is_remote_url = Store::is_valid_remote_url(ext_ref);
-
-        if cfg!(feature = "fetch_remote_manifests") && is_remote_url {
-            Store::fetch_remote_manifest(ext_ref)
-        } else {
-            // return an error with the url that should be read
-            if is_remote_url {
-                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
-            } else {
-                Err(Error::JumbfNotFound)
+        if Store::is_valid_remote_url(ext_ref) {
+            #[cfg(feature = "fetch_remote_manifests")]
+            {
+                Store::fetch_remote_manifest(ext_ref)
             }
-        }
-    }
-
-    /// Handles remote manifests for Wasm or when the file_io/fetch_remote_manifests feature is disabled
-    #[cfg(not(feature = "file_io"))]
-    fn handle_remote_manifest(ext_ref: &str) -> Result<Vec<u8>> {
-        // verify provenance path is remote url
-        let is_remote_url = Store::is_valid_remote_url(ext_ref);
-
-        if is_remote_url {
+            #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
             Err(Error::JumbfNotFound)
@@ -2740,7 +2867,7 @@ impl Store {
             })
     }
 
-    fn get_store_from_memory(
+    pub fn get_store_from_memory(
         asset_type: &str,
         data: &[u8],
         validation_log: &mut impl StatusTracker,
@@ -2755,7 +2882,7 @@ impl Store {
     }
 
     /// Returns embedded remote manifest URL if available
-    /// asset_type: extentions or mime type of the data
+    /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
     pub fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
         let mut buf_reader = Cursor::new(data);
@@ -2806,7 +2933,7 @@ impl Store {
         })
     }
 
-    /// Load Store from a in-memory asset asychronously validating
+    /// Load Store from a in-memory asset asynchronously validating
     /// asset_type: asset extension or mime type
     /// data: reference to bytes of the file
     /// verify: if true will run verification checks when loading
@@ -2867,7 +2994,7 @@ impl Store {
         })
     }
 
-    /// Load Store from a in-memory asset asychronously validating
+    /// Load Store from a in-memory asset asynchronously validating
     /// asset_type: asset extension or mime type
     /// init_segment: reference to bytes of the init segment
     /// fragment: reference to bytes of the fragment to validate
@@ -2997,18 +3124,15 @@ pub mod tests {
 
     use std::io::Write;
 
+    use memchr::memmem;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
-    use twoway::find_bytes;
 
     use super::*;
     use crate::{
-        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Ingredient, Uuid},
-        claim::{AssertionStoreJsonFormat, Claim},
-        jumbf_io::{
-            get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file,
-            update_file_jumbf,
-        },
+        assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
+        claim::AssertionStoreJsonFormat,
+        jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
         status_tracker::*,
         utils::{
             hash_utils::Hasher,
@@ -3076,7 +3200,7 @@ pub mod tests {
         let capture = claim_capture.label().to_string();
         let claim2_label = claim2.label().to_string();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -3183,7 +3307,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
@@ -3322,7 +3446,7 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(find_bytes(&buf, &original_jumbf[0..1024]).is_none());
+        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
     }
 
     #[actix::test]
@@ -3433,7 +3557,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -3503,6 +3627,154 @@ pub mod tests {
         }
     }
 
+    /*  reenable this test once we place for large test files
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_arw_jumbf_generation() {
+            let ap = fixture_path("sample1.arw");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.arw");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_nef_jumbf_generation() {
+            let ap = fixture_path("sample1.nef");
+            let temp_dir = tempdir().expect("temp dir");
+            let op = temp_dir_path(&temp_dir, "ssample1.nef");
+
+            // Create claims store.
+            let mut store = Store::new();
+
+            // Create a new claim.
+            let claim1 = create_test_claim().unwrap();
+
+            // Create a new claim.
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            create_editing_claim(&mut claim2).unwrap();
+
+            // Create a 3rd party claim
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            create_capture_claim(&mut claim_capture).unwrap();
+
+            // Do we generate JUMBF?
+            let signer = temp_signer();
+
+            // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+            store.commit_claim(claim1).unwrap();
+            store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim_capture).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+            store.commit_claim(claim2).unwrap();
+            store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+            // write to new file
+            println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+            let mut report = DetailedStatusTracker::new();
+
+            // read from new file
+            let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+            // can  we get by the ingredient data back
+            let _some_binary_data: Vec<u8> = vec![
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // dump store and compare to original
+            for claim in new_store.claims() {
+                let _restored_json = claim
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+                let _orig_json = store
+                    .get_claim(claim.label())
+                    .unwrap()
+                    .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                    .unwrap();
+
+                println!(
+                    "Claim: {} \n{}",
+                    claim.label(),
+                    claim
+                        .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                        .expect("could not restore from json")
+                );
+
+                for hashed_uri in claim.assertions() {
+                    let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                    claim
+                        .get_claim_assertion(&label, instance)
+                        .expect("Should find assertion");
+                }
+            }
+        }
+    */
     #[test]
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
@@ -3527,7 +3799,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -3601,7 +3873,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -3675,7 +3947,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -3741,7 +4013,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
@@ -3785,7 +4057,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
@@ -3829,7 +4101,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
@@ -4157,23 +4429,6 @@ pub mod tests {
             Some(validation_status::CLAIM_MISSING)
         );
     }
-
-    /* enable when we enable OCSP validation
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_ocsp() {
-        let ap = fixture_path("ocsp_test.png");
-        let mut report = DetailedStatusTracker::new();
-        let _r = Store::load_from_asset(&ap, true, &mut report);
-
-        println!(
-            "Error report for {}: {:?}",
-            ap.display(),
-            report.get_log()
-        );
-        assert!(report.get_log().is_empty());
-    }
-    */
 
     #[test]
     fn test_display() {
@@ -4528,7 +4783,7 @@ pub mod tests {
         // Do we generate JUMBF?
         let signer = temp_signer();
 
-        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -4605,9 +4860,9 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
-        // insert manifest into ouput asset
+        // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
         let ol = jpeg_io.get_object_locations(&ap).unwrap();
 
@@ -4644,6 +4899,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4685,9 +4941,9 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = store.get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
 
-        // insert manifest into ouput asset
+        // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
         let ol = jpeg_io.get_object_locations(&ap).unwrap();
 
@@ -4724,6 +4980,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
@@ -4763,6 +5020,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -4825,6 +5083,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
@@ -4893,6 +5152,7 @@ pub mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&output)
             .unwrap();
 
