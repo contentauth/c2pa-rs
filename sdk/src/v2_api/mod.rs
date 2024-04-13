@@ -11,15 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// mod c2pa;
-// pub use c2pa::C2pa;
 mod reader;
 pub use reader::Reader;
 mod builder;
 pub use builder::Builder;
-
-// #[cfg(feature = "file_io")]
-// pub use crate::{Error, Result};
 
 pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
     path.as_ref()

@@ -25,7 +25,7 @@ use crate::{
     validation_status::ValidationStatus, Manifest,
 };
 
-/// A reader for the manifest store
+/// A reader for the manifest store.
 #[derive(Debug)]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
@@ -38,14 +38,14 @@ impl Reader {
         }
     }
 
-    /// Create a manifest store Reader from a stream
+    /// Create a manifest store Reader from a stream.
     /// # Arguments
-    /// * `format` - The format of the stream
-    /// * `stream` - The stream to read from
+    /// * `format` - The format of the stream.
+    /// * `stream` - The stream to read from.
     /// # Returns
-    /// A reader for the manifest store
+    /// A reader for the manifest store.
     /// # Errors
-    /// If the stream is not a valid manifest store
+    /// If the stream is not a valid manifest store.
     /// validation status should be checked for non severe errors
     /// # Example
     /// ```no_run
@@ -72,15 +72,15 @@ impl Reader {
         })
     }
 
-    /// Create a manifest store Reader from bytes
+    /// Create a manifest store Reader from bytes.
     /// # Arguments
-    /// * `format` - The format of the bytes
-    /// * `bytes` - The bytes to read from
+    /// * `format` - The format of the bytes.
+    /// * `bytes` - The bytes to read from.
     /// # Returns
-    /// A reader for the manifest store
+    /// A reader for the manifest store.
     /// # Errors
-    /// If the bytes are do not contain a manifest store
-    /// validation status should be checked for non severe errors
+    /// If the bytes are do not contain a manifest store.
+    /// validation status should be checked for non severe errors.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
@@ -92,14 +92,14 @@ impl Reader {
     }
 
     #[cfg(feature = "file_io")]
-    /// Create a manifest store Reader from a file
+    /// Create a manifest store Reader from a file.
     /// # Arguments
-    /// * `path` - The path to the file
+    /// * `path` - The path to the file.
     /// # Returns
-    /// A reader for the manifest store
+    /// A reader for the manifest store.
     /// # Errors
-    /// If the file is not a valid manifest store
-    /// validation status should be checked for non severe errors
+    /// If the file is not a valid manifest store.
+    /// validation status should be checked for non severe errors.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
@@ -107,8 +107,7 @@ impl Reader {
     /// ```
     /// # Note
     /// If the file does not have a manifest store, the function will check for a sidecar manifest
-    /// with the same name and a .c2pa extension
-    /// If the sidecar manifest exists, it will be used instead
+    /// with the same name and a .c2pa extension.
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
@@ -125,11 +124,11 @@ impl Reader {
         result
     }
 
-    /// Create a manifest store Reader from a JSON string
+    /// Create a manifest store [`Reader`]` from a JSON string.
     /// # Arguments
-    /// * `json` - The JSON string
+    /// * `json` - A Json String containing a manifest store definition.
     /// # Returns
-    /// A reader for the manifest store
+    /// A [`Reader`]` for the manifest store.
     /// # Note
     /// This should only be used for testing
     /// Any referenced resources will not be available
@@ -138,14 +137,14 @@ impl Reader {
         Ok(Reader { manifest_store })
     }
 
-    /// Create a manifest store Reader from existing c2pa_data and a stream
+    /// Create a manifest store [`Reader`] from existing c2pa_data and a stream
     /// You can use this to validate a remote manifest or a sidecar manifest
     /// # Arguments
     /// * `c2pa_data` - The c2pa data (a manifest store in JUMBF format)
     /// * `format` - The format of the stream
     /// * `stream` - The stream to verify the store against
     /// # Returns
-    /// A reader for the manifest store
+    /// A [`Reader`] for the manifest store
     /// # Errors
     /// If the c2pa_data is not valid, or severe errors occur in validation
     /// validation status should be checked for non severe errors
@@ -189,9 +188,7 @@ impl Reader {
         self.manifest_store.to_string()
     }
 
-    /// Get the validation status of the manifest store
-    /// # Returns
-    /// The validation status of the manifest store
+    /// Get the [`ValidationStatus`] array of the manifest store if it exists.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
@@ -200,40 +197,36 @@ impl Reader {
     /// let status = reader.validation_status();
     /// ```
     /// # Note
-    /// The validation status should be checked for validation errors`
+    /// The validation status should be checked for validation errors.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.manifest_store.validation_status()
     }
 
-    /// Get the active manifest
-    /// # Returns
-    /// The active manifest if it exists
+    /// Get the active [`Manifest`] if it exists.
     pub fn active(&self) -> Option<&Manifest> {
         self.manifest_store.get_active()
     }
 
-    /// Get the active manifest label
+    /// Get the active [`Manifest`] label.
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
     }
 
-    /// Return a Manifest for a given label
+    /// Return a [`Manifest`] for a given label
     /// # Arguments
-    /// * `label` - The label of the manifest to return
-    /// # Returns
-    /// The manifest if it exists
+    /// * `label` - The label of the requested [`Manifest`]
     pub fn get(&self, label: &str) -> Option<&Manifest> {
         self.manifest_store.get(label)
     }
 
-    /// Write a resource identified by uri to the given stream
+    /// Write a resource identified by URI to the given stream.
     /// # Arguments
-    /// * `uri` - The URI of the resource to write (from an identifier field)
-    /// * `stream` - The stream to write to
+    /// * `uri` - The URI of the resource to write (from an identifier field).
+    /// * `stream` - The stream to write to.
     /// # Returns
-    /// The number of bytes written
+    /// The number of bytes written.
     /// # Errors
-    /// If the resource does not exist
+    /// If the resource does not exist.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
