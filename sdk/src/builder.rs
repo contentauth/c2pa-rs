@@ -114,14 +114,17 @@ use crate::assertion::AssertionDecodeError;
 impl AssertionDefinition {
     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         match &self.data {
-            AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
-                Error::AssertionDecoding(AssertionDecodeError::from_err(
-                    self.label.to_owned(),
-                    None,
-                    "application/json".to_owned(),
-                    e,
-                ))
-            }),
+            AssertionData::Json(value) => {
+                println!("An Assertion JSON was created {}", &self.label);
+                serde_json::from_value(value.clone()).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/json".to_owned(),
+                        e,
+                    ))
+                })
+            }
             AssertionData::Cbor(value) => {
                 serde_cbor::value::from_value(value.clone()).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_err(
@@ -635,28 +638,7 @@ impl Builder {
                     AssertionData::Cbor(value) => claim.add_assertion_with_salt(
                         &UserCbor::new(&manifest_assertion.label, serde_cbor::to_vec(value)?),
                         &salt,
-                    ), /* ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
-                        *     &UserCbor::new(
-                        *         manifest_assertion.label(),
-                        *         serde_cbor::to_vec(&manifest_assertion.value()?)?,
-                        *     ),
-                        *     &salt,
-                        * ),
-                        * ManifestAssertionKind::Json => claim.add_assertion_with_salt(
-                        *     &User::new(
-                        *         manifest_assertion.label(),
-                        *         &serde_json::to_string(&manifest_assertion.value()?)?,
-                        *     ),
-                        *     &salt,
-                        * ),
-                        * ManifestAssertionKind::Binary => {
-                        *     // todo: Support binary kinds
-                        *     return Err(Error::AssertionEncoding);
-                        * }
-                        * ManifestAssertionKind::Uri => {
-                        *     // todo: Support binary kinds
-                        *     return Err(Error::AssertionEncoding);
-                        * } */
+                    ), 
                 },
             }?;
         }
