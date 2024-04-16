@@ -11,9 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! The Reader provides a way to read a manifest store from an asset.
+//! It also performs validation on the manifest store.
+
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::{Cursor, Read, Seek, Write};
+use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
 
@@ -32,12 +35,6 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new() -> Self {
-        Self {
-            manifest_store: ManifestStore::new(),
-        }
-    }
-
     /// Create a manifest store Reader from a stream.
     /// # Arguments
     /// * `format` - The format of the stream.
@@ -52,7 +49,7 @@ impl Reader {
     /// use std::io::Cursor;
     ///
     /// use c2pa::Reader;
-    /// let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg"));
+    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
@@ -70,25 +67,6 @@ impl Reader {
         Ok(Reader {
             manifest_store: reader,
         })
-    }
-
-    /// Create a manifest store Reader from bytes.
-    /// # Arguments
-    /// * `format` - The format of the bytes.
-    /// * `bytes` - The bytes to read from.
-    /// # Returns
-    /// A reader for the manifest store.
-    /// # Errors
-    /// If the bytes are do not contain a manifest store.
-    /// validation status should be checked for non severe errors.
-    /// # Example
-    /// ```no_run
-    /// use c2pa::Reader;
-    /// let bytes = include_bytes!("../../tests/fixtures/CA.jpg");
-    /// let reader = Reader::from_bytes("image/jpeg", bytes).unwrap();
-    /// ```
-    pub fn from_bytes(format: &str, bytes: &[u8]) -> Result<Reader> {
-        Self::from_stream(format, Cursor::new(bytes))
     }
 
     #[cfg(feature = "file_io")]
@@ -189,10 +167,14 @@ impl Reader {
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
+    ///
+    /// This validation report only includes error statuses on applied to the active manifest.
+    /// And error statuses for ingredients that are not already reported by the ingredient status.
+    /// The uri field can be used to identify the associated manifest.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let stream = std::io::Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg"));
+    /// let stream = std::io::Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// let status = reader.validation_status();
     /// ```
@@ -202,20 +184,20 @@ impl Reader {
         self.manifest_store.validation_status()
     }
 
-    /// Get the active [`Manifest`] if it exists.
-    pub fn active(&self) -> Option<&Manifest> {
+    /// Return the active [`Manifest`] if it exists.
+    pub fn active_manifest(&self) -> Option<&Manifest> {
         self.manifest_store.get_active()
     }
 
-    /// Get the active [`Manifest`] label.
+    /// Return the active [`Manifest`] label if one exists.
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
     }
 
-    /// Return a [`Manifest`] for a given label
+    /// Return a [`Manifest`] for a given label if it exists.
     /// # Arguments
     /// * `label` - The label of the requested [`Manifest`]
-    pub fn get(&self, label: &str) -> Option<&Manifest> {
+    pub fn get_manifest(&self, label: &str) -> Option<&Manifest> {
         self.manifest_store.get(label)
     }
 
@@ -232,7 +214,7 @@ impl Reader {
     /// use c2pa::Reader;
     /// let stream = std::io::Cursor::new(Vec::new());
     /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    /// let manifest = reader.active().unwrap();
+    /// let manifest = reader.active_manifest().unwrap();
     /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
     /// let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
     /// ```
@@ -249,7 +231,9 @@ impl Reader {
 
 impl Default for Reader {
     fn default() -> Self {
-        Self::new()
+        Self {
+            manifest_store: ManifestStore::new(),
+        }
     }
 }
 

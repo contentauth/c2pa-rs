@@ -111,8 +111,8 @@ pub fn compare_readers(reader1: &Reader, reader2: &Reader) -> Result<Vec<String>
     let mut issues = Vec::new();
     for (label1, label2) in manifest_map.iter() {
         // convert manifests into json values and compare them
-        let value1 = serde_json::to_value(reader1.get(label1))?;
-        let value2 = serde_json::to_value(reader2.get(label2))?;
+        let value1 = serde_json::to_value(reader1.get_manifest(label1))?;
+        let value2 = serde_json::to_value(reader2.get_manifest(label2))?;
         compare_json_values(
             &format!("manifests.{}", label1),
             &value1,
@@ -128,7 +128,7 @@ fn gather_manifests(manifest_store: &Reader, manifest_label: &str, labels: &mut 
     if !labels.contains(&manifest_label.to_string()) {
         labels.push(manifest_label.to_string());
     }
-    if let Some(manifest) = manifest_store.get(manifest_label) {
+    if let Some(manifest) = manifest_store.get_manifest(manifest_label) {
         for ingredient in manifest.ingredients() {
             if let Some(label) = ingredient.active_manifest() {
                 gather_manifests(manifest_store, label, labels);

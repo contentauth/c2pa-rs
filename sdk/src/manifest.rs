@@ -1690,7 +1690,10 @@ pub(crate) mod tests {
             .await
             .expect("embed");
         let reader = Reader::from_file(&output).expect("from_file");
-        assert_eq!(reader.active().unwrap().title().unwrap(), TEST_SMALL_JPEG);
+        assert_eq!(
+            reader.active_manifest().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
@@ -1708,7 +1711,7 @@ pub(crate) mod tests {
             .expect("embed");
         let manifest_store = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1728,7 +1731,10 @@ pub(crate) mod tests {
             .expect("embed");
 
         let reader = Reader::from_file(&output).expect("from_file");
-        assert_eq!(reader.active().unwrap().title().unwrap(), TEST_SMALL_JPEG);
+        assert_eq!(
+            reader.active_manifest().unwrap().title().unwrap(),
+            TEST_SMALL_JPEG
+        );
     }
 
     #[cfg(all(feature = "file_io", feature = "xmp_write"))]
@@ -1752,7 +1758,7 @@ pub(crate) mod tests {
         let manifest_store =
             Reader::from_stream("application/c2pa", Cursor::new(c2pa_data)).expect("from_bytes");
         assert_eq!(
-            manifest_store.active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1898,9 +1904,12 @@ pub(crate) mod tests {
 
         stream.set_position(0);
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
-        assert_eq!(reader.active().unwrap().title().unwrap(), "EmbedStream");
+        assert_eq!(
+            reader.active_manifest().unwrap().title().unwrap(),
+            "EmbedStream"
+        );
         #[cfg(feature = "add_thumbnails")]
-        assert!(reader.active().unwrap().thumbnail().is_some());
+        assert!(reader.active_manifest().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 
@@ -1927,7 +1936,7 @@ pub(crate) mod tests {
             .expect("embed");
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let manifest = manifest_store.active().unwrap();
+        let manifest = manifest_store.active_manifest().unwrap();
         let ingredient_status = manifest.ingredients()[0].validation_status();
         assert_eq!(
             ingredient_status.unwrap()[0].code(),
@@ -1962,7 +1971,7 @@ pub(crate) mod tests {
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
         let manifest_store = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             "XCAplus.jpg"
         );
     }
@@ -1984,7 +1993,7 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
         let manifest_store = Reader::from_file(&output).expect("from_file");
-        let active_manifest = manifest_store.active().unwrap();
+        let active_manifest = manifest_store.active_manifest().unwrap();
         let (format, image) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.into_owned(), thumb_data);
@@ -2136,7 +2145,7 @@ pub(crate) mod tests {
         output.set_position(0);
         let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         println!("manifest_store = {reader}");
-        let m = reader.active().unwrap();
+        let m = reader.active_manifest().unwrap();
 
         //println!("after = {m}");
 
@@ -2191,7 +2200,7 @@ pub(crate) mod tests {
 
         let reader = Reader::from_stream("jpeg", Cursor::new(output_image)).expect("from_bytes");
         println!("manifest_store = {reader}");
-        let m = reader.active().unwrap();
+        let m = reader.active_manifest().unwrap();
 
         assert!(m.thumbnail().is_some());
         let (format, image) = m.thumbnail().unwrap();
@@ -2250,7 +2259,7 @@ pub(crate) mod tests {
 
         let reader = Reader::from_file(&output).expect("from_file");
         println!("{reader}");
-        let active_manifest = reader.active().unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
         let (format, _) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
     }
@@ -2276,7 +2285,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let active_manifest = manifest_store.active().unwrap();
+        let active_manifest = manifest_store.active_manifest().unwrap();
         let (format, _) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
     }
@@ -2336,7 +2345,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let active_manifest = manifest_store.active().unwrap();
+        let active_manifest = manifest_store.active_manifest().unwrap();
         assert!(active_manifest.thumbnail_ref().is_none());
         assert!(active_manifest.thumbnail().is_none());
     }
@@ -2514,7 +2523,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         println!("{reader}");
-        assert!(reader.active().is_some());
+        assert!(reader.active_manifest().is_some());
         assert!(reader.validation_status().is_none());
     }
 }

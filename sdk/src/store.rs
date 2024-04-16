@@ -2077,12 +2077,15 @@ impl Store {
         }
     }
 
-    pub async fn save_to_stream_remote_signed(
+    /// Async version of save_to_stream
+    ///
+    /// This can also handle remote signing if direct_cose_handling() is true
+    pub async fn save_to_stream_async(
         &mut self,
         format: &str,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        remote_signer: &dyn RemoteSigner,
+        signer: &dyn AsyncSigner,
     ) -> Result<Vec<u8>> {
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
@@ -2091,12 +2094,19 @@ impl Store {
             format,
             input_stream,
             &mut intermediate_stream,
-            remote_signer.reserve_size(),
+            signer.reserve_size(),
         )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = remote_signer.sign_remote(&pc.data()?).await?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, remote_signer.reserve_size());
+        let claim_bytes = pc.data()?;
+        let sig = if signer.direct_cose_handling() {
+            // let the signer do all the COSE processing and return the structured COSE data
+            signer.sign(claim_bytes).await?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size())
+                .await?
+        };
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match self.finish_save_stream(
             jumbf_bytes,

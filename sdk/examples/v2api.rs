@@ -112,7 +112,7 @@ fn main() -> Result<()> {
 
     // write the manifest builder to a zipped stream
     let mut zipped = Cursor::new(Vec::new());
-    builder.zip(&mut zipped)?;
+    builder.to_archive(&mut zipped)?;
 
     // write the zipped stream to a file for debugging
     //let debug_path = format!("{}/../target/test.zip", env!("CARGO_MANIFEST_DIR"));
@@ -124,7 +124,7 @@ fn main() -> Result<()> {
     let ed_signer = |_context: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
     let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
-    let mut builder = Builder::unzip(&mut zipped)?;
+    let mut builder = Builder::from_archive(&mut zipped)?;
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());
     builder.sign(format, &mut source, &mut dest, &signer)?;
@@ -136,7 +136,7 @@ fn main() -> Result<()> {
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());
-    if let Some(manifest) = reader.active() {
+    if let Some(manifest) = reader.active_manifest() {
         if let Some(thumbnail_ref) = manifest.thumbnail_ref() {
             reader.resource_to_stream(&thumbnail_ref.identifier, &mut thumbnail)?;
             println!(
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
 
     println!("{}", reader.json());
     assert!(reader.validation_status().is_none());
-    assert_eq!(reader.active().unwrap().title().unwrap(), title);
+    assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
 }

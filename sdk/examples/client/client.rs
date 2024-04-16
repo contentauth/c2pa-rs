@@ -29,7 +29,7 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
     let indent = " ".repeat(level * INDENT_SPACE);
 
     println!("{indent}manifest_label: {manifest_label}");
-    if let Some(manifest) = manifest_store.get(manifest_label) {
+    if let Some(manifest) = manifest_store.get_manifest(manifest_label) {
         println!(
             "{}title: {} , format: {}, instance_id: {}",
             indent,

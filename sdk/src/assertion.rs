@@ -562,6 +562,20 @@ impl AssertionDecodeError {
             source: source.into(),
         }
     }
+
+    pub(crate) fn from_err<S: Into<AssertionDecodeErrorCause>>(
+        label: String,
+        version: Option<usize>,
+        content_type: String,
+        source: S,
+    ) -> Self {
+        Self {
+            label,
+            version,
+            content_type,
+            source: source.into(),
+        }
+    }
 }
 
 impl std::fmt::Debug for AssertionDecodeError {
