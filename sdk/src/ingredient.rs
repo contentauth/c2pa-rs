@@ -786,6 +786,7 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
+    #[cfg(feature = "unstable_api")]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,

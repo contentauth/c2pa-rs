@@ -111,6 +111,7 @@ pub mod wasm;
 // Public exports
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
+#[cfg(feature = "unstable_api")]
 pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
@@ -125,6 +126,7 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
 pub use manifest_store_report::ManifestStoreReport;
+#[cfg(feature = "unstable_api")]
 pub use reader::Reader;
 pub use resource_store::ResourceRef;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
@@ -137,6 +139,7 @@ pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+#[cfg(feature = "unstable_api")]
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;
@@ -156,6 +159,7 @@ pub(crate) mod manifest_store_report;
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
 pub(crate) mod openssl;
+#[allow(dead_code)]  // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;

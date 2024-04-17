@@ -563,6 +563,7 @@ impl AssertionDecodeError {
         }
     }
 
+    #[cfg(feature = "unstable_api")]
     pub(crate) fn from_err<S: Into<AssertionDecodeErrorCause>>(
         label: String,
         version: Option<usize>,

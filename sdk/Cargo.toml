@@ -43,7 +43,6 @@ unstable_api = []
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
 
-#[cfg(not(target_arch = "wasm32"))]
 [[example]]
 name = "client"
 required-features = ["file_io"]
@@ -51,6 +50,14 @@ required-features = ["file_io"]
 [[example]]
 name = "show"
 required-features = ["file_io"]
+
+[[example]]
+name = "v2show"
+required-features = ["unstable_api"]
+
+[[example]]
+name = "v2api"
+required-features = ["unstable_api"]
 
 
 
@@ -156,6 +163,7 @@ web-sys = { version = "0.3.58", features = [
 [dev-dependencies]
 anyhow = "1.0.40"
 mockall = "0.11.2"
+c2pa = { path = ".", features = ["unstable_api"] } # allow integration tests to use the new API
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
