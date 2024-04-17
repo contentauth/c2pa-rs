@@ -1,5 +1,5 @@
 [package]
-name="c2pa"
+name = "c2pa"
 version = "0.31.3"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
@@ -52,8 +52,6 @@ required-features = ["file_io"]
 name = "show"
 required-features = ["file_io"]
 
-[[example]]
-name = "data_hash"
 
 
 [lib]

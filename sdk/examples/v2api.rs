@@ -73,15 +73,16 @@ fn main() -> Result<()> {
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let modified_core = r#"{
+    let modified_core = json!({
         "core": {
             "debug": true,
             "hash_alg": "sha512",
             "max_memory_usage": 123456
         }
-    }"#;
+    })
+    .to_string();
 
-    load_settings_from_str(modified_core, "json")?;
+    load_settings_from_str(&modified_core, "json")?;
 
     let json = manifest_def(title, format);
 
