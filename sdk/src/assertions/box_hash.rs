@@ -314,7 +314,7 @@ mod tests {
     fn test_hash_verify_jpg() {
         let ap = fixture_path("CA.jpg");
 
-        let bhp = crate::jumbf_io::get_assetio_handler_from_path(&ap)
+        let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
             .asset_box_hash_ref()
             .unwrap();
