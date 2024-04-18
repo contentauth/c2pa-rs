@@ -160,7 +160,8 @@ pub(crate) mod manifest_store_report;
 pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
 pub(crate) mod openssl;
-#[allow(dead_code)]  // TODO: Remove this when the feature is released (used in tests only for some builds now)
+#[allow(dead_code)]
+// TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;

@@ -1302,8 +1302,9 @@ pub(crate) mod tests {
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
+        reader::Reader,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
-        Manifest, reader::Reader, Result,
+        Manifest, Result,
     };
     #[cfg(feature = "file_io")]
     use crate::{
