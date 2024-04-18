@@ -142,8 +142,8 @@ impl AsyncSigner for CallbackSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let mut pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
-        Ok(pems.drain(..).map(|p| p.into_contents()).collect())
+        let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
+        Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
 
     fn reserve_size(&self) -> usize {
