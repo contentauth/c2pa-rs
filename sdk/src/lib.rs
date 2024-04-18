@@ -24,12 +24,13 @@
 //! the existing methods of reading and writing C2PA data.
 //! The new API focuses on stream support and can do more with fewer methods.
 //! It will be supported in all language bindings and build environments.
+//! To try these out, you need to enable the `unstable_api` feature.
 //!
 //! To read with file based methods, you must add the `file_io` dependency to your Cargo.toml.
 //! For example:
 //!
 //! ```text
-//! c2pa = {version="0.11.0", features=["file_io"]}
+//! c2pa = {version="0.32.0", features=["file_io"]}
 //! ```
 //!
 //! # Example: Reading a ManifestStore
