@@ -52,11 +52,12 @@ const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
 
-static SUPPORTED_TYPES: [&str; 9] = [
+static SUPPORTED_TYPES: [&str; 10] = [
     "tif",
     "tiff",
     "image/tiff",
     "dng",
+    "image/dng",
     "image/x-adobe-dng",
     "arw",
     "image/x-sony-arw",
@@ -1014,7 +1015,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.seek(SeekFrom::Start(curr_pos))?;
             self.writer.write_u32(0)?;
         }
-
+        self.writer.flush()?;
         Ok(())
     }
 

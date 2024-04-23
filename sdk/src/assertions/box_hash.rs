@@ -301,11 +301,13 @@ impl AssertionBase for BoxHash {
     }
 }
 
+#[cfg(feature = "file_io")]
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    #[cfg(test)]
     use crate::{jumbf_io::get_assetio_handler_from_path, utils::test::fixture_path};
 
     #[test]

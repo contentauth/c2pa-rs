@@ -414,6 +414,74 @@ pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
     Box::new(TempRemoteSigner {})
 }
 
+/// Create an AsyncSigner that acts as a RemoteSigner
+struct TempAsyncRemoteSigner {
+    signer: TempRemoteSigner,
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
+    // this will not be called but requires an implementation
+    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
+        #[cfg(feature = "openssl_sign")]
+        {
+            let signer =
+                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+            // this would happen on some remote server
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+        }
+        #[cfg(not(feature = "openssl_sign"))]
+        {
+            use std::io::{Seek, Write};
+
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+
+            sign_bytes.rewind()?;
+            sign_bytes.write_all(&claim_bytes)?;
+
+            // fake sig
+            Ok(sign_bytes.into_inner())
+        }
+    }
+
+    // signer will return a COSE structure
+    fn direct_cose_handling(&self) -> bool {
+        true
+    }
+
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
+
+    async fn send_timestamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
+    }
+}
+
+/// Create a [`AsyncSigner`] that does it's own COSE handling for testing.
+///
+/// # Returns
+///
+/// Returns a boxed [`RemoteSigner`] instance.
+pub fn temp_async_remote_signer() -> Box<dyn crate::signer::AsyncSigner> {
+    Box::new(TempAsyncRemoteSigner {
+        signer: TempRemoteSigner {},
+    })
+}
+
 #[test]
 fn test_create_test_store() {
     #[allow(clippy::expect_used)]

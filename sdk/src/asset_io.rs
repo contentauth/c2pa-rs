@@ -13,7 +13,7 @@
 
 use std::{
     fmt,
-    io::{Read, Seek, Write},
+    io::{Cursor, Read, Seek, Write},
     path::Path,
 };
 
@@ -40,17 +40,15 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
-// Disable `Send` for wasm32 since we are not sending data across threads
-#[cfg(target_arch = "wasm32")]
-pub trait CAIRead: Read + Seek {}
-#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
 
-impl CAIRead for std::fs::File {}
-impl CAIRead for std::io::Cursor<&[u8]> {}
-impl CAIRead for std::io::Cursor<&mut [u8]> {}
-impl CAIRead for std::io::Cursor<Vec<u8>> {}
-impl CAIRead for NamedTempFile {}
+impl<T> CAIRead for T where T: Read + Seek + Send {}
+
+impl From<String> for Box<dyn CAIRead> {
+    fn from(val: String) -> Self {
+        Box::new(Cursor::new(val))
+    }
+}
 
 // Helper struct to create a concrete type for CAIRead when
 // that is required.  For example a function defined like this
@@ -75,10 +73,7 @@ impl Seek for CAIReadWrapper<'_> {
 
 pub trait CAIReadWrite: CAIRead + Write {}
 
-impl CAIReadWrite for std::fs::File {}
-impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
-impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
-impl CAIReadWrite for NamedTempFile {}
+impl<T> CAIReadWrite for T where T: CAIRead + Write {}
 
 // Helper struct to create a concrete type for CAIReadWrite when
 // that is required. For example a function defined like this
@@ -164,6 +159,7 @@ pub trait AssetIO: Sync + Send {
     }
 
     // Return entire CAI block as Vec<u8>
+    #[allow(dead_code)]
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
 
     // Write the CAI block to an asset
@@ -227,7 +223,7 @@ pub trait AssetBoxHash {
 
 // Type of remote reference to embed.  Some of the listed
 // emums are for future uses and experiments.
-#[allow(unused_variables)]
+#[allow(dead_code)]
 pub enum RemoteRefEmbedType {
     Xmp(String),
     StegoS(String),
