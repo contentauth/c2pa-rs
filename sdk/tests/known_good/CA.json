@@ -1,0 +1,74 @@
+{
+  "active_manifest": "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921",
+  "manifests": {
+    "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921": {
+      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
+      "title": "CA.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:68c08d77-0713-4127-9fea-1f6a6a8635ba",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "parentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Adobe make_test"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "instanceId": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+                "parameters": {
+                  "ingredient": {
+                    "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                    "hash": "tTBD4/E0R0AjLUdJFpsVz3lE/KJUq22Vz0UGqzhEpVs="
+                  }
+                }
+              },
+              {
+                "action": "c2pa.color_adjustments",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2023-07-13T18:58:32+00:00"
+      },
+      "label": "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921"
+    }
+  }
+}

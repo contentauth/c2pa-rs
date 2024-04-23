@@ -16,7 +16,6 @@ pub(crate) mod cbor_types;
 #[allow(dead_code)]
 pub(crate) mod hash_utils;
 pub(crate) mod merkle;
-#[cfg(feature = "file_io")]
 pub(crate) mod mime;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;

@@ -18,27 +18,33 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 //! This library supports reading, creating and embedding C2PA data
-//! with JPEG and PNG images.
+//! with a variety of asset types.
 //!
-//! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
-//! EXCEPTION: If you are building for WASM, do not add this dependency.
+//! We have a new experimental Builder/Reader API that will eventually replace
+//! the existing methods of reading and writing C2PA data.
+//! The new API focuses on stream support and can do more with fewer methods.
+//! It will be supported in all language bindings and build environments.
+//! To try these out, you need to enable the `unstable_api` feature.
+//!
+//! To read with file based methods, you must add the `file_io` dependency to your Cargo.toml.
 //! For example:
 //!
 //! ```text
-//! c2pa = {version="0.11.0", features=["file_io"]}
+//! c2pa = {version="0.32.0", features=["file_io"]}
 //! ```
 //!
 //! # Example: Reading a ManifestStore
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::{assertions::Actions, ManifestStore};
+//! use c2pa::{assertions::Actions, Reader};
 //!
 //! # fn main() -> Result<()> {
-//! let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
-//! println!("{}", manifest_store);
+//! let stream = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let reader = Reader::from_stream("image/jpeg", stream)?;
+//! println!("{}", reader.json());
 //!
-//! if let Some(manifest) = manifest_store.get_active() {
+//! if let Some(manifest) = reader.active_manifest() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
 //!         println!("{}\n", action.action());
@@ -54,7 +60,7 @@
 //! # use c2pa::Result;
 //! use std::path::PathBuf;
 //!
-//! use c2pa::{create_signer, Manifest, SigningAlg};
+//! use c2pa::{create_signer, Builder, SigningAlg};
 //! use serde::Serialize;
 //! use tempfile::tempdir;
 //!
@@ -64,97 +70,107 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_labeled_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
-//!
-//! let source = PathBuf::from("tests/fixtures/C.jpg");
-//! let dir = tempdir()?;
-//! let dest = dir.path().join("test_file.jpg");
+//! let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
 //! // Create a ps256 signer using certs and key files
-//! let signcert_path = "tests/fixtures/certs/ps256.pub";
-//! let pkey_path = "tests/fixtures/certs/ps256.pem";
-//! let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+//! let signer = create_signer::from_files(
+//!     "tests/fixtures/certs/ps256.pub",
+//!     "tests/fixtures/certs/ps256.pem",
+//!     SigningAlg::Ps256,
+//!     None,
+//! )?;
 //!
 //! // embed a manifest using the signer
-//! manifest.embed(&source, &dest, &*signer)?;
+//! std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
+//! builder.sign_file(
+//!     "tests/fixtures/C.jpg",
+//!     "../target/tmp/lib_sign.jpg",
+//!     &*signer,
+//! )?;
 //! # Ok(())
 //! # }
 //! ```
 
-pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
+/// The internal name of the C2PA SDK
+pub const NAME: &str = "c2pa-rs";
+
+/// The version of this C2PA SDK
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// Public modules
 pub mod assertions;
-
-mod cose_validator;
-
+pub mod cose_sign;
 #[cfg(feature = "openssl_sign")]
 pub mod create_signer;
-
-mod error;
-pub use error::{Error, Result};
-
-mod ingredient;
-pub use ingredient::Ingredient;
 pub mod jumbf_io;
-mod manifest;
-pub use manifest::Manifest;
-mod manifest_assertion;
-pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
+pub mod settings;
+pub mod validation_status;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
-mod manifest_store;
-pub use manifest_store::ManifestStore;
-
-mod manifest_store_report;
-pub use manifest_store_report::ManifestStoreReport;
-
-mod resource_store;
-pub use resource_store::{ResourceRef, ResourceStore};
-
-mod signing_alg;
+// Public exports
+#[cfg(feature = "v1_api")]
+pub use asset_io::{CAIRead, CAIReadWrite};
+#[cfg(feature = "unstable_api")]
+pub use builder::{Builder, ManifestDefinition};
+pub use callback_signer::{CallbackFunc, CallbackSigner};
+pub use claim_generator_info::ClaimGeneratorInfo;
+pub use error::{Error, Result};
+pub use hash_utils::{hash_stream_by_alg, HashRange};
+pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-pub(crate) mod ocsp_utils;
-#[cfg(feature = "openssl_sign")]
-mod openssl;
-
-mod signer;
+pub use manifest::Manifest;
+pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
+#[cfg(feature = "v1_api")]
+pub use manifest_store::ManifestStore;
+#[cfg(feature = "v1_api")]
+pub use manifest_store_report::ManifestStoreReport;
+#[cfg(feature = "unstable_api")]
+pub use reader::Reader;
+pub use resource_store::ResourceRef;
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
+pub use signing_alg::SigningAlg;
+pub use utils::mime::format_from_path;
+
+// Internal modules
 #[allow(dead_code, clippy::enum_variant_names)]
 pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
-pub use asset_io::{CAIRead, CAIReadWrite};
-/// crate private declarations
+#[cfg(feature = "unstable_api")]
+pub(crate) mod builder;
+pub(crate) mod callback_signer;
 pub(crate) mod claim;
-
-mod claim_generator_info;
-pub use claim_generator_info::ClaimGeneratorInfo;
-
-pub mod cose_sign;
-
+pub(crate) mod claim_generator_info;
+pub(crate) mod cose_validator;
 #[cfg(all(feature = "xmp_write", feature = "file_io"))]
 pub(crate) mod embedded_xmp;
+pub(crate) mod error;
 pub(crate) mod hashed_uri;
+pub(crate) mod ingredient;
 #[allow(dead_code)]
 pub(crate) mod jumbf;
+pub(crate) mod manifest;
+pub(crate) mod manifest_assertion;
+pub(crate) mod manifest_store;
+pub(crate) mod manifest_store_report;
+pub(crate) mod ocsp_utils;
+#[cfg(feature = "openssl")]
+pub(crate) mod openssl;
+#[allow(dead_code)]
+// TODO: Remove this when the feature is released (used in tests only for some builds now)
+pub(crate) mod reader;
+pub(crate) mod resource_store;
 pub(crate) mod salt;
-pub mod settings;
+pub(crate) mod signer;
+pub(crate) mod signing_alg;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;
 pub(crate) mod utils;
-pub mod validation_status;
-pub use hash_utils::HashRange;
 pub(crate) use utils::{cbor_types, hash_utils};
-pub use utils::{cbor_types::DateT, hash_utils::hash_stream_by_alg};
 pub(crate) mod validator;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
-
-/// The internal name of the C2PA SDK
-pub const NAME: &str = "c2pa-rs";
-/// The version of this C2PA SDK
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");

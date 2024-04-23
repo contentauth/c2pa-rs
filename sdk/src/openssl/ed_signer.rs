@@ -40,8 +40,8 @@ impl ConfigurableSigner for EdSigner {
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let certs_size = signcert.len();
-        let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
-        let pkey = PKey::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
+        let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
+        let pkey = PKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
 
         if alg != SigningAlg::Ed25519 {
             return Err(Error::UnsupportedType); // only ed25519 is supported by C2PA
@@ -68,7 +68,7 @@ impl ConfigurableSigner for EdSigner {
 impl Signer for EdSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut signer =
-            openssl::sign::Signer::new_without_digest(&self.pkey).map_err(wrap_openssl_err)?;
+            openssl::sign::Signer::new_without_digest(&self.pkey).map_err(Error::OpenSslError)?;
 
         let signed_data = signer.sign_oneshot_to_vec(data)?;
 
@@ -83,7 +83,7 @@ impl Signer for EdSigner {
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            let cert = c.to_der().map_err(Error::OpenSslError)?;
             certs.push(cert);
         }
 
@@ -97,10 +97,6 @@ impl Signer for EdSigner {
     fn reserve_size(&self) -> usize {
         1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
     }
-}
-
-fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
-    Error::OpenSslError(err)
 }
 
 #[cfg(test)]

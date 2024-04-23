@@ -15,8 +15,8 @@ use std::{fs::File, path::Path};
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
-    asset_io::{AssetIO, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
-    CAIRead, Error,
+    asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
+    Error,
     Error::{JumbfNotFound, NotImplemented, PdfReadError},
 };
 

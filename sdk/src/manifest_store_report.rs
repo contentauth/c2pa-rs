@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 #[cfg(feature = "file_io")]
+#[cfg(feature = "v1_api")]
 use std::path::Path;
 
 use atree::{Arena, Token};
@@ -20,14 +21,11 @@ use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(feature = "v1_api")]
+use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
 use crate::{
-    assertion::AssertionData,
-    claim::Claim,
-    status_tracker::{DetailedStatusTracker, StatusTracker},
-    store::Store,
-    utils::base64,
-    validation_status::ValidationStatus,
-    Result,
+    assertion::AssertionData, claim::Claim, store::Store, utils::base64,
+    validation_status::ValidationStatus, Result,
 };
 
 /// Low level JSON based representation of Manifest Store - used for debugging
@@ -58,6 +56,7 @@ impl ManifestStoreReport {
 
     /// Prints tree view of manifest store
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -97,6 +96,7 @@ impl ManifestStoreReport {
 
     /// Prints the certificate chain used to sign the active manifest.
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -113,6 +113,7 @@ impl ManifestStoreReport {
 
     /// Returns the certificate chain used to sign the active manifest.
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
@@ -120,12 +121,14 @@ impl ManifestStoreReport {
     }
 
     /// Returns the certificate used to sign the active manifest.
+    #[cfg(feature = "v1_api")]
     pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
         let mut validation_log = DetailedStatusTracker::new();
         let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
 
+    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from an existing Store and a validation log
     pub(crate) fn from_store_with_log(
         store: &Store,
@@ -150,6 +153,7 @@ impl ManifestStoreReport {
         Ok(report)
     }
 
+    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from image bytes and a format
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
@@ -157,6 +161,7 @@ impl ManifestStoreReport {
         Self::from_store_with_log(&store, &validation_log)
     }
 
+    #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from a file
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -195,7 +200,9 @@ impl ManifestStoreReport {
         // recurse down ingredients
         for i in claim.ingredient_assertions() {
             let ingredient_assertion =
-                <crate::assertions::Ingredient as crate::AssertionBase>::from_assertion(i)?;
+                <crate::assertions::Ingredient as crate::assertion::AssertionBase>::from_assertion(
+                    i,
+                )?;
 
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
@@ -389,10 +396,10 @@ fn b64_tag(mut json: String, tag: &str) -> String {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    #[cfg(feature = "v1_api")]
     use std::fs;
 
-    use super::ManifestStoreReport;
-    use crate::utils::test::fixture_path;
+    use crate::{manifest_store_report::ManifestStoreReport, utils::test::fixture_path};
 
     #[test]
     fn manifest_store_report() {
@@ -402,12 +409,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_from_bytes() {
         let bytes = fs::read(fixture_path("CA.jpg")).expect("missing test asset");
         assert!(ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes).is_ok())
     }
 
     #[test]
+    #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_from_bytes_no_manifest_err() {
         let bytes = fs::read(fixture_path("no_manifest.jpg")).expect("missing test asset");
         assert!(matches!(
@@ -418,6 +427,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_dump_tree() {
         let asset_name = "CA.jpg";
         let path = fixture_path(asset_name);
@@ -427,6 +437,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_dump_certchain() {
         let asset_name = "CA.jpg";
         let path = fixture_path(asset_name);
@@ -436,6 +447,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_get_certchain() {
         let asset_name = "CA.jpg";
         let path = fixture_path(asset_name);
@@ -444,6 +456,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_no_manifest_err() {
         let asset_name = "no_manifest.jpg";
         let path = fixture_path(asset_name);

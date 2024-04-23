@@ -153,7 +153,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let _ma = ManifestAssertion::from_assertion(&actions)?;
+    /// let _ma = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -175,7 +175,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let manifest_assertion = ManifestAssertion::from_assertion(&actions)?;
+    /// let manifest_assertion = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
     /// for action in actions.actions {

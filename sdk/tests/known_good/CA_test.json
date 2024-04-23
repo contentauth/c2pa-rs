@@ -1,0 +1,59 @@
+{
+  "active_manifest": "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47",
+  "manifests": {
+    "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47": {
+      "claim_generator": "test/1.0 c2pa-rs/0.31.1-dev",
+      "claim_generator_info": [
+        {
+          "name": "test",
+          "version": "1.0"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.31.1-dev"
+        }
+      ],
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:d6b460e3-fce8-4892-a123-bbb8c28cd9af",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "c2pa.actions.v2",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "version": "1.0",
+                  "something": "else"
+                },
+                "parameters": {
+                  "description": "import"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ed25519",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "638838410810235485828984295321338730070538954823"
+      },
+      "label": "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47"
+    }
+  },
+  "validation_status": [
+    {
+      "code": "assertion.dataHash.mismatch",
+      "url": "self#jumbf=/c2pa/urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47/c2pa.assertions/c2pa.hash.data",
+      "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )"
+    }
+  ]
+}

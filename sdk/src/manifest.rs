@@ -32,12 +32,13 @@ use crate::{
     asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
+    ingredient::Ingredient,
     jumbf,
+    manifest_assertion::ManifestAssertion,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    ClaimGeneratorInfo, HashRange, Ingredient, ManifestAssertion, ManifestAssertionKind,
-    RemoteSigner, Signer,
+    ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer, SigningAlg,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -440,21 +441,6 @@ impl Manifest {
         Ok(self)
     }
 
-    /// Sets the signature information for the report
-    fn set_signature(
-        &mut self,
-        issuer: Option<&String>,
-        time: Option<&String>,
-        cert_serial: Option<&String>,
-    ) -> &mut Self {
-        self.signature_info = Some(SignatureInfo {
-            issuer: issuer.cloned(),
-            time: time.cloned(),
-            cert_serial_number: cert_serial.cloned(),
-        });
-        self
-    }
-
     /// Returns the name of the signature issuer
     pub fn issuer(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.issuer)
@@ -662,22 +648,18 @@ impl Manifest {
             }
         }
 
-        let issuer = claim.signing_issuer();
-        let signing_time = claim
-            .signing_time()
-            .map(|signing_time| signing_time.to_rfc3339());
-
-        if issuer.is_some() || signing_time.is_some() {
-            debug!(
-                "added signature issuer={:?} time={:?}",
-                issuer, signing_time
-            );
-            manifest.set_signature(
-                issuer.as_ref(),
-                signing_time.as_ref(),
-                claim.signing_cert_serial().as_ref(),
-            );
-        }
+        manifest.signature_info = match claim.signature_info() {
+            Some(signature_info) => Some(SignatureInfo {
+                alg: signature_info.alg,
+                issuer: signature_info.issuer_org,
+                time: signature_info.date.map(|d| d.to_rfc3339()),
+                cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
+                cert_chain: String::from_utf8(signature_info.cert_chain)
+                    .map_err(|_e| Error::CoseInvalidCert)?,
+                revocation_status: signature_info.revocation_status,
+            }),
+            None => None,
+        };
 
         Ok(manifest)
     }
@@ -778,7 +760,7 @@ impl Manifest {
         let mut ingredient_map = HashMap::new();
         // add all ingredients to the claim
         for ingredient in &self.ingredients {
-            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone())?;
+            let uri = ingredient.add_to_claim(&mut claim, self.redactions.clone(), None)?;
             ingredient_map.insert(ingredient.instance_id(), uri);
         }
 
@@ -1273,6 +1255,9 @@ impl std::fmt::Display for Manifest {
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
+    alg: Option<SigningAlg>,
+    /// human readable issuing authority for this signature
+    #[serde(skip_serializing_if = "Option::is_none")]
     issuer: Option<String>,
 
     /// The serial number of the certificate
@@ -1282,6 +1267,21 @@ pub struct SignatureInfo {
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
+
+    /// the cert chain for this claim
+    #[serde(skip)] // don't serialize this, let someone ask for it
+    cert_chain: String,
+
+    /// revocation status of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revocation_status: Option<bool>,
+}
+
+impl SignatureInfo {
+    // returns the cert chain for this signature
+    pub fn cert_chain(&self) -> &str {
+        &self.cert_chain
+    }
 }
 
 #[cfg(test)]
@@ -1301,8 +1301,10 @@ pub(crate) mod tests {
 
     use crate::{
         assertions::{c2pa_action, Action, Actions},
+        ingredient::Ingredient,
+        reader::Reader,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
-        Ingredient, Manifest, Result,
+        Manifest, Result,
     };
     #[cfg(feature = "file_io")]
     use crate::{
@@ -1688,10 +1690,9 @@ pub(crate) mod tests {
             .embed_async_signed(&output, &output, &async_signer)
             .await
             .expect("embed");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        assert!(manifest_store.active_label().is_some());
+        let reader = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1709,10 +1710,9 @@ pub(crate) mod tests {
             .embed_remote_signed(&output, &output, remote_signer.as_ref())
             .await
             .expect("embed");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        assert!(manifest_store.active_label().is_some());
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1730,10 +1730,10 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        assert_eq!(manifest_store.active_label(), Some("MyLabel"));
+
+        let reader = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1756,12 +1756,10 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
 
-        //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
-        let manifest_store = crate::ManifestStore::from_bytes("application/c2pa", &c2pa_data, true)
-            .expect("from_bytes");
-        assert_eq!(manifest_store.active_label(), Some("MyLabel"));
+        let manifest_store =
+            Reader::from_stream("application/c2pa", Cursor::new(c2pa_data)).expect("from_bytes");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
         );
     }
@@ -1798,8 +1796,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store =
-            crate::ManifestStore::from_bytes("image/jpeg", &out_vec, true).unwrap();
+        let manifest_store = Reader::from_stream("image/jpeg", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1834,7 +1831,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = crate::ManifestStore::from_bytes("image/png", &out_vec, true).unwrap();
+        let manifest_store = Reader::from_stream("image/png", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1870,8 +1867,7 @@ pub(crate) mod tests {
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store =
-            crate::ManifestStore::from_bytes("image/webp", &out_vec, true).unwrap();
+        let manifest_store = Reader::from_stream("image/webp", Cursor::new(out_vec)).unwrap();
 
         /* to be enabled later
                 // try to load the manifest
@@ -1907,14 +1903,14 @@ pub(crate) mod tests {
             .embed_to_stream("jpeg", &mut stream, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
-            .expect("from_bytes");
+        stream.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             "EmbedStream"
         );
         #[cfg(feature = "add_thumbnails")]
-        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+        assert!(reader.active_manifest().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 
@@ -1939,9 +1935,9 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let manifest = manifest_store.get_active().unwrap();
+        let manifest = manifest_store.active_manifest().unwrap();
         let ingredient_status = manifest.ingredients()[0].validation_status();
         assert_eq!(
             ingredient_status.unwrap()[0].code(),
@@ -1974,9 +1970,9 @@ pub(crate) mod tests {
         assert_eq!(manifest.remote_manifest_url().unwrap(), url.to_string());
 
         //let manifest_store = crate::ManifestStore::from_file(&sidecar).expect("from_file");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             "XCAplus.jpg"
         );
     }
@@ -1997,8 +1993,8 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        let active_manifest = manifest_store.get_active().unwrap();
+        let manifest_store = Reader::from_file(&output).expect("from_file");
+        let active_manifest = manifest_store.active_manifest().unwrap();
         let (format, image) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.into_owned(), thumb_data);
@@ -2147,10 +2143,10 @@ pub(crate) mod tests {
             .embed_to_stream("jpeg", &mut input, &mut output, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
-            .expect("from_bytes");
-        println!("manifest_store = {manifest_store}");
-        let m = manifest_store.get_active().unwrap();
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("manifest_store = {reader}");
+        let m = reader.active_manifest().unwrap();
 
         //println!("after = {m}");
 
@@ -2203,10 +2199,9 @@ pub(crate) mod tests {
             .embed_from_memory("jpeg", image, signer.as_ref())
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
-        println!("manifest_store = {manifest_store}");
-        let m = manifest_store.get_active().unwrap();
+        let reader = Reader::from_stream("jpeg", Cursor::new(output_image)).expect("from_bytes");
+        println!("manifest_store = {reader}");
+        let m = reader.active_manifest().unwrap();
 
         assert!(m.thumbnail().is_some());
         let (format, image) = m.thumbnail().unwrap();
@@ -2263,9 +2258,9 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
 
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
-        println!("{manifest_store}");
-        let active_manifest = manifest_store.get_active().unwrap();
+        let reader = Reader::from_file(&output).expect("from_file");
+        println!("{reader}");
+        let active_manifest = reader.active_manifest().unwrap();
         let (format, _) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
     }
@@ -2289,9 +2284,9 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
 
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let active_manifest = manifest_store.get_active().unwrap();
+        let active_manifest = manifest_store.active_manifest().unwrap();
         let (format, _) = active_manifest.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
     }
@@ -2349,9 +2344,9 @@ pub(crate) mod tests {
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
 
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        let active_manifest = manifest_store.get_active().unwrap();
+        let active_manifest = manifest_store.active_manifest().unwrap();
         assert!(active_manifest.thumbnail_ref().is_none());
         assert!(active_manifest.thumbnail().is_none());
     }
@@ -2435,7 +2430,7 @@ pub(crate) mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&signed_manifest).unwrap();
 
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         assert!(manifest_store.validation_status().is_none());
     }
@@ -2496,7 +2491,7 @@ pub(crate) mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&signed_manifest).unwrap();
 
-        let manifest_store = crate::ManifestStore::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         assert!(manifest_store.validation_status().is_none());
     }
@@ -2522,14 +2517,14 @@ pub(crate) mod tests {
             .expect("embeddable_manifest");
 
         // Validate the embeddable manifest against the asset bytes
-        let manifest_store = crate::ManifestStore::from_manifest_and_asset_bytes(
+        let reader = Reader::from_manifest_data_and_stream(
             &embeddable,
             "image/jpeg",
-            asset_bytes,
+            Cursor::new(asset_bytes),
         )
         .unwrap();
-        println!("{manifest_store}");
-        assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        println!("{reader}");
+        assert!(reader.active_manifest().is_some());
+        assert!(reader.validation_status().is_none());
     }
 }

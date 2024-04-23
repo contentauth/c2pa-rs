@@ -20,18 +20,17 @@ use std::{
 use asn1_rs::Oid;
 
 use crate::{
-    error::{wrap_openssl_err, Result},
     hash_utils::hash_sha256,
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
     utils::base64,
-    Error,
+    Error, Result,
 };
 
 fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
     let mut certs: Vec<openssl::x509::X509> = Vec::new();
 
     for d in ders {
-        let cert = openssl::x509::X509::from_der(d).map_err(wrap_openssl_err)?;
+        let cert = openssl::x509::X509::from_der(d).map_err(Error::OpenSslError)?;
         certs.push(cert);
     }
 
@@ -39,7 +38,7 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
 }
 
 fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
-    openssl::x509::X509::stack_from_pem(trust_data).map_err(wrap_openssl_err)
+    openssl::x509::X509::stack_from_pem(trust_data).map_err(Error::OpenSslError)
 }
 
 // Struct to handle verification of trust chains
@@ -71,7 +70,7 @@ impl OpenSSLTrustHandlerConfig {
 
     fn update_store(&mut self) -> Result<()> {
         let mut builder =
-            openssl::x509::store::X509StoreBuilder::new().map_err(wrap_openssl_err)?;
+            openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
 
         // add trust anchors
         for t in &self.trust_anchors {
@@ -137,7 +136,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
 
         if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
             for cert in &cert_list {
-                let cert_der = cert.to_der().map_err(wrap_openssl_err)?;
+                let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
                 let cert_sha256 = hash_sha256(&cert_der);
                 let cert_hash_base64 = base64::encode(&cert_sha256);
 
@@ -238,16 +237,16 @@ pub(crate) fn verify_trust(
         return Ok(true);
     }
 
-    let mut cert_chain = openssl::stack::Stack::new().map_err(wrap_openssl_err)?;
-    let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(wrap_openssl_err)?;
+    let mut cert_chain = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
+    let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(Error::OpenSslError)?;
 
     let chain = certs_der_to_x509(chain_der)?;
     for c in chain {
-        cert_chain.push(c).map_err(wrap_openssl_err)?;
+        cert_chain.push(c).map_err(Error::OpenSslError)?;
     }
-    let cert = openssl::x509::X509::from_der(cert_der).map_err(wrap_openssl_err)?;
+    let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
-    let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(wrap_openssl_err)?;
+    let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
 
     // todo: figure out the passthrough case
     if th.get_anchors().is_empty() {
@@ -256,7 +255,7 @@ pub(crate) fn verify_trust(
 
     // add trust anchors
     for d in th.get_anchors() {
-        let c = openssl::x509::X509::from_der(&d).map_err(wrap_openssl_err)?;
+        let c = openssl::x509::X509::from_der(&d).map_err(Error::OpenSslError)?;
         builder.add_cert(c)?;
     }
     // finalize store

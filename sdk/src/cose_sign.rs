@@ -357,6 +357,7 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
         use crate::{

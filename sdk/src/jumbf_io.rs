@@ -11,10 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{collections::HashMap, io::Cursor};
+#[cfg(feature = "file_io")]
 use std::{
-    collections::HashMap,
     fs::{self, File},
-    io::Cursor,
     path::{Path, PathBuf},
 };
 
@@ -97,6 +97,7 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
 }
 
 /// Return jumbf block from in memory asset
+#[allow(dead_code)]
 pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> {
     let mut buf_reader = Cursor::new(data);
 
@@ -143,31 +144,33 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
     Ok(output_stream.into_inner())
 }
 
-pub fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
     let ext = get_file_extension(asset_path)?;
 
     ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
+pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = ext.to_lowercase();
 
     ASSET_HANDLERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
+pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
     let asset_type = asset_type.to_lowercase();
 
     ASSET_HANDLERS.get(&asset_type).map(|h| h.get_reader())
 }
 
-pub fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
+pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
     let asset_type = asset_type.to_lowercase();
 
     CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
 }
 
-pub fn get_file_extension(path: &Path) -> Option<String> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
     let ext_osstr = path.extension()?;
 
     let ext = ext_osstr.to_str()?;
@@ -175,7 +178,8 @@ pub fn get_file_extension(path: &Path) -> Option<String> {
     Some(ext.to_lowercase())
 }
 
-pub fn get_supported_file_extension(path: &Path) -> Option<String> {
+#[cfg(feature = "file_io")]
+pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
     let ext = get_file_extension(path)?;
 
     if ASSET_HANDLERS.get(&ext).is_some() {
@@ -185,6 +189,7 @@ pub fn get_supported_file_extension(path: &Path) -> Option<String> {
     }
 }
 
+#[cfg(feature = "file_io")]
 /// save_jumbf to a file
 /// in_path - path is source file
 /// out_path - path to the output file
@@ -237,7 +242,8 @@ pub fn save_jumbf_to_file(data: &[u8], in_path: &Path, out_path: Option<&Path>) 
 /// replace_bytes - replacement bytes
 /// returns the location where splice occurred
 #[cfg(test)] // this only used in unit tests
-pub fn update_file_jumbf(
+#[cfg(feature = "file_io")]
+pub(crate) fn update_file_jumbf(
     out_path: &Path,
     search_bytes: &[u8],
     replace_bytes: &[u8],
@@ -253,6 +259,7 @@ pub fn update_file_jumbf(
     Ok(splice_point)
 }
 
+#[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
 pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
@@ -266,7 +273,8 @@ pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
     }
 }
 
-pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
+#[cfg(feature = "file_io")]
+pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
@@ -275,7 +283,7 @@ pub fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
     }
 }
 
-pub fn object_locations_from_stream(
+pub(crate) fn object_locations_from_stream(
     format: &str,
     stream: &mut dyn CAIRead,
 ) -> Result<Vec<HashObjectPositions>> {
@@ -285,6 +293,7 @@ pub fn object_locations_from_stream(
     }
 }
 
+#[cfg(feature = "file_io")]
 /// removes the C2PA JUMBF from an asset
 /// Note: Use with caution since this deletes C2PA data
 /// It is useful when creating remote manifests from embedded manifests
