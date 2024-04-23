@@ -2023,6 +2023,7 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+    /// This can also handle remote signing if direct_cose_handling() is true.
     #[async_generic(async_signature(
         &mut self,
         format: &str,
@@ -2050,6 +2051,10 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
             self.sign_claim(pc, signer, signer.reserve_size())?
+        } else if signer.direct_cose_handling() {
+            // Let the signer do all the COSE processing and return the structured COSE data.
+            // This replaces the RemoteSigner interface.
+            signer.sign(pc.data()?).await?
         } else {
             self.sign_claim_async(pc, signer, signer.reserve_size())
                 .await?
@@ -2057,56 +2062,6 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
-        match self.finish_save_stream(
-            jumbf_bytes,
-            format,
-            &mut intermediate_stream,
-            output_stream,
-            sig,
-            &sig_placeholder,
-        ) {
-            Ok((s, m)) => {
-                // save sig so store is up to date
-                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc_mut.set_signature_val(s);
-
-                Ok(m)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Async version of save_to_stream
-    ///
-    /// This can also handle remote signing if direct_cose_handling() is true
-    pub async fn save_to_stream_async(
-        &mut self,
-        format: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        signer: &dyn AsyncSigner,
-    ) -> Result<Vec<u8>> {
-        let intermediate_output: Vec<u8> = Vec::new();
-        let mut intermediate_stream = Cursor::new(intermediate_output);
-
-        let jumbf_bytes = self.start_save_stream(
-            format,
-            input_stream,
-            &mut intermediate_stream,
-            signer.reserve_size(),
-        )?;
-
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let claim_bytes = pc.data()?;
-        let sig = if signer.direct_cose_handling() {
-            // let the signer do all the COSE processing and return the structured COSE data
-            signer.sign(claim_bytes).await?
-        } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size())
-                .await?
-        };
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
         match self.finish_save_stream(
             jumbf_bytes,
             format,

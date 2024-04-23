@@ -37,8 +37,8 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, 
-    ManifestAssertionKind, RemoteSigner, Signer, SigningAlg,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer,
+    SigningAlg,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
