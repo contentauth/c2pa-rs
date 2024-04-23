@@ -66,7 +66,9 @@ pub trait Signer {
         None
     }
     #[cfg(target_arch = "wasm32")]
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
 
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
@@ -175,6 +177,14 @@ pub trait AsyncSigner: Sync {
     /// be cached taking pressure off of the CA (recommended by C2PA spec)
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
+    }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
     }
 }
 

@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::Path;
 use std::{
     io::{BufRead, BufReader, Cursor},
-    path::Path,
     sync::RwLock,
 };
 
@@ -153,6 +154,7 @@ impl SettingsValidate for Core {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
 pub(crate) struct Verify {
+    verify_after_reading: bool,
     verify_after_sign: bool,
     verify_trust: bool,
     ocsp_fetch: bool,
@@ -162,6 +164,7 @@ pub(crate) struct Verify {
 impl Default for Verify {
     fn default() -> Self {
         Self {
+            verify_after_reading: true,
             verify_after_sign: true,
             verify_trust: false,
             ocsp_fetch: false,
@@ -195,7 +198,7 @@ impl SettingsValidate for Manifest {}
 // setting for the entire C2PA-RS instance.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub struct Settings {
+pub(crate) struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,
@@ -204,6 +207,7 @@ pub struct Settings {
 
 impl Settings {
     #[allow(unused)]
+    #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(setting_path: P) -> Result<Self> {
         let ext = setting_path
             .as_ref()
@@ -220,7 +224,7 @@ impl Settings {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
             "json5" => FileFormat::Json5,
-            "ini" => FileFormat::Ini,
+            //"ini" => FileFormat::Ini,
             "toml" => FileFormat::Toml,
             //"yaml" => FileFormat::Yaml,
             "ron" => FileFormat::Ron,
@@ -294,7 +298,8 @@ pub(crate) fn get_settings() -> Option<Settings> {
 
 // Load settings from configuration file
 #[allow(unused)]
-pub fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+#[cfg(feature = "file_io")]
+pub(crate) fn load_settings<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let ext = settings_path
         .as_ref()
         .extension()
@@ -314,7 +319,8 @@ pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
 
 // Save the current configuration to a json file.
 #[allow(unused)]
-pub fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+#[cfg(feature = "file_io")]
+pub(crate) fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
     let settings =
         get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
 

@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
-    create_signer, Ingredient, Manifest, ManifestStore, SigningAlg,
+    create_signer, Ingredient, Manifest, Reader as ManifestStore, SigningAlg,
 };
 
 const GENERATOR: &str = "test_app/0.1";
@@ -29,7 +29,7 @@ fn show_manifest(manifest_store: &ManifestStore, manifest_label: &str, level: us
     let indent = " ".repeat(level * INDENT_SPACE);
 
     println!("{indent}manifest_label: {manifest_label}");
-    if let Some(manifest) = manifest_store.get(manifest_label) {
+    if let Some(manifest) = manifest_store.get_manifest(manifest_label) {
         println!(
             "{}title: {} , format: {}, instance_id: {}",
             indent,
@@ -136,6 +136,7 @@ pub fn main() -> Result<()> {
     println!("{manifest_store}\n");
 
     // walk through the manifest and access data.
+
     if let Some(manifest_label) = manifest_store.active_label() {
         show_manifest(&manifest_store, manifest_label, 0)?;
     }
