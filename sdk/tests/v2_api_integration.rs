@@ -1,3 +1,7 @@
+// Copyright 2024 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
 
 // Unless required by applicable law or agreed to in writing,
@@ -7,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// complete functional integration test with acquisitions and ingredients
-// isolate from wasm by wrapping in module
+/// Complete functional integration test with acquisitions and ingredients.
+//  Isolate from wasm by wrapping in module.
 #[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
 

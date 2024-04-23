@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// complete functional integration test with acquisitions and ingredients
-// isolate from wasm by wrapping in module
+/// Complete functional integration test with parent and ingredients.
+// Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
 

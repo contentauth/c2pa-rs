@@ -53,10 +53,7 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// println!("{}", reader.json());
     /// ```
-    #[async_generic(async_signature(
-        format: &str,
-        mut stream: impl Read + Seek + Send,
-    ))]
+    #[async_generic()]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let reader = if _sync {
@@ -126,11 +123,7 @@ impl Reader {
     /// # Errors
     /// If the c2pa_data is not valid, or severe errors occur in validation
     /// validation status should be checked for non severe errors
-    #[async_generic(async_signature(
-        c2pa_data: &[u8],
-        format: &str,
-        mut stream: impl Read + Seek + Send,
-    ))]
+    #[async_generic()]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
