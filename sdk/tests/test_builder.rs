@@ -28,7 +28,7 @@ fn test_builder_ca_jpg() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
 
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(format, &mut source, &mut dest, &test_signer())?;
+    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
 
     // dest.set_position(0);
     // let path = common::known_good_path("CA_test.json");

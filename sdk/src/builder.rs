@@ -179,10 +179,10 @@ impl AssertionDefinition {
 ///
 /// // embed a manifest using the signer
 /// builder.sign(
+///     signer.as_ref(),
 ///     "image/jpeg",
 ///     &mut std::fs::File::open(&source)?,
 ///     &mut std::fs::File::create(&dest)?,
-///     signer.as_ref(),
 /// )?;
 /// # Ok(())
 /// # }
@@ -686,17 +686,17 @@ impl Builder {
     /// * If the manifest cannot be signed.
     #[async_generic(async_signature(
         &mut self,
+        signer: &dyn AsyncSigner,
         format: &str,
         source: &mut R,
         dest: &mut W,
-        signer: &dyn AsyncSigner
     ))]
     pub fn sign<R, W>(
         &mut self,
+        signer: &dyn Signer,
         format: &str,
         source: &mut R,
         dest: &mut W,
-        signer: &dyn Signer,
     ) -> Result<Vec<u8>>
     where
         R: Read + Seek + Send,
@@ -734,7 +734,7 @@ impl Builder {
     /// * The bytes of c2pa_manifest that was created.
     /// # Errors
     /// * If the manifest cannot be signed.
-    pub fn sign_file<S, D>(&mut self, source: S, dest: D, signer: &dyn Signer) -> Result<Vec<u8>>
+    pub fn sign_file<S, D>(&mut self, signer: &dyn Signer, source: S, dest: D) -> Result<Vec<u8>>
     where
         S: AsRef<std::path::Path>,
         D: AsRef<std::path::Path>,
@@ -763,7 +763,7 @@ impl Builder {
         };
         let mut dest = std::fs::File::create(dest)?;
 
-        self.sign(&format, &mut source, &mut dest, signer)
+        self.sign(signer, &format, &mut source, &mut dest)
     }
 }
 
@@ -954,7 +954,7 @@ mod tests {
         // sign the ManifestStoreBuilder and write it to the output stream
         let signer = temp_signer();
         builder
-            .sign(format, &mut source, &mut dest, signer.as_ref())
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
             .unwrap();
 
         // read and validate the signed manifest store
@@ -986,7 +986,7 @@ mod tests {
 
         // sign the ManifestStoreBuilder and write it to the output stream
         let signer = temp_signer();
-        builder.sign_file(source, &dest, signer.as_ref()).unwrap();
+        builder.sign_file(signer.as_ref(), source, &dest).unwrap();
 
         // read and validate the signed manifest store
         let manifest_store = ManifestStore::from_file(&dest).expect("from_bytes");
@@ -1039,7 +1039,7 @@ mod tests {
             // sign the ManifestStoreBuilder and write it to the output stream
             let signer = temp_signer();
             builder
-                .sign(format, &mut source, &mut dest, signer.as_ref())
+                .sign(signer.as_ref(), format, &mut source, &mut dest)
                 .unwrap();
 
             // read and validate the signed manifest store
@@ -1085,7 +1085,7 @@ mod tests {
         // sign the ManifestStoreBuilder and write it to the output stream
         let signer = crate::utils::test::temp_async_remote_signer();
         builder
-            .sign_async(format, &mut source, &mut dest, signer.as_ref())
+            .sign_async(signer.as_ref(), format, &mut source, &mut dest)
             .await
             .unwrap();
 

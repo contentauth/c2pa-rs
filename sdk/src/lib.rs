@@ -84,9 +84,9 @@
 //! // embed a manifest using the signer
 //! std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
 //! builder.sign_file(
+//!     &*signer,
 //!     "tests/fixtures/C.jpg",
 //!     "../target/tmp/lib_sign.jpg",
-//!     &*signer,
 //! )?;
 //! # Ok(())
 //! # }
