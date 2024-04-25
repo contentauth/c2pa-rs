@@ -31,7 +31,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run unit tests
-        run: cargo test --verbose 
+        run: cargo test --all-features --verbose 
 
   tests-cross:
     name: Unit tests
