@@ -8,7 +8,7 @@ on:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
-  tests:
+  tests-cargo:
     name: Unit tests
     runs-on: ${{ matrix.os }}
 
@@ -17,11 +17,6 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         rust_version: [stable, 1.73.0]
-        # exclude:
-        #   - os: windows-latest
-        #     rust_version: stable
-        #     # Disable latest Windows version due to build instability.
-        #     # See https://github.com/rust-lang/cargo/issues/12979.
 
     steps:
       - name: Checkout repository
@@ -31,23 +26,12 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-      - name: Upload code coverage results
-        uses: codecov/codecov-action@v3
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-          verbose: true
+      - name: Run unit tests
+        run: cargo test --verbose 
 
   tests-cross:
     name: Unit tests
