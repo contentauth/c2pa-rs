@@ -481,14 +481,18 @@ impl Builder {
             claim.add_claim_generator_info(claim_info);
         }
 
-        // if let Some(remote_op) = &self.remote_manifest {
-        //     match remote_op {
-        //         RemoteManifest::NoRemote => (),
-        //         RemoteManifest::SideCar => claim.set_external_manifest(),
-        //         RemoteManifest::Remote(r) => claim.set_remote_manifest(r)?,
-        //         RemoteManifest::EmbedWithRemote(r) => claim.set_embed_remote_manifest(r)?,
-        //     };
-        // }
+        let remote_url =
+            crate::settings::get_settings_value::<Option<String>>("builder.remote_url")?;
+        let embed = crate::settings::get_settings_value::<bool>("builder.embed")?;
+        if let Some(remote_url) = &remote_url {
+            if embed {
+                claim.set_embed_remote_manifest(remote_url)?;
+            } else {
+                claim.set_remote_manifest(remote_url)?;
+            }
+        } else if !embed {
+            claim.set_external_manifest()
+        }
 
         if let Some(title) = definition.title.as_ref() {
             claim.set_title(Some(title.to_owned()));
@@ -657,7 +661,9 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
-        if self.definition.thumbnail.is_none() {
+        // check settings to see if we should auto generate a thumbnail
+        let auto_thumbnail = crate::settings::get_settings_value::<bool>("builder.auto_thumbnail")?;
+        if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
             if let Ok((format, image)) =
                 crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)

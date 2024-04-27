@@ -33,7 +33,7 @@ use crate::{
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssetData},
+    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::check_ocsp_status,
     error::{Error, Result},
@@ -61,7 +61,6 @@ use crate::{
 #[cfg(feature = "file_io")]
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
-    claim::RemoteManifest,
     jumbf_io::{
         get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
         object_locations, remove_jumbf_from_file, save_jumbf_to_file,
@@ -1754,10 +1753,10 @@ impl Store {
     #[cfg(feature = "file_io")]
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
-            crate::claim::RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
-            crate::claim::RemoteManifest::SideCar
-            | crate::claim::RemoteManifest::Remote(_)
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => {
+            RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
+            RemoteManifest::SideCar
+            | RemoteManifest::Remote(_)
+            | RemoteManifest::EmbedWithRemote(_) => {
                 // make correct path names
                 let source_asset = source;
                 let source_cai = source_asset.with_extension(MANIFEST_STORE_EXT);
@@ -2195,9 +2194,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2209,9 +2209,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2252,9 +2250,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2266,9 +2265,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2308,9 +2305,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2322,9 +2320,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2351,39 +2347,54 @@ impl Store {
 
         // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        match pc.remote_manifest() {
-            crate::claim::RemoteManifest::Remote(url) => {
-                if let Some(h) = get_assetio_handler(format) {
-                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
-                        // remove any previous c2pa manifest from the asset
-                        let tmp_output: Vec<u8> = Vec::new();
-                        let mut tmp_stream = Cursor::new(tmp_output);
+        let (url, remove_manifests) = match pc.remote_manifest() {
+            RemoteManifest::NoRemote => (None, false),
+            RemoteManifest::SideCar => (None, true),
+            RemoteManifest::Remote(url) => (Some(url), true),
+            RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
+        };
 
-                        if let Some(manifest_writer) = h.get_writer(format) {
-                            manifest_writer
-                                .remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
-                            // add external ref if possible
-                            external_ref_writer.embed_reference_to_stream(
-                                &mut tmp_stream,
-                                &mut intermediate_stream,
-                                RemoteRefEmbedType::Xmp(url),
-                            )?;
-                        } else {
-                            return Err(Error::XmpNotSupported);
-                        }
-                    } else {
-                        return Err(Error::XmpNotSupported);
-                    }
-                } else {
-                    return Err(Error::UnsupportedType);
-                }
+        // Do not assume the handler supports XMP or removing manifests unless we need it to
+        if let Some(url) = url {
+            let external_ref_writer = io_handler
+                .remote_ref_writer_ref()
+                .ok_or(Error::XmpNotSupported)?;
+
+            if remove_manifests {
+                let manifest_writer = io_handler
+                    .get_writer(format)
+                    .ok_or(Error::UnsupportedType)?;
+
+                let tmp_output: Vec<u8> = Vec::new();
+                let mut tmp_stream = Cursor::new(tmp_output);
+                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                // add external ref if possible
+                external_ref_writer.embed_reference_to_stream(
+                    &mut tmp_stream,
+                    &mut intermediate_stream,
+                    RemoteRefEmbedType::Xmp(url),
+                )?;
+            } else {
+                // add external ref if possible
+                external_ref_writer.embed_reference_to_stream(
+                    input_stream,
+                    &mut intermediate_stream,
+                    RemoteRefEmbedType::Xmp(url),
+                )?;
             }
-            _ => {
-                // just clone stream
-                input_stream.rewind()?;
-                std::io::copy(input_stream, &mut intermediate_stream)?;
-            }
+        } else if remove_manifests {
+            let manifest_writer = io_handler
+                .get_writer(format)
+                .ok_or(Error::UnsupportedType)?;
+
+            manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+        } else {
+            // just clone stream
+            input_stream.rewind()?;
+            std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
         // we will not do automatic hashing if we detect a box hash present
@@ -2476,7 +2487,16 @@ impl Store {
             .map_err(|_| Error::JumbfCreationError)?;
 
         // re-save to file
-        save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        match pc.remote_manifest() {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                std::io::copy(input_stream, output_stream)?;
+            }
+        }
 
         Ok((sig, jumbf_bytes))
     }
