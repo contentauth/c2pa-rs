@@ -21,13 +21,16 @@ use std::{
     fs::{create_dir_all, remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
 use clap::{Parser, Subcommand};
+use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
+use url::Url;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -126,20 +129,36 @@ struct CliArgs {
     reserve_size: usize,
 }
 
+#[derive(Clone, Debug)]
+enum TrustResource {
+    File(PathBuf),
+    Url(Url),
+}
+
+fn parse_resource_string(s: &str) -> Result<TrustResource> {
+    if let Ok(url) = s.parse::<Url>() {
+        Ok(TrustResource::Url(url))
+    } else {
+        let p = PathBuf::from_str(s)?;
+
+        Ok(TrustResource::File(p))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Commands {
     Trust {
-        /// Path to file containing list of trust anchors in PEM format
-        #[clap(long = "trust_anchors")]
-        trust_anchors: Option<PathBuf>,
+        /// URL or path to file containing list of trust anchors in PEM format
+        #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
+        trust_anchors: Option<TrustResource>,
 
-        /// Path to file containing specific manifest signing certificates in PEM format to implicitly trust
-        #[clap(long = "allowed_list")]
-        allowed_list: Option<PathBuf>,
+        /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
+        #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
+        allowed_list: Option<TrustResource>,
 
-        /// Path to file containing configured EKUs in Oid dot notation
-        #[clap(long = "trust_config")]
-        trust_config: Option<PathBuf>,
+        /// URL or path to file containing configured EKUs in Oid dot notation
+        #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
+        trust_config: Option<TrustResource>,
     },
 }
 
@@ -200,6 +219,24 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     }
 }
 
+fn load_trust_resource(resource: &TrustResource) -> Result<String> {
+    match resource {
+        TrustResource::File(path) => {
+            let data = std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read trust resource from path: {:?}", path))?;
+
+            Ok(data)
+        }
+        TrustResource::Url(url) => {
+            let data = reqwest::blocking::get(url.to_string())?
+                .text()
+                .with_context(|| format!("Failed to read trust resource from URL: {}", url))?;
+
+            Ok(data)
+        }
+    }
+}
+
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
     let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
@@ -215,7 +252,8 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             trust_config,
         }) => {
             if let Some(trust_list) = &trust_anchors {
-                let data = std::fs::read_to_string(trust_list)?;
+                let data = load_trust_resource(trust_list)?;
+                debug!("Using trust anchors from {:?}", trust_list);
                 let replacement_val = serde_json::Value::String(data).to_string(); // escape string
                 let setting = ta.replace("replacement_val", &replacement_val);
 
@@ -225,7 +263,8 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             }
 
             if let Some(allowed_list) = &allowed_list {
-                let data = std::fs::read_to_string(allowed_list)?;
+                let data = load_trust_resource(allowed_list)?;
+                debug!("Using allowed list from {:?}", allowed_list);
                 let replacement_val = serde_json::Value::String(data).to_string(); // escape string
                 let setting = al.replace("replacement_val", &replacement_val);
 
@@ -235,7 +274,8 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             }
 
             if let Some(trust_config) = &trust_config {
-                let data = std::fs::read_to_string(trust_config)?;
+                let data = load_trust_resource(trust_config)?;
+                debug!("Using trust config from {:?}", trust_config);
                 let replacement_val = serde_json::Value::String(data).to_string(); // escape string
                 let setting = tc.replace("replacement_val", &replacement_val);
 
@@ -291,7 +331,7 @@ fn main() -> Result<()> {
     }
 
     // configure the SDK
-    configure_sdk(&args).context("could not configure c2pa-rs")?;
+    configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
