@@ -22,13 +22,18 @@ use log::error;
 
 #[cfg(feature = "openssl")]
 use crate::cose_validator::{verify_cose, verify_cose_async};
+#[cfg(feature = "file_io")]
+use crate::jumbf_io::{
+    get_file_extension, get_supported_file_extension, load_jumbf_from_file, object_locations,
+    remove_jumbf_from_file, save_jumbf_to_file,
+};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
     },
     assertions::{
         labels::{self, CLAIM},
-        DataBox, DataHash, Ingredient, Relationship,
+        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -44,7 +49,7 @@ use crate::{
         labels::{to_absolute_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
+        get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
     manifest_store_report::ManifestStoreReport,
@@ -57,14 +62,6 @@ use crate::{
         patch::patch_bytes,
     },
     validation_status, AsyncSigner, RemoteSigner, Signer,
-};
-#[cfg(feature = "file_io")]
-use crate::{
-    assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
-    jumbf_io::{
-        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
-    },
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -1629,9 +1626,8 @@ impl Store {
         Ok(hashes)
     }
 
-    #[cfg(feature = "file_io")]
     fn generate_bmff_data_hashes(
-        asset_path: &Path,
+        asset_stream: &mut dyn CAIRead,
         alg: &str,
         calc_hashes: bool,
     ) -> Result<Vec<BmffHash>> {
@@ -1725,7 +1721,7 @@ impl Store {
         */
 
         if calc_hashes {
-            dh.gen_hash(asset_path)?;
+            dh.gen_hash_from_stream(asset_stream)?;
         } else {
             match alg {
                 "sha256" => dh.set_hash([0u8; 32].to_vec()),
@@ -2053,6 +2049,7 @@ impl Store {
             signer.reserve_size(),
         )?;
 
+        intermediate_stream.set_position(0);
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2107,6 +2104,7 @@ impl Store {
         };
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
+        intermediate_stream.set_position(0);
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -2341,12 +2339,13 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        let mut data;
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
-        // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // Add remote reference XMP if needed and strip out existing manifest
+        // We don't need to strip manifests if we are replacing an exsiting one
         let (url, remove_manifests) = match pc.remote_manifest() {
             RemoteManifest::NoRemote => (None, false),
             RemoteManifest::SideCar => (None, true),
@@ -2372,6 +2371,7 @@ impl Store {
                 manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                 // add external ref if possible
+                tmp_stream.set_position(0);
                 external_ref_writer.embed_reference_to_stream(
                     &mut tmp_stream,
                     &mut intermediate_stream,
@@ -2397,74 +2397,128 @@ impl Store {
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
-        // we will not do automatic hashing if we detect a box hash present
-        let mut needs_hashing = false;
-        if pc.hash_assertions().is_empty() {
+        let is_bmff = is_bmff_format(format);
+
+        let mut data;
+        let jumbf_size;
+
+        if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
-            let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-            let hashes: Vec<DataHash> = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes_for_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    &mut hash_ranges,
-                    false,
-                )?
-            };
-
-            // add the placeholder data hashes to provenance claim so that the required space is reserved
-            for mut hash in hashes {
-                // add padding to account for possible cbor expansion of final DataHash
-                let padding: Vec<u8> = vec![0x0; 10];
-                hash.add_padding(padding);
-
-                pc.add_assertion(&hash)?;
+            if !pc.update_manifest() {
+                intermediate_stream.rewind()?;
+                let bmff_hashes =
+                    Store::generate_bmff_data_hashes(&mut intermediate_stream, pc.alg(), false)?;
+                for hash in bmff_hashes {
+                    pc.add_assertion(&hash)?;
+                }
             }
-            needs_hashing = true;
+
+            // 3) Generate in memory CAI jumbf block
+            // and write preliminary jumbf store to file
+            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+            // write the jumbf to the output stream if we are embedding the manifest
+            if !remove_manifests {
+                intermediate_stream.rewind()?;
+                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            } else {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            }
+
+            // generate actual hash values
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+
+            if !pc.update_manifest() {
+                let bmff_hashes = pc.bmff_hash_assertions();
+
+                if !bmff_hashes.is_empty() {
+                    let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                    intermediate_stream.rewind()?;
+                    output_stream.rewind()?;
+                    std::io::copy(output_stream, &mut intermediate_stream)?; // remove this once we can get a CAIReader from CAIReadWrite safely
+                    bmff_hash.gen_hash_from_stream(&mut intermediate_stream)?;
+                    pc.update_bmff_hash(bmff_hash)?;
+                }
+            }
+        } else {
+            // we will not do automatic hashing if we detect a box hash present
+            let mut needs_hashing = false;
+            if pc.hash_assertions().is_empty() {
+                // 2) Get hash ranges if needed, do not generate for update manifests
+                let mut hash_ranges =
+                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                let hashes: Vec<DataHash> = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        &mut intermediate_stream,
+                        pc.alg(),
+                        &mut hash_ranges,
+                        false,
+                    )?
+                };
+
+                // add the placeholder data hashes to provenance claim so that the required space is reserved
+                for mut hash in hashes {
+                    // add padding to account for possible cbor expansion of final DataHash
+                    let padding: Vec<u8> = vec![0x0; 10];
+                    hash.add_padding(padding);
+
+                    pc.add_assertion(&hash)?;
+                }
+                needs_hashing = true;
+            }
+
+            // 3) Generate in memory CAI jumbf block
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+
+            // write the jumbf to the output stream if we are embedding the manifest
+            if !remove_manifests {
+                intermediate_stream.rewind()?;
+                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            } else {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            }
+
+            // 4)  determine final object locations and patch the asset hashes with correct offset
+            // replace the source with correct asset hashes so that the claim hash will be correct
+            if needs_hashing {
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+                // get the final hash ranges, but not for update manifests
+                intermediate_stream.rewind()?;
+                output_stream.rewind()?;
+                std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+                let mut new_hash_ranges =
+                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                let updated_hashes = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        &mut intermediate_stream,
+                        pc.alg(),
+                        &mut new_hash_ranges,
+                        true,
+                    )?
+                };
+
+                // patch existing claim hash with updated data
+                for hash in updated_hashes {
+                    pc.update_data_hash(hash)?;
+                }
+            }
         }
 
-        // 3) Generate in memory CAI jumbf block
-        // and write preliminary jumbf store to file
-        // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+        // regenerate the jumbf because the cbor changed
         data = self.to_jumbf_internal(reserve_size)?;
-        let jumbf_size = data.len();
-
-        intermediate_stream.rewind()?;
-        save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
-
-        // 4)  determine final object locations and patch the asset hashes with correct offset
-        // replace the source with correct asset hashes so that the claim hash will be correct
-        if needs_hashing {
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-
-            // get the final hash ranges, but not for update manifests
-            intermediate_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
-            let mut new_hash_ranges =
-                object_locations_from_stream(format, &mut intermediate_stream)?;
-            let updated_hashes = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes_for_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    &mut new_hash_ranges,
-                    true,
-                )?
-            };
-
-            // patch existing claim hash with updated data
-            for hash in updated_hashes {
-                pc.update_data_hash(hash)?;
-            }
-
-            // regenerate the jumbf because the cbor changed
-            data = self.to_jumbf_internal(reserve_size)?;
-            if jumbf_size != data.len() {
-                return Err(Error::JumbfCreationError);
-            }
+        if jumbf_size != data.len() {
+            return Err(Error::JumbfCreationError);
         }
 
         Ok(data) // return JUMBF data
@@ -2606,7 +2660,8 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let bmff_hashes = Store::generate_bmff_data_hashes(dest_path, pc.alg(), false)?;
+                let mut file = std::fs::File::open(asset_path)?;
+                let bmff_hashes = Store::generate_bmff_data_hashes(&mut file, pc.alg(), false)?;
                 for hash in bmff_hashes {
                     pc.add_assertion(&hash)?;
                 }
