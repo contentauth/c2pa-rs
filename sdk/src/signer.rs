@@ -157,7 +157,7 @@ pub trait AsyncSigner: Sync {
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
     /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
     }
 
