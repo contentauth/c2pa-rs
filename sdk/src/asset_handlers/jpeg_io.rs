@@ -555,17 +555,20 @@ impl RemoteRefEmbed for JpegIO {
         asset_path: &Path,
         embed_ref: crate::asset_io::RemoteRefEmbedType,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
-                {
-                    crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
-                }
-
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
-                }
+        match &embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(_manifest_uri) => {
+                let mut file = std::fs::File::open(asset_path)?;
+                let mut temp = Cursor::new(Vec::new());
+                self.embed_reference_to_stream(&mut file, &mut temp, embed_ref)?;
+                let mut output = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(asset_path)
+                    .map_err(Error::IoError)?;
+                temp.set_position(0);
+                std::io::copy(&mut temp, &mut output).map_err(Error::IoError)?;
+                Ok(())
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
