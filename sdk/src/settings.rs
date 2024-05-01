@@ -180,16 +180,12 @@ impl SettingsValidate for Verify {}
 #[allow(unused)]
 pub(crate) struct Builder {
     auto_thumbnail: bool,
-    embed: bool,
-    remote_url: Option<String>,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Self {
             auto_thumbnail: true,
-            embed: true,
-            remote_url: None,
         }
     }
 }
