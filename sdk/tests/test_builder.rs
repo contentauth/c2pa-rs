@@ -28,7 +28,14 @@ fn test_builder_ca_jpg() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
 
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(format, &mut source, &mut dest, &test_signer())?;
+
+    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+
+    // dest.set_position(0);
+    // let path = common::known_good_path("CA_test.json");
+    // let reader = c2pa::Reader::from_stream(format, &mut dest)?;
+    // std::fs::write(path, reader.json())?;
+
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
 }

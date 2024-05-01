@@ -429,10 +429,10 @@ mod tests {
         let mut output_image = Cursor::new(Vec::new());
         builder
             .sign(
+                &*signer,
                 "image/jpeg",
                 &mut Cursor::new(image),
                 &mut output_image,
-                &*signer,
             )
             .expect("sign");
 

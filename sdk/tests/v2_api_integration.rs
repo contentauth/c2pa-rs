@@ -107,7 +107,7 @@ mod integration_v2 {
             let mut builder = Builder::from_archive(&mut zipped)?;
             // sign the ManifestStoreBuilder and write it to the output stream
             let mut dest = Cursor::new(Vec::new());
-            builder.sign(format, &mut source, &mut dest, &signer)?;
+            builder.sign(&signer, format, &mut source, &mut dest)?;
 
             // read and validate the signed manifest store
             dest.rewind()?;
