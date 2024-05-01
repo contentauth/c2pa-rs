@@ -11,7 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    io::{Cursor, Read, Seek, Write},
+};
 #[cfg(feature = "file_io")]
 use std::{
     fs::{create_dir_all, read, write},
@@ -22,13 +26,15 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
+use crate::{
+    assertions::AssetType, asset_io::CAIRead, claim::Claim, hashed_uri::HashedUri, Error, Result,
+};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
 /// (Serialization is disabled by default.)
 pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    !cfg!(feature = "serialize_thumbnails") || cfg!(test)
+    !cfg!(feature = "serialize_thumbnails") || cfg!(test) || cfg!(not(target_arch = "wasm32"))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -97,17 +103,17 @@ pub struct ResourceRef {
     /// Relative JUMBF URIs will be resolved with the manifest label.
     /// Relative file paths will be resolved with the base path if provided.
     pub identifier: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
 
     /// More detailed data types as defined in the C2PA spec.
-    pub data_types: Option<Vec<AssetType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 
     /// The algorithm used to hash the resource (if applicable).
-    pub alg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub alg: Option<String>,
 
     /// The hash of the resource (if applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }
 
@@ -296,6 +302,32 @@ impl ResourceStore {
         )
     }
 
+    pub fn write_stream(
+        &self,
+        id: &str,
+        mut stream: impl Write + Read + Seek + Send,
+    ) -> Result<u64> {
+        #[cfg(feature = "file_io")]
+        if !self.resources.contains_key(id) {
+            match self.base_path.as_ref() {
+                Some(base) => {
+                    // read from, the file to stream
+                    let path = base.join(id);
+                    let mut file = std::fs::File::open(path)?;
+                    return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
+                }
+                None => return Err(Error::ResourceNotFound(id.to_string())),
+            }
+        }
+        match self.resources().get(id) {
+            Some(data) => {
+                stream.write_all(data).map_err(Error::IoError)?;
+                Ok(data.len() as u64)
+            }
+            None => Err(Error::ResourceNotFound(id.to_string())),
+        }
+    }
+
     /// Returns `true` if the resource has been added or exists as file.
     pub fn exists(&self, id: &str) -> bool {
         if !self.resources.contains_key(id) {
@@ -327,13 +359,26 @@ impl Default for ResourceStore {
     }
 }
 
+pub trait ResourceResolver {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
+}
+
+impl ResourceResolver for ResourceStore {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
+        let data = self.get(&reference.identifier)?.into_owned();
+        let cursor = Cursor::new(data);
+        Ok(Box::new(cursor))
+    }
+}
+
 #[cfg(test)]
 #[cfg(feature = "openssl_sign")]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
     use super::*;
-    use crate::{utils::test::temp_signer, Manifest};
+    use crate::{utils::test::temp_signer, Builder, Reader};
 
     #[test]
     #[cfg(feature = "openssl_sign")]
@@ -369,28 +414,31 @@ mod tests {
             }]
         }"#;
 
-        let mut manifest = Manifest::from_json(json).expect("from json");
-        manifest
-            .resources_mut()
-            .add("abc123", *value)
+        let mut builder = Builder::from_json(json).expect("from json");
+        builder
+            .add_resource("abc123", &mut Cursor::new(value))
             .expect("add_resource");
-        let ingredient = &mut manifest.ingredients_mut()[0];
-        ingredient
-            .resources_mut()
-            .add("cba321", *value)
+        builder
+            .add_resource("cba321", &mut Cursor::new(value))
             .expect("add_resource");
-        println!("{manifest}");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
-        let output_image = manifest
-            .embed_from_memory("jpeg", image, signer.as_ref())
-            .expect("embed_stream");
+        let mut output_image = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &*signer,
+                "image/jpeg",
+                &mut Cursor::new(image),
+                &mut output_image,
+            )
+            .expect("sign");
 
-        let _manifest_store =
-            crate::ManifestStore::from_bytes("jpeg", &output_image, true).expect("from_bytes");
-        // println!("{manifest_store}");
+        output_image.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output_image).expect("from_bytes");
+        let _json = reader.json();
+        println!("{_json}");
     }
 }

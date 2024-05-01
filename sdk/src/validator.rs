@@ -14,7 +14,7 @@
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -72,7 +72,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(not(feature = "openssl_sign"))]
+#[cfg(not(feature = "openssl"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)
