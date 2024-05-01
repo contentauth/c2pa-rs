@@ -90,7 +90,6 @@ lazy_static! {
     };
 }
 
-#[cfg(feature = "file_io")]
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     let bmff_io = BmffIO::new("");
     bmff_io.supported_types().contains(&asset_type)
@@ -319,6 +318,8 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::utils::test::{create_test_store, temp_signer};
+
     #[test]
     fn test_get_assetio() {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
@@ -405,5 +406,47 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "dng"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
+    }
+
+    #[test]
+    fn test_streams() {
+        let files: Vec<(&str, &str)> = vec![
+            ("IMG_0003.jpg", "jpeg"),
+            ("sample1.png", "png"),
+            //("sample1.webp", "webp"), // riff io deletion of manifest store isn't working.
+            ("TUSCANY.TIF", "tiff"),
+            ("sample1.svg", "svg"),
+            //("sample1.wav", "wav"),
+            //("test.avi", "avi"),
+            ("sample1.mp3", "mp3"),
+            ("sample1.avif", "avif"),
+            ("sample1.heic", "heic"),
+            ("sample1.heif", "heif"),
+            ("video1.mp4", "mp4"),
+            //("cloud_manifest.c2pa", "c2pa")
+        ];
+        for (name, asset_type) in files {
+            println!("Testing {}", name);
+            let mut reader = std::fs::File::open(format!("tests/fixtures/{}", name)).unwrap();
+            let mut writer = Cursor::new(Vec::new());
+            let store = create_test_store().unwrap();
+            let signer = temp_signer();
+            let jumbf = store.to_jumbf(&*signer).unwrap();
+            save_jumbf_to_stream(asset_type, &mut reader, &mut writer, &jumbf).unwrap();
+            writer.set_position(0);
+            let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();
+            assert_eq!(jumbf, jumbf2);
+
+            // test removing cai store
+            writer.set_position(0);
+            let handler = get_caiwriter_handler(asset_type).unwrap();
+            let mut removed = Cursor::new(Vec::new());
+            handler
+                .remove_cai_store_from_stream(&mut writer, &mut removed)
+                .unwrap();
+            removed.set_position(0);
+            let result = load_jumbf_from_stream(asset_type, &mut removed);
+            assert!(matches!(result.err().unwrap(), Error::JumbfNotFound));
+        }
     }
 }
