@@ -354,7 +354,6 @@ impl BmffHash {
         let bmff_exclusions = &self.exclusions;
 
         // convert BMFF exclusion map to flat exclusion list
-        //let mut data = fs::File::open(asset_path)?;
         let exclusions = bmff_to_jumbf_exclusions(stream, bmff_exclusions, self.bmff_version > 1)?;
 
         let hash = hash_stream_by_alg(&alg, stream, Some(exclusions), true)?;

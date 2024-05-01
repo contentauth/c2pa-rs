@@ -1,4 +1,4 @@
-## V2 API Notes
+## 2024 API Notes
 
 ### Goals
 Provide a consistent flexible well tested API focusing on core functionality.
@@ -12,7 +12,7 @@ Provide a consistent flexible well tested API focusing on core functionality.
 - Enable builds for cameras and other embedded environments.
 - Provide a consistent model for setting runtime options.
 - Write unit tests, integration tests and documentation for all the v2 APIs.
-- Keep v1 to v2 porting as simple as possible.
+- Keep porting as simple as possible.
 
 
 ### Resource References
@@ -53,7 +53,7 @@ If there is no parent ingredient defined, and the source has a manifest store, t
 ### Remote URLs and embedding
 The default operation of c2pa signing is to embed a c2pa manifest store into an asset.
 We also return the c2pa manifest store so that it can be written to a sidecar or uploaded to a remote service.
-- The API supports embedding a a remote url reference into the asset. 
+- The API supports embedding a remote url reference into the asset. 
 - The remote URL is stored in different ways depending on the asset, but is often stored in XMP data.
 - The remote URL must be added to the asset before signing so that it can be hashed along with the asset.
 - Not all file formats support embedding remote URLs or embedding manifests stores.
