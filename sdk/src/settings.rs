@@ -175,14 +175,14 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
-// Settings for manifest API options
+// Settings for Builder API options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(unused)]
-pub(crate) struct Manifest {
+pub(crate) struct Builder {
     auto_thumbnail: bool,
 }
 
-impl Default for Manifest {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             auto_thumbnail: true,
@@ -190,7 +190,7 @@ impl Default for Manifest {
     }
 }
 
-impl SettingsValidate for Manifest {}
+impl SettingsValidate for Builder {}
 
 // Settings configuration for C2PA-RS.  Default configuration values
 // are lazy loaded on first use.  Values can also be loaded from a configuration
@@ -202,7 +202,7 @@ pub(crate) struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,
-    manifest: Manifest,
+    builder: Builder,
 }
 
 impl Settings {
@@ -270,7 +270,7 @@ impl SettingsValidate for Settings {
         self.trust.validate()?;
         self.core.validate()?;
         self.trust.validate()?;
-        self.manifest.validate()
+        self.builder.validate()
     }
 }
 
@@ -415,7 +415,7 @@ pub mod tests {
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.manifest, Manifest::default());
+        assert_eq!(settings.builder, Builder::default());
 
         reset_default_settings().unwrap();
     }
@@ -430,8 +430,8 @@ pub mod tests {
             Core::default().hash_alg
         );
         assert_eq!(
-            get_settings_value::<bool>("manifest.auto_thumbnail").unwrap(),
-            Manifest::default().auto_thumbnail
+            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
+            Builder::default().auto_thumbnail
         );
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
@@ -445,8 +445,8 @@ pub mod tests {
             Verify::default()
         );
         assert_eq!(
-            get_settings_value::<Manifest>("manifest").unwrap(),
-            Manifest::default()
+            get_settings_value::<Builder>("builder").unwrap(),
+            Builder::default()
         );
         assert_eq!(
             get_settings_value::<Trust>("trust").unwrap(),
@@ -457,7 +457,7 @@ pub mod tests {
         let hash_alg: String = get_settings_value("core.hash_alg").unwrap();
         let remote_manifest_fetch: bool =
             get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("manifest.auto_thumbnail").unwrap();
+        let auto_thumbnail: bool = get_settings_value("builder.auto_thumbnail").unwrap();
         let private_anchors: Option<String> = get_settings_value("trust.private_anchors").unwrap();
 
         assert_eq!(hash_alg, Core::default().hash_alg);
@@ -465,18 +465,18 @@ pub mod tests {
             remote_manifest_fetch,
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, Manifest::default().auto_thumbnail);
+        assert_eq!(auto_thumbnail, Builder::default().auto_thumbnail);
         assert_eq!(private_anchors, Trust::default().private_anchors);
 
         // test implicit deserialization on objects
         let core: Core = get_settings_value("core").unwrap();
         let verify: Verify = get_settings_value("verify").unwrap();
-        let manifest: Manifest = get_settings_value("manifest").unwrap();
+        let builder: Builder = get_settings_value("builder").unwrap();
         let trust: Trust = get_settings_value("trust").unwrap();
 
         assert_eq!(core, Core::default());
         assert_eq!(verify, Verify::default());
-        assert_eq!(manifest, Manifest::default());
+        assert_eq!(builder, Builder::default());
         assert_eq!(trust, Trust::default());
 
         reset_default_settings().unwrap();
@@ -491,7 +491,7 @@ pub mod tests {
         // test updating values
         set_settings_value("core.hash_alg", "sha512").unwrap();
         set_settings_value("verify.remote_manifest_fetch", false).unwrap();
-        set_settings_value("manifest.auto_thumbnail", false).unwrap();
+        set_settings_value("builder.auto_thumbnail", false).unwrap();
         set_settings_value(
             "trust.private_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
@@ -503,7 +503,7 @@ pub mod tests {
             "sha512"
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("manifest.auto_thumbnail").unwrap());
+        assert!(!get_settings_value::<bool>("builder.auto_thumbnail").unwrap());
         assert_eq!(
             get_settings_value::<Option<String>>("trust.private_anchors").unwrap(),
             Some(String::from_utf8(ts.to_vec()).unwrap())
@@ -516,8 +516,8 @@ pub mod tests {
             Verify::default()
         );
         assert_ne!(
-            get_settings_value::<Manifest>("manifest").unwrap(),
-            Manifest::default()
+            get_settings_value::<Builder>("builder").unwrap(),
+            Builder::default()
         );
         assert_ne!(
             get_settings_value::<Trust>("trust").unwrap(),
@@ -596,8 +596,8 @@ pub mod tests {
 
         // check a few defaults to make sure they are still there
         assert_eq!(
-            get_settings_value::<bool>("manifest.auto_thumbnail").unwrap(),
-            Manifest::default().auto_thumbnail
+            get_settings_value::<bool>("builder.auto_thumbnail").unwrap(),
+            Builder::default().auto_thumbnail
         );
 
         assert_eq!(

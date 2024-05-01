@@ -1741,7 +1741,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_embed_user_label() {
         let temp_dir = tempdir().expect("temp dir");
@@ -1762,7 +1762,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_embed_sidecar_user_label() {
         let temp_dir = tempdir().expect("temp dir");
@@ -2010,7 +2010,7 @@ pub(crate) mod tests {
         assert!(manifest_store.validation_status().is_none())
     }
 
-    #[cfg(all(feature = "file_io", feature = "xmp_write"))]
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_embed_sidecar_with_parent_manifest() {
         let temp_dir = tempdir().expect("temp dir");
