@@ -120,6 +120,10 @@ impl AssetIO for C2paIO {
         self
     }
 
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(C2paIO::new(asset_type)))
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
