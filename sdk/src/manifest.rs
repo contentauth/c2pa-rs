@@ -15,6 +15,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
+use async_generic::async_generic;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -22,8 +23,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-#[cfg(feature = "file_io")]
-use crate::AsyncSigner;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{
@@ -38,7 +37,8 @@ use crate::{
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer, SigningAlg,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer,
+    SigningAlg,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -1000,6 +1000,12 @@ impl Manifest {
 
     /// Embed a signed manifest into a stream using a supplied signer.
     /// returns the bytes of the  manifest that was embedded
+    #[async_generic(async_signature(
+        &mut self,
+        format: &str,
+        asset: &[u8],
+        signer: &dyn AsyncSigner,
+    ))]
     pub fn embed_from_memory(
         &mut self,
         format: &str,
@@ -1011,7 +1017,12 @@ impl Manifest {
         let asset = asset.to_vec();
         let mut stream = std::io::Cursor::new(asset);
         let mut output_stream = Cursor::new(Vec::new());
-        self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        if _sync {
+            self.embed_to_stream(format, &mut stream, &mut output_stream, signer)?;
+        } else {
+            self.embed_to_stream_async(format, &mut stream, &mut output_stream, signer)
+                .await?;
+        }
         Ok(output_stream.into_inner())
     }
 
@@ -1037,6 +1048,13 @@ impl Manifest {
     /// Embed a signed manifest into a stream using a supplied signer.
     ///
     /// Returns the bytes of c2pa_manifest that was embedded.
+    #[async_generic(async_signature(
+        &mut self,
+        format: &str,
+        source: &mut dyn CAIRead,
+        dest: &mut dyn CAIReadWrite,
+        signer: &dyn AsyncSigner,
+    ))]
     pub fn embed_to_stream(
         &mut self,
         format: &str,
@@ -1064,7 +1082,13 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
-        store.save_to_stream(format, source, dest, signer)
+        if _sync {
+            store.save_to_stream(format, source, dest, signer)
+        } else {
+            store
+                .save_to_stream_async(format, source, dest, signer)
+                .await
+        }
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -1911,6 +1935,45 @@ pub(crate) mod tests {
         );
         #[cfg(feature = "add_thumbnails")]
         assert!(reader.active_manifest().unwrap().thumbnail().is_some());
+        //println!("{manifest_store}");main
+    }
+
+    #[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
+    #[cfg_attr(feature = "openssl_sign", actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_embed_from_memory_async() {
+        use crate::{assertions::User, utils::test::temp_async_signer};
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut stream = std::io::Cursor::new(image.to_vec());
+        // let mut image = image.to_vec();
+        // let mut stream = std::io::Cursor::new(image.as_mut_slice());
+
+        let mut manifest = Manifest::new("my_app".to_owned());
+        manifest.set_title("EmbedStream");
+        manifest
+            .add_assertion(&User::new(
+                "org.contentauth.mylabel",
+                r#"{"my_tag":"Anything I want"}"#,
+            ))
+            .unwrap();
+
+        let signer = temp_async_signer();
+        let mut output = Cursor::new(Vec::new());
+        // Embed a manifest using the signer.
+        manifest
+            .embed_to_stream_async("jpeg", &mut stream, &mut output, signer.as_ref())
+            .await
+            .expect("embed_stream");
+
+        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
+            .expect("from_bytes");
+        assert_eq!(
+            manifest_store.get_active().unwrap().title().unwrap(),
+            "EmbedStream"
+        );
+        #[cfg(feature = "add_thumbnails")]
+        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 

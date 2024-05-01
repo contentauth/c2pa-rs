@@ -42,6 +42,10 @@ pub trait Signer {
         None
     }
 
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -51,10 +55,15 @@ pub trait Signer {
     /// provided by [`Self::time_authority_url()`], if any.
     #[cfg(not(target_arch = "wasm32"))]
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-
-        self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
     }
     #[cfg(target_arch = "wasm32")]
     fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
@@ -134,6 +143,10 @@ pub trait AsyncSigner: Sync {
         None
     }
 
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -145,10 +158,15 @@ pub trait AsyncSigner: Sync {
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         // NOTE: This is currently synchronous, but may become
         // async in the future.
-        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-
-        self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
     }
     #[cfg(target_arch = "wasm32")]
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
