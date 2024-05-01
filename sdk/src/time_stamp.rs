@@ -173,13 +173,10 @@ fn time_stamp_request_http(
 /// This is a wrapper around [time_stamp_request_http] that constructs the low-level
 /// ASN.1 request object with reasonable defaults.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn time_stamp_message_http(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
-) -> Result<Vec<u8>> {
+) -> Result<crate::asn1::rfc3161::TimeStampReq> {
     use rand::{thread_rng, Rng};
 
     let mut h = digest_algorithm.digester();
@@ -203,7 +200,7 @@ pub(crate) fn time_stamp_message_http(
         extensions: None,
     };
 
-    time_stamp_request_http(url, headers, &request)
+    Ok(request)
 }
 
 pub struct TimeStampResponse(TimeStampResp);
@@ -284,20 +281,34 @@ pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
+    message: &[u8],
 ) -> Result<Vec<u8>> {
-    {
-        let ts = time_stamp_message_http(
-            url,
-            headers,
-            data,
-            x509_certificate::DigestAlgorithm::Sha256,
-        )?;
+    use crate::asn1::rfc3161::TimeStampReq;
+    let request = Constructed::decode(
+        bcder::decode::SliceSource::new(data),
+        bcder::Mode::Der,
+        TimeStampReq::take_from,
+    )
+    .map_err(|_err| Error::CoseTimeStampGeneration)?;
 
-        // sanity check
-        verify_timestamp(&ts, data)?;
+    let ts = time_stamp_request_http(url, headers, &request)?;
 
-        Ok(ts)
-    }
+    // sanity check
+    verify_timestamp(&ts, message)?;
+
+    Ok(ts)
+}
+
+#[allow(unused_variables)]
+pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>> {
+    use bcder::encode::Values;
+    let request = time_stamp_message_http(data, x509_certificate::DigestAlgorithm::Sha256)?;
+
+    let mut body = Vec::<u8>::new();
+    request
+        .encode_ref()
+        .write_encoded(bcder::Mode::Der, &mut body)?;
+    Ok(body)
 }
 
 pub fn gt_to_datetime(
@@ -401,16 +412,12 @@ impl Default for TstContainer {
 
 /// Wrap rfc3161 TimeStampRsp in COSE sigTst object
 pub fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
-    if cfg!(feature = "openssl_sign") {
-        let token = TstToken {
-            val: ts_data.to_vec(),
-        };
+    let token = TstToken {
+        val: ts_data.to_vec(),
+    };
 
-        let mut container = TstContainer::new();
-        container.add_token(token);
+    let mut container = TstContainer::new();
+    container.add_token(token);
 
-        container
-    } else {
-        TstContainer::new()
-    }
+    container
 }
