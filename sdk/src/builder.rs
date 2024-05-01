@@ -193,6 +193,12 @@ pub struct Builder {
     #[serde(flatten)]
     pub definition: ManifestDefinition,
 
+    /// Optional remote URL for the manifest
+    pub remote_url: Option<String>,
+
+    // If true, the manifest store will not be embedded in the asset on sign
+    pub no_embed: bool,
+
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
     resources: ResourceStore,
@@ -481,14 +487,15 @@ impl Builder {
             claim.add_claim_generator_info(claim_info);
         }
 
-        // if let Some(remote_op) = &self.remote_manifest {
-        //     match remote_op {
-        //         RemoteManifest::NoRemote => (),
-        //         RemoteManifest::SideCar => claim.set_external_manifest(),
-        //         RemoteManifest::Remote(r) => claim.set_remote_manifest(r)?,
-        //         RemoteManifest::EmbedWithRemote(r) => claim.set_embed_remote_manifest(r)?,
-        //     };
-        // }
+        if let Some(remote_url) = &self.remote_url {
+            if self.no_embed {
+                claim.set_remote_manifest(remote_url)?;
+            } else {
+                claim.set_embed_remote_manifest(remote_url)?;
+            }
+        } else if self.no_embed {
+            claim.set_external_manifest()
+        }
 
         if let Some(title) = definition.title.as_ref() {
             claim.set_title(Some(title.to_owned()));
@@ -657,7 +664,9 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
-        if self.definition.thumbnail.is_none() {
+        // check settings to see if we should auto generate a thumbnail
+        let auto_thumbnail = crate::settings::get_settings_value::<bool>("builder.auto_thumbnail")?;
+        if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
             if let Ok((format, image)) =
                 crate::utils::thumbnail::make_thumbnail_from_stream(format, stream)
@@ -778,7 +787,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{manifest_store::ManifestStore, utils::test::temp_signer};
+    use crate::{utils::test::temp_signer, Reader};
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -826,6 +835,8 @@ mod tests {
         .to_string()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
 
     #[test]
@@ -951,7 +962,7 @@ mod tests {
         zipped.rewind().unwrap();
         let mut _builder = Builder::from_archive(&mut zipped).unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign and write to the output stream
         let signer = temp_signer();
         builder
             .sign(signer.as_ref(), format, &mut source, &mut dest)
@@ -959,13 +970,12 @@ mod tests {
 
         // read and validate the signed manifest store
         dest.rewind().unwrap();
-        let manifest_store =
-            ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{}", manifest_store);
         assert!(manifest_store.validation_status().is_none());
-        assert!(manifest_store.get_active().is_some());
-        let manifest = manifest_store.get_active().unwrap();
+        assert!(manifest_store.active_manifest().is_some());
+        let manifest = manifest_store.active_manifest().unwrap();
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
@@ -984,17 +994,17 @@ mod tests {
             .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
             .unwrap();
 
-        // sign the ManifestStoreBuilder and write it to the output stream
+        // sign and write to the output stream
         let signer = temp_signer();
         builder.sign_file(signer.as_ref(), source, &dest).unwrap();
 
         // read and validate the signed manifest store
-        let manifest_store = ManifestStore::from_file(&dest).expect("from_bytes");
+        let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
         println!("{}", manifest_store);
         assert!(manifest_store.validation_status().is_none());
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
         );
     }
@@ -1008,15 +1018,14 @@ mod tests {
             "sample1.webp",
             "TUSCANY.TIF",
             "sample1.svg",
-            //"APC_0808.dng",
             "sample1.wav",
             "test.avi",
-            //"sample1.mp3",
-            //"sample1.avif",
-            //"sample1.heic",
-            //"sample1.heif",
-            //"video1.mp4",
-            //"cloud_manifest.c2pa",
+            "sample1.mp3",
+            "sample1.avif",
+            "sample1.heic",
+            "sample1.heif",
+            "video1.mp4",
+            "cloud_manifest.c2pa",
         ];
         for file_name in TESTFILES {
             let extension = file_name.split('.').last().unwrap();
@@ -1036,7 +1045,7 @@ mod tests {
                 .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
                 .unwrap();
 
-            // sign the ManifestStoreBuilder and write it to the output stream
+            // sign and write to the output stream
             let signer = temp_signer();
             builder
                 .sign(signer.as_ref(), format, &mut source, &mut dest)
@@ -1044,13 +1053,15 @@ mod tests {
 
             // read and validate the signed manifest store
             dest.rewind().unwrap();
-            let manifest_store =
-                ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+            let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
             println!("{}", manifest_store);
-            assert!(manifest_store.validation_status().is_none());
+            if format != "c2pa" {
+                // c2pa files will not validate since they have no associated asset
+                assert!(manifest_store.validation_status().is_none());
+            }
             assert_eq!(
-                manifest_store.get_active().unwrap().title().unwrap(),
+                manifest_store.active_manifest().unwrap().title().unwrap(),
                 "Test_Manifest"
             );
 
@@ -1091,15 +1102,48 @@ mod tests {
 
         // read and validate the signed manifest store
         dest.rewind().unwrap();
-        let manifest_store =
-            ManifestStore::from_stream(format, &mut dest, true).expect("from_bytes");
+        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{}", manifest_store);
         #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert!(manifest_store.validation_status().is_none());
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
         );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_builder_remote_url() {
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder.remote_url = Some("http://my_remote_url".to_string());
+        builder.no_embed = true;
+
+        builder
+            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
+        let signer = temp_signer();
+        let manifest_data = builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // check to make sure we have a remote url and no manifest data
+        dest.set_position(0);
+        let _err = c2pa::Reader::from_stream("image/jpeg", &mut dest).expect_err("from_bytes");
+
+        // now validate the manifest against the written asset
+        dest.set_position(0);
+        let reader =
+            c2pa::Reader::from_manifest_data_and_stream(&manifest_data, "image/jpeg", &mut dest)
+                .expect("from_bytes");
+
+        println!("{}", reader.json());
+        assert!(reader.validation_status().is_none());
     }
 }

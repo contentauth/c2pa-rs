@@ -146,8 +146,6 @@ pub(crate) mod callback_signer;
 pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod cose_validator;
-#[cfg(all(feature = "xmp_write", feature = "file_io"))]
-pub(crate) mod embedded_xmp;
 pub(crate) mod error;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
