@@ -430,7 +430,7 @@ impl MakeTestImages {
 
         let mut dest = fs::File::create(&dst_path)?;
         builder
-            .sign(format, &mut temp, &mut dest, signer.as_ref())
+            .sign(signer.as_ref(), format, &mut temp, &mut dest)
             .context("signing")?;
 
         Ok(dst_path)
@@ -503,7 +503,7 @@ impl MakeTestImages {
         let mut dest = fs::File::create(&dst_path)?;
         let signer = self.config.get_signer()?;
         builder
-            .sign(format, &mut source, &mut dest, signer.as_ref())
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
             .context("signing")?;
 
         Ok(dst_path)
