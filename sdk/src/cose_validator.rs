@@ -998,18 +998,18 @@ pub(crate) async fn verify_cose_async(
             }
         }
 
-        // is the certificate trusted
-        #[cfg(target_arch = "wasm32")]
-        check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
-
         // check certificate revocation
         check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
 
         // todo: check TSA certs against trust list
     }
+
+    // Is the certificate trusted?
+    #[cfg(target_arch = "wasm32")]
+    check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    check_trust(th, &certs[1..], der_bytes, validation_log)?;
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
@@ -1174,14 +1174,14 @@ pub(crate) fn verify_cose(
             }
         }
 
-        // is the certificate trusted
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
-
         // check certificate revocation
         check_ocsp_status(cose_bytes, data, th, validation_log)?;
 
         // todo: check TSA certs against trust list
     }
+
+    // Is the certificate trusted?
+    check_trust(th, &certs[1..], der_bytes, validation_log)?;
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
