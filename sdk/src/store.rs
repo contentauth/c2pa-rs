@@ -4637,12 +4637,14 @@ pub mod tests {
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
-    #[test]
-    fn test_external_manifest_embedded() {
+    // generalize test for multipe file types
+    fn external_manifest_test(file_name: &str) {
         // test adding to actual image
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path(file_name);
+        let extension = ap.extension().unwrap().to_str().unwrap();
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+        let mut op = temp_dir_path(&temp_dir, file_name);
+        op.set_extension(extension);
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
@@ -4679,7 +4681,7 @@ pub mod tests {
         // load the jumbf back into a store
         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
         let ext_ref =
-            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, extension)
                 .provenance
                 .unwrap();
 
@@ -4688,6 +4690,21 @@ pub mod tests {
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_png() {
+        external_manifest_test("libpng-test.png");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_tiff() {
+        external_manifest_test("TUSCANY.TIF");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_webp() {
+        external_manifest_test("sample1.webp");
     }
 
     #[test]
