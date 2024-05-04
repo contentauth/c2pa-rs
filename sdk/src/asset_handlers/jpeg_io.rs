@@ -56,7 +56,7 @@ fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-// todo decide if want to keep this just for in-memory use cases
+// Return contents of APP1 segment if it is an XMP segment.
 fn extract_xmp(seg: &JpegSegment) -> Option<String> {
     let contents = seg.contents();
     if contents.starts_with(XMP_SIGNATURE) {
@@ -67,6 +67,7 @@ fn extract_xmp(seg: &JpegSegment) -> Option<String> {
     }
 }
 
+// Extract XMP from bytes.
 fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     if let Ok(jpeg) = Jpeg::from_bytes(Bytes::copy_from_slice(asset_bytes)) {
         let segs = jpeg.segments_by_marker(markers::APP1);
@@ -593,28 +594,29 @@ impl RemoteRefEmbed for JpegIO {
                 let mut jpeg =
                     Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
-                // first extract the xmp from APP1 markers
-                let app1_segs = jpeg.segments_by_marker(markers::APP1);
-                let mut xmp: String = app1_segs.filter_map(extract_xmp).collect();
-
-                // remove existing XMP segments
+                // find any existing XMP segment and remember where it was
+                let mut xmp = MIN_XMP.to_string(); // default minimal XMP
+                let mut xmp_index = None;
                 let segments = jpeg.segments_mut();
-                segments.retain(|seg| {
-                    !(seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE))
-                });
+                for (i, seg) in segments.iter().enumerate() {
+                    if seg.marker() == markers::APP1 && seg.contents().starts_with(XMP_SIGNATURE) {
+                        xmp = extract_xmp(seg).unwrap_or_else(|| xmp.clone());
+                        xmp_index = Some(i);
+                        break;
+                    }
+                }
+                // add provenance and JPEG XMP prefix
+                let xmp = format!(
+                    "http://ns.adobe.com/xap/1.0/\0 {}",
+                    add_provenance(&xmp, &manifest_uri)?
+                );
+                let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
+                // insert or add the segment
+                match xmp_index {
+                    Some(i) => segments[i] = segment,
+                    None => segments.insert(1, segment),
+                }
 
-                if xmp.is_empty() {
-                    // Init with minimal xmp segment
-                    // JPEG APP1 segment with XMP are defined with this null terminated string
-                    // todo: add format and other minimal metadata to xmp ?
-                    xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
-                };
-                let xmp = add_provenance(&xmp, &manifest_uri)?;
-                let xmp_bytes = Bytes::from(xmp);
-                let segment = JpegSegment::new_with_contents(markers::APP1, xmp_bytes);
-                segments.insert(1, segment);
-
-                output_stream.rewind()?;
                 jpeg.encoder()
                     .write_to(output_stream)
                     .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
