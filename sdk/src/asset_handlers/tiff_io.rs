@@ -1560,13 +1560,9 @@ impl CAIWriter for TiffIO {
         let mut bo = ByteOrdered::new(output_stream, e);
         let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
 
-        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
-            Some(_ifd) => {
-                tc.clone_tiff(&mut idfs, page_0, input_stream)?;
-                Ok(())
-            }
-            None => Ok(()),
-        }
+        idfs[page_0].data.entries.remove(&C2PA_TAG);
+        tc.clone_tiff(&mut idfs, page_0, input_stream)?;
+        Ok(())
     }
 }
 
@@ -1632,6 +1628,7 @@ impl RemoteRefEmbed for TiffIO {
                 }
 
                 // write will replace exisiting contents
+                output_stream.rewind()?;
                 std::fs::write(asset_path, output_stream.into_inner())?;
                 Ok(())
             }
@@ -1754,6 +1751,9 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
+
+        // first make sure that calling this without a manifest does not error
+        tiff_io.remove_cai_store(&output).unwrap();
 
         // save data to tiff
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
