@@ -236,7 +236,7 @@ impl Assertion {
     }
 
     pub(crate) fn set_content_type(mut self, content_type: &str) -> Self {
-        self.content_type = content_type.to_owned();
+        content_type.clone_into(&mut self.content_type);
         self
     }
 

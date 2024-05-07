@@ -55,7 +55,7 @@ pub struct Manifest {
     #[serde(default = "default_claim_generator")]
     pub claim_generator: String,
 
-    ///
+    /// A list of claim generator info data identifying the software/hardware/system produced this claim
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
 
@@ -733,8 +733,8 @@ impl Manifest {
         if let Some(title) = self.title() {
             claim.set_title(Some(title.to_owned()));
         }
-        claim.format = self.format().to_owned();
-        claim.instance_id = self.instance_id().to_owned();
+        self.format().clone_into(&mut claim.format);
+        self.instance_id().clone_into(&mut claim.instance_id);
 
         if let Some(thumb_ref) = self.thumbnail_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
@@ -1347,6 +1347,7 @@ pub(crate) mod tests {
 
     // example of random data structure as an assertion
     #[derive(serde::Serialize)]
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     struct MyStruct {
         l1: String,
         l2: u32,
