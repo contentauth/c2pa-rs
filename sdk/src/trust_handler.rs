@@ -51,9 +51,11 @@ pub(crate) trait TrustHandlerConfig: Sync + Send {
     fn get_auxillary_ekus(&self) -> Vec<Oid>;
 
     // list of all anchors
+    #[allow(dead_code)] // Only used in calls with allow dead_code
     fn get_anchors(&self) -> Vec<Vec<u8>>;
 
     // set of allowed cert hashes
+    #[allow(dead_code)] // Only used in calls with allow dead_code
     fn get_allowed_list(&self) -> &HashSet<String>;
 }
 

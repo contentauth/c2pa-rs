@@ -1298,7 +1298,6 @@ async fn validate_with_cert_async(
 #[cfg(test)]
 pub mod tests {
 
-
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
