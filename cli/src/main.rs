@@ -419,9 +419,9 @@ fn main() -> Result<()> {
 
         if let Some(remote) = args.remote {
             if args.sidecar {
-                manifest.set_embedded_manifest_with_remote_ref(remote);
-            } else {
                 manifest.set_remote_manifest(remote);
+            } else {
+                manifest.set_embedded_manifest_with_remote_ref(remote);
             }
         } else if args.sidecar {
             manifest.set_sidecar_manifest();
@@ -472,9 +472,11 @@ fn main() -> Result<()> {
                     ManifestStore::from_file(&output).map_err(special_errs)?
                 )
             }
+        } else {
+            bail!("Output path required with manifest definition")
         }
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
-        bail!("manifest definition required with these options or flags")
+        bail!("Manifest definition required with these options or flags")
     } else if let Some(output) = args.output {
         if output.is_file() || output.extension().is_some() {
             bail!("Output must be a folder for this option.")
