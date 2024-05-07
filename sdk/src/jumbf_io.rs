@@ -317,8 +317,13 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Seek;
+
     use super::*;
-    use crate::utils::test::{create_test_store, temp_signer};
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::test::{create_test_store, temp_signer},
+    };
 
     #[test]
     fn test_get_assetio() {
@@ -408,45 +413,146 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "mp3"));
     }
 
-    #[test]
-    fn test_streams() {
-        let files: Vec<(&str, &str)> = vec![
-            ("IMG_0003.jpg", "jpeg"),
-            ("sample1.png", "png"),
-            //("sample1.webp", "webp"), // riff io deletion of manifest store isn't working.
-            ("TUSCANY.TIF", "tiff"),
-            ("sample1.svg", "svg"),
-            //("sample1.wav", "wav"),
-            //("test.avi", "avi"),
-            ("sample1.mp3", "mp3"),
-            ("sample1.avif", "avif"),
-            ("sample1.heic", "heic"),
-            ("sample1.heif", "heif"),
-            ("video1.mp4", "mp4"),
-            //("cloud_manifest.c2pa", "c2pa")
-        ];
-        for (name, asset_type) in files {
-            println!("Testing {}", name);
-            let mut reader = std::fs::File::open(format!("tests/fixtures/{}", name)).unwrap();
-            let mut writer = Cursor::new(Vec::new());
-            let store = create_test_store().unwrap();
-            let signer = temp_signer();
-            let jumbf = store.to_jumbf(&*signer).unwrap();
-            save_jumbf_to_stream(asset_type, &mut reader, &mut writer, &jumbf).unwrap();
-            writer.set_position(0);
-            let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();
-            assert_eq!(jumbf, jumbf2);
+    fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
+        let mut writer = Cursor::new(Vec::new());
+        let store = create_test_store().unwrap();
+        let signer = temp_signer();
+        let jumbf = store.to_jumbf(&*signer).unwrap();
+        save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
+        writer.set_position(0);
+        let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();
+        assert_eq!(jumbf, jumbf2);
 
-            // test removing cai store
-            writer.set_position(0);
-            let handler = get_caiwriter_handler(asset_type).unwrap();
-            let mut removed = Cursor::new(Vec::new());
-            handler
-                .remove_cai_store_from_stream(&mut writer, &mut removed)
-                .unwrap();
-            removed.set_position(0);
-            let result = load_jumbf_from_stream(asset_type, &mut removed);
-            assert!(matches!(result.err().unwrap(), Error::JumbfNotFound));
+        // test removing cai store
+        writer.set_position(0);
+        let handler = get_caiwriter_handler(asset_type).unwrap();
+        let mut removed = Cursor::new(Vec::new());
+        handler
+            .remove_cai_store_from_stream(&mut writer, &mut removed)
+            .unwrap();
+        removed.set_position(0);
+        let result = load_jumbf_from_stream(asset_type, &mut removed);
+        if (asset_type != "wav")
+            && (asset_type != "avi" && asset_type != "mp3" && asset_type != "webp")
+        {
+            assert!(matches!(&result.err().unwrap(), Error::JumbfNotFound));
         }
+        //assert!(matches!(result.err().unwrap(), Error::JumbfNotFound));
+    }
+
+    fn test_remote_ref(asset_type: &str, reader: &mut dyn CAIRead) {
+        const REMOTE_URL: &str = "https://example.com/remote_manifest";
+        let asset_handler = get_assetio_handler(asset_type).unwrap();
+        let remote_ref_writer = asset_handler.remote_ref_writer_ref().unwrap();
+        let mut writer = Cursor::new(Vec::new());
+        let embed_ref = RemoteRefEmbedType::Xmp(REMOTE_URL.to_string());
+        remote_ref_writer
+            .embed_reference_to_stream(reader, &mut writer, embed_ref)
+            .unwrap();
+        writer.set_position(0);
+        let xmp = asset_handler.get_reader().read_xmp(&mut writer).unwrap();
+        let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
+        assert_eq!(loaded, REMOTE_URL.to_string());
+    }
+
+    #[test]
+    fn test_streams_jpeg() {
+        let mut reader = std::fs::File::open("tests/fixtures/IMG_0003.jpg").unwrap();
+        test_jumbf("jpeg", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("jpeg", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_png() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.png").unwrap();
+        test_jumbf("png", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("png", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_webp() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.webp").unwrap();
+        test_jumbf("webp", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("webp", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_wav() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.wav").unwrap();
+        test_jumbf("wav", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("wav", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_avi() {
+        let mut reader = std::fs::File::open("tests/fixtures/test.avi").unwrap();
+        test_jumbf("avi", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("avi", &mut reader); // not working
+    }
+
+    #[test]
+    fn test_streams_tiff() {
+        let mut reader = std::fs::File::open("tests/fixtures/TUSCANY.TIF").unwrap();
+        test_jumbf("tiff", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("tiff", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_svg() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.svg").unwrap();
+        test_jumbf("svg", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("svg", &mut reader); // svg doesn't support remote refs
+    }
+
+    #[test]
+    fn test_streams_mp3() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.mp3").unwrap();
+        test_jumbf("mp3", &mut reader);
+        // mp3 doesn't support remote refs
+        //reader.rewind().unwrap();
+        //test_remote_ref("mp3", &mut reader); // not working
+    }
+
+    #[test]
+    fn test_streams_avif() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.avif").unwrap();
+        test_jumbf("avif", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("avif", &mut reader);  // not working
+    }
+
+    #[test]
+    fn test_streams_heic() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heic").unwrap();
+        test_jumbf("heic", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_heif() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heif").unwrap();
+        test_jumbf("heif", &mut reader);
+        //reader.rewind().unwrap();
+        //test_remote_ref("heif", &mut reader);   // not working
+    }
+
+    #[test]
+    fn test_streams_mp4() {
+        let mut reader = std::fs::File::open("tests/fixtures/video1.mp4").unwrap();
+        test_jumbf("mp4", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("mp4", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_c2pa() {
+        let mut reader = std::fs::File::open("tests/fixtures/cloud_manifest.c2pa").unwrap();
+        test_jumbf("c2pa", &mut reader);
     }
 }

@@ -230,9 +230,9 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 }
 
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use super::*;
     use crate::{

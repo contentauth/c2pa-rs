@@ -32,6 +32,7 @@ pub struct ValidationInfo {
 /// Trait to support validating a signature against the provided data
 pub(crate) trait CoseValidator {
     /// validate signature "sig" for given "data using provided public key"
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool>;
 }
 

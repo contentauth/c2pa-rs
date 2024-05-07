@@ -169,9 +169,11 @@ pub trait AssetIO: Sync + Send {
     /// If the offsets exist return the start of those locations other it should
     /// return the calculated location of when it should start.  There may still be a
     /// length if the format contains extra header information for example.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
     // Remove entire C2PA manifest store from asset
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 
     // List of supported extensions and mime types
@@ -180,6 +182,7 @@ pub trait AssetIO: Sync + Send {
     /// OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
@@ -208,6 +211,7 @@ pub trait AssetPatch {
     // Patches an existing manifest store with new manifest store.
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
 }
 
@@ -236,6 +240,7 @@ pub enum RemoteRefEmbedType {
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
     // Embed RemoteRefEmbedType into the asset
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
     // Embed RemoteRefEmbedType into the asset stream
     fn embed_reference_to_stream(

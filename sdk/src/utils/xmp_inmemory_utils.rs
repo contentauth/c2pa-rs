@@ -14,7 +14,7 @@
 use std::io::Cursor;
 
 use fast_xml::{
-    events::{BytesEnd, BytesStart, Event},
+    events::{BytesStart, Event},
     Reader, Writer,
 };
 use log::error;
@@ -94,31 +94,40 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
     None
 }
 
+// writes the event to the writer)
 /// Add a value to XMP using a key, replaces the value if the key exists
 fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let mut reader = Reader::from_str(xmp);
     reader.trim_text(true);
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
     let mut buf = Vec::new();
     let mut added = false;
     loop {
-        match reader.read_event(&mut buf) {
-            Ok(Event::Start(ref e)) if e.name() == RDF_DESCRIPTION => {
+        let event = reader
+            .read_event(&mut buf)
+            .map_err(|e| Error::XmpReadError(e.to_string()))?;
+        // println!("{:?}", event);
+        match event {
+            Event::Start(ref e) if e.name() == RDF_DESCRIPTION => {
                 // creates a new element
                 let mut elem = BytesStart::owned(RDF_DESCRIPTION.to_vec(), RDF_DESCRIPTION.len());
+
                 for attr in e.attributes() {
-                    if let Ok(attr) = attr {
-                        if attr.key == key.as_bytes() {
-                            // replace the key/value if it exists
-                            elem.push_attribute((key, value));
-                            added = true;
-                        } else {
-                            // add all other existing elements
-                            elem.extend_attributes([attr]);
+                    match attr {
+                        Ok(attr) => {
+                            if attr.key == key.as_bytes() {
+                                // replace the key/value if it exists
+                                elem.push_attribute((key, value));
+                                added = true;
+                            } else {
+                                // add all other existing elements
+                                elem.extend_attributes([attr]);
+                            }
                         }
-                    } else {
-                        error!("Error at position {}", reader.buffer_position());
-                        return Err(Error::XmpReadError);
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
                     }
                 }
                 if !added {
@@ -126,24 +135,51 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
                     elem.push_attribute((key, value));
                 }
                 // writes the event to the writer
-                assert!(writer.write_event(Event::Start(elem)).is_ok());
+                writer
+                    .write_event(Event::Start(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
             }
-            Ok(Event::End(ref e)) if e.name() == b"this_tag" => {
-                assert!(writer
-                    .write_event(Event::End(BytesEnd::borrowed(b"my_elem")))
-                    .is_ok());
+            Event::Empty(ref e) if e.name() == RDF_DESCRIPTION => {
+                // creates a new element
+                let mut elem = BytesStart::owned(RDF_DESCRIPTION.to_vec(), RDF_DESCRIPTION.len());
+                for attr in e.attributes() {
+                    match attr {
+                        Ok(attr) => {
+                            if attr.key == key.as_bytes() {
+                                // replace the key/value if it exists
+                                elem.push_attribute((key, value));
+                                added = true;
+                            } else {
+                                // add all other existing elements
+                                elem.extend_attributes([attr]);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
+                    }
+                }
+                if !added {
+                    // didn't exist, so add it
+                    elem.push_attribute((key, value));
+                }
+                // writes the event to the writer
+                writer
+                    .write_event(Event::Empty(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
             }
-            Ok(Event::Eof) => break,
-            Ok(e) => assert!(writer.write_event(e).is_ok()),
-            Err(e) => {
-                error!("Error at position {}: {:?}", reader.buffer_position(), e);
-                return Err(Error::XmpWriteError);
+            Event::Eof => break,
+            e => {
+                writer
+                    .write_event(e)
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
             }
         }
     }
     buf.clear();
     let result = writer.into_inner().into_inner();
-    String::from_utf8(result).map_err(|_e| Error::XmpWriteError)
+    String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
 }
 
 /// extract the dc:provenance value from xmp

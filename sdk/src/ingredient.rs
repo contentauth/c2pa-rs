@@ -1049,7 +1049,7 @@ impl Ingredient {
                 &data_box.format,
                 data_box.data.clone(),
             )?;
-            data_ref.data_types = data_box.data_types.clone();
+            data_ref.data_types.clone_from(&data_box.data_types);
             ingredient.set_data_ref(data_ref)?;
         }
 
@@ -1228,15 +1228,22 @@ impl Ingredient {
 
         let mut ingredient_assertion = assertions::Ingredient::new_v2(&self.title, &self.format);
         ingredient_assertion.instance_id = instance_id;
-        ingredient_assertion.document_id = self.document_id.to_owned();
+        self.document_id
+            .clone_into(&mut ingredient_assertion.document_id);
         ingredient_assertion.c2pa_manifest = c2pa_manifest;
         ingredient_assertion.relationship = self.relationship.clone();
         ingredient_assertion.thumbnail = thumbnail;
-        ingredient_assertion.metadata = self.metadata.clone();
-        ingredient_assertion.validation_status = self.validation_status.clone();
+        ingredient_assertion.metadata.clone_from(&self.metadata);
+        ingredient_assertion
+            .validation_status
+            .clone_from(&self.validation_status);
         ingredient_assertion.data = data;
-        ingredient_assertion.description = self.description.clone();
-        ingredient_assertion.informational_uri = self.informational_uri.clone();
+        ingredient_assertion
+            .description
+            .clone_from(&self.description);
+        ingredient_assertion
+            .informational_uri
+            .clone_from(&self.informational_uri);
         claim.add_assertion(&ingredient_assertion)
     }
 

@@ -500,8 +500,8 @@ impl Builder {
         if let Some(title) = definition.title.as_ref() {
             claim.set_title(Some(title.to_owned()));
         }
-        claim.format = definition.format.to_owned();
-        claim.instance_id = definition.instance_id.to_owned();
+        definition.format.clone_into(&mut claim.format);
+        definition.instance_id.clone_into(&mut claim.instance_id);
 
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
@@ -712,7 +712,7 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let format = format_to_mime(format);
-        self.definition.format = format.clone();
+        self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 

@@ -216,10 +216,10 @@ pub enum Error {
     ResourceNotFound(String),
 
     #[error("XMP read error")]
-    XmpReadError,
+    XmpReadError(String),
 
     #[error("XMP write error")]
-    XmpWriteError,
+    XmpWriteError(String),
 
     #[error("XMP is not supported")]
     XmpNotSupported,

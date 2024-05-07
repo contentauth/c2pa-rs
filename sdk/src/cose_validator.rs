@@ -1293,10 +1293,10 @@ async fn validate_with_cert_async(
     }
 }
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use sha2::digest::generic_array::sequence::Shorten;
 
