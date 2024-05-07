@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.0
+_07 May 2024_
+
+* (Minor) Additional unit tests and fixes for injection (or previously untested) issues. ([#464](https://github.com/contentauth/c2pa-rs/pull/464))
+* Expose authoring support in WASM ([#369](https://github.com/contentauth/c2pa-rs/pull/369))
+* Move signer to first parameter on Builder.sign ([#457](https://github.com/contentauth/c2pa-rs/pull/457))
+* Gpeacock/embed_remote_settings ([#460](https://github.com/contentauth/c2pa-rs/pull/460))
+* (MINOR) Removes xmp_write feature and xmp_toolkit ([#461](https://github.com/contentauth/c2pa-rs/pull/461))
+* Async Signer: add support for async OCSP call ([#458](https://github.com/contentauth/c2pa-rs/pull/458))
+* Use cargo test in CI ([#459](https://github.com/contentauth/c2pa-rs/pull/459))
+* (MINOR) Initial V2 API work ([#437](https://github.com/contentauth/c2pa-rs/pull/437))
+
 ## 0.31.3
 _05 April 2024_
 
