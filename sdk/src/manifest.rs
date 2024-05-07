@@ -1347,6 +1347,7 @@ pub(crate) mod tests {
 
     // example of random data structure as an assertion
     #[derive(serde::Serialize)]
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     struct MyStruct {
         l1: String,
         l2: u32,
