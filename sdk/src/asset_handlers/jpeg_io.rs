@@ -146,7 +146,7 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
                 if is_cai {
                     cai_segs.push(i);
                     cai_seg_cnt = 1;
-                    cai_en = en.clone(); // store the identifier
+                    cai_en.clone_from(&en); // store the identifier
                 }
             }
         }
@@ -227,7 +227,7 @@ impl CAIReader for JpegIO {
 
                                     buffer.append(&mut raw_vec.as_mut_slice()[8..].to_vec());
                                     cai_seg_cnt = 1;
-                                    cai_en = en.clone(); // store the identifier
+                                    cai_en.clone_from(&en); // store the identifier
 
                                     manifest_store_cnt += 1;
                                 }
@@ -381,7 +381,7 @@ impl CAIWriter for JpegIO {
                                     let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                                     if is_cai {
                                         cai_seg_cnt = 1;
-                                        cai_en = en.clone(); // store the identifier
+                                        cai_en.clone_from(&en); // store the identifier
 
                                         let v = HashObjectPositions {
                                             offset: curr_offset,
@@ -802,7 +802,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                         let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                         if is_cai {
                             cai_seg_cnt = 1;
-                            cai_en = en.clone(); // store the identifier
+                            cai_en.clone_from(&en); // store the identifier
 
                             let c2pa_bm = BoxMap {
                                 names: vec![C2PA_BOXHASH.to_string()],

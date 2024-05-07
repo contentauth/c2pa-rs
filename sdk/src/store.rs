@@ -1808,8 +1808,8 @@ impl Store {
         }
 
         let mut adjusted_dh = DataHash::new("jumbf manifest", pc.alg());
-        adjusted_dh.exclusions = dh.exclusions.clone();
-        adjusted_dh.hash = dh.hash.clone();
+        adjusted_dh.exclusions.clone_from(&dh.exclusions);
+        adjusted_dh.hash.clone_from(&dh.hash);
 
         if let Some(reader) = asset_reader {
             // calc hashes

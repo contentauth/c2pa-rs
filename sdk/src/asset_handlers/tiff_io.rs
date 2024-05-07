@@ -161,9 +161,9 @@ pub(crate) struct TiffStructure {
 
 impl TiffStructure {
     #[allow(dead_code)]
-    pub fn load<R: ?Sized>(reader: &mut R) -> Result<Self>
+    pub fn load<R>(reader: &mut R) -> Result<Self>
     where
-        R: Read + Seek,
+        R: Read + Seek + ?Sized,
     {
         let mut endianness = [0u8, 2];
         reader.read_exact(&mut endianness)?;
@@ -231,14 +231,14 @@ impl TiffStructure {
     }
 
     // read IFD entries, all value_offset are in source endianness
-    pub fn read_ifd_entries<R: ?Sized>(
+    pub fn read_ifd_entries<R>(
         byte_reader: &mut ByteOrdered<&mut R, Endianness>,
         big_tiff: bool,
         entry_cnt: u64,
         entries: &mut HashMap<u16, IfdEntry>,
     ) -> Result<()>
     where
-        R: Read + Seek,
+        R: Read + Seek + ?Sized,
     {
         for _ in 0..entry_cnt {
             let tag = byte_reader.read_u16()?;
@@ -290,14 +290,14 @@ impl TiffStructure {
     }
 
     // read IFD from reader
-    pub fn read_ifd<R: ?Sized>(
+    pub fn read_ifd<R>(
         reader: &mut R,
         byte_order: Endianness,
         big_tiff: bool,
         ifd_type: IfdType,
     ) -> Result<ImageFileDirectory>
     where
-        R: Read + Seek + ReadBytesExt,
+        R: Read + Seek + ReadBytesExt + ?Sized,
     {
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
@@ -365,11 +365,9 @@ fn stream_len(reader: &mut dyn CAIRead) -> crate::Result<u64> {
     Ok(len)
 }
 // create tree of TIFF structure IFDs and IFD entries.
-fn map_tiff<R: ?Sized>(
-    input: &mut R,
-) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
+fn map_tiff<R>(input: &mut R) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let _size = input.seek(SeekFrom::End(0))?;
     input.rewind()?;
@@ -1329,9 +1327,9 @@ fn add_required_tags_to_stream(
     }
 }
 
-fn get_cai_data<R: ?Sized>(asset_reader: &mut R) -> Result<Vec<u8>>
+fn get_cai_data<R>(asset_reader: &mut R) -> Result<Vec<u8>>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let (tiff_tree, page_0, e, big_tiff) = map_tiff(asset_reader)?;
 
@@ -1362,9 +1360,9 @@ where
     Ok(data)
 }
 
-fn get_xmp_data<R: ?Sized>(asset_reader: &mut R) -> Option<Vec<u8>>
+fn get_xmp_data<R>(asset_reader: &mut R) -> Option<Vec<u8>>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let (tiff_tree, page_0, e, big_tiff) = map_tiff(asset_reader).ok()?;
     let first_ifd = &tiff_tree[page_0].data;
