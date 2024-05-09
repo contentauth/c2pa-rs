@@ -77,6 +77,14 @@ pub trait Signer {
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
     }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
 }
 
 /// Trait to allow loading of signing credential from external sources

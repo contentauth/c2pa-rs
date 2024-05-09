@@ -1205,6 +1205,13 @@ impl Manifest {
     /// This can directly replace a placeholder manifest to create a properly signed asset
     /// The data hash must contain exclusions and may contain pre-calculated hashes
     /// if an asset reader is provided, it will be used to calculate the data hash
+    #[async_generic(async_signature(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn AsyncSigner,
+        format: &str,
+        mut asset_reader: Option<&mut dyn CAIRead>,
+    ))]
     pub fn data_hash_embeddable_manifest(
         &mut self,
         dh: &DataHash,
@@ -1216,8 +1223,13 @@ impl Manifest {
         if let Some(asset_reader) = asset_reader.as_deref_mut() {
             asset_reader.rewind()?;
         }
-        let cm = store.get_data_hashed_embeddable_manifest(dh, signer, format, asset_reader)?;
-        Ok(cm)
+        if _sync {
+            store.get_data_hashed_embeddable_manifest(dh, signer, format, asset_reader)
+        } else {
+            store
+                .get_data_hashed_embeddable_manifest_async(dh, signer, format, asset_reader)
+                .await
+        }
     }
 
     /// Generates an data hashed embeddable manifest for a file
@@ -1246,13 +1258,22 @@ impl Manifest {
     /// Generates a signed box hashed manifest, optionally preformatted for embedding
     ///
     /// The manifest must include a box hash assertion with correct hashes
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        format: Option<&str>,
+    ))]
     pub fn box_hash_embeddable_manifest(
         &mut self,
         signer: &dyn Signer,
         format: Option<&str>,
     ) -> Result<Vec<u8>> {
         let mut store = self.to_store()?;
-        let mut cm = store.get_box_hashed_embeddable_manifest(signer)?;
+        let mut cm = if _sync {
+            store.get_box_hashed_embeddable_manifest(signer)
+        } else {
+            store.get_box_hashed_embeddable_manifest_async(signer).await
+        }?;
         if let Some(format) = format {
             cm = Store::get_composed_manifest(&cm, format)?;
         }

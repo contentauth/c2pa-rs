@@ -505,9 +505,19 @@ impl Store {
         let claim_bytes = claim.data()?;
 
         let result = if _sync {
-            cose_sign(signer, &claim_bytes, box_size)
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
+            } else {
+                cose_sign(signer, &claim_bytes, box_size)
+            }
         } else {
-            cose_sign_async(signer, &claim_bytes, box_size).await
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+            } else {
+                cose_sign_async(signer, &claim_bytes, box_size).await
+            }
         };
         match result {
             Ok(sig) => {
@@ -2046,15 +2056,11 @@ impl Store {
         intermediate_stream.set_position(0);
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size())?
-        } else if signer.direct_cose_handling() {
-            // Let the signer do all the COSE processing and return the structured COSE data.
-            // This replaces the RemoteSigner interface.
-            signer.sign(pc.data()?).await?
+            self.sign_claim(pc, signer, signer.reserve_size())
         } else {
             self.sign_claim_async(pc, signer, signer.reserve_size())
-                .await?
-        };
+                .await
+        }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
