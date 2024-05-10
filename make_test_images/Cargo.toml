@@ -14,7 +14,7 @@ c2pa = { path = "../sdk", default-features = false, features = [
 ] }
 env_logger = "0.10"
 log = "0.4.8" 
-image = { version = "0.24.7", default-features = false, features = [
+image = { version = "0.25.1", default-features = false, features = [
 	"jpeg",
 	"png",
 ] }
