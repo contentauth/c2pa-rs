@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.1
+_10 May 2024_
+
+* Steps toward removing RemoteSigner APIs. ([#466](https://github.com/contentauth/c2pa-rs/pull/466))
+
 ## 0.32.0
 _07 May 2024_
 
