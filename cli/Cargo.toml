@@ -47,6 +47,9 @@ httpmock = "0.7.0"
 predicates = "2.1"
 mockall = "0.12.1"
 
+[package.metadata.binstall]
+bin = "c2patool"
+
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 
 opt-level = 3
