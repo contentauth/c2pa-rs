@@ -6,6 +6,10 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.1
+_22 May 2024_
+
+* Add better support for cargo-binstall ([contentauth/c2patool#177](https://github.com/contentauth/c2patool/pull/177))
 ## 0.9.0
 _07 May 2024_
 
