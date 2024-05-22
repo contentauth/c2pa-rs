@@ -164,12 +164,15 @@ impl MerkleMap {
         location: u32,
         proof: &Option<VecByteBuf>,
     ) -> bool {
+        if location >= self.count {
+            return false;
+        }
+
         let mut index = location;
         let mut hash = hash.to_vec();
+        let layers = C2PAMerkleTree::to_layout(self.count as usize);
 
         if let Some(hashes) = proof {
-            let layers = C2PAMerkleTree::to_layout(self.count as usize);
-
             // playback proof
             let mut proof_index = 0;
             for layer in layers {
@@ -199,6 +202,14 @@ impl MerkleMap {
                     }
                 }
 
+                index /= 2;
+            }
+        } else {
+            //empty proof playback
+            for layer in layers {
+                if layer == self.hashes.len() {
+                    break;
+                }
                 index /= 2;
             }
         }
@@ -407,6 +418,10 @@ impl BmffHash {
         // start from 1st moof
         if let Some(pos) = boxes.iter().position(|b| b.path == "moof") {
             let mut box_list = vec![boxes[pos].clone()];
+
+            if pos == 0 {
+                return moof_list; // this does not contain fragmented content
+            }
 
             for b in boxes[pos + 1..].iter() {
                 if b.path == "moof" {
