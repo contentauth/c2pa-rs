@@ -69,9 +69,9 @@ impl CoseValidator for RsaValidator {
 }
 
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use super::*;
     use crate::{signer::ConfigurableSigner, Signer, SigningAlg};

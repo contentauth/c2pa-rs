@@ -505,9 +505,19 @@ impl Store {
         let claim_bytes = claim.data()?;
 
         let result = if _sync {
-            cose_sign(signer, &claim_bytes, box_size)
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
+            } else {
+                cose_sign(signer, &claim_bytes, box_size)
+            }
         } else {
-            cose_sign_async(signer, &claim_bytes, box_size).await
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+            } else {
+                cose_sign_async(signer, &claim_bytes, box_size).await
+            }
         };
         match result {
             Ok(sig) => {
@@ -1808,8 +1818,8 @@ impl Store {
         }
 
         let mut adjusted_dh = DataHash::new("jumbf manifest", pc.alg());
-        adjusted_dh.exclusions = dh.exclusions.clone();
-        adjusted_dh.hash = dh.hash.clone();
+        adjusted_dh.exclusions.clone_from(&dh.exclusions);
+        adjusted_dh.hash.clone_from(&dh.hash);
 
         if let Some(reader) = asset_reader {
             // calc hashes
@@ -2046,15 +2056,11 @@ impl Store {
         intermediate_stream.set_position(0);
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size())?
-        } else if signer.direct_cose_handling() {
-            // Let the signer do all the COSE processing and return the structured COSE data.
-            // This replaces the RemoteSigner interface.
-            signer.sign(pc.data()?).await?
+            self.sign_claim(pc, signer, signer.reserve_size())
         } else {
             self.sign_claim_async(pc, signer, signer.reserve_size())
-                .await?
-        };
+                .await
+        }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
@@ -4637,12 +4643,14 @@ pub mod tests {
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
-    #[test]
-    fn test_external_manifest_embedded() {
+    // generalize test for multipe file types
+    fn external_manifest_test(file_name: &str) {
         // test adding to actual image
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path(file_name);
+        let extension = ap.extension().unwrap().to_str().unwrap();
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+        let mut op = temp_dir_path(&temp_dir, file_name);
+        op.set_extension(extension);
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
@@ -4679,7 +4687,7 @@ pub mod tests {
         // load the jumbf back into a store
         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
         let ext_ref =
-            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, extension)
                 .provenance
                 .unwrap();
 
@@ -4688,6 +4696,21 @@ pub mod tests {
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_png() {
+        external_manifest_test("libpng-test.png");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_tiff() {
+        external_manifest_test("TUSCANY.TIF");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_webp() {
+        external_manifest_test("sample1.webp");
     }
 
     #[test]

@@ -607,7 +607,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
 
     if let Some(xmp) = xmp_box {
         // overwrite existing box
-        Some((xmp.start, xmp.length))
+        Some((xmp.start, xmp.length + PNG_HDR_LEN as u32))
     } else {
         // insert after IHDR
         ps.iter()

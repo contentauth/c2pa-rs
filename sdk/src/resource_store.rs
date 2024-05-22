@@ -14,7 +14,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io::{Cursor, Read, Seek, Write},
+    io::{Read, Seek, Write},
 };
 #[cfg(feature = "file_io")]
 use std::{
@@ -26,9 +26,9 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    assertions::AssetType, asset_io::CAIRead, claim::Claim, hashed_uri::HashedUri, Error, Result,
-};
+#[cfg(feature = "unstable_api")]
+use crate::asset_io::CAIRead;
+use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -359,14 +359,16 @@ impl Default for ResourceStore {
     }
 }
 
+#[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 
+#[cfg(feature = "unstable_api")]
 impl ResourceResolver for ResourceStore {
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
         let data = self.get(&reference.identifier)?.into_owned();
-        let cursor = Cursor::new(data);
+        let cursor = std::io::Cursor::new(data);
         Ok(Box::new(cursor))
     }
 }
@@ -376,6 +378,8 @@ impl ResourceResolver for ResourceStore {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
 
     use super::*;
     use crate::{utils::test::temp_signer, Builder, Reader};
