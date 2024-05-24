@@ -485,7 +485,7 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
         let context = WindowOrWorker::new().unwrap();
         let crypto = context.subtle_crypto().unwrap();
 
-        let mut data = claim_bytes.clone();
+        let mut data = claim_bytes;
         let promise = crypto
             .digest_with_str_and_u8_array("SHA-256", &mut data)
             .unwrap();
