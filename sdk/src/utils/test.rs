@@ -476,7 +476,7 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
         Ok(self.certs.clone())
     }
 
-    async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+    async fn sign(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen_futures::JsFuture;
         use web_sys::CryptoKey;
@@ -549,7 +549,7 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
         #[cfg(not(feature = "openssl_sign"))]
         {
@@ -558,7 +558,7 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
             let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
 
             sign_bytes.rewind()?;
-            sign_bytes.write_all(&claim_bytes)?;
+            sign_bytes.write_all(claim_bytes)?;
 
             // fake sig
             Ok(sign_bytes.into_inner())
