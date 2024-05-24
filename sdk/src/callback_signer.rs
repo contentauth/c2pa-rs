@@ -133,8 +133,8 @@ use async_trait::async_trait;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 // I'm not sure if this is useful since the callback is still synchronous.
 impl AsyncSigner for CallbackSigner {
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
-        (self.callback)(self.context, &data)
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        (self.callback)(self.context, data)
     }
 
     fn alg(&self) -> SigningAlg {

@@ -126,7 +126,7 @@ use async_trait::async_trait;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
 
     /// Returns the algorithm of the Signer.
     fn alg(&self) -> SigningAlg;

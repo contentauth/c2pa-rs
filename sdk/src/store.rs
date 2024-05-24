@@ -514,7 +514,7 @@ impl Store {
         } else {
             if signer.direct_cose_handling() {
                 // Let the signer do all the COSE processing and return the structured COSE data.
-                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+                return signer.sign(&claim_bytes).await; // do not verify remote signers (we never did)
             } else {
                 cose_sign_async(signer, &claim_bytes, box_size).await
             }

@@ -298,7 +298,7 @@ pub(crate) struct AsyncTestGoodSigner {}
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::AsyncSigner for AsyncTestGoodSigner {
-    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+    async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -542,7 +542,7 @@ struct TempAsyncRemoteSigner {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
+    async fn sign(&self, claim_bytes: &[u8]) -> Result<Vec<u8>> {
         #[cfg(feature = "openssl_sign")]
         {
             let signer =
