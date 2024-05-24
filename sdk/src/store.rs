@@ -1314,15 +1314,21 @@ impl Store {
                         )?;
                     }
 
-                    // make sure
+                    let check_ingredient_trust: bool =
+                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+
                     // verify the ingredient claim
                     Claim::verify_claim(
                         ingredient,
                         asset_data,
                         false,
+                        check_ingredient_trust,
                         store.trust_handler(),
                         validation_log,
                     )?;
+
+                    // recurse nested ingredients
+                    Store::ingredient_checks(store, ingredient, asset_data, validation_log)?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -1431,11 +1437,16 @@ impl Store {
                             )),
                         )?;
                     }
+
+                    let check_ingredient_trust: bool =
+                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+
                     // verify the ingredient claim
                     Claim::verify_claim_async(
                         ingredient,
                         asset_data,
                         false,
+                        check_ingredient_trust,
                         store.trust_handler(),
                         validation_log,
                     )
@@ -1491,6 +1502,7 @@ impl Store {
             claim,
             asset_data,
             true,
+            true,
             store.trust_handler(),
             validation_log,
         )
@@ -1528,6 +1540,7 @@ impl Store {
         Claim::verify_claim(
             claim,
             asset_data,
+            true,
             true,
             store.trust_handler(),
             validation_log,

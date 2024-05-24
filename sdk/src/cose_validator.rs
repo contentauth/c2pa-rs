@@ -697,11 +697,11 @@ pub(crate) fn check_ocsp_status(
 ) -> Result<OcspData> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
-    let time_stamp_info = get_timestamp_info(&sign1, data);
-
     let mut result = Ok(OcspData::default());
 
     if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
+        let time_stamp_info = get_timestamp_info(&sign1, data);
+
         // check stapled OCSP response, must have timestamp
         if let Ok(tst_info) = &time_stamp_info {
             let signing_time = gt_to_datetime(tst_info.gen_time.clone());
@@ -731,6 +731,8 @@ pub(crate) fn check_ocsp_status(
                     if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
                         // fetch_ocsp_response(&certs) {
                         let ocsp_response_der = ocsp_der;
+
+                        let time_stamp_info = get_timestamp_info(&sign1, data);
 
                         let signing_time = match &time_stamp_info {
                             Ok(tst_info) => {
@@ -928,7 +930,7 @@ pub(crate) async fn verify_cose_async(
     cose_bytes: Vec<u8>,
     data: Vec<u8>,
     additional_data: Vec<u8>,
-    signature_only: bool,
+    cert_check: bool,
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
@@ -961,7 +963,7 @@ pub(crate) async fn verify_cose_async(
     let der_bytes = &certs[0];
 
     // verify cert matches requested algorithm
-    if !signature_only {
+    if cert_check {
         // verify certs
         match get_timestamp_info(&sign1, &data) {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
@@ -1004,9 +1006,6 @@ pub(crate) async fn verify_cose_async(
 
         #[cfg(not(target_arch = "wasm32"))]
         check_trust(th, &certs[1..], der_bytes, validation_log)?;
-
-        // check certificate revocation
-        check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
 
         // todo: check TSA certs against trust list
     }
@@ -1103,7 +1102,7 @@ pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
     additional_data: &[u8],
-    signature_only: bool,
+    cert_check: bool,
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
@@ -1139,7 +1138,7 @@ pub(crate) fn verify_cose(
 
     let time_stamp_info = get_timestamp_info(&sign1, data);
 
-    if !signature_only {
+    if cert_check {
         // verify certs
         match &time_stamp_info {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
@@ -1177,9 +1176,6 @@ pub(crate) fn verify_cose(
         // is the certificate trusted
         check_trust(th, &certs[1..], der_bytes, validation_log)?;
 
-        // check certificate revocation
-        check_ocsp_status(cose_bytes, data, th, validation_log)?;
-
         // todo: check TSA certs against trust list
     }
 
@@ -1216,7 +1212,7 @@ pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
     _additional_data: &[u8],
-    _signature_only: bool,
+    _cert_check: bool,
     _th: &dyn TrustHandlerConfig,
     _validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {

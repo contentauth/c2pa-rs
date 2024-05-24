@@ -31,7 +31,7 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash,
     },
     asset_io::CAIRead,
-    cose_validator::{get_signing_info, verify_cose, verify_cose_async},
+    cose_validator::{check_ocsp_status, get_signing_info, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -1024,13 +1024,14 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        cert_check: bool,
         th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
-        let claim_data = claim.data()?;
+        let data = claim.data()?;
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1053,15 +1054,12 @@ impl Claim {
             validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
         }
 
-        let verified = verify_cose_async(
-            sig,
-            claim_data,
-            additional_bytes,
-            !is_provenance,
-            th,
-            validation_log,
-        )
-        .await;
+        // check certificate revocation
+        check_ocsp_status(&sig, &data, th, validation_log)?;
+
+        let verified =
+            verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
+
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
@@ -1072,6 +1070,7 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        cert_check: bool,
         th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -1101,14 +1100,10 @@ impl Claim {
             return Err(Error::ClaimDecoding);
         };
 
-        let verified = verify_cose(
-            sig,
-            data,
-            &additional_bytes,
-            !is_provenance,
-            th,
-            validation_log,
-        );
+        // check certificate revocation
+        check_ocsp_status(sig, data, th, validation_log)?;
+
+        let verified = verify_cose(sig, data, &additional_bytes, cert_check, th, validation_log);
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }

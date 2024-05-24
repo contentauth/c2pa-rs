@@ -159,6 +159,7 @@ pub(crate) struct Verify {
     verify_trust: bool,
     ocsp_fetch: bool,
     remote_manifest_fetch: bool,
+    check_ingredient_trust: bool,
 }
 
 impl Default for Verify {
@@ -169,6 +170,7 @@ impl Default for Verify {
             verify_trust: false,
             ocsp_fetch: false,
             remote_manifest_fetch: true,
+            check_ingredient_trust: true,
         }
     }
 }
