@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "anyhow",
  "assert_cmd",

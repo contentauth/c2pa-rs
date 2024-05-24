@@ -6,6 +6,10 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.2
+_24 May 2024_
+
+* Remove integration tests for now due to extraneous binaries ([contentauth/c2patool#178](https://github.com/contentauth/c2patool/pull/178))
 ## 0.9.1
 _22 May 2024_
 
