@@ -48,18 +48,9 @@ predicates = "2.1"
 mockall = "0.12.1"
 
 [package.metadata.binstall]
-bin = "c2patool"
+# Use defaults
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 
 opt-level = 3
 lto = "thin"  # Link time optimization.
-
-[[bin]]
-name = "signer-path-fail"
-
-[[bin]]
-name = "signer-path-no-stdout"
-
-[[bin]]
-name = "signer-path-success"
