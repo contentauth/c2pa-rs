@@ -939,7 +939,6 @@ impl Claim {
     }
 
     // Crate private function to allow for patching a BMFF hash with final contents.
-    #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
         self.replace_assertion(bmff_hash.to_assertion()?)
     }
@@ -947,7 +946,6 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    #[cfg(feature = "file_io")]
     pub(crate) fn replace_assertion(&mut self, replace_with: Assertion) -> Result<()> {
         self.update_assertion(
             replace_with,

@@ -15,7 +15,7 @@ use std::{
     cmp,
     collections::{hash_map::Entry::Vacant, HashMap},
     fmt, fs,
-    io::{BufReader, Cursor, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     ops::Deref,
     path::{Path, PathBuf},
 };
@@ -37,8 +37,8 @@ use crate::{
     cbor_types::UriT,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_asset_by_alg, hash_stream_by_alg, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
+            Hasher,
         },
         merkle::C2PAMerkleTree,
     },
@@ -332,6 +332,15 @@ impl BmffHash {
         Ok(())
     }
 
+    /// Generate the hash value for the asset using the range from the BmffHash.
+    pub fn gen_hash_from_stream<R>(&mut self, asset_stream: &mut R) -> crate::error::Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream)?));
+        Ok(())
+    }
+
     /// Generate the hash again.
     pub fn regen_hash(&mut self) -> crate::error::Result<()> {
         let p = self.path.clone();
@@ -342,6 +351,18 @@ impl BmffHash {
     /// Generate the asset hash from a file asset using the constructed
     /// start and length values.
     fn hash_from_asset(&mut self, asset_path: &Path) -> crate::error::Result<Vec<u8>> {
+        // convert BMFF exclusion map to flat exclusion list
+        let mut data = fs::File::open(asset_path)?;
+
+        self.hash_from_stream(&mut data)
+    }
+
+    /// Generate the asset hash from a file asset using the constructed
+    /// start and length values.
+    fn hash_from_stream<R>(&mut self, asset_stream: &mut R) -> crate::error::Result<Vec<u8>>
+    where
+        R: Read + Seek + ?Sized,
+    {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
                 "asset hash is remote, not yet supported".to_owned(),
@@ -356,11 +377,10 @@ impl BmffHash {
         let bmff_exclusions = &self.exclusions;
 
         // convert BMFF exclusion map to flat exclusion list
-        let mut data = fs::File::open(asset_path)?;
         let exclusions =
-            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
+            bmff_to_jumbf_exclusions(asset_stream, bmff_exclusions, self.bmff_version > 1)?;
 
-        let hash = hash_asset_by_alg(&alg, asset_path, Some(exclusions))?;
+        let hash = hash_stream_by_alg(&alg, asset_stream, Some(exclusions), true)?;
 
         if hash.is_empty() {
             Err(Error::BadParam("could not generate data hash".to_string()))

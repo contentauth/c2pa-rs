@@ -12,21 +12,19 @@
 // each license.
 
 use std::{
+    cell::RefCell,
     io::{BufRead, BufReader, Cursor},
     path::Path,
-    sync::RwLock,
 };
 
 use config::{Config, FileFormat};
-use lazy_static::lazy_static;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{utils::base64, Error, Result};
 
-lazy_static! {
-    static ref SETTINGS: RwLock<Config> =
-        RwLock::new(Config::try_from(&Settings::default()).unwrap_or_default());
-}
+thread_local!(
+    pub static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
+);
 
 // trait used to validate user input to make sure user supplied configurations are valid
 pub(crate) trait SettingsValidate {
@@ -232,16 +230,15 @@ impl Settings {
             .build()
             .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
 
-        // blocking write
-        match SETTINGS.write() {
-            Ok(mut c) => {
-                let source = c.clone();
-                let update_config = Config::builder()
-                    .add_source(source)
-                    .add_source(new_config) // merge overrides, allows for partial changes
-                    .build()
-                    .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+        let mut update_config = SETTINGS.with_borrow(|current_settings| {
+            Config::builder()
+                .add_source(current_settings.clone())
+                .add_source(new_config)
+                .build() // merge overrides, allows for partial changes
+        });
 
+        match update_config {
+            Ok(update_config) => {
                 // sanity check the values before committing
                 let settings = update_config
                     .clone()
@@ -249,14 +246,14 @@ impl Settings {
                     .map_err(|_e| {
                         Error::BadParam("configuration file contains unrecognized param".into())
                     })?;
+
                 settings.validate()?;
 
-                // update if valid
-                *c = update_config;
+                SETTINGS.set(update_config);
 
                 Ok(settings)
             }
-            Err(_) => Err(Error::OtherError("could not save settings".into())),
+            Err(_) => Err(Error::OtherError("could not update configuration".into())),
         }
     }
 }
@@ -273,23 +270,13 @@ impl SettingsValidate for Settings {
 // Get snapshot of the Settings objects, returns None if there is an error
 #[allow(unused)]
 pub(crate) fn get_settings() -> Option<Settings> {
-    match SETTINGS.try_read() {
-        // concurrent read
-        Ok(c) => {
-            let source = c.clone(); // clone required since deserialize consumes object
-            let cloned_config = Config::builder().add_source(source).build();
-
-            if let Ok(cloned_config) = cloned_config {
-                match cloned_config.try_deserialize::<Settings>() {
-                    Ok(s) => Some(s),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
+    SETTINGS.with(|source| {
+        let config = source.borrow().clone();
+        match config.try_deserialize::<Settings>() {
+            Ok(s) => Some(s),
+            Err(_) => None,
         }
-        Err(_) => None,
-    }
+    })
 }
 
 // Load settings from configuration file
@@ -328,34 +315,31 @@ pub fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
 // The nesting can be arbitrarily deep based on the Settings definition.
 #[allow(unused)]
 pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-    match SETTINGS.write() {
-        Ok(mut c) => {
-            let source = c.clone();
-            let update_config = Config::builder()
-                .add_source(source)
-                .set_override(value_path, value);
+    let c = SETTINGS.take();
 
-            if let Ok(updated) = update_config {
-                let update_config = updated
-                    .build()
-                    .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
+    let update_config = Config::builder()
+        .add_source(c.clone())
+        .set_override(value_path, value);
 
-                let settings = update_config
-                    .clone()
-                    .try_deserialize::<Settings>()
-                    .map_err(|_e| {
-                        Error::BadParam("configuration file contains unrecognized param".into())
-                    })?;
-                settings.validate()?;
+    if let Ok(updated) = update_config {
+        let update_config = updated
+            .build()
+            .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
 
-                *c = update_config;
+        let settings = update_config
+            .clone()
+            .try_deserialize::<Settings>()
+            .map_err(|_e| {
+                Error::BadParam("configuration file contains unrecognized param".into())
+            })?;
+        settings.validate()?;
 
-                Ok(())
-            } else {
-                Err(Error::OtherError("could not save settings".into()))
-            }
-        }
-        Err(_) => Err(Error::OtherError("could not save settings".into())),
+        SETTINGS.set(update_config);
+
+        Ok(())
+    } else {
+        SETTINGS.set(c);
+        Err(Error::OtherError("could not save settings".into()))
     }
 }
 
@@ -366,23 +350,20 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
-    match SETTINGS.read() {
-        Ok(settings) => settings.get::<T>(value_path).map_err(|_| Error::NotFound),
-        Err(_) => Err(Error::OtherError("could not read setting object".into())),
-    }
+    SETTINGS.with(|current_settings| {
+        current_settings
+            .borrow()
+            .get::<T>(value_path)
+            .map_err(|_| Error::NotFound)
+    })
 }
 
 // Set settings back to the default values.  Current use case is for testing.
 #[allow(unused)]
 pub fn reset_default_settings() -> Result<()> {
     if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-        match SETTINGS.write() {
-            Ok(mut current_settings) => {
-                *current_settings = default_settings;
-                Ok(())
-            }
-            Err(_) => Err(Error::OtherError("could not save settings".into())),
-        }
+        SETTINGS.set(default_settings);
+        Ok(())
     } else {
         Err(Error::OtherError("could not save settings".into()))
     }
@@ -393,31 +374,20 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::sync::Mutex;
-
     use super::*;
-
-    // prevent tests from polluting the results of each other because of Rust unit test concurrency
-    static PROTECT: Mutex<u32> = Mutex::new(1); // prevent tests from polluting the results of each other
 
     #[test]
     fn test_get_defaults() {
-        let _protect = PROTECT.lock().unwrap();
-
         let settings = get_settings().unwrap();
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.manifest, Manifest::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
     fn test_get_val_by_direct_path() {
-        let _protect = PROTECT.lock().unwrap();
-
         // you can do this for all values but if these sanity checks pass they all should if the path is correct
         assert_eq!(
             get_settings_value::<String>("core.hash_alg").unwrap(),
@@ -472,14 +442,10 @@ pub mod tests {
         assert_eq!(verify, Verify::default());
         assert_eq!(manifest, Manifest::default());
         assert_eq!(trust, Trust::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
     fn test_set_val_by_direct_path() {
-        let _protect = PROTECT.lock().unwrap();
-
         let ts = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
@@ -517,15 +483,11 @@ pub mod tests {
             get_settings_value::<Trust>("trust").unwrap(),
             Trust::default()
         );
-
-        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
     #[test]
     fn test_save_load() {
-        let _protect = PROTECT.lock().unwrap();
-
         let temp_dir = tempfile::tempdir().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
@@ -535,15 +497,11 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[cfg(feature = "file_io")]
     #[test]
     fn test_save_load_from_string() {
-        let _protect = PROTECT.lock().unwrap();
-
         let temp_dir = tempfile::tempdir().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
@@ -555,14 +513,10 @@ pub mod tests {
         let settings = get_settings().unwrap();
 
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
     fn test_partial_loading() {
-        let _protect = PROTECT.lock().unwrap();
-
         // we support just changing the fields you are interested in changing
         // here is an example of incomplete structures only overriding specific
         // fields
@@ -598,14 +552,10 @@ pub mod tests {
             get_settings_value::<bool>("core.salt_jumbf_boxes").unwrap(),
             Core::default().salt_jumbf_boxes
         );
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
     fn test_bad_setting() {
-        let _protect = PROTECT.lock().unwrap();
-
         let modified_core = r#"{
             "core": {
                 "debug": true,
@@ -615,13 +565,9 @@ pub mod tests {
         }"#;
 
         assert!(load_settings_from_str(modified_core, "json").is_err());
-
-        reset_default_settings().unwrap();
     }
     #[test]
     fn test_hidden_setting() {
-        let _protect = PROTECT.lock().unwrap();
-
         let secret = r#"{
             "hidden": {
                 "test1": true,
@@ -641,7 +587,5 @@ pub mod tests {
             get_settings_value::<u32>("hidden.test3").unwrap(),
             123456u32
         );
-
-        reset_default_settings().unwrap();
     }
 }

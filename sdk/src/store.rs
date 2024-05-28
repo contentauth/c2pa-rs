@@ -1628,6 +1628,14 @@ impl Store {
         alg: &str,
         calc_hashes: bool,
     ) -> Result<Vec<BmffHash>> {
+        let mut asset_stream = std::fs::File::open(asset_path)?;
+        Store::generate_bmff_data_hashes_for_stream(&mut asset_stream, alg, calc_hashes)
+    }
+    fn generate_bmff_data_hashes_for_stream(
+        asset_stream: &mut dyn CAIRead,
+        alg: &str,
+        calc_hashes: bool,
+    ) -> Result<Vec<BmffHash>> {
         use serde_bytes::ByteBuf;
 
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
@@ -1718,7 +1726,7 @@ impl Store {
         */
 
         if calc_hashes {
-            dh.gen_hash(asset_path)?;
+            dh.gen_hash_from_stream(asset_stream)?;
         } else {
             match alg {
                 "sha256" => dh.set_hash([0u8; 32].to_vec()),
@@ -2071,7 +2079,7 @@ impl Store {
 
     /// This function is used to pre-generate a manifest as if it were added to input_stream. All values
     /// are complete including the hash bindings, except for the signature.  The signature is completed during
-    /// the actual embedding using `embed_placed_manifest `.   The Signature box reserved size is based on the size required by
+    /// the actual embedding using `embed_placed_manifest `.   The Signature box reserve_size is based on the size required by
     /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `embed_placed_manifest`.  `embed_placed_manifest` will accept the manifest to sign and place
     /// in the output.
@@ -2090,9 +2098,13 @@ impl Store {
     /// Embed the manifest store into an asset. If a ManifestPatchCallback is present the caller
     /// is given an opportunity to adjust most assertions.  This function will not generate hash
     /// binding for the manifest.  It is assumed the user called get_box_hashed_embeddable_manifest
-    /// hash or provided a box hash binding.  
-    /// When called, the stream should contain an asset matching format.
-    /// on return, the stream will contain the new manifest signed with signer
+    /// hash or provided a box hash binding.  The input stream should reference the same content used
+    /// in the 'get_placed_manifest_call'.  Changes to the following assertions are disallowed
+    /// when using 'ManifestPatchCallback':  ["c2pa.hash.data",  "c2pa.hash.boxes",  "c2pa.hash.bmff",
+    ///  "c2pa.actions",  "c2pa.ingredient"].  Also the set of assertions cannot be changed, only the
+    /// content of allowed assertions can be modified.  
+    /// 'format' shoould match the type of the input stream..
+    /// Upon return, the output stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
 
     #[async_generic(
@@ -2501,12 +2513,12 @@ impl Store {
 
         let ah = match get_assetio_handler(format) {
             Some(h) => h,
-            None => return Err(Error::XmpNotSupported),
+            None => return Err(Error::UnsupportedType),
         };
 
         let manifest_writer = match ah.get_writer(format) {
             Some(h) => h,
-            None => return Err(Error::XmpNotSupported),
+            None => return Err(Error::UnsupportedType),
         };
 
         // clear manifest first since we cannot shrink streams
@@ -2540,74 +2552,114 @@ impl Store {
             }
         }
 
-        // we will not do automatic hashing if we detect a box hash present
-        let mut needs_hashing = false;
-        if pc.hash_assertions().is_empty() {
+        let jumbf_size;
+        let is_bmff = is_bmff_format(format);
+
+        if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
-            let mut hash_ranges = object_locations_from_stream(format, &mut intermediate_stream)?;
-            let hashes: Vec<DataHash> = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes_for_stream(
+            if !pc.update_manifest() {
+                let bmff_hashes = Store::generate_bmff_data_hashes_for_stream(
                     &mut intermediate_stream,
                     pc.alg(),
-                    &mut hash_ranges,
                     false,
-                )?
-            };
-
-            // add the placeholder data hashes to provenance claim so that the required space is reserved
-            for mut hash in hashes {
-                // add padding to account for possible cbor expansion of final DataHash
-                let padding: Vec<u8> = vec![0x0; 10];
-                hash.add_padding(padding);
-
-                pc.add_assertion(&hash)?;
+                )?;
+                for hash in bmff_hashes {
+                    pc.add_assertion(&hash)?;
+                }
             }
-            needs_hashing = true;
+
+            // 3) Generate in memory CAI jumbf block
+            // and write preliminary jumbf store to file
+            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+            intermediate_stream.rewind()?;
+            save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+
+            // generate actual hash values
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+
+            if !pc.update_manifest() {
+                let bmff_hashes = pc.bmff_hash_assertions();
+
+                if !bmff_hashes.is_empty() {
+                    let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                    bmff_hash.gen_hash_from_stream(output_stream)?;
+                    pc.update_bmff_hash(bmff_hash)?;
+                }
+            }
+        } else {
+            let mut needs_hashing = false;
+
+            // we will not do automatic hashing if we detect a box hash present
+            if pc.hash_assertions().is_empty() {
+                // 2) Get hash ranges if needed, do not generate for update manifests
+                let mut hash_ranges =
+                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                let hashes: Vec<DataHash> = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        &mut intermediate_stream,
+                        pc.alg(),
+                        &mut hash_ranges,
+                        false,
+                    )?
+                };
+
+                // add the placeholder data hashes to provenance claim so that the required space is reserved
+                for mut hash in hashes {
+                    // add padding to account for possible cbor expansion of final DataHash
+                    let padding: Vec<u8> = vec![0x0; 10];
+                    hash.add_padding(padding);
+
+                    pc.add_assertion(&hash)?;
+                }
+                needs_hashing = true;
+            }
+
+            // 3) Generate in memory CAI jumbf block
+            // and write preliminary jumbf store to file
+            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+
+            intermediate_stream.rewind()?;
+            save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+
+            // 4) determine final object locations and patch the asset hashes with correct offset
+            // replace the source with correct asset hashes so that the claim hash will be correct
+            if needs_hashing {
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+                // get the final hash ranges, but not for update manifests
+                intermediate_stream.rewind()?;
+                output_stream.rewind()?;
+                std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
+                let mut new_hash_ranges =
+                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                let updated_hashes = if pc.update_manifest() {
+                    Vec::new()
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        &mut intermediate_stream,
+                        pc.alg(),
+                        &mut new_hash_ranges,
+                        true,
+                    )?
+                };
+
+                // patch existing claim hash with updated data
+                for hash in updated_hashes {
+                    pc.update_data_hash(hash)?;
+                }
+            }
         }
 
-        // 3) Generate in memory CAI jumbf block
-        // and write preliminary jumbf store to file
-        // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
+        // regenerate the jumbf because the cbor changed
         data = self.to_jumbf_internal(reserve_size)?;
-        let jumbf_size = data.len();
-
-        intermediate_stream.rewind()?;
-        save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
-
-        // 4)  determine final object locations and patch the asset hashes with correct offset
-        // replace the source with correct asset hashes so that the claim hash will be correct
-        if needs_hashing {
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-
-            // get the final hash ranges, but not for update manifests
-            intermediate_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
-            let mut new_hash_ranges =
-                object_locations_from_stream(format, &mut intermediate_stream)?;
-            let updated_hashes = if pc.update_manifest() {
-                Vec::new()
-            } else {
-                Store::generate_data_hashes_for_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    &mut new_hash_ranges,
-                    true,
-                )?
-            };
-
-            // patch existing claim hash with updated data
-            for hash in updated_hashes {
-                pc.update_data_hash(hash)?;
-            }
-
-            // regenerate the jumbf because the cbor changed
-            data = self.to_jumbf_internal(reserve_size)?;
-            if jumbf_size != data.len() {
-                return Err(Error::JumbfCreationError);
-            }
+        if jumbf_size != data.len() {
+            return Err(Error::JumbfCreationError);
         }
 
         Ok(data) // return JUMBF data
@@ -4709,6 +4761,47 @@ pub mod tests {
 
         // can we read back in
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+    }
+
+    #[test]
+    fn test_bmff_jumbf_stream_generation() {
+        // test adding to actual image
+        let ap = fixture_path("video1.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = temp_signer();
+
+        let result: Vec<u8> = Vec::new();
+        let mut output_stream = Cursor::new(result);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+
+        store
+            .save_to_stream(
+                "mp4",
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+            )
+            .unwrap();
+
+        let mut report = DetailedStatusTracker::new();
+
+        let output_data = output_stream.into_inner();
+
+        // can we read back in
+        let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+
+        assert!(errors.is_empty());
     }
 
     #[test]

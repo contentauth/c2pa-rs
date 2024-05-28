@@ -434,11 +434,14 @@ fn get_top_level_boxes(
     tl_boxes
 }
 
-pub fn bmff_to_jumbf_exclusions(
-    reader: &mut dyn CAIRead,
+pub fn bmff_to_jumbf_exclusions<R>(
+    reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
-) -> Result<Vec<HashRange>> {
+) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
     let size = reader.seek(SeekFrom::End(0))?;
     reader.rewind()?;
 

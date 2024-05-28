@@ -227,7 +227,7 @@ mod integration_1 {
                     if let Some(db) = my_box.data_box() {
                         let data_offset = db.offset_within_superbox(&sb).unwrap();
                         let replace_bytes = r#"{"some_tag": "some value is replaced"}"#;
-                        
+
                         if db.data.len() != replace_bytes.len() {
                             return Err(Error::OtherError("replacement data size mismatch".into()));
                         }
@@ -295,7 +295,7 @@ mod integration_1 {
         // my manifest callback handler
         // set some data needed by callback to do what it needs to
         // for this example let's tell it which jumbf box we can to change
-        // There is currently no what to get this directly from Manifest so I am using a hack
+        // There is currently no way to get this directly from Manifest so I am using a hack
         // to get_placed_manifest to return the manifest UUID.
         let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
 
@@ -310,6 +310,72 @@ mod integration_1 {
         Manifest::embed_placed_manifest(
             &placed_manifest,
             "jpg",
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &callbacks,
+        )
+        .unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_placed_manifest_bmff() -> Result<()> {
+        // set up parent and destination paths
+
+        use std::io::Seek;
+        let dir = tempdir()?;
+        let output_path = dir.path().join("video1.mp4");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("manifest.json");
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("video1.mp4");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut manifest = Manifest::from_json(&json)?;
+        manifest.with_base_path(fixture_path.canonicalize()?)?;
+
+        // sign and embed into the target file
+        let signer = get_temp_signer();
+
+        let mut input_stream = std::fs::File::open(&parent_path).unwrap();
+        let mut output_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output_path)
+            .unwrap();
+
+        // get placed manifest
+        let (placed_manifest, label) = manifest
+            .get_placed_manifest(signer.reserve_size(), "mp4", &mut input_stream)
+            .unwrap();
+
+        // my manifest callback handler
+        // set some data needed by callback to do what it needs to
+        // for this example let's tell it which jumbf box we can to change
+        // There is currently no way to get this directly from Manifest so I am using a hack
+        // to get_placed_manifest to return the manifest UUID.
+        let path = format!("{}/c2pa.assertions/{}", label, "com.mycompany.myassertion");
+
+        let my_callback = PlacedCallback {
+            path: path.to_string(),
+        };
+
+        let callbacks: Vec<Box<dyn ManifestPatchCallback>> = vec![Box::new(my_callback)];
+
+        // add manifest back into data
+        input_stream.rewind().unwrap();
+        Manifest::embed_placed_manifest(
+            &placed_manifest,
+            "mp4",
             &mut input_stream,
             &mut output_stream,
             signer.as_ref(),
