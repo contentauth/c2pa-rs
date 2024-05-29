@@ -17,7 +17,7 @@ use std::{
     fmt, fs,
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
     ops::Deref,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use mp4::*;
@@ -164,12 +164,15 @@ impl MerkleMap {
         location: u32,
         proof: &Option<VecByteBuf>,
     ) -> bool {
+        if location >= self.count {
+            return false;
+        }
+
         let mut index = location;
         let mut hash = hash.to_vec();
+        let layers = C2PAMerkleTree::to_layout(self.count as usize);
 
         if let Some(hashes) = proof {
-            let layers = C2PAMerkleTree::to_layout(self.count as usize);
-
             // playback proof
             let mut proof_index = 0;
             for layer in layers {
@@ -199,6 +202,14 @@ impl MerkleMap {
                     }
                 }
 
+                index /= 2;
+            }
+        } else {
+            //empty proof playback
+            for layer in layers {
+                if layer == self.hashes.len() {
+                    break;
+                }
                 index /= 2;
             }
         }
@@ -254,9 +265,6 @@ pub struct BmffHash {
     url: Option<UriT>, // deprecated in V2 and not to be used
 
     #[serde(skip)]
-    pub path: PathBuf,
-
-    #[serde(skip)]
     bmff_version: usize,
 }
 
@@ -271,7 +279,6 @@ impl BmffHash {
             merkle: None,
             name: Some(name.to_string()),
             url,
-            path: PathBuf::new(),
             bmff_version: ASSERTION_CREATION_VERSION,
         }
     }
@@ -326,9 +333,10 @@ impl BmffHash {
     }
 
     /// Generate the hash value for the asset using the range from the BmffHash.
+    #[cfg(feature = "file_io")]
     pub fn gen_hash(&mut self, asset_path: &Path) -> crate::error::Result<()> {
-        self.hash = Some(ByteBuf::from(self.hash_from_asset(asset_path)?));
-        self.path = PathBuf::from(asset_path);
+        let mut file = std::fs::File::open(asset_path)?;
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file)?));
         Ok(())
     }
 
@@ -339,22 +347,6 @@ impl BmffHash {
     {
         self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream)?));
         Ok(())
-    }
-
-    /// Generate the hash again.
-    pub fn regen_hash(&mut self) -> crate::error::Result<()> {
-        let p = self.path.clone();
-        self.hash = Some(ByteBuf::from(self.hash_from_asset(p.as_path())?));
-        Ok(())
-    }
-
-    /// Generate the asset hash from a file asset using the constructed
-    /// start and length values.
-    fn hash_from_asset(&mut self, asset_path: &Path) -> crate::error::Result<Vec<u8>> {
-        // convert BMFF exclusion map to flat exclusion list
-        let mut data = fs::File::open(asset_path)?;
-
-        self.hash_from_stream(&mut data)
     }
 
     /// Generate the asset hash from a file asset using the constructed
@@ -431,6 +423,10 @@ impl BmffHash {
         // start from 1st moof
         if let Some(pos) = boxes.iter().position(|b| b.path == "moof") {
             let mut box_list = vec![boxes[pos].clone()];
+
+            if pos == 0 {
+                return moof_list; // this does not contain fragmented content
+            }
 
             for b in boxes[pos + 1..].iter() {
                 if b.path == "moof" {

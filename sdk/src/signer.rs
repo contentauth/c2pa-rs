@@ -42,6 +42,10 @@ pub trait Signer {
         None
     }
 
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -51,13 +55,20 @@ pub trait Signer {
     /// provided by [`Self::time_authority_url()`], if any.
     #[cfg(not(target_arch = "wasm32"))]
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-
-        self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
     }
     #[cfg(target_arch = "wasm32")]
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
 
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
@@ -66,9 +77,18 @@ pub trait Signer {
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
     }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
 }
 
 /// Trait to allow loading of signing credential from external sources
+#[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
 pub(crate) trait ConfigurableSigner: Signer + Sized {
     /// Create signer form credential files
     #[cfg(feature = "file_io")]
@@ -132,6 +152,10 @@ pub trait AsyncSigner: Sync {
         None
     }
 
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
@@ -143,10 +167,15 @@ pub trait AsyncSigner: Sync {
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         // NOTE: This is currently synchronous, but may become
         // async in the future.
-        let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-
-        self.time_authority_url()
-            .map(|url| crate::time_stamp::default_rfc3161_request(&url, headers, message))
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
     }
     #[cfg(target_arch = "wasm32")]
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
@@ -155,8 +184,16 @@ pub trait AsyncSigner: Sync {
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
     /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
+    }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
     }
 }
 

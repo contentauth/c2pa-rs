@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// complete functional integration test with acquisitions and ingredients
-// isolate from wasm by wrapping in module
+/// Complete functional integration test with parent and ingredients.
+// Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
 
@@ -20,8 +20,10 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions},
-        create_signer, settings, Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore,
-        Result, Signer, SigningAlg,
+        create_signer,
+        settings::load_settings_from_str,
+        Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore, Result, Signer,
+        SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -31,6 +33,8 @@ mod integration_1 {
     static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1); // prevent tests from polluting the results of each other
 
     fn get_temp_signer() -> Box<dyn Signer> {
+        let _protect = PROTECT.lock().unwrap();
+
         // sign and embed into the target file
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         signcert_path.push("tests/fixtures/certs/ps256.pub");
@@ -54,7 +58,7 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(trust_list).to_string(); // escape string
             let setting = ta.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
@@ -63,7 +67,7 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(allowed_list).to_string(); // escape string
             let setting = al.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
@@ -72,17 +76,14 @@ mod integration_1 {
             let replacement_val = serde_json::Value::String(trust_config).to_string(); // escape string
             let setting = tc.replace("replacement_val", &replacement_val);
 
-            c2pa::settings::load_settings_from_str(&setting, "json")?;
+            load_settings_from_str(&setting, "json")?;
 
             enable_trust_checks = true;
         }
 
         // enable trust checks
         if enable_trust_checks {
-            c2pa::settings::load_settings_from_str(
-                r#"{"verify": { "verify_trust": true} }"#,
-                "json",
-            )?;
+            load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
         }
 
         Ok(())
@@ -91,8 +92,6 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
-        let _protect = PROTECT.lock().unwrap();
-
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");
@@ -172,10 +171,6 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
-        let _protect = PROTECT.lock().unwrap();
-
-        settings::reset_default_settings().unwrap();
-
         // set up parent and destination paths
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");

@@ -1,0 +1,54 @@
+{
+  "active_manifest": "contentauth:urn:uuid:d17a0d3c-fd12-4381-b14f-1760b5fe0469",
+  "manifests": {
+    "contentauth:urn:uuid:d17a0d3c-fd12-4381-b14f-1760b5fe0469": {
+      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:51c597ec-6364-4411-ad6e-88bf76e60134",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Adobe make_test"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": "Make Test Images 0.24.0",
+                "parameters": {
+                  "name": "gradient"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2023-07-13T18:58:32+00:00"
+      },
+      "label": "contentauth:urn:uuid:d17a0d3c-fd12-4381-b14f-1760b5fe0469"
+    }
+  }
+}

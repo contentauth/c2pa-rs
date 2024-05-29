@@ -6,6 +6,40 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.1
+_10 May 2024_
+
+* Steps toward removing RemoteSigner APIs. ([#466](https://github.com/contentauth/c2pa-rs/pull/466))
+
+## 0.32.0
+_07 May 2024_
+
+* (Minor) Additional unit tests and fixes for injection (or previously untested) issues. ([#464](https://github.com/contentauth/c2pa-rs/pull/464))
+* Expose authoring support in WASM ([#369](https://github.com/contentauth/c2pa-rs/pull/369))
+* Move signer to first parameter on Builder.sign ([#457](https://github.com/contentauth/c2pa-rs/pull/457))
+* Gpeacock/embed_remote_settings ([#460](https://github.com/contentauth/c2pa-rs/pull/460))
+* (MINOR) Removes xmp_write feature and xmp_toolkit ([#461](https://github.com/contentauth/c2pa-rs/pull/461))
+* Async Signer: add support for async OCSP call ([#458](https://github.com/contentauth/c2pa-rs/pull/458))
+* Use cargo test in CI ([#459](https://github.com/contentauth/c2pa-rs/pull/459))
+* (MINOR) Initial V2 API work ([#437](https://github.com/contentauth/c2pa-rs/pull/437))
+
+## 0.31.3
+_05 April 2024_
+
+* Add `video/quicktime` to the list of BMFF MIME types ([#441](https://github.com/contentauth/c2pa-rs/pull/441))
+* Streaming XMP write support for PNG ([#439](https://github.com/contentauth/c2pa-rs/pull/439))
+
+## 0.31.2
+_03 April 2024_
+
+* Fixed temp file auto delete ([#438](https://github.com/contentauth/c2pa-rs/pull/438))
+* Add `Sync` trait to `TrustHandlerConfig` ([#440](https://github.com/contentauth/c2pa-rs/pull/440))
+* remove file_io dependency on fetch_remote_manifests ([#434](https://github.com/contentauth/c2pa-rs/pull/434))
+* Remove verify after signing when compiling without openssl ([#404](https://github.com/contentauth/c2pa-rs/pull/404))
+* Streaming write support for BMFF ([#435](https://github.com/contentauth/c2pa-rs/pull/435))
+* Added support for XMP streaming writes for TIFF/DNG ([#433](https://github.com/contentauth/c2pa-rs/pull/433))
+* Implements embed_reference_to_stream for jpeg ([#430](https://github.com/contentauth/c2pa-rs/pull/430))
+
 ## 0.31.1
 _25 March 2024_
 

@@ -27,7 +27,7 @@ pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9)
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 // Trait for supply configuration and handling of trust lists and EKU configuration store
-pub(crate) trait TrustHandlerConfig: Send {
+pub(crate) trait TrustHandlerConfig: Sync + Send {
     fn new() -> Self
     where
         Self: Sized;
@@ -51,9 +51,11 @@ pub(crate) trait TrustHandlerConfig: Send {
     fn get_auxillary_ekus(&self) -> Vec<Oid>;
 
     // list of all anchors
+    #[allow(dead_code)] // Only used in calls with allow dead_code
     fn get_anchors(&self) -> Vec<Vec<u8>>;
 
     // set of allowed cert hashes
+    #[allow(dead_code)] // Only used in calls with allow dead_code
     fn get_allowed_list(&self) -> &HashSet<String>;
 }
 

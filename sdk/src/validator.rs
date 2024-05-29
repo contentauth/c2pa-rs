@@ -14,7 +14,7 @@
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -32,6 +32,7 @@ pub struct ValidationInfo {
 /// Trait to support validating a signature against the provided data
 pub(crate) trait CoseValidator {
     /// validate signature "sig" for given "data using provided public key"
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool>;
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(not(feature = "openssl_sign"))]
+#[cfg(not(feature = "openssl"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)

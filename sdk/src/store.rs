@@ -21,22 +21,25 @@ use std::{fs, path::Path};
 use async_generic::async_generic;
 use log::error;
 
-#[cfg(feature = "openssl")]
-use crate::cose_validator::{verify_cose, verify_cose_async};
+#[cfg(feature = "file_io")]
+use crate::jumbf_io::{
+    get_file_extension, get_supported_file_extension, load_jumbf_from_file, object_locations,
+    remove_jumbf_from_file, save_jumbf_to_file,
+};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
     },
     assertions::{
         labels::{self, CLAIM},
-        DataBox, DataHash, Ingredient, Relationship,
+        BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssetData},
+    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::check_ocsp_status,
+    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -46,9 +49,10 @@ use crate::{
         labels::{to_absolute_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
-        get_assetio_handler, load_jumbf_from_stream, object_locations_from_stream,
+        get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
         save_jumbf_to_memory, save_jumbf_to_stream,
     },
+    manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
     status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
@@ -57,16 +61,7 @@ use crate::{
         hash_utils::{hash_sha256, HashRange},
         patch::patch_bytes,
     },
-    validation_status, AsyncSigner, ManifestStoreReport, RemoteSigner, Signer,
-};
-#[cfg(feature = "file_io")]
-use crate::{
-    assertions::{BmffHash, DataMap, ExclusionsMap, SubsetMap},
-    claim::RemoteManifest,
-    jumbf_io::{
-        get_file_extension, get_supported_file_extension, is_bmff_format, load_jumbf_from_file,
-        object_locations, remove_jumbf_from_file, save_jumbf_to_file,
-    },
+    validation_status, AsyncSigner, RemoteSigner, Signer,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -454,6 +449,7 @@ impl Store {
     }
 
     /// Return certificate chain for the provenance claim
+    #[cfg(feature = "v1_api")]
     pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
@@ -495,6 +491,12 @@ impl Store {
     }
 
     /// Sign the claim and return signature.
+    #[async_generic(async_signature(
+        &self,
+        claim: &Claim,
+        signer: &dyn AsyncSigner,
+        box_size: usize,
+    ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
@@ -503,60 +505,51 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
-        cose_sign(signer, &claim_bytes, box_size).and_then(|sig| {
-            // Sanity check: Ensure that this signature is valid.
-            #[cfg(feature = "openssl")]
-            if let Ok(verify_after_sign) = get_settings_value::<bool>("verify.verify_after_sign") {
-                if verify_after_sign {
-                    let mut cose_log = OneShotStatusTracker::new();
-                    if let Err(err) = verify_cose(
-                        &sig,
-                        &claim_bytes,
-                        b"",
-                        false,
-                        self.trust_handler(),
-                        &mut cose_log,
-                    ) {
-                        error!(
-                            "Signature that was just generated does not validate: {:#?}",
-                            err
-                        );
-                        return Err(err);
-                    }
-                }
+        let result = if _sync {
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
+            } else {
+                cose_sign(signer, &claim_bytes, box_size)
             }
-            Ok(sig)
-        })
-    }
-
-    /// Sign the claim asynchronously and return signature.
-    pub async fn sign_claim_async(
-        &self,
-        claim: &Claim,
-        signer: &dyn AsyncSigner,
-        box_size: usize,
-    ) -> Result<Vec<u8>> {
-        let claim_bytes = claim.data()?;
-
-        match cose_sign_async(signer, &claim_bytes, box_size).await {
-            // Sanity check: Ensure that this signature is valid.
+        } else {
+            if signer.direct_cose_handling() {
+                // Let the signer do all the COSE processing and return the structured COSE data.
+                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+            } else {
+                cose_sign_async(signer, &claim_bytes, box_size).await
+            }
+        };
+        match result {
             Ok(sig) => {
-                #[cfg(feature = "openssl")]
+                // Sanity check: Ensure that this signature is valid.
                 if let Ok(verify_after_sign) =
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
                         let mut cose_log = OneShotStatusTracker::new();
-                        if let Err(err) = verify_cose_async(
-                            sig.clone(),
-                            claim_bytes,
-                            b"".to_vec(),
-                            false,
-                            self.trust_handler(),
-                            &mut cose_log,
-                        )
-                        .await
-                        {
+
+                        let result = if _sync {
+                            verify_cose(
+                                &sig,
+                                &claim_bytes,
+                                b"",
+                                false,
+                                self.trust_handler(),
+                                &mut cose_log,
+                            )
+                        } else {
+                            verify_cose_async(
+                                sig.clone(),
+                                claim_bytes,
+                                b"".to_vec(),
+                                false,
+                                self.trust_handler(),
+                                &mut cose_log,
+                            )
+                            .await
+                        };
+                        if let Err(err) = result {
                             error!(
                                 "Signature that was just generated does not validate: {:#?}",
                                 err
@@ -1622,15 +1615,6 @@ impl Store {
         Ok(hashes)
     }
 
-    #[cfg(feature = "file_io")]
-    fn generate_bmff_data_hashes(
-        asset_path: &Path,
-        alg: &str,
-        calc_hashes: bool,
-    ) -> Result<Vec<BmffHash>> {
-        let mut asset_stream = std::fs::File::open(asset_path)?;
-        Store::generate_bmff_data_hashes_for_stream(&mut asset_stream, alg, calc_hashes)
-    }
     fn generate_bmff_data_hashes_for_stream(
         asset_stream: &mut dyn CAIRead,
         alg: &str,
@@ -1754,10 +1738,10 @@ impl Store {
     #[cfg(feature = "file_io")]
     fn copy_c2pa_to_output(source: &Path, dest: &Path, remote_type: RemoteManifest) -> Result<()> {
         match remote_type {
-            crate::claim::RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
-            crate::claim::RemoteManifest::SideCar
-            | crate::claim::RemoteManifest::Remote(_)
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => {
+            RemoteManifest::NoRemote => Store::move_or_copy(source, dest)?,
+            RemoteManifest::SideCar
+            | RemoteManifest::Remote(_)
+            | RemoteManifest::EmbedWithRemote(_) => {
                 // make correct path names
                 let source_asset = source;
                 let source_cai = source_asset.with_extension(MANIFEST_STORE_EXT);
@@ -1827,8 +1811,8 @@ impl Store {
         }
 
         let mut adjusted_dh = DataHash::new("jumbf manifest", pc.alg());
-        adjusted_dh.exclusions = dh.exclusions.clone();
-        adjusted_dh.hash = dh.hash.clone();
+        adjusted_dh.exclusions.clone_from(&dh.exclusions);
+        adjusted_dh.hash.clone_from(&dh.hash);
 
         if let Some(reader) = asset_reader {
             // calc hashes
@@ -2037,6 +2021,14 @@ impl Store {
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
+    /// This can also handle remote signing if direct_cose_handling() is true.
+    #[async_generic(async_signature(
+        &mut self,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn AsyncSigner,
+    ))]
     pub fn save_to_stream(
         &mut self,
         format: &str,
@@ -2055,9 +2047,15 @@ impl Store {
         )?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size())
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size())
+                .await
+        }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
+        intermediate_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -2342,7 +2340,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2357,9 +2355,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2371,9 +2370,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2397,7 +2394,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2414,9 +2411,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2428,9 +2426,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2454,7 +2450,7 @@ impl Store {
     ) -> Result<Vec<u8>> {
         // set up temp dir, contents auto deleted
         let td = tempfile::TempDir::new()?;
-        let temp_path = td.into_path();
+        let temp_path = td.path();
         let temp_file = temp_path.join(
             dest_path
                 .file_name()
@@ -2470,9 +2466,10 @@ impl Store {
 
         // get correct output path for remote manifest
         let output_path = match pc.remote_manifest() {
-            crate::claim::RemoteManifest::NoRemote
-            | crate::claim::RemoteManifest::EmbedWithRemote(_) => temp_file.to_path_buf(),
-            crate::claim::RemoteManifest::SideCar | crate::claim::RemoteManifest::Remote(_) => {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                temp_file.to_path_buf()
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 temp_file.with_extension(MANIFEST_STORE_EXT)
             }
         };
@@ -2484,9 +2481,7 @@ impl Store {
                 pc_mut.set_signature_val(s);
 
                 // do we need to make a C2PA file in addition to standard embedded output
-                if let crate::claim::RemoteManifest::EmbedWithRemote(_url) =
-                    pc_mut.remote_manifest()
-                {
+                if let RemoteManifest::EmbedWithRemote(_url) = pc_mut.remote_manifest() {
                     let c2pa = output_path.with_extension(MANIFEST_STORE_EXT);
                     std::fs::write(c2pa, &m)?;
                 }
@@ -2507,57 +2502,73 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
-        let mut data;
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
-        let ah = match get_assetio_handler(format) {
-            Some(h) => h,
-            None => return Err(Error::UnsupportedType),
-        };
-
-        let manifest_writer = match ah.get_writer(format) {
-            Some(h) => h,
-            None => return Err(Error::UnsupportedType),
-        };
-
-        // clear manifest first since we cannot shrink streams
-        manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
-
-        // add remote reference XMP if needed
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        match pc.remote_manifest() {
-            crate::claim::RemoteManifest::Remote(url) => {
-                if let Some(external_ref_writer) = ah.remote_ref_writer_ref() {
-                    let tmp_output: Vec<u8> = Vec::new();
-                    let mut tmp_stream = Cursor::new(tmp_output);
 
-                    // add external ref if possible
-                    external_ref_writer.embed_reference_to_stream(
-                        &mut intermediate_stream,
-                        &mut tmp_stream,
-                        RemoteRefEmbedType::Xmp(url),
-                    )?;
+        // Add remote reference XMP if needed and strip out existing manifest
+        // We don't need to strip manifests if we are replacing an exsiting one
+        let (url, remove_manifests) = match pc.remote_manifest() {
+            RemoteManifest::NoRemote => (None, false),
+            RemoteManifest::SideCar => (None, true),
+            RemoteManifest::Remote(url) => (Some(url), true),
+            RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
+        };
 
-                    // swap streams
-                    let inner = tmp_stream.into_inner();
-                    intermediate_stream = Cursor::new(inner);
-                } else {
-                    return Err(Error::XmpNotSupported);
-                }
+        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+
+        // Do not assume the handler supports XMP or removing manifests unless we need it to
+        if let Some(url) = url {
+            let external_ref_writer = io_handler
+                .remote_ref_writer_ref()
+                .ok_or(Error::XmpNotSupported)?;
+
+            if remove_manifests {
+                let manifest_writer = io_handler
+                    .get_writer(format)
+                    .ok_or(Error::UnsupportedType)?;
+
+                let tmp_output: Vec<u8> = Vec::new();
+                let mut tmp_stream = Cursor::new(tmp_output);
+                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                // add external ref if possible
+                tmp_stream.rewind()?;
+                external_ref_writer.embed_reference_to_stream(
+                    &mut tmp_stream,
+                    &mut intermediate_stream,
+                    RemoteRefEmbedType::Xmp(url),
+                )?;
+            } else {
+                // add external ref if possible
+                external_ref_writer.embed_reference_to_stream(
+                    input_stream,
+                    &mut intermediate_stream,
+                    RemoteRefEmbedType::Xmp(url),
+                )?;
             }
-            _ => {
-                input_stream.rewind()?;
-                intermediate_stream.rewind()?;
-            }
+        } else if remove_manifests {
+            let manifest_writer = io_handler
+                .get_writer(format)
+                .ok_or(Error::UnsupportedType)?;
+
+            manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+        } else {
+            // just clone stream
+            input_stream.rewind()?;
+            std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
-        let jumbf_size;
         let is_bmff = is_bmff_format(format);
+
+        let mut data;
+        let jumbf_size;
 
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
+                intermediate_stream.rewind()?;
                 let bmff_hashes = Store::generate_bmff_data_hashes_for_stream(
                     &mut intermediate_stream,
                     pc.alg(),
@@ -2573,8 +2584,15 @@ impl Store {
             // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
-            intermediate_stream.rewind()?;
-            save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            // write the jumbf to the output stream if we are embedding the manifest
+            if !remove_manifests {
+                intermediate_stream.rewind()?;
+                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            } else {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            }
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -2584,14 +2602,14 @@ impl Store {
 
                 if !bmff_hashes.is_empty() {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0])?;
+                    output_stream.rewind()?;
                     bmff_hash.gen_hash_from_stream(output_stream)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
         } else {
-            let mut needs_hashing = false;
-
             // we will not do automatic hashing if we detect a box hash present
+            let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
                 // 2) Get hash ranges if needed, do not generate for update manifests
                 let mut hash_ranges =
@@ -2619,39 +2637,39 @@ impl Store {
             }
 
             // 3) Generate in memory CAI jumbf block
-            // and write preliminary jumbf store to file
-            // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
 
-            intermediate_stream.rewind()?;
-            save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            // write the jumbf to the output stream if we are embedding the manifest
+            if !remove_manifests {
+                intermediate_stream.rewind()?;
+                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+            } else {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            }
 
-            // 4) determine final object locations and patch the asset hashes with correct offset
+            // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
                 // get the final hash ranges, but not for update manifests
-                intermediate_stream.rewind()?;
                 output_stream.rewind()?;
-                std::io::copy(output_stream, &mut intermediate_stream)?; // can remove this once we can get a CAIReader from CAIReadWrite safely
-                let mut new_hash_ranges =
-                    object_locations_from_stream(format, &mut intermediate_stream)?;
-                let updated_hashes = if pc.update_manifest() {
-                    Vec::new()
-                } else {
-                    Store::generate_data_hashes_for_stream(
-                        &mut intermediate_stream,
+                let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
+                if !pc.update_manifest() {
+                    let updated_hashes = Store::generate_data_hashes_for_stream(
+                        output_stream,
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
-                    )?
-                };
+                    )?;
 
-                // patch existing claim hash with updated data
-                for hash in updated_hashes {
-                    pc.update_data_hash(hash)?;
+                    // patch existing claim hash with updated data
+                    for hash in updated_hashes {
+                        pc.update_data_hash(hash)?;
+                    }
                 }
             }
         }
@@ -2682,7 +2700,16 @@ impl Store {
             .map_err(|_| Error::JumbfCreationError)?;
 
         // re-save to file
-        save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        match pc.remote_manifest() {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                std::io::copy(input_stream, output_stream)?;
+            }
+        }
 
         Ok((sig, jumbf_bytes))
     }
@@ -2792,7 +2819,9 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
-                let bmff_hashes = Store::generate_bmff_data_hashes(dest_path, pc.alg(), false)?;
+                let mut file = std::fs::File::open(asset_path)?;
+                let bmff_hashes =
+                    Store::generate_bmff_data_hashes_for_stream(&mut file, pc.alg(), false)?;
                 for hash in bmff_hashes {
                     pc.add_assertion(&hash)?;
                 }
@@ -3388,6 +3417,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
@@ -3400,7 +3430,7 @@ pub mod tests {
                 write_jpeg_placeholder_file,
             },
         },
-        AssertionJson, SigningAlg,
+        SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -3666,7 +3696,6 @@ pub mod tests {
 
         store.commit_claim(claim).unwrap();
 
-        // JUMBF generation should fail because the certificate won't validate.
         let r = store.save_to_asset(&ap, &signer, &op);
         assert!(r.is_err());
         assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
@@ -4856,12 +4885,14 @@ pub mod tests {
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
     }
 
-    #[test]
-    fn test_external_manifest_embedded() {
+    // generalize test for multipe file types
+    fn external_manifest_test(file_name: &str) {
         // test adding to actual image
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path(file_name);
+        let extension = ap.extension().unwrap().to_str().unwrap();
         let temp_dir = tempdir().expect("temp dir");
-        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+        let mut op = temp_dir_path(&temp_dir, file_name);
+        op.set_extension(extension);
 
         let sidecar = op.with_extension(MANIFEST_STORE_EXT);
 
@@ -4898,7 +4929,7 @@ pub mod tests {
         // load the jumbf back into a store
         let mut asset_reader = std::fs::File::open(op.clone()).unwrap();
         let ext_ref =
-            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, "png")
+            crate::utils::xmp_inmemory_utils::XmpInfo::from_source(&mut asset_reader, extension)
                 .provenance
                 .unwrap();
 
@@ -4907,6 +4938,21 @@ pub mod tests {
         // make sure it validates
         let mut validation_log = OneShotStatusTracker::default();
         Store::load_from_asset(&op, true, &mut validation_log).unwrap();
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_png() {
+        external_manifest_test("libpng-test.png");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_tiff() {
+        external_manifest_test("TUSCANY.TIF");
+    }
+
+    #[test]
+    fn test_external_manifest_embedded_webp() {
+        external_manifest_test("sample1.webp");
     }
 
     #[test]

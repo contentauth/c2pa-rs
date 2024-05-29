@@ -236,7 +236,7 @@ impl Assertion {
     }
 
     pub(crate) fn set_content_type(mut self, content_type: &str) -> Self {
-        self.content_type = content_type.to_owned();
+        content_type.clone_into(&mut self.content_type);
         self
     }
 
@@ -554,6 +554,21 @@ impl AssertionDecodeError {
         version: Option<usize>,
         content_type: String,
         source: serde_json::error::Error,
+    ) -> Self {
+        Self {
+            label,
+            version,
+            content_type,
+            source: source.into(),
+        }
+    }
+
+    #[cfg(feature = "unstable_api")]
+    pub(crate) fn from_err<S: Into<AssertionDecodeErrorCause>>(
+        label: String,
+        version: Option<usize>,
+        content_type: String,
+        source: S,
     ) -> Self {
         Self {
             label,

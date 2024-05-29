@@ -39,6 +39,17 @@ pub struct ClaimGeneratorInfo {
     other: HashMap<String, Value>,
 }
 
+impl Default for ClaimGeneratorInfo {
+    fn default() -> Self {
+        Self {
+            name: crate::NAME.to_string(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            icon: None,
+            other: HashMap::new(),
+        }
+    }
+}
+
 impl ClaimGeneratorInfo {
     pub fn new<S: Into<String>>(name: S) -> Self {
         Self {

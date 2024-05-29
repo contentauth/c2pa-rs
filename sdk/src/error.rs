@@ -216,10 +216,10 @@ pub enum Error {
     ResourceNotFound(String),
 
     #[error("XMP read error")]
-    XmpReadError,
+    XmpReadError(String),
 
     #[error("XMP write error")]
-    XmpWriteError,
+    XmpWriteError(String),
 
     #[error("XMP is not supported")]
     XmpNotSupported,
@@ -288,8 +288,3 @@ pub enum Error {
 
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(feature = "openssl_sign")]
-pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
-    Error::OpenSslError(err)
-}

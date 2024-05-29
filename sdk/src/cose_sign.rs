@@ -204,7 +204,12 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
     };
 
     let certs = signer.certs()?;
-    let ocsp_val = signer.ocsp_val();
+
+    let ocsp_val = if _sync {
+        signer.ocsp_val()
+    } else {
+        signer.ocsp_val().await
+    };
 
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()), // single cert
@@ -357,6 +362,7 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
         use crate::{
