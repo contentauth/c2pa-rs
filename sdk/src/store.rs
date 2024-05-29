@@ -19,6 +19,7 @@ use std::{
 use std::{fs, path::Path};
 
 use async_generic::async_generic;
+use async_recursion::async_recursion;
 use log::error;
 
 #[cfg(feature = "file_io")]
@@ -1390,6 +1391,7 @@ impl Store {
     }
 
     // wake the ingredients and validate
+    #[async_recursion(?Send)]
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
@@ -1451,6 +1453,10 @@ impl Store {
                         validation_log,
                     )
                     .await?;
+
+                    // recurse nested ingredients
+                    Store::ingredient_checks_async(store, ingredient, asset_data, validation_log)
+                        .await?;
                 } else {
                     let log_item = log_item!(
                         &c2pa_manifest.url(),
@@ -3601,7 +3607,17 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
-        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
+        Store::verify_store_async(
+            &new_store,
+            &mut ClaimAssetData::Path(op.as_path()),
+            &mut report,
+        )
+        .await
+        .unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
     }
 
     #[actix::test]
@@ -3628,7 +3644,18 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
-        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
+
+        Store::verify_store_async(
+            &new_store,
+            &mut ClaimAssetData::Path(op.as_path()),
+            &mut report,
+        )
+        .await
+        .unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
     }
 
     #[test]
@@ -4866,11 +4893,18 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = DetailedStatusTracker::new();
-        let _new_store = Store::load_from_memory("jpeg", &result, true, &mut report).unwrap();
+        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+
+        Store::verify_store_async(
+            &new_store,
+            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            &mut report,
+        )
+        .await
+        .unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
-
         // std::fs::write("target/test.jpg", result).unwrap();
     }
 
@@ -5021,7 +5055,11 @@ pub mod tests {
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
         let mut report = DetailedStatusTracker::new();
-        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
+
+        Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
+            .await
+            .unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
@@ -5165,7 +5203,11 @@ pub mod tests {
         output_file.write_all(&cm).unwrap();
 
         let mut report = DetailedStatusTracker::new();
-        let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
+
+        Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
+            .await
+            .unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
