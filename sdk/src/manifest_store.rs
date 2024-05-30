@@ -151,9 +151,9 @@ impl ManifestStore {
         for claim in store.claims() {
             let manifest_label = claim.label();
             #[cfg(feature = "file_io")]
-            let result = Manifest::from_store(&store, manifest_label, resource_path);
+            let result = Manifest::from_store(store, manifest_label, resource_path);
             #[cfg(not(feature = "file_io"))]
-            let result = Manifest::from_store(&store, manifest_label);
+            let result = Manifest::from_store(store, manifest_label);
             match result {
                 Ok(manifest) => {
                     manifest_store
