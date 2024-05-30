@@ -19,17 +19,19 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+use serde::Serialize;
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
     settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
-    validation_status::ValidationStatus, Manifest,
+    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
 };
 
 /// A reader for the manifest store.
-#[derive(Debug)]
+#[derive(Serialize)]
+#[serde(transparent)]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
 }
@@ -150,7 +152,7 @@ impl Reader {
         }
 
         Ok(Reader {
-            manifest_store: ManifestStore::from_store(&store, &validation_log),
+            manifest_store: ManifestStore::from_store(store, &validation_log),
         })
     }
 
@@ -233,5 +235,13 @@ impl Default for Reader {
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.json().as_str())
+    }
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let report = ManifestStoreReport::from_store(self.manifest_store.store())
+            .map_err(|_| std::fmt::Error)?;
+        f.write_str(&report.to_string())
     }
 }
