@@ -18,7 +18,7 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{self, create_dir_all, remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -315,7 +315,29 @@ fn main() -> Result<()> {
     env_logger::init();
 
     let path = &args.path;
+    match path.is_dir() {
+        true => {
+            for path in fs::read_dir(path)? {
+                let path = match path {
+                    Ok(path) => path.path(),
+                    Err(err) => {
+                        println!("{}", err);
+                        continue;
+                    }
+                };
 
+                if let Err(err) = execute_with_path(&args, &path) {
+                    println!("path `{}` failed with {}", path.display(), err);
+                }
+            }
+        }
+        false => execute_with_path(&args, path)?,
+    }
+
+    Ok(())
+}
+
+fn execute_with_path(args: &CliArgs, path: &Path) -> Result<()> {
     if args.info {
         return info(path);
     }
@@ -331,7 +353,7 @@ fn main() -> Result<()> {
     }
 
     // configure the SDK
-    configure_sdk(&args).context("Could not configure c2pa-rs")?;
+    configure_sdk(args).context("Could not configure c2pa-rs")?;
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
@@ -363,7 +385,7 @@ fn main() -> Result<()> {
                 (std::fs::read_to_string(manifest_path)?, base_path)
             }
             None => (
-                args.config.unwrap_or_default(),
+                args.config.clone().unwrap_or_default(),
                 std::env::current_dir().ok(),
             ),
         };
@@ -403,21 +425,21 @@ fn main() -> Result<()> {
             }
         }
 
-        if let Some(parent_path) = args.parent {
-            let ingredient = load_ingredient(&parent_path)?;
+        if let Some(parent_path) = &args.parent {
+            let ingredient = load_ingredient(parent_path)?;
             manifest.set_parent(ingredient)?;
         }
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
         // note: This could be treated as an update manifest eventually since the image is the same
         if manifest.parent().is_none() {
-            let source_ingredient = Ingredient::from_file(&args.path)?;
+            let source_ingredient = Ingredient::from_file(path)?;
             if source_ingredient.manifest_data().is_some() {
                 manifest.set_parent(source_ingredient)?;
             }
         }
 
-        if let Some(remote) = args.remote {
+        if let Some(remote) = &args.remote {
             if args.sidecar {
                 manifest.set_remote_manifest(remote);
             } else {
@@ -427,8 +449,8 @@ fn main() -> Result<()> {
             manifest.set_sidecar_manifest();
         }
 
-        if let Some(output) = args.output {
-            if ext_normal(&output) != ext_normal(&args.path) {
+        if let Some(output) = &args.output {
+            if ext_normal(output) != ext_normal(path) {
                 bail!("Output type must match source type");
             }
             if output.exists() && !args.force {
@@ -442,34 +464,35 @@ fn main() -> Result<()> {
                 bail!("Missing extension output");
             }
 
-            let signer = if let Some(signer_process_name) = args.signer_path {
-                let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+            let signer = match &args.signer_path {
+                Some(signer_process_name) => {
+                    let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
 
-                let process_runner = Box::new(ExternalProcessRunner::new(
-                    cb_config.clone(),
-                    signer_process_name,
-                ));
-                let signer = CallbackSigner::new(process_runner, cb_config);
+                    let process_runner = Box::new(ExternalProcessRunner::new(
+                        cb_config.clone(),
+                        signer_process_name.to_owned(),
+                    ));
+                    let signer = CallbackSigner::new(process_runner, cb_config);
 
-                Box::new(signer)
-            } else {
-                sign_config.signer()?
+                    Box::new(signer)
+                }
+                None => sign_config.signer()?,
             };
 
             manifest
-                .embed(&args.path, &output, signer.as_ref())
+                .embed(path, output, signer.as_ref())
                 .context("embedding manifest")?;
 
             // generate a report on the output file
             if args.detailed {
                 println!(
                     "{}",
-                    ManifestStoreReport::from_file(&output).map_err(special_errs)?
+                    ManifestStoreReport::from_file(output).map_err(special_errs)?
                 );
             } else {
                 println!(
                     "{}",
-                    ManifestStore::from_file(&output).map_err(special_errs)?
+                    ManifestStore::from_file(output).map_err(special_errs)?
                 )
             }
         } else {
@@ -477,32 +500,32 @@ fn main() -> Result<()> {
         }
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
         bail!("Manifest definition required with these options or flags")
-    } else if let Some(output) = args.output {
+    } else if let Some(output) = &args.output {
         if output.is_file() || output.extension().is_some() {
             bail!("Output must be a folder for this option.")
         }
         if output.exists() {
             if args.force {
-                remove_dir_all(&output)?;
+                remove_dir_all(output)?;
             } else {
                 bail!("Output already exists, use -f/force to force write");
             }
         }
-        create_dir_all(&output)?;
+        create_dir_all(output)?;
         if args.ingredient {
-            let report = Ingredient::from_file_with_folder(&args.path, &output)
+            let report = Ingredient::from_file_with_folder(path, output)
                 .map_err(special_errs)?
                 .to_string();
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let report = ManifestStore::from_file_with_resources(&args.path, &output)
+            let report = ManifestStore::from_file_with_resources(path, output)
                 .map_err(special_errs)?
                 .to_string();
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = ManifestStoreReport::from_file(&args.path)
+                let detailed = ManifestStoreReport::from_file(path)
                     .map_err(special_errs)?
                     .to_string();
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
@@ -511,20 +534,14 @@ fn main() -> Result<()> {
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {
-        println!(
-            "{}",
-            Ingredient::from_file(&args.path).map_err(special_errs)?
-        )
+        println!("{}", Ingredient::from_file(path).map_err(special_errs)?)
     } else if args.detailed {
         println!(
             "{}",
-            ManifestStoreReport::from_file(&args.path).map_err(special_errs)?
+            ManifestStoreReport::from_file(path).map_err(special_errs)?
         )
     } else {
-        println!(
-            "{}",
-            ManifestStore::from_file(&args.path).map_err(special_errs)?
-        )
+        println!("{}", ManifestStore::from_file(path).map_err(special_errs)?)
     }
 
     Ok(())
