@@ -28,7 +28,13 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "unstable_api")]
 use crate::asset_io::CAIRead;
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
+use crate::{
+    assertions::{labels, AssetType},
+    claim::Claim,
+    hashed_uri::HashedUri,
+    jumbf::labels::assertion_label_from_uri,
+    Error, Result,
+};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -93,6 +99,8 @@ impl From<HashedUri> for UriOrResource {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A reference to a resource to be used in JSON serialization.
+///
+/// The underlying data can be read as a stream via [`Reader::resource_to_stream`][crate::Reader::resource_to_stream].
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
@@ -272,6 +280,13 @@ impl ResourceStore {
         Ok(self)
     }
 
+    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
+        self.resources
+            .keys()
+            .map(|uri| ResourceRef::new(mime_from_uri(uri), uri.to_owned()))
+    }
+
     /// Returns a [`HashMap`] of internal resources.
     pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
         &self.resources
@@ -361,6 +376,7 @@ impl Default for ResourceStore {
 
 #[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
+    /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 
@@ -371,6 +387,20 @@ impl ResourceResolver for ResourceStore {
         let cursor = std::io::Cursor::new(data);
         Ok(Box::new(cursor))
     }
+}
+
+pub fn mime_from_uri(uri: &str) -> String {
+    if let Some(label) = assertion_label_from_uri(uri) {
+        if label.starts_with(labels::THUMBNAIL) {
+            // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
+            if let Some(ext) = label.rsplit('.').next() {
+                return format!("image/{ext}");
+            }
+        }
+    }
+
+    // Unknown binary data.
+    String::from("application/octet-stream")
 }
 
 #[cfg(test)]
