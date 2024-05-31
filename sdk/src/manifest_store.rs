@@ -90,7 +90,7 @@ impl ManifestStore {
             None => self.get_active(),
         };
         if let Some(manifest) = manifest {
-            let mut resources = manifest.resources();
+            let mut resources = manifest.resource_store();
             if !resources.exists(uri) {
                 // also search ingredients to support Reader model
                 for ingredient in manifest.ingredients() {
@@ -176,7 +176,7 @@ impl ManifestStore {
             &store,
             &OneShotStatusTracker::new(),
             #[cfg(feature = "file_io")]
-            manifest.resources().base_path(),
+            manifest.resource_store().base_path(),
         ))
     }
 
