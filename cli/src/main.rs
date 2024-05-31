@@ -18,14 +18,14 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
+    fs::{self, create_dir_all, remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
+use c2pa::{Error, Ingredient, Manifest, ManifestStoreReport, Reader};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -462,15 +462,9 @@ fn main() -> Result<()> {
 
             // generate a report on the output file
             if args.detailed {
-                println!(
-                    "{}",
-                    ManifestStoreReport::from_file(&output).map_err(special_errs)?
-                );
+                println!("{:?}", Reader::from_file(output).map_err(special_errs)?);
             } else {
-                println!(
-                    "{}",
-                    ManifestStore::from_file(&output).map_err(special_errs)?
-                )
+                println!("{}", Reader::from_file(output).map_err(special_errs)?)
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -496,18 +490,35 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let report = ManifestStore::from_file_with_resources(&args.path, &output)
-                .map_err(special_errs)?
-                .to_string();
+            let reader = Reader::from_file(path).map_err(special_errs)?;
+            for (_, manifest) in reader.manifests() {
+                let manifest_path = output.join(
+                    manifest
+                        .label()
+                        .context("Failed to get maniest label")?
+                        .replace(':', "_"),
+                );
+                for (resource_label, resource_bytes) in manifest.resources() {
+                    // TODO: the labels are not normalized and should be (labels::to_normalized_uri in c2pa-rs)
+                    let resource_path = manifest_path.join(resource_label);
+                    fs::create_dir_all(
+                        resource_path
+                            .parent()
+                            .context("Failed to find resource parent path from label")?,
+                    )?;
+                    fs::write(&resource_path, resource_bytes)?;
+                }
+            }
+
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = ManifestStoreReport::from_file(&args.path)
-                    .map_err(special_errs)?
-                    .to_string();
+                let detailed = format!("{:?}", Reader::from_file(path).map_err(special_errs)?);
+
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
-            File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
+            File::create(output.join("manifest_store.json"))?
+                .write_all(&reader.to_string().into_bytes())?;
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {
@@ -516,15 +527,9 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        println!(
-            "{}",
-            ManifestStoreReport::from_file(&args.path).map_err(special_errs)?
-        )
+        println!("{:?}", Reader::from_file(path).map_err(special_errs)?)
     } else {
-        println!(
-            "{}",
-            ManifestStore::from_file(&args.path).map_err(special_errs)?
-        )
+        println!("{}", Reader::from_file(path).map_err(special_errs)?)
     }
 
     Ok(())
@@ -566,7 +571,7 @@ pub mod tests {
             .embed(SOURCE_PATH, OUTPUT_PATH, signer.as_ref())
             .expect("embed");
 
-        let ms = ManifestStore::from_file(OUTPUT_PATH)
+        let ms = Reader::from_file(OUTPUT_PATH)
             .expect("from_file")
             .to_string();
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
