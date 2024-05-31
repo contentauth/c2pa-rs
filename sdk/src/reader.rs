@@ -16,7 +16,10 @@
 
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::{Read, Seek, Write};
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, Write},
+};
 
 use async_generic::async_generic;
 
@@ -185,6 +188,11 @@ impl Reader {
     /// Return the active [`Manifest`] label if one exists.
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
+    }
+
+    /// Returns a reference to a hash map, mapping manifest label to manifest
+    pub fn manifests(&self) -> &HashMap<String, Manifest> {
+        self.manifest_store.manifests()
     }
 
     /// Return a [`Manifest`] for a given label if it exists.
