@@ -19,7 +19,6 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
-use serde::Serialize;
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;
@@ -30,8 +29,6 @@ use crate::{
 };
 
 /// A reader for the manifest store.
-#[derive(Serialize)]
-#[serde(transparent)]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
 }
