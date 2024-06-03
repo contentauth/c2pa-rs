@@ -18,7 +18,7 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 use std::{
-    fs::{self, create_dir_all, remove_dir_all, File},
+    fs::{create_dir_all, remove_dir_all, File},
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
@@ -501,12 +501,12 @@ fn main() -> Result<()> {
                 for (resource_label, resource_bytes) in manifest.resources() {
                     // TODO: the labels are not normalized and should be (labels::to_normalized_uri in c2pa-rs)
                     let resource_path = manifest_path.join(resource_label);
-                    fs::create_dir_all(
+                    std::fs::create_dir_all(
                         resource_path
                             .parent()
                             .context("Failed to find resource parent path from label")?,
                     )?;
-                    fs::write(&resource_path, resource_bytes)?;
+                    std::fs::write(&resource_path, resource_bytes)?;
                 }
             }
 
