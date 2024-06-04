@@ -17,7 +17,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.73.0"
+rust-version = "1.74.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -57,7 +57,6 @@ required-features = ["unstable_api"]
 [[example]]
 name = "v2api"
 required-features = ["unstable_api"]
-
 
 
 [lib]
@@ -160,9 +159,12 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-c2pa = { path = ".", features = ["unstable_api"] } # allow integration tests to use the new API
-jumbf = "0.3.0"
 mockall = "0.11.2"
+c2pa = { path = ".", features = [
+	"unstable_api",
+] } # allow integration tests to use the new API
+jumbf = "0.3.0"
+
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
