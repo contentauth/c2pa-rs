@@ -146,7 +146,7 @@ pub struct ResourceStore {
 
 impl ResourceStore {
     /// Create a new resource reference.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ResourceStore {
             resources: HashMap::new(),
             #[cfg(feature = "file_io")]
@@ -156,14 +156,14 @@ impl ResourceStore {
     }
 
     /// Set a manifest label for this store used to resolve relative JUMBF URIs.
-    pub(crate) fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
         self.label = Some(label.into());
         self
     }
 
     #[cfg(feature = "file_io")]
     // Returns the base path for relative file paths if it is set.
-    pub(crate) fn base_path(&self) -> Option<&Path> {
+    pub fn base_path(&self) -> Option<&Path> {
         self.base_path.as_deref()
     }
 
@@ -171,18 +171,18 @@ impl ResourceStore {
     /// Sets a base path for relative file paths.
     ///
     /// Identifiers will be interpreted as file paths and resources will be written to files if this is set.
-    pub(crate) fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) {
+    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) {
         self.base_path = Some(base_path.into());
     }
 
     #[cfg(feature = "file_io")]
     /// Returns and removes the base path.
-    pub(crate) fn take_base_path(&mut self) -> Option<PathBuf> {
+    pub fn take_base_path(&mut self) -> Option<PathBuf> {
         self.base_path.take()
     }
 
     /// Generates a unique ID for a given content type (adds a file extension).
-    pub(crate) fn id_from(&self, key: &str, format: &str) -> String {
+    pub fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
@@ -206,12 +206,7 @@ impl ResourceStore {
     /// Adds a resource, generating a [`ResourceRef`] from a key and format.
     ///
     /// The generated identifier may be different from the key.
-    pub(crate) fn add_with<R>(
-        &mut self,
-        key: &str,
-        format: &str,
-        value: R,
-    ) -> crate::Result<ResourceRef>
+    pub fn add_with<R>(&mut self, key: &str, format: &str, value: R) -> crate::Result<ResourceRef>
     where
         R: Into<Vec<u8>>,
     {
@@ -264,7 +259,7 @@ impl ResourceStore {
     }
 
     /// Adds a resource, using a given id value.
-    pub(crate) fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
+    pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
     where
         S: Into<String>,
         R: Into<Vec<u8>>,
@@ -296,7 +291,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub(crate) fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -318,7 +313,7 @@ impl ResourceStore {
         )
     }
 
-    pub(crate) fn write_stream(
+    pub fn write_stream(
         &self,
         id: &str,
         mut stream: impl Write + Read + Seek + Send,
@@ -345,7 +340,7 @@ impl ResourceStore {
     }
 
     /// Returns `true` if the resource has been added or exists as file.
-    pub(crate) fn exists(&self, id: &str) -> bool {
+    pub fn exists(&self, id: &str) -> bool {
         if !self.resources.contains_key(id) {
             #[cfg(feature = "file_io")]
             match self.base_path.as_ref() {
@@ -362,11 +357,11 @@ impl ResourceStore {
         }
     }
 
-    // #[cfg(feature = "file_io")]
-    // // Returns the full path for an ID.
-    // pub(crate) fn path_for_id(&self, id: &str) -> Option<PathBuf> {
-    //     self.base_path.as_ref().map(|base| base.join(id))
-    // }
+    #[cfg(feature = "file_io")]
+    // Returns the full path for an ID.
+    pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
+        self.base_path.as_ref().map(|base| base.join(id))
+    }
 }
 
 impl Default for ResourceStore {

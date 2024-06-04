@@ -457,7 +457,7 @@ impl Manifest {
     }
 
     /// Return a mutable reference to the manifest resources
-    pub(crate) fn resources_mut(&mut self) -> &mut ResourceStore {
+    pub fn resources_mut(&mut self) -> &mut ResourceStore {
         &mut self.resources
     }
 
