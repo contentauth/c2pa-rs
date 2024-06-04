@@ -13,7 +13,7 @@
 
 use std::{
     collections::HashMap,
-    io::{Read, Seek, Write},
+    io::{self, Read, Seek, Write},
 };
 
 use async_generic::async_generic;
@@ -372,19 +372,22 @@ impl Builder {
                 // add a folder to the zip file
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for (id, data) in self.resources.resources() {
-                    zip.start_file(format!("resources/{}", id), options)
+                for resource_ref in self.resources.iter_resources() {
+                    zip.start_file(format!("resources/{}", resource_ref.identifier), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    zip.write_all(data)?;
+                    io::copy(&mut self.resources.open(&resource_ref)?, &mut zip)?;
                 }
                 for (index, ingredient) in self.definition.ingredients.iter().enumerate() {
                     zip.start_file(format!("ingredients/{}/", index), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    for (id, data) in ingredient.resources().resources() {
+                    for resource_ref in ingredient.resources().iter_resources() {
                         //println!("adding ingredient {}/{}", index, id);
-                        zip.start_file(format!("ingredients/{}/{}", index, id), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
+                        zip.start_file(
+                            format!("ingredients/{}/{}", index, resource_ref.identifier),
+                            options,
+                        )
+                        .map_err(|e| Error::OtherError(Box::new(e)))?;
+                        io::copy(&mut ingredient.resources().open(&resource_ref)?, &mut zip)?;
                     }
                 }
                 zip.finish()

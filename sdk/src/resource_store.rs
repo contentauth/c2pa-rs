@@ -93,6 +93,9 @@ impl From<HashedUri> for UriOrResource {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A reference to a resource to be used in JSON serialization.
+///
+/// A resource can be read as a stream via [`ResourceResolver::open`][ResourceResolver::open]
+/// from a [`ResourceStore`][ResourceStore].
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
@@ -143,7 +146,7 @@ pub struct ResourceStore {
 
 impl ResourceStore {
     /// Create a new resource reference.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         ResourceStore {
             resources: HashMap::new(),
             #[cfg(feature = "file_io")]
@@ -153,14 +156,14 @@ impl ResourceStore {
     }
 
     /// Set a manifest label for this store used to resolve relative JUMBF URIs.
-    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
+    pub(crate) fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
         self.label = Some(label.into());
         self
     }
 
     #[cfg(feature = "file_io")]
     // Returns the base path for relative file paths if it is set.
-    pub fn base_path(&self) -> Option<&Path> {
+    pub(crate) fn base_path(&self) -> Option<&Path> {
         self.base_path.as_deref()
     }
 
@@ -168,18 +171,18 @@ impl ResourceStore {
     /// Sets a base path for relative file paths.
     ///
     /// Identifiers will be interpreted as file paths and resources will be written to files if this is set.
-    pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) {
+    pub(crate) fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) {
         self.base_path = Some(base_path.into());
     }
 
     #[cfg(feature = "file_io")]
     /// Returns and removes the base path.
-    pub fn take_base_path(&mut self) -> Option<PathBuf> {
+    pub(crate) fn take_base_path(&mut self) -> Option<PathBuf> {
         self.base_path.take()
     }
 
     /// Generates a unique ID for a given content type (adds a file extension).
-    pub fn id_from(&self, key: &str, format: &str) -> String {
+    pub(crate) fn id_from(&self, key: &str, format: &str) -> String {
         let ext = match format {
             "jpg" | "jpeg" | "image/jpeg" => ".jpg",
             "png" | "image/png" => ".png",
@@ -203,7 +206,12 @@ impl ResourceStore {
     /// Adds a resource, generating a [`ResourceRef`] from a key and format.
     ///
     /// The generated identifier may be different from the key.
-    pub fn add_with<R>(&mut self, key: &str, format: &str, value: R) -> crate::Result<ResourceRef>
+    pub(crate) fn add_with<R>(
+        &mut self,
+        key: &str,
+        format: &str,
+        value: R,
+    ) -> crate::Result<ResourceRef>
     where
         R: Into<Vec<u8>>,
     {
@@ -256,7 +264,7 @@ impl ResourceStore {
     }
 
     /// Adds a resource, using a given id value.
-    pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
+    pub(crate) fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
     where
         S: Into<String>,
         R: Into<Vec<u8>>,
@@ -272,7 +280,15 @@ impl ResourceStore {
         Ok(self)
     }
 
-    /// Returns a [`HashMap`] of internal resources.
+    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
+        self.resources.keys().map_while(|uri| {
+            uri.split('.')
+                .last()
+                .map(|ext| ResourceRef::new(format!("image/{}", ext), uri.to_owned()))
+        })
+    }
+
     pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
         &self.resources
     }
@@ -280,7 +296,7 @@ impl ResourceStore {
     /// Returns a copy on write reference to the resource if found.
     ///
     /// Returns [`Error::ResourceNotFound`] if it cannot find a resource matching that ID.
-    pub fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
+    pub(crate) fn get(&self, id: &str) -> Result<Cow<Vec<u8>>> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
@@ -302,7 +318,7 @@ impl ResourceStore {
         )
     }
 
-    pub fn write_stream(
+    pub(crate) fn write_stream(
         &self,
         id: &str,
         mut stream: impl Write + Read + Seek + Send,
@@ -319,7 +335,7 @@ impl ResourceStore {
                 None => return Err(Error::ResourceNotFound(id.to_string())),
             }
         }
-        match self.resources().get(id) {
+        match self.resources.get(id) {
             Some(data) => {
                 stream.write_all(data).map_err(Error::IoError)?;
                 Ok(data.len() as u64)
@@ -329,7 +345,7 @@ impl ResourceStore {
     }
 
     /// Returns `true` if the resource has been added or exists as file.
-    pub fn exists(&self, id: &str) -> bool {
+    pub(crate) fn exists(&self, id: &str) -> bool {
         if !self.resources.contains_key(id) {
             #[cfg(feature = "file_io")]
             match self.base_path.as_ref() {
@@ -346,11 +362,11 @@ impl ResourceStore {
         }
     }
 
-    #[cfg(feature = "file_io")]
-    // Returns the full path for an ID.
-    pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
-        self.base_path.as_ref().map(|base| base.join(id))
-    }
+    // #[cfg(feature = "file_io")]
+    // // Returns the full path for an ID.
+    // pub(crate) fn path_for_id(&self, id: &str) -> Option<PathBuf> {
+    //     self.base_path.as_ref().map(|base| base.join(id))
+    // }
 }
 
 impl Default for ResourceStore {
@@ -361,6 +377,7 @@ impl Default for ResourceStore {
 
 #[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
+    /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 

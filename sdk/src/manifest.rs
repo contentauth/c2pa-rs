@@ -451,18 +451,13 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.time)
     }
 
-    /// Returns a reference to a hash map, mapping resource labels to bytes
-    pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
-        self.resources.resources()
-    }
-
     /// Return an immutable reference to the manifest resources
-    pub(crate) fn resource_store(&self) -> &ResourceStore {
+    pub fn resources(&self) -> &ResourceStore {
         &self.resources
     }
 
     /// Return a mutable reference to the manifest resources
-    pub(crate) fn resource_store_mut(&mut self) -> &mut ResourceStore {
+    pub(crate) fn resources_mut(&mut self) -> &mut ResourceStore {
         &mut self.resources
     }
 
@@ -513,7 +508,7 @@ impl Manifest {
             for claim_info in info_vec {
                 let mut info = claim_info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    info.set_icon(icon.to_resource_ref(manifest.resource_store_mut(), claim)?);
+                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
                 }
                 generators.push(info);
             }
@@ -567,8 +562,7 @@ impl Manifest {
                             action.software_agent_mut()
                         {
                             if let Some(icon) = info.icon.as_mut() {
-                                let icon =
-                                    icon.to_resource_ref(manifest.resource_store_mut(), claim)?;
+                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                 info.set_icon(icon);
                             }
                         }
@@ -579,9 +573,9 @@ impl Manifest {
                         for template in templates {
                             // replace icon with resource ref
                             template.icon = match template.icon.take() {
-                                Some(icon) => Some(
-                                    icon.to_resource_ref(manifest.resource_store_mut(), claim)?,
-                                ),
+                                Some(icon) => {
+                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
+                                }
                                 None => None,
                             };
 
@@ -589,10 +583,8 @@ impl Manifest {
                             template.software_agent = match template.software_agent.take() {
                                 Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
                                     if let Some(icon) = info.icon.as_mut() {
-                                        let icon = icon.to_resource_ref(
-                                            manifest.resource_store_mut(),
-                                            claim,
-                                        )?;
+                                        let icon =
+                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
                                         info.set_icon(icon);
                                     }
                                     Some(SoftwareAgent::ClaimGeneratorInfo(info))
@@ -694,10 +686,10 @@ impl Manifest {
             #[cfg(feature = "add_thumbnails")]
             if let Ok((format, image)) = crate::utils::thumbnail::make_thumbnail(path.as_ref()) {
                 // Do not write this as a file when reading from files
-                let base_path = self.resource_store_mut().take_base_path();
+                let base_path = self.resources_mut().take_base_path();
                 self.set_thumbnail(format, image)?;
                 if let Some(path) = base_path {
-                    self.resource_store_mut().set_base_path(path)
+                    self.resources_mut().set_base_path(path)
                 }
             }
         }
@@ -723,7 +715,7 @@ impl Manifest {
             for info in info_vec {
                 let mut claim_info = info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    claim_info.icon = Some(icon.to_hashed_uri(self.resource_store(), &mut claim)?);
+                    claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
                 }
                 claim.add_claim_generator_info(claim_info);
             }
@@ -826,7 +818,7 @@ impl Manifest {
                             // replace icon with hashed_uri
                             template.icon = match template.icon.take() {
                                 Some(icon) => {
-                                    Some(icon.to_hashed_uri(self.resource_store(), &mut claim)?)
+                                    Some(icon.to_hashed_uri(self.resources(), &mut claim)?)
                                 }
                                 None => None,
                             };
@@ -836,7 +828,7 @@ impl Manifest {
                                 Some(SoftwareAgent::ClaimGeneratorInfo(mut info)) => {
                                     if let Some(icon) = info.icon.as_mut() {
                                         let icon =
-                                            icon.to_hashed_uri(self.resource_store(), &mut claim)?;
+                                            icon.to_hashed_uri(self.resources(), &mut claim)?;
                                         info.set_icon(icon);
                                     }
                                     Some(SoftwareAgent::ClaimGeneratorInfo(info))
@@ -857,8 +849,7 @@ impl Manifest {
                         {
                             if let Some(icon) = info.icon.as_ref() {
                                 let mut info = info.to_owned();
-                                let icon_uri =
-                                    icon.to_hashed_uri(self.resource_store(), &mut claim)?;
+                                let icon_uri = icon.to_hashed_uri(self.resources(), &mut claim)?;
                                 let update = info.set_icon(icon_uri);
                                 let mut action = action.to_owned();
                                 action = action.set_software_agent(update.to_owned());
@@ -2210,7 +2201,7 @@ pub(crate) mod tests {
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
-            .resource_store_mut()
+            .resources_mut()
             .add("IMG_0003.jpg", *b"my value")
             .unwrap()
             .add("sample1.svg", *b"my value")
@@ -2269,7 +2260,7 @@ pub(crate) mod tests {
         let mut manifest = Manifest::from_json(MANIFEST_JSON).unwrap();
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
-            .resource_store_mut()
+            .resources_mut()
             .add("IMG_0003.jpg", *b"my value")
             .unwrap()
             .add("sample1.svg", *b"my value")
