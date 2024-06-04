@@ -119,7 +119,7 @@ serde_with = "3.4.0"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.10.1"
-thiserror = "1.0.40"
+thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.2.2"
 uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
