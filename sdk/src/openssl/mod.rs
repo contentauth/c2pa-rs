@@ -21,6 +21,9 @@ mod rsa_validator;
 #[cfg(feature = "openssl")]
 pub(crate) use rsa_validator::RsaValidator;
 
+//#[cfg(feature = "openssl")]
+pub(crate) use rsa_validator::RsaLegacyValidator;
+
 #[cfg(feature = "openssl_sign")]
 mod ec_signer;
 #[cfg(feature = "openssl_sign")]

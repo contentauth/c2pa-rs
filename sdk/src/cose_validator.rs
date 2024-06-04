@@ -51,14 +51,16 @@ use crate::{
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 pub(crate) const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
+pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
+
 pub(crate) const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
 pub(crate) const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
 pub(crate) const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
 pub(crate) const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
@@ -689,6 +691,8 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
     }
 }
 
+#[allow(dead_code)]
+#[async_generic]
 pub(crate) fn check_ocsp_status(
     cose_bytes: &[u8],
     data: &[u8],
@@ -700,7 +704,11 @@ pub(crate) fn check_ocsp_status(
     let mut result = Ok(OcspData::default());
 
     if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
-        let time_stamp_info = get_timestamp_info(&sign1, data);
+        let time_stamp_info = if _sync {
+            get_timestamp_info(&sign1, data)
+        } else {
+            get_timestamp_info_async(&sign1, data).await
+        };
 
         // check stapled OCSP response, must have timestamp
         if let Ok(tst_info) = &time_stamp_info {
@@ -792,6 +800,7 @@ fn get_signing_time(
 }
 
 // return appropriate TstInfo if available
+#[async_generic]
 fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> {
     // parse the temp timestamp
     if let Some(t) = &sign1
@@ -807,8 +816,12 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
         })
     {
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos =
-            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
+        let tst_infos = if _sync {
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?
+        } else {
+            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, data, &sign1.protected)
+                .await?
+        };
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -965,7 +978,7 @@ pub(crate) async fn verify_cose_async(
     // verify cert matches requested algorithm
     if cert_check {
         // verify certs
-        match get_timestamp_info(&sign1, &data) {
+        match get_timestamp_info_async(&sign1, &data).await {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors

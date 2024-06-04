@@ -12,21 +12,32 @@
 // each license.
 
 use async_generic::async_generic;
-use bcder::decode::Constructed;
+use bcder::encode::Values;
+use bcder::{decode::Constructed, ConstOid};
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
-/// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
-/// using the specified Time Authority
-use crate::error::{Error, Result};
 use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
-        rfc5652::{CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA},
+        rfc5652::{
+            CertificateChoices::Certificate, SignedAttributesDer, SignedData, OID_ID_SIGNED_DATA,
+        },
+    },
+    cose_validator::{
+        ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
+        ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
+        SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
     },
     hash_utils::vec_compare,
     AsyncSigner, Signer,
+};
+/// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
+/// using the specified Time Authority
+use crate::{
+    //cose_validator::{SHA256_OID, SHA384_OID, SHA512_OID},
+    error::{Error, Result},
 };
 
 #[allow(dead_code)]
@@ -70,7 +81,7 @@ pub(crate) fn cose_timestamp_countersign(
     }
 }
 
-#[allow(dead_code)]
+#[async_generic]
 pub(crate) fn cose_sigtst_to_tstinfos(
     sigtst_cbor: &[u8],
     data: &[u8],
@@ -83,7 +94,12 @@ pub(crate) fn cose_sigtst_to_tstinfos(
 
     for token in &tst_container.tst_tokens {
         let tbs = cose_countersign_data(data, p_header);
-        let tst_info = verify_timestamp(&token.val, &tbs)?;
+        let tst_info = if _sync {
+            verify_timestamp(&token.val, &tbs)?
+        } else {
+            verify_timestamp_async(&token.val, &tbs).await?
+        };
+
         tstinfos.push(tst_info);
     }
 
@@ -103,8 +119,6 @@ fn time_stamp_request_http(
     request: &crate::asn1::rfc3161::TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
-
-    use bcder::encode::Values;
 
     const HTTP_CONTENT_TYPE_REQUEST: &str = "application/timestamp-query";
     const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
@@ -301,7 +315,6 @@ pub fn default_rfc3161_request(
 
 #[allow(unused_variables)]
 pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>> {
-    use bcder::encode::Values;
     let request = time_stamp_message_http(data, x509_certificate::DigestAlgorithm::Sha256)?;
 
     let mut body = Vec::<u8>::new();
@@ -322,34 +335,146 @@ fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chr
         x509_certificate::asn1time::Time::GeneralTime(gt) => gt_to_datetime(gt),
     }
 }
+
+#[cfg(feature = "openssl")]
+fn get_local_validator(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    pk_alg: &bcder::Oid,
+) -> Result<Box<dyn crate::validator::CoseValidator>> {
+    let validator = if sig_alg.as_ref() == RSA_OID.as_bytes()
+        || pk_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || pk_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || pk_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA1_OID.as_bytes() {
+            Box::new(crate::openssl::RsaLegacyValidator::new("sha1"))
+        } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            Box::new(crate::openssl::RsaLegacyValidator::new("rs256"))
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            Box::new(crate::openssl::RsaLegacyValidator::new("rs384"))
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            Box::new(crate::openssl::RsaLegacyValidator::new("rs512"))
+        } else {
+            return Err(Error::CoseTimeStampAuthority);
+        }
+    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            crate::validator::get_validator(crate::SigningAlg::Es256)
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            crate::validator::get_validator(crate::SigningAlg::Es384)
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            crate::validator::get_validator(crate::SigningAlg::Es512)
+        } else {
+            return Err(Error::CoseTimeStampAuthority);
+        }
+    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        crate::validator::get_validator(crate::SigningAlg::Ed25519)
+    } else {
+        return Err(Error::CoseTimeStampAuthority);
+    };
+
+    Ok(validator)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn get_validator_type(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    pk_alg: &bcder::Oid,
+) -> Option<String> {
+    if sig_alg.as_ref() == RSA_OID.as_bytes()
+        || pk_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || pk_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || pk_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA1_OID.as_bytes() {
+            Some("sha1".to_string())
+        } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            Some("rs256".to_string())
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            Some("rs384".to_string())
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            Some("rs512".to_string())
+        } else {
+            None
+        }
+    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
+        || pk_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            Some(crate::SigningAlg::Es256.to_string())
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            Some(crate::SigningAlg::Es384.to_string())
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            Some(crate::SigningAlg::Es512.to_string())
+        } else {
+            None
+        }
+    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        Some(crate::SigningAlg::Ed25519.to_string())
+    } else {
+        None
+    }
+}
+
 /// Returns TimeStamp token info if ts verifies against supplied data
+#[async_generic]
 pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     let ts_resp = get_timestamp_response(ts)?;
 
-    // make sure this signature matches the expected data
-    let tst_opt = ts_resp.tst_info()?;
-    let tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
-    let mi = &tst.message_imprint;
-
-    let digest_algorithm = DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm)
-        .map_err(|_e| Error::UnsupportedType)?;
-
-    let mut h = digest_algorithm.digester();
-    h.update(data);
-    let digest = h.finish();
-
-    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
-        return Err(Error::CoseTimeStampMismatch);
-    }
-
     // check for timestamp expiration during stamping
-    if let Ok(Some(sd)) = ts_resp.signed_data() {
-        if let Some(cs) = sd.certificates {
-            if !cs.is_empty() {
-                let cert = match &cs[0] {
+    if let Ok(Some(sd)) = &ts_resp.signed_data() {
+        let certs = sd
+            .certificates
+            .clone()
+            .ok_or(Error::CoseTimeStampValidity)?;
+
+        for signer_info in sd.signer_infos.iter() {
+            if let Some(cert) = certs.iter().find_map(|cc| {
+                let c = match cc {
                     Certificate(c) => c,
-                    _ => return Err(Error::CoseTimeStampValidity),
+                    _ => return None,
                 };
+
+                match &signer_info.sid {
+                    crate::asn1::rfc5652::SignerIdentifier::IssuerAndSerialNumber(sn) => {
+                        if sn.issuer == c.tbs_certificate.issuer
+                            && sn.serial_number == c.tbs_certificate.serial_number
+                        {
+                            Some(c)
+                        } else {
+                            None
+                        }
+                    }
+                    crate::asn1::rfc5652::SignerIdentifier::SubjectKeyIdentifier(ski) => {
+                        const SKI_OID: ConstOid = bcder::Oid(&[2, 5, 29, 14]);
+                        if let Some(extensions) = &c.tbs_certificate.extensions {
+                            if extensions.iter().any(|e| {
+                                if e.id == SKI_OID {
+                                    return *ski == e.value;
+                                }
+                                false
+                            }) {
+                                Some(c)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }) {
+                // timestamp cert expiration
+                let tst_opt = ts_resp.tst_info()?;
+                let tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
 
                 let signing_time = gt_to_datetime(tst.gen_time.clone()).timestamp();
                 let not_before =
@@ -361,11 +486,101 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 if !(signing_time >= not_before && signing_time <= not_after) {
                     return Err(Error::CoseTimeStampValidity);
                 }
+
+                // build CMS structure to verify
+                #[allow(unused_variables)]
+                let tbs = match &signer_info.signed_attributes {
+                    Some(d) => {
+                        let sa_der = SignedAttributesDer::new(d.clone(), None);
+
+                        let mut tbs_der = Vec::new();
+                        sa_der.write_encoded(bcder::Mode::Der, &mut tbs_der)?;
+
+                        tbs_der
+                    }
+                    None => match &sd.content_info.content {
+                        Some(d) => d.to_bytes().to_vec(),
+                        None => return Err(Error::CoseTimeStampValidity),
+                    },
+                };
+
+                #[allow(unused_variables)]
+                let sig_val = &signer_info.signature;
+                #[allow(unused_variables)]
+                let mut signing_key_der = Vec::<u8>::new();
+                cert.tbs_certificate
+                    .subject_public_key_info
+                    .encode_ref()
+                    .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
+
+                // verify signature of timestamp signature
+
+                #[allow(unused_variables)]
+                let hash_alg = &signer_info.digest_algorithm.algorithm;
+                #[allow(unused_variables)]
+                let sig_alg = &signer_info.signature_algorithm.algorithm;
+                #[allow(unused_variables)]
+                let pk_alg = &cert.tbs_certificate.signature.algorithm;
+
+                let validated = if _sync {
+                    #[cfg(feature = "openssl")]
+                    {
+                        let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                        validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)?
+                    }
+
+                    #[cfg(not(feature = "openssl"))]
+                    {
+                        false
+                    }
+                } else {
+                    #[cfg(feature = "openssl")]
+                    {
+                        let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                        validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)?
+                    }
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        crate::wasm::verify_data(
+                            signing_key_der,
+                            get_validator_type(sig_alg, hash_alg, pk_alg),
+                            sig_val.to_bytes().to_vec(),
+                            tbs,
+                        )
+                        .await?
+                    }
+
+                    #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+                    {
+                        false
+                    }
+                };
+
+                if validated {
+                    // make sure this signature matches the expected data
+                    let tst_opt = ts_resp.tst_info()?;
+                    let tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
+                    let mi = &tst.message_imprint;
+
+                    let digest_algorithm = DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm)
+                        .map_err(|_e| Error::UnsupportedType)?;
+
+                    let mut h = digest_algorithm.digester();
+                    h.update(data);
+                    let digest = h.finish();
+
+                    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
+                        return Err(Error::CoseTimeStampMismatch);
+                    }
+                    return Ok(tst);
+                } else {
+                    return Err(Error::CoseTimeStampAuthority);
+                }
             }
         }
     }
-
-    Ok(tst)
+    Err(Error::CoseInvalidTimeStamp)
 }
 
 /// Get TimeStampResponse from DER TimeStampResp bytes

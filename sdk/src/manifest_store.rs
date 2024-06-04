@@ -293,6 +293,7 @@ impl ManifestStore {
     /// Loads a ManifestStore from an init segment and fragment.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate assets.
+    #[allow(dead_code)]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -333,6 +334,7 @@ impl ManifestStore {
     /// #    Ok(())
     /// }
     /// ```
+    #[allow(dead_code)]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -370,6 +372,7 @@ impl ManifestStore {
     /// #
     /// #    Ok(())
     /// }
+    #[allow(dead_code)]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,
