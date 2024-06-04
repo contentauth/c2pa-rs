@@ -163,7 +163,7 @@ mockall = "0.11.2"
 c2pa = { path = ".", features = [
 	"unstable_api",
 ] } # allow integration tests to use the new API
-jumbf = "0.3.0"
+jumbf = "0.4.0"
 
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
