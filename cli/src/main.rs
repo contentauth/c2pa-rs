@@ -25,7 +25,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Error, Ingredient, Manifest, ManifestStoreReport, Reader};
+use c2pa::{Error, Ingredient, Manifest, ManifestStoreReport, Reader, ResourceResolver};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -491,22 +491,25 @@ fn main() -> Result<()> {
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
             let reader = Reader::from_file(path).map_err(special_errs)?;
-            for (_, manifest) in reader.manifests() {
+            for manifest in reader.iter_manifests() {
                 let manifest_path = output.join(
                     manifest
                         .label()
                         .context("Failed to get maniest label")?
                         .replace(':', "_"),
                 );
-                for (resource_label, resource_bytes) in manifest.resources() {
-                    // TODO: the labels are not normalized and should be (labels::to_normalized_uri in c2pa-rs)
-                    let resource_path = manifest_path.join(resource_label);
+                for resource_ref in manifest.resources().iter_resources() {
+                    // TODO: need a method in c2pa-rs to normalize the identifier (removing jumbf tag)
+                    let resource_path = manifest_path.join(&resource_ref.identifier);
                     std::fs::create_dir_all(
                         resource_path
                             .parent()
                             .context("Failed to find resource parent path from label")?,
                     )?;
-                    std::fs::write(&resource_path, resource_bytes)?;
+                    std::io::copy(
+                        &mut manifest.resources().open(&resource_ref)?,
+                        &mut File::create(&resource_path)?,
+                    )?;
                 }
             }
 
