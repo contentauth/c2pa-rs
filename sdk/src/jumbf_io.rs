@@ -132,7 +132,7 @@ pub fn save_jumbf_to_stream(
 }
 
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
-pub(crate) fn save_jumbf_to_memory(
+pub fn save_jumbf_to_memory(
     asset_type: &str,
     data: &[u8],
     store_bytes: &[u8],
@@ -331,7 +331,7 @@ where
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
 #[allow(dead_code)]
-pub(crate) fn remove_jumbf_from_file(path: &Path) -> Result<()> {
+pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.remove_cai_store(path),

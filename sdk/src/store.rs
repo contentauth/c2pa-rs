@@ -4796,7 +4796,7 @@ pub mod tests {
     fn test_bmff_jumbf_stream_generation() {
         // test adding to actual image
         let ap = fixture_path("video1.mp4");
-        let mut input_stream = std::fs::File::open(&ap).unwrap();
+        let mut input_stream = std::fs::File::open(ap).unwrap();
 
         // Create claims store.
         let mut store = Store::new();
