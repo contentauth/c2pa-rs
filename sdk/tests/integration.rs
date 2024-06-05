@@ -13,7 +13,6 @@
 
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
-#[allow(unused_imports)]
 #[cfg(feature = "file_io")]
 mod integration_1 {
 
@@ -30,7 +29,12 @@ mod integration_1 {
 
     const GENERATOR: &str = "app";
 
+    // prevent tests from polluting the results of each other because of Rust unit test concurrency
+    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
+
     fn get_temp_signer() -> Box<dyn Signer> {
+        let _protect = PROTECT.lock().unwrap();
+
         // sign and embed into the target file
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         signcert_path.push("tests/fixtures/certs/ps256.pub");
