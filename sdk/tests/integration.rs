@@ -151,7 +151,7 @@ mod integration_1 {
 
         // sign and embed into the target file
         let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, &*signer)?;
+        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
 
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
