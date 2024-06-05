@@ -28,14 +28,9 @@ mod integration_1 {
     };
     use tempfile::tempdir;
 
-    const _GENERATOR: &str = "app";
-
-    // prevent tests from polluting the results of each other because of Rust unit test concurrency
-    static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1); // prevent tests from polluting the results of each other
+    const GENERATOR: &str = "app";
 
     fn get_temp_signer() -> Box<dyn Signer> {
-        let _protect = PROTECT.lock().unwrap();
-
         // sign and embed into the target file
         let mut signcert_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         signcert_path.push("tests/fixtures/certs/ps256.pub");
@@ -45,7 +40,7 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
-    fn _configure_trust(
+    fn configure_trust(
         trust_anchors: Option<String>,
         allowed_list: Option<String>,
         trust_config: Option<String>,
@@ -90,7 +85,6 @@ mod integration_1 {
         Ok(())
     }
 
-    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
@@ -169,7 +163,6 @@ mod integration_1 {
         }
         Ok(())
     }
-    */
 
     #[test]
     #[cfg(feature = "file_io")]
