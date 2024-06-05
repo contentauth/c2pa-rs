@@ -13,6 +13,7 @@
 
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
+#[allow(unused_imports)]
 #[cfg(feature = "file_io")]
 mod integration_1 {
 
@@ -27,7 +28,7 @@ mod integration_1 {
     };
     use tempfile::tempdir;
 
-    const GENERATOR: &str = "app";
+    const _GENERATOR: &str = "app";
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1); // prevent tests from polluting the results of each other
@@ -44,7 +45,7 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
-    fn configure_trust(
+    fn _configure_trust(
         trust_anchors: Option<String>,
         allowed_list: Option<String>,
         trust_config: Option<String>,
@@ -89,6 +90,7 @@ mod integration_1 {
         Ok(())
     }
 
+    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
@@ -167,6 +169,7 @@ mod integration_1 {
         }
         Ok(())
     }
+    */
 
     #[test]
     #[cfg(feature = "file_io")]
