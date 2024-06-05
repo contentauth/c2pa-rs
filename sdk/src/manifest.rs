@@ -917,17 +917,13 @@ impl Manifest {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => {
-                        let cbor = match manifest_assertion.value() {
-                            Ok(value) => serde_cbor::to_vec(value)?,
-                            Err(_) => manifest_assertion.binary()?.to_vec(),
-                        };
-
-                        claim.add_assertion_with_salt(
-                            &UserCbor::new(manifest_assertion.label(), cbor),
-                            &salt,
-                        )
-                    }
+                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
+                        &UserCbor::new(
+                            manifest_assertion.label(),
+                            serde_cbor::to_vec(&manifest_assertion.value()?)?,
+                        ),
+                        &salt,
+                    ),
                     ManifestAssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
@@ -1313,6 +1309,12 @@ impl Manifest {
             cm = Store::get_composed_manifest(&cm, format)?;
         }
         Ok(cm)
+    }
+    /// Formats a signed manifest for embedding in the given format
+    ///
+    /// For instance, this would return one or JPEG App11 segments containing the manifest
+    pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format)
     }
 
     /// Generate a placed manifest.  The returned manifest is complete
