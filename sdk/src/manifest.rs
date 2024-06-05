@@ -1310,6 +1310,7 @@ impl Manifest {
         }
         Ok(cm)
     }
+
     /// Formats a signed manifest for embedding in the given format
     ///
     /// For instance, this would return one or JPEG App11 segments containing the manifest
