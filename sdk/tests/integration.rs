@@ -22,8 +22,7 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions},
         create_signer,
         settings::load_settings_from_str,
-        Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore, Result, Signer,
-        SigningAlg,
+        Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
@@ -44,7 +43,7 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
-    fn _configure_trust(
+    fn configure_trust(
         trust_anchors: Option<String>,
         allowed_list: Option<String>,
         trust_config: Option<String>,
@@ -100,18 +99,17 @@ mod integration_1 {
         let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         ingredient_path.push("tests/fixtures/libpng-test.png");
 
-        /*
-                let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
-                let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
+        let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
+        let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
-                // Configure before first use so that trust settings are used for all calls.
-                // In production code you should check that the file is indeed UTF-8 text.
-                configure_trust(
-                    Some(String::from_utf8_lossy(priv_trust).to_string()),
-                    None,
-                    Some(String::from_utf8_lossy(config).to_string()),
-                )?;
-        */
+        // Configure before first use so that trust settings are used for all calls.
+        // In production code you should check that the file is indeed UTF-8 text.
+        configure_trust(
+            Some(String::from_utf8_lossy(priv_trust).to_string()),
+            None,
+            Some(String::from_utf8_lossy(config).to_string()),
+        )?;
+
         // create a new Manifest
         let mut manifest = Manifest::new(GENERATOR.to_owned());
 
@@ -191,7 +189,7 @@ mod integration_1 {
 
         // sign and embed into the target file
         let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, &*signer)?;
+        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
 
         // read our new file with embedded manifest
         let manifest_store = ManifestStore::from_file(&output_path)?;
@@ -209,6 +207,7 @@ mod integration_1 {
         Ok(())
     }
 
+    /*
     struct PlacedCallback {
         path: String,
     }
@@ -381,4 +380,5 @@ mod integration_1 {
 
         Ok(())
     }
+    */
 }
