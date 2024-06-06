@@ -659,6 +659,7 @@ impl Builder {
         Ok(store)
     }
 
+    #[allow(dead_code)]
     #[cfg(feature = "add_thumbnails")]
     fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
