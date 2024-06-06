@@ -129,7 +129,7 @@ pub use manifest_store::ManifestStore;
 pub use manifest_store_report::ManifestStoreReport;
 #[cfg(feature = "unstable_api")]
 pub use reader::Reader;
-pub use resource_store::{ResourceRef, ResourceResolver, ResourceStore};
+pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use signing_alg::SigningAlg;
 pub use utils::mime::format_from_path;
