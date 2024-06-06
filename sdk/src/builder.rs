@@ -659,7 +659,6 @@ impl Builder {
         Ok(store)
     }
 
-    #[allow(dead_code)]
     #[cfg(feature = "add_thumbnails")]
     fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
@@ -718,8 +717,8 @@ impl Builder {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
         // generate thumbnail if we don't already have one
-        // #[cfg(feature = "add_thumbnails")]
-        // self.maybe_add_thumbnail(&format, source)?;
+        #[cfg(feature = "add_thumbnails")]
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
