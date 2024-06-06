@@ -338,7 +338,7 @@ impl Builder {
     /// * A mutable reference to the builder.
     /// # Errors
     /// * If the resource is not valid.
-    pub fn add_resource<T: Read + Seek + Send>(
+    pub fn add_resource<T: Read + Send>(
         &mut self,
         id: &str,
         stream: &mut T,
