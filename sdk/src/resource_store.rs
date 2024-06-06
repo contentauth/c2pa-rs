@@ -94,8 +94,7 @@ impl From<HashedUri> for UriOrResource {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A reference to a resource to be used in JSON serialization.
 ///
-/// A resource can be read as a stream via [`ResourceResolver::open`][ResourceResolver::open]
-/// from a [`ResourceStore`][ResourceStore].
+/// The underlying data can be read as a stream via [`Reader::resource_to_stream`][crate::Reader::resource_to_stream].
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
