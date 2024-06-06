@@ -8,11 +8,15 @@ use url::Url;
 #[derive(Debug, Parser)]
 #[command(author, version, about, rename_all = "snake_case")]
 pub struct CliArgs {
+    // TODO: restrict it so input and command can't be specified simulataneously
+    /// Input path to asset to display manifset for.
+    pub input: Option<PathBuf>,
+
     #[clap(flatten)]
     pub trust: Trust,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[allow(clippy::large_enum_variant)]

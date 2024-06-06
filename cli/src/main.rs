@@ -18,11 +18,12 @@ use std::{
     fs::{self, File},
     io::BufReader,
     path::{Path, PathBuf},
+    process,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use commands::{CliArgs, Commands, Information, InputSource, Trust};
 use serde::Deserialize;
 use signer::SignConfig;
@@ -112,13 +113,34 @@ fn load_trust_settings(trust: &Trust) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    let args = CliArgs::parse();
+    let mut args = CliArgs::parse();
+
+    // Normally default behavior, but since we mark the input and subcommands as optional
+    // clap will require the input arg or else error, which isn't want we want.
+    if args.input.is_none() && args.command.is_none() {
+        CliArgs::command().print_help()?;
+        process::exit(0);
+    }
 
     env_logger::init();
 
     load_trust_settings(&args.trust)?;
 
-    match args.command {
+    // When only an input file is specified with no subcommands, c2patool will display
+    // the user-friendly manifest.
+    if let Some(input) = args.input {
+        args.command = Some(Commands::Display {
+            command: Information::Manifest {
+                input,
+                debug: false,
+            },
+        });
+    }
+
+    // Safe to unwrap since if no input or command is specified, we exit. If
+    // only the input is specified, we populate the command. Otherwise, command
+    // is guaranteed to be specified.
+    match args.command.unwrap() {
         Commands::Sign {
             input,
             output,
