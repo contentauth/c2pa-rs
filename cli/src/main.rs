@@ -114,10 +114,6 @@ fn load_trust_settings(trust: &Trust) -> Result<()> {
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    // set RUST_LOG=debug to get detailed debug logging
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "error");
-    }
     env_logger::init();
 
     load_trust_settings(&args.trust)?;
