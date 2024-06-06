@@ -138,10 +138,10 @@ impl InputSource {
     pub fn resolve(&self) -> Result<String> {
         let data = match self {
             InputSource::Path(path) => fs::read_to_string(path)
-                .with_context(|| format!("Failed to read trust resource from path: {:?}", path))?,
+                .with_context(|| format!("Failed to read input from path: {:?}", path))?,
             InputSource::Url(url) => reqwest::blocking::get(url.to_string())?
                 .text()
-                .with_context(|| format!("Failed to read trust resource from URL: {}", url))?,
+                .with_context(|| format!("Failed to read input from URL: {}", url))?,
         };
         Ok(data)
     }
