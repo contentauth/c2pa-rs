@@ -25,6 +25,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --all-targets --all-features
+        run: cargo test -Z direct-minimal-versions --all-targets --all-features
         env:
           RUST_BACKTRACE: 1
