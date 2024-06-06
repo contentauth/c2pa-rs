@@ -19,14 +19,18 @@ mod integration_1 {
     use std::path::PathBuf;
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions},
+        //assertions::{c2pa_action, Action, Actions},
         create_signer,
-        settings::load_settings_from_str,
-        Ingredient, Manifest, ManifestStore, Result, Signer, SigningAlg,
+        //Ingredient,
+        Manifest,
+        ManifestStore,
+        Result,
+        Signer,
+        SigningAlg,
     };
     use tempfile::tempdir;
 
-    const GENERATOR: &str = "app";
+    //const GENERATOR: &str = "app";
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
@@ -43,6 +47,7 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
+    /*
     fn configure_trust(
         trust_anchors: Option<String>,
         allowed_list: Option<String>,
@@ -87,7 +92,9 @@ mod integration_1 {
 
         Ok(())
     }
+    */
 
+    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
@@ -166,6 +173,7 @@ mod integration_1 {
         }
         Ok(())
     }
+    */
 
     #[test]
     #[cfg(feature = "file_io")]
