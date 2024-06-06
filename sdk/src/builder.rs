@@ -717,8 +717,8 @@ impl Builder {
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
         // generate thumbnail if we don't already have one
-        #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
+        // #[cfg(feature = "add_thumbnails")]
+        // self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
