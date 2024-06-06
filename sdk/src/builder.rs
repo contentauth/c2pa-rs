@@ -338,10 +338,10 @@ impl Builder {
     /// * A mutable reference to the builder.
     /// # Errors
     /// * If the resource is not valid.
-    pub fn add_resource(
+    pub fn add_resource<T: Read + Seek + Send>(
         &mut self,
         id: &str,
-        mut stream: impl Read + Seek + Send,
+        stream: &mut T,
     ) -> Result<&mut Self> {
         if self.resources.exists(id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
@@ -843,6 +843,7 @@ mod tests {
     /// example of creating a builder directly with a [`ManifestDefinition`]
     fn test_manifest_store_builder() {
         let mut image = Cursor::new(TEST_IMAGE);
+        let mut resource = Cursor::new(b"12345");
 
         let thumbnail_ref = ResourceRef::new("ingredient/jpeg", "5678");
 
@@ -871,7 +872,7 @@ mod tests {
             .unwrap();
 
         builder
-            .add_resource(&thumbnail_ref.identifier, Cursor::new(b"12345"))
+            .add_resource(&thumbnail_ref.identifier, &mut resource)
             .unwrap();
 
         let definition = &builder.definition;
@@ -987,11 +988,12 @@ mod tests {
         let source = "tests/fixtures/CA.jpg";
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("test_file.jpg");
+        let mut resource = Cursor::new(TEST_IMAGE);
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail1.jpg", &mut resource)
             .unwrap();
 
         // sign and write to the output stream
@@ -1035,6 +1037,7 @@ mod tests {
             println!("path: {}", path);
             let mut source = std::fs::File::open(path).unwrap();
             let mut dest = Cursor::new(Vec::new());
+            let mut resource = Cursor::new(TEST_IMAGE);
 
             let mut builder = Builder::from_json(&manifest_json()).unwrap();
             builder
@@ -1042,7 +1045,7 @@ mod tests {
                 .unwrap();
 
             builder
-                .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+                .add_resource("thumbnail1.jpg", &mut resource)
                 .unwrap();
 
             // sign and write to the output stream
@@ -1118,13 +1121,14 @@ mod tests {
     fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
+        let mut resource = Cursor::new(TEST_IMAGE);
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder.remote_url = Some("http://my_remote_url".to_string());
         builder.no_embed = true;
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail1.jpg", &mut resource)
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
