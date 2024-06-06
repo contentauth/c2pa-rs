@@ -24,7 +24,7 @@ use serde_derive::{Deserialize, Serialize};
 use crate::{utils::base64, Error, Result};
 
 thread_local! {
-    pub static SETTINGS: RefCell<Config> = RefCell::new(Config::default())
+    pub static SETTINGS: RefCell<Config> = RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default())
 }
 
 // trait used to validate user input to make sure user supplied configurations are valid
