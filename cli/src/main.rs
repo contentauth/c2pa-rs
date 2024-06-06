@@ -50,13 +50,6 @@ struct ExtendedManifest {
 
 // loads an ingredient, allowing for a folder or json ingredient
 fn load_ingredient(path: &Path) -> Result<Ingredient> {
-    // TODO: implicit?
-    // if the path is a folder, look for ingredient.json
-    let path = match path.is_dir() {
-        true => &path.join("ingredient.json"),
-        false => path,
-    };
-
     if path.extension() == Some(OsStr::new("json")) {
         let reader = BufReader::new(File::open(path)?);
         let mut ingredient: Ingredient = serde_json::from_reader(reader)?;
