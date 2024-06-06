@@ -338,10 +338,10 @@ impl Builder {
     /// * A mutable reference to the builder.
     /// # Errors
     /// * If the resource is not valid.
-    pub fn add_resource<T: Read + Send>(
+    pub fn add_resource(
         &mut self,
         id: &str,
-        stream: &mut T,
+        stream: &mut (impl Read + Send),
     ) -> Result<&mut Self> {
         if self.resources.exists(id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
