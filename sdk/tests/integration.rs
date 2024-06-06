@@ -22,13 +22,13 @@ mod integration_1 {
         //assertions::{c2pa_action, Action, Actions},
         create_signer,
         //Ingredient,
-        Manifest,
-        ManifestStore,
+        //Manifest,
+        //ManifestStore,
         Result,
         Signer,
         SigningAlg,
     };
-    use tempfile::tempdir;
+    //use tempfile::tempdir;
 
     //const GENERATOR: &str = "app";
 
@@ -45,6 +45,13 @@ mod integration_1 {
         pkey_path.push("tests/fixtures/certs/ps256.pem");
         create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)
             .expect("get_signer_from_files")
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_get_signer() -> Result<()> {
+        let _s = get_temp_signer();
+        Ok(())
     }
 
     /*
@@ -173,7 +180,6 @@ mod integration_1 {
         }
         Ok(())
     }
-    */
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -215,7 +221,6 @@ mod integration_1 {
         Ok(())
     }
 
-    /*
     struct PlacedCallback {
         path: String,
     }
