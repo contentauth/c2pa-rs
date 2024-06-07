@@ -10,6 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod extract;
 mod sign;
 mod view;
 
@@ -17,6 +18,7 @@ use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, Parser, Subcommand};
+pub use extract::extract;
 pub use sign::sign;
 use url::Url;
 pub use view::view;
@@ -150,6 +152,11 @@ pub enum View {
 pub struct Extract {
     /// Input glob path to asset.
     pub path: String,
+
+    // TODO: same here as for signer
+    /// Path to output file or folder (if multiple inputs are specified)
+    #[clap(short, long)]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Default, Parser)]

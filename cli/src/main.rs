@@ -61,7 +61,7 @@ fn main() -> Result<()> {
     match args.command.unwrap() {
         Commands::Sign(config) => commands::sign(config)?,
         Commands::View(config) => commands::view(config)?,
-        Commands::Extract(config) => todo!(),
+        Commands::Extract(config) => commands::extract(config)?,
     }
 
     Ok(())
