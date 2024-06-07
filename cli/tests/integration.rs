@@ -29,15 +29,15 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 #[test]
-// c2patool display manifest tests/fixtures/C.jpg --trust_anchors=tests/fixtures/trust/anchors.pem --trust_config=tests/fixtures/trust/store.cfg
+// c2patool view manifest tests/fixtures/C.jpg --trust_anchors=tests/fixtures/trust/anchors.pem --trust_config=tests/fixtures/trust/store.cfg
 fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
-        .arg("--trust_anchors")
+        .arg("--trust-anchors")
         .arg(fixture_path("trust/anchors.pem"))
-        .arg("--trust_config")
+        .arg("--trust-config")
         .arg(fixture_path("trust/store.cfg"))
         .assert()
         .success()
@@ -47,15 +47,15 @@ fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-// c2patool display manifest tests/fixtures/C.jpg --trust_anchors=tests/fixtures/trust/no-match.pem --trust_config=tests/fixtures/trust/store.cfg
+// c2patool view manifest tests/fixtures/C.jpg --trust_anchors=tests/fixtures/trust/no-match.pem --trust_config=tests/fixtures/trust/store.cfg
 fn tool_load_trust_settings_from_file_untrusted() -> Result<(), Box<dyn Error>> {
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
-        .arg("--trust_anchors")
+        .arg("--trust-anchors")
         .arg(fixture_path("trust/no-match.pem"))
-        .arg("--trust_config")
+        .arg("--trust-config")
         .arg(fixture_path("trust/store.cfg"))
         .assert()
         .success()
@@ -94,12 +94,12 @@ fn tool_load_trust_settings_from_url_arg_trusted() -> Result<(), Box<dyn Error>>
 
     // Test flags
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
-        .arg("--trust_anchors")
+        .arg("--trust-anchors")
         .arg(server.url("/trust/anchors.pem"))
-        .arg("--trust_config")
+        .arg("--trust-config")
         .arg(server.url("/trust/store.cfg"))
         .assert()
         .success()
@@ -117,12 +117,12 @@ fn tool_load_trust_settings_from_url_arg_untrusted() -> Result<(), Box<dyn Error
     let mocks = create_mock_server(&server, "trust/no-match.pem", "trust/store.cfg");
 
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
-        .arg("--trust_anchors")
+        .arg("--trust-anchors")
         .arg(server.url("/trust/anchors.pem"))
-        .arg("--trust_config")
+        .arg("--trust-config")
         .arg(server.url("/trust/store.cfg"))
         .assert()
         .success()
@@ -141,7 +141,7 @@ fn tool_load_trust_settings_from_url_env_trusted() -> Result<(), Box<dyn Error>>
 
     // Test flags
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))
@@ -163,7 +163,7 @@ fn tool_load_trust_settings_from_url_env_untrusted() -> Result<(), Box<dyn Error
 
     // Test flags
     Command::cargo_bin("c2patool")?
-        .arg("display")
+        .arg("view")
         .arg("manifest")
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))

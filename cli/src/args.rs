@@ -10,7 +10,7 @@ use url::Url;
 pub struct CliArgs {
     // TODO: restrict it so input and command can't be specified simulataneously
     /// Input path to asset to display manifset for.
-    pub input: Option<PathBuf>,
+    pub path: Option<PathBuf>,
 
     #[clap(flatten)]
     pub trust: Trust,
@@ -18,12 +18,7 @@ pub struct CliArgs {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    #[arg(
-        short,
-        long,
-        action = ArgAction::Count,
-        global = true,
-    )]
+    #[arg(short, long, global=true, action = ArgAction::Count)]
     pub verbose: u8,
 }
 
@@ -42,87 +37,96 @@ pub struct Trust {
     pub trust_config: Option<InputSource>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Sign an asset with a manifest.
-    Sign {
-        /// Input path(s) to asset.
-        input: Vec<PathBuf>,
+    Sign(Sign),
+    /// View information about a C2PA manifest in an asset.
+    #[clap(subcommand)]
+    View(View),
+}
 
-        // TODO: impl parser to require dir if multiple inputs
-        /// Path to output file or folder (if multiple inputs are specified)
-        #[clap(short, long)]
-        output: PathBuf,
+#[derive(Debug, Parser)]
+pub struct Sign {
+    /// Input glob path to asset.
+    pub path: String,
 
-        /// Path or URL to manifest JSON.
-        #[clap(short, long, value_parser = InputSource::validate)]
-        manifest: InputSource,
+    // TODO: impl parser to require dir if multiple inputs
+    /// Path to output file or folder (if multiple inputs are specified)
+    #[clap(short, long)]
+    pub output: PathBuf,
 
-        /// Generate a .c2pa manifest file next to the output without embedding.
-        #[clap(short, long)]
-        sidecar: bool,
+    /// Path or URL to manifest JSON.
+    #[clap(short, long, value_parser = InputSource::validate)]
+    pub manifest: InputSource,
 
-        /// Force overwrite of output if it already exists.
-        #[clap(short, long)]
-        force: bool,
+    /// Generate a .c2pa manifest file next to the output without embedding.
+    #[clap(short, long)]
+    pub sidecar: bool,
 
-        /// Path to the parent ingredient json.
-        #[clap(short, long)]
-        parent: Option<PathBuf>,
+    /// Force overwrite of output if it already exists.
+    #[clap(short, long)]
+    pub force: bool,
 
-        /// Path to an executable that will sign the claim bytes, defaults to built-in signer.
-        #[clap(long)]
-        signer_path: Option<PathBuf>,
+    /// Path to the parent ingredient json.
+    #[clap(short, long)]
+    pub parent: Option<PathBuf>,
 
-        /// To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) +
-        /// the size of cert provided in the manifest definition's `sign_cert` field + the size of the
-        /// signature of the Time Stamp Authority response. For example:
-        ///
-        /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
-        /// your manifest description:
-        ///
-        ///     1024 + sign_cert.len()
-        ///
-        /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
-        /// reserve size like this:
-        ///
-        ///     1024 + sign_cert.len() + tsa_signature_response.len()
-        ///
-        /// Note:
-        /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
-        /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
-        #[clap(long, default_value("20000"))]
-        reserve_size: usize,
+    /// Path to an executable that will sign the claim bytes, defaults to built-in signer.
+    #[clap(long)]
+    pub signer_path: Option<PathBuf>,
 
-        /// Do not perform validation of signature after signing.
-        #[clap(long)]
-        no_verify_signing: bool,
-    },
-    /// Display information about a C2PA manifest in an asset.
-    Display {
-        #[command(subcommand)]
-        command: Information,
-    },
+    /// To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) +
+    /// the size of cert provided in the manifest definition's `sign_cert` field + the size of the
+    /// signature of the Time Stamp Authority response. For example:
+    ///
+    /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
+    /// your manifest description:
+    ///
+    ///     1024 + sign_cert.len()
+    ///
+    /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
+    /// reserve size like this:
+    ///
+    ///     1024 + sign_cert.len() + tsa_signature_response.len()
+    ///
+    /// Note:
+    /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
+    /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
+    #[clap(long, default_value("20000"))]
+    pub reserve_size: usize,
+
+    /// Do not perform validation of signature after signing.
+    #[clap(long)]
+    pub no_verify_signing: bool,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum Information {
+pub enum View {
     /// Display user-friendly information about the manifest.
     Manifest {
         /// Input path to asset.
-        input: PathBuf,
+        path: PathBuf,
 
         /// Display debug information about the manifest.
         #[clap(short, long)]
         debug: bool,
     },
     /// Display statistics about the manifest (e.g. file size).
-    Stats { input: PathBuf },
+    Info {
+        /// Input path to asset.
+        path: PathBuf,
+    },
     /// Create a tree diagram of the manifest store.
-    Tree { input: PathBuf },
+    Tree {
+        /// Input path to asset.
+        path: PathBuf,
+    },
     /// Display certificate chain.
-    Certs { input: PathBuf },
+    Certs {
+        /// Input path to asset.
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
