@@ -6,7 +6,7 @@ use url::Url;
 
 /// Tool for displaying and creating C2PA manifests.
 #[derive(Debug, Parser)]
-#[command(author, version, about, rename_all = "snake_case")]
+#[command(author, version, about)]
 pub struct CliArgs {
     // TODO: restrict it so input and command can't be specified simulataneously
     /// Input path to asset to display manifset for.
@@ -19,9 +19,23 @@ pub struct CliArgs {
     pub command: Option<Commands>,
 }
 
+#[derive(Debug, Parser)]
+pub struct Trust {
+    /// Path or URL to file containing list of trust anchors in PEM format.
+    #[clap(long, global=true, env="C2PATOOL_TRUST_ANCHORS", value_parser = InputSource::validate)]
+    pub trust_anchors: Option<InputSource>,
+
+    /// Path or URL to file containing specific manifest signing certificates in PEM format to implicitly trust.
+    #[clap(long, global=true, env="C2PATOOL_ALLOWED_LIST", value_parser = InputSource::validate)]
+    pub allowed_list: Option<InputSource>,
+
+    /// Path or url to file containing configured EKUs in Oid dot notation.
+    #[clap(long, global=true, env="C2PATOOL_TRUST_CONFIG", value_parser = InputSource::validate)]
+    pub trust_config: Option<InputSource>,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
-#[command(rename_all = "snake_case")]
 pub enum Commands {
     /// Sign an asset with a manifest.
     Sign {
@@ -84,24 +98,7 @@ pub enum Commands {
     },
 }
 
-#[derive(Debug, Parser)]
-#[command(rename_all = "snake_case")]
-pub struct Trust {
-    /// Path or URL to file containing list of trust anchors in PEM format.
-    #[clap(long, global=true, env="C2PATOOL_TRUST_ANCHORS", value_parser = InputSource::validate)]
-    pub trust_anchors: Option<InputSource>,
-
-    /// Path or URL to file containing specific manifest signing certificates in PEM format to implicitly trust.
-    #[clap(long, global=true, env="C2PATOOL_ALLOWED_LIST", value_parser = InputSource::validate)]
-    pub allowed_list: Option<InputSource>,
-
-    /// Path or url to file containing configured EKUs in Oid dot notation.
-    #[clap(long, global=true, env="C2PATOOL_TRUST_CONFIG", value_parser = InputSource::validate)]
-    pub trust_config: Option<InputSource>,
-}
-
 #[derive(Debug, Subcommand)]
-#[command(rename_all = "snake_case")]
 pub enum Information {
     /// Display user-friendly information about the manifest.
     Manifest {
