@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use url::Url;
 
 /// Tool for displaying and creating C2PA manifests.
@@ -17,6 +17,14 @@ pub struct CliArgs {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
+
+    #[arg(
+        short,
+        long,
+        action = ArgAction::Count,
+        global = true,
+    )]
+    pub verbose: u8,
 }
 
 #[derive(Debug, Parser)]
@@ -53,7 +61,7 @@ pub enum Commands {
 
         /// Generate a .c2pa manifest file next to the output without embedding.
         #[clap(short, long)]
-        no_embed: bool,
+        sidecar: bool,
 
         /// Force overwrite of output if it already exists.
         #[clap(short, long)]

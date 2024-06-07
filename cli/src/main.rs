@@ -25,6 +25,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
 use clap::{CommandFactory, Parser};
 use commands::{CliArgs, Commands, Information, InputSource, Trust};
+use log::LevelFilter;
 use serde::Deserialize;
 use signer::SignConfig;
 
@@ -112,10 +113,18 @@ fn main() -> Result<()> {
     // clap will require the input arg or else error, which isn't want we want.
     if args.input.is_none() && args.command.is_none() {
         CliArgs::command().print_help()?;
-        process::exit(0);
+        process::exit(1);
     }
 
-    env_logger::init();
+    env_logger::Builder::new()
+        .filter_level(match args.verbose {
+            0 => LevelFilter::Error,
+            1 => LevelFilter::Warn,
+            2 => LevelFilter::Info,
+            3 => LevelFilter::Debug,
+            4.. => LevelFilter::Trace,
+        })
+        .init();
 
     load_trust_settings(&args.trust)?;
 
@@ -138,7 +147,7 @@ fn main() -> Result<()> {
             input,
             output,
             manifest: manifest_source,
-            no_embed,
+            sidecar,
             force,
             parent,
             signer_path,
@@ -215,11 +224,11 @@ fn main() -> Result<()> {
 
             match &manifest_source {
                 InputSource::Path(_) => {
-                    if no_embed {
+                    if sidecar {
                         manifest.set_sidecar_manifest();
                     }
                 }
-                InputSource::Url(url) => match no_embed {
+                InputSource::Url(url) => match sidecar {
                     true => {
                         manifest.set_remote_manifest(url.to_string());
                     }
