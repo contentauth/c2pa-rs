@@ -15,11 +15,13 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use c2pa::{Error, IngredientOptions, ManifestStore, ManifestStoreReport};
 
-use crate::args::View;
+use crate::{commands::View, load_trust_settings};
 
 pub fn view(config: View) -> Result<()> {
     match config {
-        View::Manifest { path, debug } => {
+        View::Manifest { path, debug, trust } => {
+            load_trust_settings(&trust)?;
+
             let report = match debug {
                 true => ManifestStoreReport::from_file(&path).map(|r| r.to_string()),
                 false => ManifestStore::from_file(&path).map(|r| r.to_string()),
@@ -34,7 +36,8 @@ pub fn view(config: View) -> Result<()> {
 
             println!("{report}");
         }
-        View::Info { path } => {
+        View::Info { path, trust } => {
+            load_trust_settings(&trust)?;
             struct Options {}
             impl IngredientOptions for Options {
                 fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
@@ -90,10 +93,12 @@ pub fn view(config: View) -> Result<()> {
                 println!("No C2PA Manifests. (file size = {file_size})");
             }
         }
-        View::Tree { path } => {
+        View::Tree { path, trust } => {
+            load_trust_settings(&trust)?;
             ManifestStoreReport::dump_tree(path)?;
         }
-        View::Certs { path } => {
+        View::Certs { path, trust } => {
+            load_trust_settings(&trust)?;
             ManifestStoreReport::dump_cert_chain(path)?;
         }
     }
@@ -104,6 +109,7 @@ pub fn view(config: View) -> Result<()> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::commands::Trust;
 
     const SOURCE_PATH: &str = "tests/fixtures/C.jpg";
 
@@ -112,6 +118,7 @@ pub mod tests {
         view(View::Manifest {
             path: SOURCE_PATH.into(),
             debug: false,
+            trust: Trust::default(),
         })
     }
 
@@ -120,6 +127,7 @@ pub mod tests {
         view(View::Manifest {
             path: SOURCE_PATH.into(),
             debug: true,
+            trust: Trust::default(),
         })
     }
 
@@ -127,6 +135,7 @@ pub mod tests {
     fn test_view_info() -> Result<()> {
         view(View::Info {
             path: SOURCE_PATH.into(),
+            trust: Trust::default(),
         })
     }
 
@@ -134,6 +143,7 @@ pub mod tests {
     fn test_view_tree() -> Result<()> {
         view(View::Tree {
             path: SOURCE_PATH.into(),
+            trust: Trust::default(),
         })
     }
 
@@ -141,6 +151,7 @@ pub mod tests {
     fn test_view_certs() -> Result<()> {
         view(View::Certs {
             path: SOURCE_PATH.into(),
+            trust: Trust::default(),
         })
     }
 }

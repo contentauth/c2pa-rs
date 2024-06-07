@@ -15,11 +15,10 @@
 use std::process;
 
 use anyhow::Result;
-use args::{CliArgs, Commands, Trust, View};
 use clap::{CommandFactory, Parser};
+use commands::{CliArgs, Commands, Trust, View};
 use log::LevelFilter;
 
-mod args;
 mod commands;
 
 mod callback_signer;
@@ -45,12 +44,15 @@ fn main() -> Result<()> {
         })
         .init();
 
-    load_trust_settings(&args.trust)?;
-
     // When only an input file is specified with no subcommands, display the
     // user-friendly manifest.
     if let Some(path) = args.path {
-        return commands::view(View::Manifest { path, debug: false });
+        return commands::view(View::Manifest {
+            path,
+            debug: false,
+            // To specify trust, use the explicit command `c2patool view manifest`
+            trust: Trust::default(),
+        });
     }
 
     // Safe to unwrap since if no input or command is specified, we exit. If
@@ -59,6 +61,7 @@ fn main() -> Result<()> {
     match args.command.unwrap() {
         Commands::Sign(config) => commands::sign(config)?,
         Commands::View(config) => commands::view(config)?,
+        Commands::Extract(config) => todo!(),
     }
 
     Ok(())

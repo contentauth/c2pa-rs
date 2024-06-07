@@ -23,8 +23,9 @@ use c2pa::{Ingredient, Manifest};
 use serde::Deserialize;
 
 use crate::{
-    args::{InputSource, Sign},
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
+    commands::{InputSource, Sign},
+    load_trust_settings,
     signer::SignConfig,
 };
 
@@ -42,7 +43,9 @@ pub fn sign(config: Sign) -> Result<()> {
         bail!("Output already exists use `--force` to overwrite")
     }
 
-    let replacement_val = serde_json::Value::Bool(!config.no_verify_signing).to_string();
+    load_trust_settings(&config.trust)?;
+
+    let replacement_val = serde_json::Value::Bool(!config.no_verify).to_string();
     let vs = r#"{"verify": { "verify_after_sign": replacement_val } }"#;
     let setting = vs.replace("replacement_val", &replacement_val);
 
