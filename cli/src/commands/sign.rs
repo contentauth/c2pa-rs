@@ -152,7 +152,7 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
 
 #[cfg(test)]
 pub mod tests {
-    use super::*;
+    // use super::*;
 
     #[test]
     fn test_sign() {
