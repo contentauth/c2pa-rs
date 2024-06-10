@@ -43,10 +43,10 @@ pub struct CliArgs {
 pub enum Commands {
     /// Sign an asset with a manifest.
     Sign(Sign),
-    /// View information about a C2PA manifest in an asset.
+    /// View information about a manifest in an asset.
     #[clap(subcommand)]
     View(View),
-    /// Extract resourecs from a manifest (e.g. thumbnails).
+    /// Extract known resources from a manifest (e.g. thumbnails).
     Extract(Extract),
 }
 
@@ -55,7 +55,6 @@ pub struct Sign {
     /// Input glob path to asset.
     pub path: String,
 
-    // TODO: impl parser to require dir if multiple inputs
     /// Path to output file or folder (if multiple inputs are specified)
     #[clap(short, long)]
     pub output: PathBuf,
@@ -110,7 +109,7 @@ pub struct Sign {
 
 #[derive(Debug, Subcommand)]
 pub enum View {
-    /// Display user-friendly information about the manifest.
+    /// View manifest in JSON format.
     Manifest {
         /// Input path to asset.
         path: PathBuf,
@@ -122,7 +121,7 @@ pub enum View {
         #[clap(flatten)]
         trust: Trust,
     },
-    /// Display statistics about the manifest (e.g. file size).
+    /// View various info about the manifest (e.g. file size).
     Info {
         /// Input path to asset.
         path: PathBuf,
@@ -130,7 +129,7 @@ pub enum View {
         #[clap(flatten)]
         trust: Trust,
     },
-    /// Create a tree diagram of the manifest store.
+    /// View a tree diagram of the manifest store.
     Tree {
         /// Input path to asset.
         path: PathBuf,
@@ -138,7 +137,7 @@ pub enum View {
         #[clap(flatten)]
         trust: Trust,
     },
-    /// Display certificate chain.
+    /// View the manifest certificate chain.
     Certs {
         /// Input path to asset.
         path: PathBuf,
@@ -153,10 +152,14 @@ pub struct Extract {
     /// Input glob path to asset.
     pub path: String,
 
-    // TODO: same here as for signer
-    /// Path to output file or folder (if multiple inputs are specified)
+    /// Path to output folder.
     #[clap(short, long)]
     pub output: PathBuf,
+
+    #[clap(flatten)]
+    trust: Trust,
+    // TODO: add flag for additionally exporting unknown ingredients (ingredients that
+    // do not have a standardized label) as a binary file
 }
 
 #[derive(Debug, Default, Parser)]

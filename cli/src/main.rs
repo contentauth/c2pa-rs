@@ -15,7 +15,7 @@
 use std::process;
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::{error::ErrorKind, CommandFactory, Parser};
 use commands::{CliArgs, Commands, Trust, View};
 use log::LevelFilter;
 
@@ -32,6 +32,16 @@ fn main() -> Result<()> {
     if args.path.is_none() && args.command.is_none() {
         CliArgs::command().print_help()?;
         process::exit(1);
+    } else if args.path.is_some() && args.command.is_some() {
+        CliArgs::command()
+            .error(
+                ErrorKind::UnknownArgument,
+                format!(
+                    "unexpected argument '{}' found",
+                    args.path.unwrap().display()
+                ),
+            )
+            .exit();
     }
 
     env_logger::Builder::new()

@@ -40,7 +40,17 @@ struct ExtendedManifest {
 
 pub fn sign(config: Sign) -> Result<()> {
     if config.output.exists() && !config.force {
-        bail!("Output already exists use `--force` to overwrite")
+        bail!("Output already exists use `--force` to overwrite");
+    }
+
+    // It's not ideal to create a second iterator over globs especially when it's only used for validation,
+    // although there aren't many options besides performing some caching trickery in the second glob iterator.
+    if glob::glob(&config.path)?.nth(1).is_some() {
+        if !config.output.is_dir() {
+            bail!("Output must be a folder if specifying multiple paths as input");
+        }
+    } else if !config.output.is_file() {
+        bail!("Output must be a file if specifying one path as input");
     }
 
     load_trust_settings(&config.trust)?;
@@ -51,9 +61,9 @@ pub fn sign(config: Sign) -> Result<()> {
 
     c2pa::settings::load_settings_from_str(&setting, "json")?;
 
-    // In the c2pa unstable_api we will be able to reuse a lot of this work.
-    let input = &config.path;
-    for entry in glob::glob(input)? {
+    // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
+    // reconstructing the entire manifest each iteration.
+    for entry in glob::glob(&config.path)? {
         let path = entry?;
 
         let json = config.manifest.resolve()?;

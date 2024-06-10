@@ -10,11 +10,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use anyhow::Result;
+use std::fs;
 
-use crate::commands::Extract;
+use anyhow::{bail, Result};
+use c2pa::ManifestStore;
 
-pub fn extract(_config: Extract) -> Result<()> {
-    // TODO:
-    todo!()
+use crate::{commands::Extract, load_trust_settings};
+
+pub fn extract(config: Extract) -> Result<()> {
+    load_trust_settings(&config.trust)?;
+
+    fs::create_dir_all(&config.output)?;
+
+    for entry in glob::glob(&config.path)? {
+        let path = entry?;
+        if path.is_dir() {
+            bail!("Input path cannot be a folder when extracting resources");
+        }
+
+        ManifestStore::from_file_with_resources(&path, &config.output)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+pub mod tests {
+    // use super::*;
+
+    #[test]
+    fn test_sign() {
+        // TODO:
+    }
 }
