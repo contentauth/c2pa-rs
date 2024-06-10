@@ -14,6 +14,7 @@
 use std::{
     collections::HashSet,
     io::{read_to_string, Cursor, Read},
+    panic::{RefUnwindSafe, UnwindSafe},
     str::FromStr,
 };
 
@@ -27,7 +28,10 @@ pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9)
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
 // Trait for supply configuration and handling of trust lists and EKU configuration store
-pub(crate) trait TrustHandlerConfig: Sync + Send {
+//
+// `RefUnwindSafe` + `UnwindSafe` were added to ensure `Store` is unwind safe and to preserve
+// backwards compatbility.
+pub(crate) trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
     fn new() -> Self
     where
         Self: Sized;
@@ -122,6 +126,7 @@ pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
 
 // Pass through trust for the case of claim signer usage since it has known trust with context
 // configured to all email protection, timestamping, ocsp signing and document signing
+#[derive(Debug)]
 pub(crate) struct TrustPassThrough {
     allowed_cert_set: HashSet<String>,
     config_store: Vec<u8>,
