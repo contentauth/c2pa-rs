@@ -45,7 +45,8 @@ pub enum Commands {
     /// View information about a manifest in an asset.
     #[clap(subcommand)]
     View(View),
-    /// Extract known resources from a manifest (e.g. thumbnails).
+    /// Extract manifest data from an asset.
+    #[clap(subcommand)]
     Extract(Extract),
 }
 

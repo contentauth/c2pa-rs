@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use c2pa::{Error, IngredientOptions, ManifestStore, ManifestStoreReport};
 use clap::Subcommand;
 
@@ -20,7 +20,7 @@ use crate::{commands::Trust, load_trust_settings};
 
 #[derive(Debug, Subcommand)]
 pub enum View {
-    /// View manifest in JSON format.
+    /// View manifest in .json format.
     Manifest {
         /// Input path to asset.
         path: PathBuf,
@@ -62,6 +62,10 @@ impl View {
     pub fn execute(&self) -> Result<()> {
         match self {
             View::Manifest { path, debug, trust } => {
+                if !path.is_file() {
+                    bail!("Input path must be a file");
+                }
+
                 load_trust_settings(trust)?;
 
                 let report = match debug {
@@ -79,7 +83,12 @@ impl View {
                 println!("{report}");
             }
             View::Info { path, trust } => {
+                if !path.is_file() {
+                    bail!("Input path must be a file");
+                }
+
                 load_trust_settings(trust)?;
+
                 struct Options {}
                 impl IngredientOptions for Options {
                     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
@@ -136,11 +145,21 @@ impl View {
                 }
             }
             View::Tree { path, trust } => {
+                if !path.is_file() {
+                    bail!("Input path must be a file");
+                }
+
                 load_trust_settings(trust)?;
+
                 ManifestStoreReport::dump_tree(path)?;
             }
             View::Certs { path, trust } => {
+                if !path.is_file() {
+                    bail!("Input path must be a file");
+                }
+
                 load_trust_settings(trust)?;
+
                 ManifestStoreReport::dump_cert_chain(path)?;
             }
         }

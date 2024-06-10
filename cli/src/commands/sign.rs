@@ -35,11 +35,11 @@ pub struct Sign {
     /// Input glob path to asset.
     pub path: String,
 
-    /// Path to output file or folder (if multiple inputs are specified)
+    /// Path to output file or folder if multiple inputs are specified
     #[clap(short, long)]
     pub output: PathBuf,
 
-    /// Path or URL to manifest JSON.
+    /// Path or URL to manifest .json.
     #[clap(short, long, value_parser = InputSource::validate)]
     pub manifest: InputSource,
 
@@ -47,17 +47,21 @@ pub struct Sign {
     #[clap(short, long)]
     pub sidecar: bool,
 
-    /// Force overwrite of output if it already exists.
+    /// Force overwrite output file if it already exists.
     #[clap(short, long)]
     pub force: bool,
 
-    /// Path to the parent ingredient json.
+    /// Path to the parent ingredient .json.
     #[clap(short, long)]
     pub parent: Option<PathBuf>,
 
     /// Path to an executable that will sign the claim bytes, defaults to built-in signer.
     #[clap(long)]
     pub signer_path: Option<PathBuf>,
+
+    /// Do not perform validation of signature after signing.
+    #[clap(long)]
+    pub no_verify: bool,
 
     /// To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) +
     /// the size of cert provided in the manifest definition's `sign_cert` field + the size of the
@@ -79,10 +83,6 @@ pub struct Sign {
     #[clap(long, default_value("20000"))]
     pub reserve_size: usize,
 
-    /// Do not perform validation of signature after signing.
-    #[clap(long)]
-    pub no_verify: bool,
-
     #[clap(flatten)]
     pub trust: Trust,
 }
@@ -98,18 +98,24 @@ struct ExtendedManifest {
 
 impl Sign {
     pub fn execute(&self) -> Result<()> {
-        if self.output.exists() && !self.force {
-            bail!("Output already exists use `--force` to overwrite");
-        }
-
-        // It's not ideal to create a second iterator over globs especially when it's only used for validation,
-        // although there aren't many options besides performing some caching trickery in the second glob iterator.
-        if glob::glob(&self.path)?.nth(1).is_some() {
-            if !self.output.is_dir() {
-                bail!("Output must be a folder if specifying multiple paths as input");
+        let mut paths = glob::glob(&self.path)?;
+        if paths.next().is_none() {
+            // If no paths were found.
+            bail!("No input file found")
+        } else if paths.next().is_some() {
+            // If at least two paths were found then output must be a directory.
+            if !self.output.exists() {
+                fs::create_dir_all(&self.output)?;
+            } else if !self.output.is_dir() {
+                bail!("Output path must be a folder if specifying multiple paths as input");
             }
-        } else if !self.output.is_file() {
-            bail!("Output must be a file if specifying one path as input");
+        } else if self.output.exists() {
+            // Otherwise, only one path was found.
+            if !self.output.is_file() {
+                bail!("Output path must be a file if specifying one path as input");
+            } else if !self.force {
+                bail!("Output path already exists use `--force` to overwrite");
+            }
         }
 
         load_trust_settings(&self.trust)?;
