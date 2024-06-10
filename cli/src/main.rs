@@ -57,21 +57,22 @@ fn main() -> Result<()> {
     // When only an input file is specified with no subcommands, display the
     // user-friendly manifest.
     if let Some(path) = args.path {
-        return commands::view(View::Manifest {
+        return View::Manifest {
             path,
             debug: false,
             // To specify trust, use the explicit command `c2patool view manifest`
             trust: Trust::default(),
-        });
+        }
+        .execute();
     }
 
     // Safe to unwrap since if no input or command is specified, we exit. If
     // only the input is specified, we populate the command. Otherwise, command
     // is guaranteed to be specified.
     match args.command.unwrap() {
-        Commands::Sign(config) => commands::sign(config)?,
-        Commands::View(config) => commands::view(config)?,
-        Commands::Extract(config) => commands::extract(config)?,
+        Commands::Sign(sign) => sign.execute()?,
+        Commands::View(view) => view.execute()?,
+        Commands::Extract(extract) => extract.execute()?,
     }
 
     Ok(())
