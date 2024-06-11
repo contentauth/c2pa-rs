@@ -106,6 +106,17 @@ impl Extract {
                 match binary {
                     true => {
                         let manifest = jumbf_io::load_jumbf_from_file(path)?;
+                        // Validates the jumbf refers to a valid manifest.
+                        match c2pa::format_from_path(path) {
+                            Some(format) => {
+                                ManifestStore::from_manifest_and_asset_bytes(
+                                    &manifest,
+                                    &format,
+                                    &fs::read(path)?,
+                                )?;
+                            }
+                            None => bail!("Path `{}` is missing file extension", path.display()),
+                        }
                         fs::write(output, manifest)?;
                     }
                     false => {
