@@ -1,18 +1,18 @@
 ---
-source: tests/extract.rs
+source: tests/test_extract.rs
 info:
   program: c2patool
   args:
     - extract
     - ingredient
     - "--output"
-    - /tmp/.tmpAZlIwc
+    - /tmp/.tmpFSYYHt
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully extracted ingredient to `/tmp/.tmpAZlIwc/ingredient.json`
-Sucessfully extracted manifest data to `/tmp/.tmpAZlIwc/manifest_data.c2pa`
+Sucessfully extracted ingredient to `[TEMP_FILE]
+Sucessfully extracted manifest data to `[TEMP_FILE]
 
 ----- stderr -----

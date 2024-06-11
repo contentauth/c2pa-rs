@@ -1,19 +1,7 @@
 ---
-source: tests/trust.rs
-info:
-  program: c2patool
-  args:
-    - view
-    - manifest
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
-    - "--trust-anchors"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/anchors.pem
-    - "--trust-config"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/store.cfg
+source: tests/test_extract.rs
+expression: "unescape_json(&fs::read_to_string(&output_path)?)?"
 ---
-success: true
-exit_code: 0
------ stdout -----
 {
   "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc",
   "manifests": {
@@ -68,5 +56,3 @@ exit_code: 0
     }
   }
 }
-
------ stderr -----

@@ -1,19 +1,7 @@
 ---
-source: tests/trust.rs
-info:
-  program: c2patool
-  args:
-    - view
-    - manifest
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
-    - "--trust-anchors"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/no-match.pem
-    - "--trust-config"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/store.cfg
+source: tests/test_extract.rs
+expression: "unescape_json(&ManifestStore::from_manifest_and_asset_bytes(&fs::read(output_path.join(\"manifest_data.c2pa\"))?,\n                        TEST_IMAGE_WITH_MANIFEST_FORMAT,\n                        &fs::read(test_img_path())?)?.to_string())?"
 ---
-success: true
-exit_code: 0
------ stdout -----
 {
   "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc",
   "manifests": {
@@ -66,19 +54,5 @@ exit_code: 0
       },
       "label": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
     }
-  },
-  "validation_status": [
-    {
-      "code": "signingCredential.untrusted",
-      "url": "Cose_Sign1",
-      "explanation": "signing certificate untrusted"
-    },
-    {
-      "code": "claimSignature.mismatch",
-      "url": "self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.signature",
-      "explanation": "claim signature is not valid"
-    }
-  ]
+  }
 }
-
------ stderr -----

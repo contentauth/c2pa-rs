@@ -1,18 +1,17 @@
 ---
 source: tests/test_extract.rs
-assertion_line: 16
 info:
   program: c2patool
   args:
     - extract
-    - manifest
+    - resources
     - "--output"
-    - /tmp/.tmp4Y5rML/test_extract_manifest.json
+    - /tmp/.tmpLfJiOY
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
-Sucessfully extracted manifest to `/tmp/.tmp4Y5rML/test_extract_manifest.json`
 
 ----- stderr -----
+Error: Output path already exists use `--force` to overwrite and clear children

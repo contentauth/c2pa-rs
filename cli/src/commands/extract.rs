@@ -20,6 +20,38 @@ use crate::{commands::Trust, load_trust_settings};
 
 #[derive(Debug, Parser)]
 pub enum Extract {
+    /// Extract the .json manifest.
+    Manifest {
+        /// Input path to asset.
+        path: PathBuf,
+
+        /// Path to output file.
+        #[clap(short, long)]
+        output: PathBuf,
+
+        /// Force overwrite output if it already exists.
+        #[clap(short, long)]
+        force: bool,
+
+        #[clap(flatten)]
+        trust: Trust,
+    },
+    /// Extract the .json ingredient and .c2pa manifest file.
+    Ingredient {
+        /// Input path to asset.
+        path: PathBuf,
+
+        /// Path to output folder.
+        #[clap(short, long)]
+        output: PathBuf,
+
+        /// Force overwrite output if it already exists.
+        #[clap(short, long)]
+        force: bool,
+
+        #[clap(flatten)]
+        trust: Trust,
+    },
     /// Extract known resources from a manifest (e.g. thumbnails).
     Resources {
         /// Input glob path to asset.
@@ -39,78 +71,37 @@ pub enum Extract {
         // TODO: add flag for additionally exporting unknown ingredients (ingredients that
         // do not have a standardized label) as a binary file
     },
-    /// Extract the .json ingredient and .c2pa manifest file.
-    Ingredient {
-        /// Input path to asset.
-        path: PathBuf,
-
-        /// Path to output folder.
-        #[clap(short, long)]
-        output: PathBuf,
-
-        /// Force overwrite output if it already exists.
-        #[clap(short, long)]
-        force: bool,
-
-        #[clap(flatten)]
-        trust: Trust,
-    },
-    /// Extract the .json manifest.
-    Manifest {
-        /// Input path to asset.
-        path: PathBuf,
-
-        /// Path to output file.
-        #[clap(short, long)]
-        output: PathBuf,
-
-        /// Force overwrite output if it already exists.
-        #[clap(short, long)]
-        force: bool,
-
-        #[clap(flatten)]
-        trust: Trust,
-    },
 }
 
 impl Extract {
     pub fn execute(&self) -> Result<()> {
         match self {
-            Extract::Resources {
+            Extract::Manifest {
                 path,
                 output,
                 force,
                 trust,
             } => {
-                if glob::glob(path)?.next().is_none() {
+                if !path.exists() {
                     bail!("Input path does not exist")
+                } else if !path.is_file() {
+                    bail!("Input path must be a file")
                 }
 
-                if !output.exists() {
-                    fs::create_dir_all(output)?;
-                } else if !output.is_dir() {
-                    bail!("Output path must be a folder");
-                } else if !force {
-                    bail!(
-                        "Output path already exists use `--force` to overwrite and clear children"
-                    );
+                if output.exists() {
+                    if !output.is_file() {
+                        bail!("Output path must be a file");
+                    } else if !force {
+                        bail!("Output path already exists use `--force` to overwrite");
+                    }
                 }
 
                 load_trust_settings(trust)?;
 
-                for entry in glob::glob(path)? {
-                    let path = entry?;
-                    if path.is_dir() {
-                        bail!("Input path cannot be a folder when extracting resources");
-                    }
+                let manifest = ManifestStore::from_file(path)?;
+                fs::write(output, manifest.to_string())?;
 
-                    ManifestStore::from_file_with_resources(&path, output)?;
-
-                    println!(
-                        "Sucessfully extracted resources from file `{}`",
-                        path.display()
-                    );
-                }
+                println!("Sucessfully extracted manifest to `{}`", output.display());
             }
             Extract::Ingredient {
                 path,
@@ -157,44 +148,43 @@ impl Extract {
                     manifest_data_path.display()
                 );
             }
-            Extract::Manifest {
+            Extract::Resources {
                 path,
                 output,
                 force,
                 trust,
             } => {
-                if !path.exists() {
+                if glob::glob(path)?.next().is_none() {
                     bail!("Input path does not exist")
-                } else if !path.is_file() {
-                    bail!("Input path must be a file")
                 }
 
-                if output.exists() {
-                    if !output.is_file() {
-                        bail!("Output path must be a file");
-                    } else if !force {
-                        bail!("Output path already exists use `--force` to overwrite");
-                    }
+                if !output.exists() {
+                    fs::create_dir_all(output)?;
+                } else if !output.is_dir() {
+                    bail!("Output path must be a folder");
+                } else if !force {
+                    bail!(
+                        "Output path already exists use `--force` to overwrite and clear children"
+                    );
                 }
 
                 load_trust_settings(trust)?;
 
-                let manifest = ManifestStore::from_file(path)?;
-                fs::write(output, manifest.to_string())?;
+                for entry in glob::glob(path)? {
+                    let path = entry?;
+                    if path.is_dir() {
+                        bail!("Input path cannot be a folder when extracting resources");
+                    }
 
-                println!("Sucessfully extracted manifest to `{}`", output.display());
+                    ManifestStore::from_file_with_resources(&path, output)?;
+
+                    println!(
+                        "Sucessfully extracted resources from file `{}`",
+                        path.display()
+                    );
+                }
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    // use super::*;
-
-    #[test]
-    fn test_sign() {
-        // TODO:
     }
 }

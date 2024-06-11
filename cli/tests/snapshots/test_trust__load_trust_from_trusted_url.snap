@@ -1,5 +1,5 @@
 ---
-source: tests/trust.rs
+source: tests/test_trust.rs
 info:
   program: c2patool
   args:
@@ -7,9 +7,9 @@ info:
     - manifest
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--trust-anchors"
-    - "http://127.0.0.1:61633/trust/anchors.pem"
+    - "http://127.0.0.1:64146/trust/anchors.pem"
     - "--trust-config"
-    - "http://127.0.0.1:61633/trust/store.cfg"
+    - "http://127.0.0.1:64146/trust/store.cfg"
 ---
 success: true
 exit_code: 0
@@ -66,19 +66,7 @@ exit_code: 0
       },
       "label": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
     }
-  },
-  "validation_status": [
-    {
-      "code": "signingCredential.untrusted",
-      "url": "Cose_Sign1",
-      "explanation": "signing certificate untrusted"
-    },
-    {
-      "code": "claimSignature.mismatch",
-      "url": "self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.signature",
-      "explanation": "claim signature is not valid"
-    }
-  ]
+  }
 }
 
 ----- stderr -----

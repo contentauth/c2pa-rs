@@ -1,0 +1,19 @@
+---
+source: tests/test_view.rs
+info:
+  program: c2patool
+  args:
+    - view
+    - info
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+---
+success: true
+exit_code: 0
+----- stdout -----
+Information for C.jpg
+Provenance URI = self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.claim
+Manifest store size = 51217 (36.48% of file size 140396)
+Validated
+One manifest
+
+----- stderr -----

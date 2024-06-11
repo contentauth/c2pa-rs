@@ -1,5 +1,5 @@
 ---
-source: tests/view.rs
+source: tests/test_view.rs
 info:
   program: c2patool
   args:

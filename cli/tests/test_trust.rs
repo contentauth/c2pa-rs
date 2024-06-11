@@ -1,8 +1,8 @@
-mod test_utils;
+mod common;
 
+use common::{cmd, create_mock_server, fixture_path, test_img_path};
 use httpmock::MockServer;
 use insta_cmd::assert_cmd_snapshot;
-use test_utils::{cmd, create_mock_server, fixture_path, test_img_path};
 
 #[test]
 fn test_load_trust_from_trusted_file() {

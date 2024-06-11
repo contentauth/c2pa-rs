@@ -325,13 +325,3 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
         Ok(Ingredient::from_file(path)?)
     }
 }
-
-#[cfg(test)]
-pub mod tests {
-    // use super::*;
-
-    #[test]
-    fn test_sign() {
-        // TODO: construct Sign {} and call sign()
-    }
-}

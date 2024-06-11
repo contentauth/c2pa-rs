@@ -1,14 +1,15 @@
 ---
-source: tests/trust.rs
+source: tests/test_trust.rs
 info:
   program: c2patool
   args:
     - view
     - manifest
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
-  env:
-    C2PATOOL_TRUST_ANCHORS: "http://127.0.0.1:61639/trust/anchors.pem"
-    C2PATOOL_TRUST_CONFIG: "http://127.0.0.1:61639/trust/store.cfg"
+    - "--trust-anchors"
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/anchors.pem
+    - "--trust-config"
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/store.cfg
 ---
 success: true
 exit_code: 0

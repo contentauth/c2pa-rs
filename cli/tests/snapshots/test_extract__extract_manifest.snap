@@ -1,17 +1,17 @@
 ---
-source: tests/extract.rs
+source: tests/test_extract.rs
 info:
   program: c2patool
   args:
     - extract
     - manifest
     - "--output"
-    - /tmp/.tmphetwKJ/test_extract_manifest.json
+    - /tmp/.tmpvbFpN8/test_extract_manifest.json
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully extracted manifest to `/tmp/.tmphetwKJ/test_extract_manifest.json`
+Sucessfully extracted manifest to `[TEMP_FILE]
 
 ----- stderr -----

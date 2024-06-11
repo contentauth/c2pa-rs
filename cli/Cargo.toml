@@ -45,7 +45,7 @@ glob = "0.3.1"
 [dev-dependencies]
 httpmock = "0.7.0"
 mockall = "0.12.1"
-insta = { version = "1.39.0", features = ["json"] }
+insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
 insta-cmd = "0.6.0"
 
 [package.metadata.binstall]

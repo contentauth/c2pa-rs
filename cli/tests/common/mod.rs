@@ -1,9 +1,12 @@
 use std::{path::PathBuf, process::Command};
 
+use anyhow::Result;
 use httpmock::{Method, Mock, MockServer};
 use insta_cmd::get_cargo_bin;
+use serde_json::Value;
 
-const TEST_IMAGE_WITH_MANIFEST: &str = "C.jpg";
+pub const TEST_IMAGE_WITH_MANIFEST: &str = "C.jpg";
+pub const TEST_IMAGE_WITH_MANIFEST_FORMAT: &str = "image/jpeg";
 
 pub fn fixture_path(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -41,4 +44,25 @@ pub fn create_mock_server<'a>(
     });
 
     vec![trust_mock, config_mock]
+}
+
+pub fn unescape_json(str: &str) -> Result<Value> {
+    Ok(serde_json::from_str(str)?)
+}
+
+// Taken from: https://insta.rs/docs/cmd/
+#[macro_export]
+macro_rules! apply_path_filters {
+    {} => {
+        let mut settings = insta::Settings::clone_current();
+        // Macos Temp Folder
+        settings.add_filter(r"/var/folders/\S+?/T/\S+", "[TEMP_FILE]");
+        // Linux Temp Folder
+        settings.add_filter(r"/tmp/\.tmp\S+", "[TEMP_FILE]");
+        // Windows Temp folder
+        settings.add_filter(r"\b[A-Z]:\\.*\\Local\\Temp\\\S+", "[TEMP_FILE]");
+        // Convert windows paths to Unix Paths.
+        settings.add_filter(r"\\\\?([\w\d.])", "/$1");
+        let _bound = settings.bind_to_scope();
+    }
 }
