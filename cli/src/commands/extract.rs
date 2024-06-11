@@ -82,17 +82,22 @@ impl Extract {
                 force,
                 trust,
             } => {
+                if glob::glob(path)?.next().is_none() {
+                    bail!("Input path does not exist")
+                }
+
                 if !output.exists() {
                     fs::create_dir_all(output)?;
                 } else if !output.is_dir() {
                     bail!("Output path must be a folder");
                 } else if !force {
-                    bail!("Output path already exists use `--force` to overwrite");
+                    bail!(
+                        "Output path already exists use `--force` to overwrite and clear children"
+                    );
                 }
 
                 load_trust_settings(trust)?;
 
-                // TODO: validate input path similar to when signing
                 for entry in glob::glob(path)? {
                     let path = entry?;
                     if path.is_dir() {
@@ -100,6 +105,11 @@ impl Extract {
                     }
 
                     ManifestStore::from_file_with_resources(&path, output)?;
+
+                    println!(
+                        "Sucessfully extracted resources from file `{}`",
+                        path.display()
+                    );
                 }
             }
             Extract::Ingredient {
@@ -114,22 +124,38 @@ impl Extract {
                     bail!("Input path must be a file")
                 }
 
+                let ingredient_path = output.join("ingredient.json");
+                let manifest_data_path = output.join("manifest_data.c2pa");
+
                 if !output.exists() {
                     fs::create_dir_all(output)?;
                 } else if !output.is_dir() {
                     bail!("Output path must be a folder");
-                } else if !force {
-                    bail!("Output path already exists use `--force` to overwrite");
+                } else if !force && (ingredient_path.exists() || manifest_data_path.exists()) {
+                    bail!(
+                        "One or both paths already exist: `{}` or `{}` use `--force` to overwrite",
+                        ingredient_path.display(),
+                        manifest_data_path.display()
+                    );
                 }
 
                 load_trust_settings(trust)?;
 
                 let ingredient = Ingredient::from_file(path)?;
-                fs::write(output.join("ingredient.json"), ingredient.to_string())?;
+                fs::write(&ingredient_path, ingredient.to_string())?;
 
                 if let Some(manifest_data) = ingredient.manifest_data() {
-                    fs::write(output.join("manifest_data.c2pa"), manifest_data.as_ref())?;
+                    fs::write(&manifest_data_path, manifest_data.as_ref())?;
                 }
+
+                println!(
+                    "Sucessfully extracted ingredient to `{}`",
+                    ingredient_path.display()
+                );
+                println!(
+                    "Sucessfully extracted manifest data to `{}`",
+                    manifest_data_path.display()
+                );
             }
             Extract::Manifest {
                 path,
@@ -155,6 +181,8 @@ impl Extract {
 
                 let manifest = ManifestStore::from_file(path)?;
                 fs::write(output, manifest.to_string())?;
+
+                println!("Sucessfully extracted manifest to `{}`", output.display());
             }
         }
         Ok(())

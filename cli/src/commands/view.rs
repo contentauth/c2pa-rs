@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
-use c2pa::{Error, IngredientOptions, ManifestStore, ManifestStoreReport};
+use c2pa::{Error, Ingredient, IngredientOptions, ManifestStore, ManifestStoreReport};
 use clap::Subcommand;
 
 use crate::{commands::Trust, load_trust_settings};
@@ -28,6 +28,14 @@ pub enum View {
         /// Display debug information about the manifest.
         #[clap(short, long)]
         debug: bool,
+
+        #[clap(flatten)]
+        trust: Trust,
+    },
+    /// View ingredient in .json format.
+    Ingredient {
+        /// Input path to asset.
+        path: PathBuf,
 
         #[clap(flatten)]
         trust: Trust,
@@ -80,6 +88,16 @@ impl View {
                     Err(err) => Err(err.into()),
                 }?;
 
+                println!("{report}");
+            }
+            View::Ingredient { path, trust } => {
+                if !path.is_file() {
+                    bail!("Input path must be a file");
+                }
+
+                load_trust_settings(trust)?;
+
+                let report = Ingredient::from_file(path)?.to_string();
                 println!("{report}");
             }
             View::Info { path, trust } => {
@@ -192,6 +210,15 @@ pub mod tests {
         View::Manifest {
             path: SOURCE_PATH.into(),
             debug: true,
+            trust: Trust::default(),
+        }
+        .execute()
+    }
+
+    #[test]
+    fn test_view_ingredient() -> Result<()> {
+        View::Ingredient {
+            path: SOURCE_PATH.into(),
             trust: Trust::default(),
         }
         .execute()

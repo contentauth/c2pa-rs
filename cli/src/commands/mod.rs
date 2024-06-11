@@ -26,7 +26,6 @@ pub use self::{extract::Extract, sign::Sign, view::View};
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct CliArgs {
-    // TODO: restrict it so input and command can't be specified simulataneously
     /// Input path to asset to display manifset for.
     pub path: Option<PathBuf>,
 

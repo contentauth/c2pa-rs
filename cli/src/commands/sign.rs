@@ -35,7 +35,7 @@ pub struct Sign {
     /// Input glob path to asset.
     pub path: String,
 
-    /// Path to output file or folder if multiple inputs are specified
+    /// Path to output file or folder (if glob specified).
     #[clap(short, long)]
     pub output: PathBuf,
 
@@ -47,7 +47,7 @@ pub struct Sign {
     #[clap(short, long)]
     pub sidecar: bool,
 
-    /// Force overwrite output file if it already exists.
+    /// Force overwrite output file(s) if they already exists.
     #[clap(short, long)]
     pub force: bool,
 
@@ -98,25 +98,7 @@ struct ExtendedManifest {
 
 impl Sign {
     pub fn execute(&self) -> Result<()> {
-        let mut paths = glob::glob(&self.path)?;
-        if paths.next().is_none() {
-            // If no paths were found.
-            bail!("No input file found")
-        } else if paths.next().is_some() {
-            // If at least two paths were found then output must be a directory.
-            if !self.output.exists() {
-                fs::create_dir_all(&self.output)?;
-            } else if !self.output.is_dir() {
-                bail!("Output path must be a folder if specifying multiple paths as input");
-            }
-        } else if self.output.exists() {
-            // Otherwise, only one path was found.
-            if !self.output.is_file() {
-                bail!("Output path must be a file if specifying one path as input");
-            } else if !self.force {
-                bail!("Output path already exists use `--force` to overwrite");
-            }
-        }
+        let is_output_dir = self.validate()?;
 
         load_trust_settings(&self.trust)?;
 
@@ -217,12 +199,114 @@ impl Sign {
                 None => sign_config.signer()?,
             };
 
+            let output = match is_output_dir {
+                true => {
+                    // It's safe to unwrap because we already validated this in the beginning of the function.
+                    &self.output.join(path.file_name().unwrap())
+                }
+                false => &self.output,
+            };
             manifest
-                .embed(Path::new(&path), &self.output, signer.as_ref())
+                .embed(&path, output, signer.as_ref())
                 .context("embedding manifest")?;
+
+            println!("Sucessfully signed file to `{}`", output.display());
         }
 
         Ok(())
+    }
+
+    // Validates input and output paths for conflicts and returns whether the output is
+    // a file or a folder.
+    pub fn validate(&self) -> Result<bool> {
+        let mut paths = glob::glob(&self.path)?;
+        let mut min_paths = 0;
+        if paths.next().is_some() {
+            min_paths += 1;
+        }
+        if paths.next().is_some() {
+            min_paths += 1;
+        }
+        if min_paths == 0 {
+            bail!("Input path not found")
+        }
+
+        // These restrictions allow a file or folder to be specified as output if there is only one input. If
+        // there are multiple inputs, the output must be a folder.
+        let is_output_dir = if self.output.exists() {
+            if min_paths == 2 {
+                if !self.output.is_dir() {
+                    // If the output exists and there are at least two inputs, it must be a folder.
+                    bail!("Output path must be a folder if multiple inputs are specified")
+                } else {
+                    // If the output exists and there are at least two inputs and the output is a folder,
+                    // then ensure each file within the folder doesn't already exist.
+                    for entry in glob::glob(&self.path)? {
+                        // A glob always returns a file path, so it's safe to unwrap.
+                        let output = self.output.join(entry?.file_name().unwrap());
+                        if output.exists() {
+                            bail!("Output path `{}` already exists", output.display());
+                        }
+                    }
+
+                    true
+                }
+            } else if self.output.is_file() {
+                // If the output exists and there's one input and the output is a file, --force must be specified.
+                if !self.force {
+                    bail!("Output path already exists use `--force` to overwrite")
+                }
+
+                false
+            } else {
+                // If the output exists and there's one input and the output is a folder, then ensure
+                // the file doesn't exist in the output.
+
+                // A glob always returns a file path, so it's safe to unwrap.
+                let output = self.output.join(Path::new(&self.path).file_name().unwrap());
+                if output.exists() {
+                    bail!("Output path `{}` already exists", output.display());
+                }
+
+                true
+            }
+        } else if min_paths == 2 {
+            // If the output doesn't exist and there's at least two inputs, we assume it's a folder.
+
+            // TODO: re-evaluate this decision, the copy (cp) tool requires a dir exists, doesn't create it auto
+            fs::create_dir_all(&self.output)?;
+            true
+        } else {
+            // If the output doesn't exist and there's one input, we assume the output is a file.
+
+            // TODO: this will be removed eventually, see https://github.com/contentauth/c2patool/issues/150
+            if !self.sidecar {
+                let input_ext = ext_normal(Path::new(&self.path));
+                let output_ext = ext_normal(&self.output);
+                if input_ext != output_ext {
+                    bail!("Manifest cannot be embedded if extensions do not match {}≠{}, specify `--sidecar` to sidecar the manifest", input_ext, output_ext);
+                }
+            }
+
+            false
+        };
+
+        Ok(is_output_dir)
+    }
+}
+
+// normalize extensions so we can compare them
+fn ext_normal(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    match ext.as_str() {
+        "jpeg" => "jpg".to_string(),
+        "tiff" => "tif".to_string(),
+        _ => ext,
     }
 }
 
