@@ -81,7 +81,8 @@ fn test_extract_resourecs() -> Result<()> {
         .arg("resources")
         .arg(test_img_path())
         .arg("--output")
-        .arg(output_path));
+        .arg(output_path)
+        .arg("--force"));
 
     // TODO: convert resources file tree to json and assert snapshot
 

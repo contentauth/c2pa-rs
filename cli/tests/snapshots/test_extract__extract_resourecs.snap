@@ -5,13 +5,14 @@ info:
   args:
     - extract
     - resources
-    - "--output"
-    - /tmp/.tmpLfJiOY
     - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - "--output"
+    - /tmp/.tmprMOnr6
+    - "--force"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
+Sucessfully extracted resources from file `/Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg`
 
 ----- stderr -----
-Error: Output path already exists use `--force` to overwrite and clear children
