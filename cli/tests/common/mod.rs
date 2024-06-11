@@ -1,3 +1,7 @@
+// When at least one integration test doesn't use all of the exported methods, there are
+// dead code warnings causing clippy CI to fail.
+#![allow(dead_code)]
+
 use std::{path::PathBuf, process::Command};
 
 use anyhow::Result;
