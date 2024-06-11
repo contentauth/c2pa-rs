@@ -22,14 +22,14 @@ use crate::{commands::Trust, load_trust_settings};
 pub enum Extract {
     /// Extract known resources from a manifest (e.g. thumbnails).
     Resources {
-        /// Input path to asset.
+        /// Input glob path to asset.
         path: String,
 
         /// Path to output folder.
         #[clap(short, long)]
         output: PathBuf,
 
-        /// Force overwrite output if it already exists.
+        /// Force overwrite output and clear children if it already exists.
         #[clap(short, long)]
         force: bool,
 

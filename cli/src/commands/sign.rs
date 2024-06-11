@@ -202,12 +202,12 @@ impl Sign {
             let output = match is_output_dir {
                 true => {
                     // It's safe to unwrap because we already validated this in the beginning of the function.
-                    &self.output.join(path.file_name().unwrap())
+                    self.output.join(path.file_name().unwrap())
                 }
-                false => &self.output,
+                false => self.output.to_owned(),
             };
             manifest
-                .embed(&path, output, signer.as_ref())
+                .embed(&path, &output, signer.as_ref())
                 .context("embedding manifest")?;
 
             println!("Sucessfully signed file to `{}`", output.display());
