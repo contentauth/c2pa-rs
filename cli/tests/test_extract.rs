@@ -18,9 +18,9 @@ fn test_extract_manifest() -> Result<()> {
     assert_cmd_snapshot!(cmd()
         .arg("extract")
         .arg("manifest")
+        .arg(test_img_path())
         .arg("--output")
-        .arg(&output_path)
-        .arg(test_img_path()));
+        .arg(&output_path));
 
     assert_json_snapshot!(unescape_json(&fs::read_to_string(&output_path)?)?);
 
@@ -37,9 +37,9 @@ fn test_extract_ingredient() -> Result<()> {
     assert_cmd_snapshot!(cmd()
         .arg("extract")
         .arg("ingredient")
+        .arg(test_img_path())
         .arg("--output")
-        .arg(output_path)
-        .arg(test_img_path()));
+        .arg(output_path));
 
     assert_json_snapshot!(unescape_json(&fs::read_to_string(
         output_path.join("ingredient.json")
@@ -67,9 +67,9 @@ fn test_extract_resourecs() -> Result<()> {
     assert_cmd_snapshot!(cmd()
         .arg("extract")
         .arg("resources")
+        .arg(test_img_path())
         .arg("--output")
-        .arg(output_path)
-        .arg(test_img_path()));
+        .arg(output_path));
 
     // TODO: convert resources file tree to json and assert snapshot
 

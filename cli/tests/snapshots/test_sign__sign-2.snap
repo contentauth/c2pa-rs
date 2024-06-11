@@ -1,0 +1,228 @@
+---
+source: tests/test_sign.rs
+expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?"
+---
+{
+  "active_manifest": "[MANIFEST_URN]",
+  "manifests": {
+    "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc": {
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Gavin Peacock"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created"
+              },
+              {
+                "action": "c2pa.drawing",
+                "parameters": {
+                  "name": "gradient"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+      },
+      "label": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
+      "claim_generator_info": [
+        {
+          "name": "Test App",
+          "version": "0.0.1",
+          "icon": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          }
+        }
+      ],
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+        },
+        {
+          "title": "earth_apollo17.jpg",
+          "format": "image/jpeg",
+          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        },
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+        },
+        {
+          "title": "test ingredient",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "c2pa.actions.v2",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "version": "1.0",
+                  "something": "else"
+                },
+                "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.opened",
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "version": "1.0",
+                  "icon": {
+                    "format": "image/svg+xml",
+                    "identifier": "[JUMBF_URI]"
+                  },
+                  "something": "else"
+                },
+                "changes": [
+                  {
+                    "region": [
+                      {
+                        "type": "temporal",
+                        "time": {}
+                      },
+                      {
+                        "type": "identified",
+                        "item": {
+                          "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                          "value": "lips"
+                        }
+                      }
+                    ],
+                    "description": "lip synced area"
+                  }
+                ],
+                "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                "parameters": {
+                  "description": "import"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.edited",
+                "changes": [
+                  {
+                    "region": [
+                      {
+                        "type": "identified",
+                        "item": {
+                          "identifier": "track_id",
+                          "value": "transcript"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
+              }
+            ]
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "https://schema.org",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Joe Bloggs"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "cawg.training-mining",
+          "data": {
+            "entries": {
+              "c2pa.ai_training": {
+                "use": "allowed"
+              },
+              "c2pa.ai_generative_training": {
+                "use": "notAllowed"
+              }
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Es256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "640229841392226413189608867977836244731148734950",
+        "time": "[TIMESTAMP]"
+      },
+      "label": "[MANIFEST_URN]"
+    }
+  }
+}

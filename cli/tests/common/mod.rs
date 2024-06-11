@@ -70,3 +70,19 @@ macro_rules! apply_path_filters {
         let _bound = settings.bind_to_scope();
     }
 }
+
+#[macro_export]
+macro_rules! apply_manifest_filters {
+    {} => {
+        let mut settings = insta::Settings::clone_current();
+        // jumbf uri
+        settings.add_filter(r#""self#jumbf=.*""#, r#""[JUMBF_URI]""#);
+        // xmp id
+        settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
+        // manifest urn
+        settings.add_filter(r#""urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
+        // timestamp
+        settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP]""#);
+        let _bound = settings.bind_to_scope();
+    }
+}
