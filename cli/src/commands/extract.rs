@@ -13,7 +13,7 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::{bail, Result};
-use c2pa::{Ingredient, ManifestStore};
+use c2pa::{jumbf_io, Ingredient, ManifestStore};
 use clap::Parser;
 
 use crate::{commands::Trust, load_trust_settings};
@@ -28,6 +28,10 @@ pub enum Extract {
         /// Path to output file.
         #[clap(short, long)]
         output: PathBuf,
+
+        /// Extract binary .c2pa manifest.
+        #[clap(short, long)]
+        binary: bool,
 
         /// Force overwrite output if it already exists.
         #[clap(short, long)]
@@ -79,6 +83,7 @@ impl Extract {
             Extract::Manifest {
                 path,
                 output,
+                binary,
                 force,
                 trust,
             } => {
@@ -98,8 +103,16 @@ impl Extract {
 
                 load_trust_settings(trust)?;
 
-                let manifest = ManifestStore::from_file(path)?;
-                fs::write(output, manifest.to_string())?;
+                match binary {
+                    true => {
+                        let manifest = jumbf_io::load_jumbf_from_file(path)?;
+                        fs::write(output, manifest)?;
+                    }
+                    false => {
+                        let manifest = ManifestStore::from_file(path)?;
+                        fs::write(output, manifest.to_string())?;
+                    }
+                }
 
                 println!("Sucessfully extracted manifest to `{}`", output.display());
             }
