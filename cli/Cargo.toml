@@ -43,13 +43,18 @@ url = "2.5.0"
 glob = "0.3.1"
 
 [dev-dependencies]
-assert_cmd = "2.0.14"
 httpmock = "0.7.0"
-predicates = "2.1"
 mockall = "0.12.1"
+insta = { version = "1.39.0", features = ["json"] }
+insta-cmd = "0.6.0"
 
 [package.metadata.binstall]
 # Use defaults
+
+# https://insta.rs/docs/quickstart/
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary. 

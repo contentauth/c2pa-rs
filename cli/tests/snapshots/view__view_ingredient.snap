@@ -1,0 +1,31 @@
+---
+source: tests/view.rs
+info:
+  program: c2patool
+  args:
+    - view
+    - ingredient
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+---
+success: true
+exit_code: 0
+----- stdout -----
+{
+  "title": "C.jpg",
+  "format": "image/jpeg",
+  "instance_id": "xmp:iid:7b716b52-b92d-4861-90aa-152b32470e4d",
+  "provenance": "self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.claim",
+  "thumbnail": {
+    "format": "image/jpeg",
+    "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.assertions/c2pa.thumbnail.claim.jpeg",
+    "hash": "BkI+QPdyZ1fEXETg2uOBTpM5wmlwx+erq7a8KnDTOt4="
+  },
+  "relationship": "componentOf",
+  "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc",
+  "manifest_data": {
+    "format": "application/c2pa",
+    "identifier": "manifest_data.c2pa"
+  }
+}
+
+----- stderr -----

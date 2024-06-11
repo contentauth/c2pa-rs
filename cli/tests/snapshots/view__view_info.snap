@@ -1,0 +1,21 @@
+---
+source: tests/view.rs
+info:
+  program: c2patool
+  args:
+    - view
+    - infop
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+---
+success: false
+exit_code: 2
+----- stdout -----
+
+----- stderr -----
+error: unrecognized subcommand 'infop'
+
+  tip: a similar subcommand exists: 'info'
+
+Usage: c2patool view [OPTIONS] <COMMAND>
+
+For more information, try '--help'.

@@ -1,0 +1,5 @@
+---
+source: tests/extract.rs
+expression: "fs::read_to_string(output_path.join(\"ingredient.json\"))?"
+---
+"{\n  \"title\": \"C.jpg\",\n  \"format\": \"image/jpeg\",\n  \"instance_id\": \"xmp:iid:e59ebf18-0a36-4280-9a3e-b47f49901fab\",\n  \"provenance\": \"self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.claim\",\n  \"thumbnail\": {\n    \"format\": \"image/jpeg\",\n    \"identifier\": \"self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.assertions/c2pa.thumbnail.claim.jpeg\",\n    \"hash\": \"BkI+QPdyZ1fEXETg2uOBTpM5wmlwx+erq7a8KnDTOt4=\"\n  },\n  \"relationship\": \"componentOf\",\n  \"active_manifest\": \"contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc\",\n  \"manifest_data\": {\n    \"format\": \"application/c2pa\",\n    \"identifier\": \"manifest_data.c2pa\"\n  }\n}"
