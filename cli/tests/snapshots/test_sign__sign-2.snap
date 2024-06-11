@@ -5,7 +5,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
-    "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc": {
+    "[MANIFEST_URN]": {
       "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
       "title": "C.jpg",
       "format": "image/jpeg",
@@ -52,7 +52,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153"
       },
-      "label": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+      "label": "[MANIFEST_URN]"
     },
     "[MANIFEST_URN]": {
       "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
@@ -83,7 +83,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
             "identifier": "[JUMBF_URI]"
           },
           "relationship": "parentOf",
-          "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+          "active_manifest": "[MANIFEST_URN]"
         },
         {
           "title": "earth_apollo17.jpg",
@@ -105,7 +105,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
             "identifier": "[JUMBF_URI]"
           },
           "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+          "active_manifest": "[MANIFEST_URN]"
         },
         {
           "title": "test ingredient",

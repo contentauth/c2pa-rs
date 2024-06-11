@@ -37,7 +37,7 @@ jobs:
       - name: Generate code coverage
         env:
           RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --tests --bins --all-features --lcov --output-path lcov.info
 
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
