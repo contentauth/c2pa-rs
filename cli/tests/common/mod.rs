@@ -89,7 +89,7 @@ macro_rules! apply_filters {
         // Timestamp1
         settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
         // Timestamp2
-        settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6} UTC"#, r#""[TIMESTAMP2]""#);
+        settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
         let _guard = settings.bind_to_scope();
     }
 }
