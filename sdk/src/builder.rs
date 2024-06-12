@@ -101,7 +101,7 @@ fn default_vec<T>() -> Vec<T> {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum AssertionData {
-    #[schemars(skip)]
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     Cbor(serde_cbor::Value),
     Json(serde_json::Value),
 }
