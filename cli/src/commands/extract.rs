@@ -167,7 +167,8 @@ impl Extract {
                 force,
                 trust,
             } => {
-                if glob::glob(path)?.next().is_none() {
+                let paths = glob::glob(path)?.collect::<Result<Vec<PathBuf>, _>>()?;
+                if paths.is_empty() {
                     bail!("Input path does not exist")
                 }
 
@@ -183,8 +184,7 @@ impl Extract {
 
                 load_trust_settings(trust)?;
 
-                for entry in glob::glob(path)? {
-                    let path = entry?;
+                for path in paths {
                     if path.is_dir() {
                         bail!("Input path cannot be a folder when extracting resources");
                     }

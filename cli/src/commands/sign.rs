@@ -97,7 +97,7 @@ struct ExtendedManifest {
 }
 
 #[derive(Debug)]
-pub struct ValidationResults {
+struct ValidationResults {
     paths: Vec<PathBuf>,
     is_output_dir: bool,
 }
@@ -220,7 +220,7 @@ impl Sign {
 
     // Validates input and output paths for conflicts and returns whether the output is
     // a file or a folder.
-    pub fn validate(&self) -> Result<ValidationResults> {
+    fn validate(&self) -> Result<ValidationResults> {
         let paths = glob::glob(&self.path)?.collect::<Result<Vec<PathBuf>, _>>()?;
 
         // These restrictions allow a file or folder to be specified as output if there is only one input. If
@@ -272,7 +272,7 @@ impl Sign {
             (false, false, 1) => {
                 // TODO: this will be removed eventually, see https://github.com/contentauth/c2patool/issues/150
                 if !self.sidecar {
-                    let input_ext = ext_normal(Path::new(&self.path));
+                    let input_ext = ext_normal(&paths[0]);
                     let output_ext = ext_normal(&self.output);
                     if input_ext != output_ext {
                         bail!("Manifest cannot be embedded if extensions do not match {}≠{}, specify `--sidecar` to sidecar the manifest", input_ext, output_ext);
@@ -284,7 +284,7 @@ impl Sign {
             // If there are not inputs specified, then error.
             (_, _, 0) => bail!("Input path not found"),
             // If the output doesn't exist then it's impossible to know if it's a file or a folder.
-            (false, true, ..) => unreachable!(),
+            (false, true, _) => unreachable!(),
         };
 
         Ok(ValidationResults {
