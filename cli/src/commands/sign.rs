@@ -96,9 +96,15 @@ struct ExtendedManifest {
     ingredient_paths: Option<Vec<PathBuf>>,
 }
 
+#[derive(Debug)]
+pub struct ValidationResults {
+    paths: Vec<PathBuf>,
+    is_output_dir: bool,
+}
+
 impl Sign {
     pub fn execute(&self) -> Result<()> {
-        let is_output_dir = self.validate()?;
+        let validation_results = self.validate()?;
 
         load_trust_settings(&self.trust)?;
 
@@ -110,9 +116,7 @@ impl Sign {
 
         // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
         // reconstructing the entire manifest each iteration.
-        for entry in glob::glob(&self.path)? {
-            let path = entry?;
-
+        for path in validation_results.paths {
             let json = self.manifest.resolve()?;
             // read the signing information from the manifest definition
             let mut sign_config = SignConfig::from_json(&json)?;
@@ -199,7 +203,7 @@ impl Sign {
                 None => sign_config.signer()?,
             };
 
-            let output = match is_output_dir {
+            let output = match validation_results.is_output_dir {
                 true => {
                     // It's safe to unwrap because we already validated this in the beginning of the function.
                     self.output.join(path.file_name().unwrap())
@@ -216,32 +220,25 @@ impl Sign {
 
     // Validates input and output paths for conflicts and returns whether the output is
     // a file or a folder.
-    pub fn validate(&self) -> Result<bool> {
-        let mut paths = glob::glob(&self.path)?;
-        let mut min_paths = 0;
-        if paths.next().is_some() {
-            min_paths += 1;
-        }
-        if paths.next().is_some() {
-            min_paths += 1;
-        }
-        if min_paths == 0 {
+    pub fn validate(&self) -> Result<ValidationResults> {
+        let paths = glob::glob(&self.path)?.collect::<Result<Vec<PathBuf>, _>>()?;
+        if paths.is_empty() {
             bail!("Input path not found")
         }
 
         // These restrictions allow a file or folder to be specified as output if there is only one input. If
         // there are multiple inputs, the output must be a folder.
         let is_output_dir = if self.output.exists() {
-            if min_paths == 2 {
+            if paths.len() >= 2 {
                 if !self.output.is_dir() {
                     // If the output exists and there are at least two inputs, it must be a folder.
                     bail!("Output path must be a folder if multiple inputs are specified")
                 } else {
                     // If the output exists and there are at least two inputs and the output is a folder,
                     // then ensure each file within the folder doesn't already exist.
-                    for entry in glob::glob(&self.path)? {
+                    for path in &paths {
                         // A glob always returns a file path, so it's safe to unwrap.
-                        let output = self.output.join(entry?.file_name().unwrap());
+                        let output = self.output.join(path.file_name().unwrap());
                         if output.exists() {
                             bail!("Output path `{}` already exists", output.display());
                         }
@@ -261,14 +258,14 @@ impl Sign {
                 // the file doesn't exist in the output.
 
                 // A glob always returns a file path, so it's safe to unwrap.
-                let output = self.output.join(Path::new(&self.path).file_name().unwrap());
+                let output = self.output.join(paths[0].file_name().unwrap());
                 if output.exists() {
                     bail!("Output path `{}` already exists", output.display());
                 }
 
                 true
             }
-        } else if min_paths == 2 {
+        } else if paths.len() >= 2 {
             // If the output doesn't exist and there's at least two inputs, we assume it's a folder.
 
             // TODO: re-evaluate this decision, the copy (cp) tool requires a dir exists, doesn't create it auto
@@ -289,7 +286,10 @@ impl Sign {
             false
         };
 
-        Ok(is_output_dir)
+        Ok(ValidationResults {
+            paths,
+            is_output_dir,
+        })
     }
 }
 
