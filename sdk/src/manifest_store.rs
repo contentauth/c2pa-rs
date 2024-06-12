@@ -200,30 +200,30 @@ impl ManifestStore {
     /// Generate a Store from a format string and stream.
     #[async_generic(async_signature(
         format: &str,
-        mut stream: impl Read + Seek + Send,
+        stream: &mut (impl Read + Seek + Send),
         verify: bool,
     ))]
     pub fn from_stream(
         format: &str,
-        mut stream: impl Read + Seek + Send,
+        stream: &mut (impl Read + Seek + Send),
         verify: bool,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(format, stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
         if verify {
             // verify store and claims
             if _sync {
                 Store::verify_store(
                     &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
+                    &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
                 )?;
             } else {
                 Store::verify_store_async(
                     &store,
-                    &mut ClaimAssetData::Stream(&mut stream, format),
+                    &mut ClaimAssetData::Stream(stream, format),
                     &mut validation_log,
                 )
                 .await?;
