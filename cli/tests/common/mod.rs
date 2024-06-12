@@ -14,7 +14,7 @@
 // dead code warnings causing clippy CI to fail.
 #![allow(dead_code)]
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command};
 
 use anyhow::Result;
 use httpmock::{Method, Mock, MockServer};
@@ -28,7 +28,8 @@ pub fn fixture_path(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/fixtures");
     path.push(name);
-    fs::canonicalize(path).expect("Failed to canonicalize fixture path")
+    // TODO: avoid canonicalizing due to glob issue: https://github.com/rust-lang/glob/issues/145
+    path
 }
 
 pub fn test_img_path() -> PathBuf {

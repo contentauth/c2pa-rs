@@ -17,8 +17,8 @@ mod view;
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
+use reqwest::Url;
 use clap::{ArgAction, Parser, Subcommand};
-use url::Url;
 
 pub use self::{extract::Extract, sign::Sign, view::View};
 
@@ -83,7 +83,7 @@ impl InputSource {
         let data = match self {
             InputSource::Path(path) => fs::read_to_string(path)
                 .with_context(|| format!("Failed to read input from path: {:?}", path))?,
-            InputSource::Url(url) => reqwest::blocking::get(url.to_string())?
+            InputSource::Url(url) => reqwest::blocking::get(url.to_owned())?
                 .text()
                 .with_context(|| format!("Failed to read input from URL: {}", url))?,
         };
