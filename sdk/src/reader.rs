@@ -16,7 +16,10 @@
 
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::{Read, Seek, Write};
+use std::{
+    borrow::Cow,
+    io::{Read, Seek, Write},
+};
 
 use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
@@ -196,6 +199,13 @@ impl Reader {
     /// * `label` - The label of the requested [`Manifest`]
     pub fn get_manifest(&self, label: &str) -> Option<&Manifest> {
         self.manifest_store.get(label)
+    }
+
+    /// Returns a copy on write reference to the resource that contains the data for this uri
+    pub fn resource(&self, uri: &str) -> Result<Cow<Vec<u8>>> {
+        let resource_store = self.manifest_store.get_resource_store(uri)?;
+
+        resource_store.get(uri)
     }
 
     /// Write a resource identified by URI to the given stream.
