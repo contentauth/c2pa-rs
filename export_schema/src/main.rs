@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use c2pa::{settings::Settings, ManifestStore};
+use c2pa::{settings::Settings, ManifestDefinition, ManifestStore};
 use schemars::{schema::RootSchema, schema_for};
 
 fn write_schema(schema: &RootSchema, name: &str) {
@@ -15,6 +15,9 @@ fn write_schema(schema: &RootSchema, name: &str) {
 }
 
 fn main() -> Result<()> {
+    let manifest_definition = schema_for!(ManifestDefinition);
+    write_schema(&manifest_definition, "ManifestDefinition");
+
     let manifest_store = schema_for!(ManifestStore);
     write_schema(&manifest_store, "ManifestStore");
 
