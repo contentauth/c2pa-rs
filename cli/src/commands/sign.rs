@@ -222,41 +222,38 @@ impl Sign {
     // a file or a folder.
     pub fn validate(&self) -> Result<ValidationResults> {
         let paths = glob::glob(&self.path)?.collect::<Result<Vec<PathBuf>, _>>()?;
-        if paths.is_empty() {
-            bail!("Input path not found")
-        }
 
         // These restrictions allow a file or folder to be specified as output if there is only one input. If
         // there are multiple inputs, the output must be a folder.
-        let is_output_dir = if self.output.exists() {
-            if paths.len() >= 2 {
-                if !self.output.is_dir() {
-                    // If the output exists and there are at least two inputs, it must be a folder.
-                    bail!("Output path must be a folder if multiple inputs are specified")
-                } else {
-                    // If the output exists and there are at least two inputs and the output is a folder,
-                    // then ensure each file within the folder doesn't already exist.
-                    for path in &paths {
-                        // A glob always returns a file path, so it's safe to unwrap.
-                        let output = self.output.join(path.file_name().unwrap());
-                        if output.exists() {
-                            bail!("Output path `{}` already exists", output.display());
-                        }
+        let is_output_dir = match (self.output.exists(), self.output.is_dir(), paths.len()) {
+            // If the output exists and there are at least two inputs, it must be a folder.
+            (true, false, 2..) => {
+                bail!("Output path must be a folder if multiple inputs are specified")
+            }
+            // If the output exists and there are at least two inputs and the output is a folder,
+            // then ensure each file within the folder doesn't already exist.
+            (true, true, 2..) => {
+                for path in &paths {
+                    // A glob always returns a file path, so it's safe to unwrap.
+                    let output = self.output.join(path.file_name().unwrap());
+                    if output.exists() {
+                        bail!("Output path `{}` already exists", output.display());
                     }
-
-                    true
                 }
-            } else if self.output.is_file() {
-                // If the output exists and there's one input and the output is a file, --force must be specified.
+
+                true
+            }
+            // If the output exists and there's one input and the output is a file, --force must be specified.
+            (true, false, 1) => {
                 if !self.force {
                     bail!("Output path already exists use `--force` to overwrite")
                 }
 
                 false
-            } else {
-                // If the output exists and there's one input and the output is a folder, then ensure
-                // the file doesn't exist in the output.
-
+            }
+            // If the output exists and there's one input and the output is a folder, then ensure
+            // the file doesn't exist in the output.
+            (true, true, 1) => {
                 // A glob always returns a file path, so it's safe to unwrap.
                 let output = self.output.join(paths[0].file_name().unwrap());
                 if output.exists() {
@@ -265,25 +262,29 @@ impl Sign {
 
                 true
             }
-        } else if paths.len() >= 2 {
             // If the output doesn't exist and there's at least two inputs, we assume it's a folder.
-
-            // TODO: re-evaluate this decision, the copy (cp) tool requires a dir exists, doesn't create it auto
-            fs::create_dir_all(&self.output)?;
-            true
-        } else {
-            // If the output doesn't exist and there's one input, we assume the output is a file.
-
-            // TODO: this will be removed eventually, see https://github.com/contentauth/c2patool/issues/150
-            if !self.sidecar {
-                let input_ext = ext_normal(Path::new(&self.path));
-                let output_ext = ext_normal(&self.output);
-                if input_ext != output_ext {
-                    bail!("Manifest cannot be embedded if extensions do not match {}≠{}, specify `--sidecar` to sidecar the manifest", input_ext, output_ext);
-                }
+            (false, false, 2..) => {
+                // TODO: re-evaluate this decision, the copy (cp) tool requires a dir exists, doesn't create it auto
+                fs::create_dir_all(&self.output)?;
+                true
             }
+            // If the output doesn't exist and there's one input, we assume the output is a file.
+            (false, false, 1) => {
+                // TODO: this will be removed eventually, see https://github.com/contentauth/c2patool/issues/150
+                if !self.sidecar {
+                    let input_ext = ext_normal(Path::new(&self.path));
+                    let output_ext = ext_normal(&self.output);
+                    if input_ext != output_ext {
+                        bail!("Manifest cannot be embedded if extensions do not match {}≠{}, specify `--sidecar` to sidecar the manifest", input_ext, output_ext);
+                    }
+                }
 
-            false
+                false
+            }
+            // If there are not inputs specified, then error.
+            (_, _, 0) => bail!("Input path not found"),
+            // If the output doesn't exist then it's impossible to know if it's a file or a folder.
+            (false, true, ..) => unreachable!(),
         };
 
         Ok(ValidationResults {
