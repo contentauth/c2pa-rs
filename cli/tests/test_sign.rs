@@ -20,7 +20,6 @@ use insta_cmd::assert_cmd_snapshot;
 
 #[test]
 fn test_sign() -> Result<()> {
-    hide_info!();
     apply_filters!();
 
     let tempdir = tempfile::tempdir()?;

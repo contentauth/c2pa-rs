@@ -281,7 +281,7 @@ impl Sign {
 
                 false
             }
-            // If there are not inputs specified, then error.
+            // If there are no inputs specified, then error.
             (_, _, 0) => bail!("Input path not found"),
             // If the output doesn't exist then it's impossible to know if it's a file or a folder.
             (false, true, _) => unreachable!(),

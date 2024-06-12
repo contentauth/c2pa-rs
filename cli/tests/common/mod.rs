@@ -14,7 +14,7 @@
 // dead code warnings causing clippy CI to fail.
 #![allow(dead_code)]
 
-use std::{path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 
 use anyhow::Result;
 use httpmock::{Method, Mock, MockServer};
@@ -28,7 +28,7 @@ pub fn fixture_path(name: &str) -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests/fixtures");
     path.push(name);
-    path
+    fs::canonicalize(path).expect("Failed to canonicalize fixture path")
 }
 
 pub fn test_img_path() -> PathBuf {
@@ -90,17 +90,6 @@ macro_rules! apply_filters {
         settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
         // Timestamp2
         settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
-        let _guard = settings.bind_to_scope();
-    }
-}
-
-// When using assert_cmd_snapshot! with absolute file paths, it will include local filesystem structure and account
-// username. Ideally we'd be able to filter this information, but that's currently not supported: https://github.com/mitsuhiko/insta/issues/500
-#[macro_export]
-macro_rules! hide_info {
-    {} => {
-        let mut settings = insta::Settings::clone_current();
-        settings.remove_description();
         let _guard = settings.bind_to_scope();
     }
 }
