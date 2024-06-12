@@ -40,7 +40,7 @@ pub struct Sign {
     pub output: PathBuf,
 
     /// Path or URL to manifest .json.
-    #[clap(short, long, value_parser = InputSource::validate)]
+    #[clap(short, long, value_parser = InputSource::parse)]
     pub manifest: InputSource,
 
     /// Generate a .c2pa manifest file next to the output without embedding.

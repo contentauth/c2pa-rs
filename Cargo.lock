@@ -711,7 +711,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
- "url",
 ]
 
 [[package]]

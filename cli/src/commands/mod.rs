@@ -17,8 +17,8 @@ mod view;
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
-use reqwest::Url;
 use clap::{ArgAction, Parser, Subcommand};
+use reqwest::Url;
 
 pub use self::{extract::Extract, sign::Sign, view::View};
 
@@ -52,15 +52,15 @@ pub enum Commands {
 #[derive(Debug, Default, Parser)]
 pub struct Trust {
     /// Path or URL to file containing list of trust anchors in PEM format.
-    #[clap(long, env="C2PATOOL_TRUST_ANCHORS", value_parser = InputSource::validate)]
+    #[clap(long, env="C2PATOOL_TRUST_ANCHORS", value_parser = InputSource::parse)]
     pub trust_anchors: Option<InputSource>,
 
     /// Path or URL to file containing specific manifest signing certificates in PEM format to implicitly trust.
-    #[clap(long, env="C2PATOOL_ALLOWED_LIST", value_parser = InputSource::validate)]
+    #[clap(long, env="C2PATOOL_ALLOWED_LIST", value_parser = InputSource::parse)]
     pub allowed_list: Option<InputSource>,
 
     /// Path or URL to file containing configured EKUs in Oid dot notation.
-    #[clap(long, env="C2PATOOL_TRUST_CONFIG", value_parser = InputSource::validate)]
+    #[clap(long, env="C2PATOOL_TRUST_CONFIG", value_parser = InputSource::parse)]
     pub trust_config: Option<InputSource>,
 }
 
@@ -71,22 +71,20 @@ pub enum InputSource {
 }
 
 impl InputSource {
-    fn validate(s: &str) -> Result<InputSource> {
-        if let Ok(url) = s.parse::<Url>() {
-            Ok(InputSource::Url(url))
-        } else {
-            Ok(InputSource::Path(s.into()))
+    fn parse(s: &str) -> Result<InputSource> {
+        match Url::parse(s) {
+            Ok(url) => Ok(InputSource::Url(url)),
+            Err(_) => Ok(InputSource::Path(s.into())),
         }
     }
 
     pub fn resolve(&self) -> Result<String> {
-        let data = match self {
+        match self {
             InputSource::Path(path) => fs::read_to_string(path)
-                .with_context(|| format!("Failed to read input from path: {:?}", path))?,
+                .with_context(|| format!("Failed to read input from path: {:?}", path)),
             InputSource::Url(url) => reqwest::blocking::get(url.to_owned())?
                 .text()
-                .with_context(|| format!("Failed to read input from URL: {}", url))?,
-        };
-        Ok(data)
+                .with_context(|| format!("Failed to read input from URL: {}", url)),
+        }
     }
 }
