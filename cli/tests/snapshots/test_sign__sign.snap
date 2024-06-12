@@ -4,16 +4,15 @@ info:
   program: c2patool
   args:
     - sign
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--manifest"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/ingredient_test.json
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/ingredient_test.json
     - "--output"
-    - /tmp/.tmpUE3y20/C.jpg
+    - /tmp/.tmpvSJkyC/C.jpg
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully signed file to `[TEMP_FILE]
 
 ----- stderr -----
 

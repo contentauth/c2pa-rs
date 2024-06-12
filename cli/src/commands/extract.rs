@@ -124,8 +124,6 @@ impl Extract {
                         fs::write(output, manifest.to_string())?;
                     }
                 }
-
-                println!("Sucessfully extracted manifest to `{}`", output.display());
             }
             Extract::Ingredient {
                 path,
@@ -162,15 +160,6 @@ impl Extract {
                 if let Some(manifest_data) = ingredient.manifest_data() {
                     fs::write(&manifest_data_path, manifest_data.as_ref())?;
                 }
-
-                println!(
-                    "Sucessfully extracted ingredient to `{}`",
-                    ingredient_path.display()
-                );
-                println!(
-                    "Sucessfully extracted manifest data to `{}`",
-                    manifest_data_path.display()
-                );
             }
             Extract::Resources {
                 path,
@@ -201,11 +190,6 @@ impl Extract {
                     }
 
                     ManifestStore::from_file_with_resources(&path, output)?;
-
-                    println!(
-                        "Sucessfully extracted resources from file `{}`",
-                        path.display()
-                    );
                 }
             }
         }

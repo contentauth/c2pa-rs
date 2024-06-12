@@ -5,14 +5,12 @@ info:
   args:
     - extract
     - ingredient
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--output"
-    - /tmp/.tmpFSYYHt
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /tmp/.tmpFmGjZw
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully extracted ingredient to `[TEMP_FILE]
-Sucessfully extracted manifest data to `[TEMP_FILE]
 
 ----- stderr -----

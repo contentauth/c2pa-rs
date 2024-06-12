@@ -14,25 +14,31 @@ mod common;
 
 use anyhow::Result;
 use c2pa::ManifestStore;
-use common::{cmd, fixture_path, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST};
-use insta::assert_json_snapshot;
+use common::{cli, fixture_path, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST};
+use insta::{assert_json_snapshot, Settings};
 use insta_cmd::assert_cmd_snapshot;
 
 #[test]
 fn test_sign() -> Result<()> {
-    apply_path_filters!();
-    apply_manifest_filters!();
+    hide_info!();
+    apply_filters!();
 
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path().join(TEST_IMAGE_WITH_MANIFEST);
 
-    assert_cmd_snapshot!(cmd()
+    assert_cmd_snapshot!(cli()
         .arg("sign")
         .arg(test_img_path())
         .arg("--manifest")
         .arg(fixture_path("ingredient_test.json"))
         .arg("--output")
         .arg(&output_path));
+
+    // The order of the output can be arbitrary, so we sort it beforehand
+    // as to not affect the diff.
+    let mut settings = Settings::clone_current();
+    settings.set_sort_maps(true);
+    let _guard = settings.bind_to_scope();
 
     assert_json_snapshot!(unescape_json(
         &ManifestStore::from_file(output_path)?.to_string()

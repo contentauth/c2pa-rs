@@ -5,11 +5,11 @@ info:
   args:
     - view
     - manifest
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--trust-anchors"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/anchors.pem
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/trust/anchors.pem
     - "--trust-config"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/trust/store.cfg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/trust/store.cfg
 ---
 success: true
 exit_code: 0

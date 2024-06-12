@@ -5,7 +5,7 @@ info:
   args:
     - view
     - info
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
 ---
 success: true
 exit_code: 0

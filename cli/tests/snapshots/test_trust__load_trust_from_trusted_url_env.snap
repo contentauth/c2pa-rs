@@ -5,10 +5,10 @@ info:
   args:
     - view
     - manifest
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
   env:
-    C2PATOOL_TRUST_ANCHORS: "http://127.0.0.1:64150/trust/anchors.pem"
-    C2PATOOL_TRUST_CONFIG: "http://127.0.0.1:64150/trust/store.cfg"
+    C2PATOOL_TRUST_ANCHORS: "http://127.0.0.1:61756/trust/anchors.pem"
+    C2PATOOL_TRUST_CONFIG: "http://127.0.0.1:61756/trust/store.cfg"
 ---
 success: true
 exit_code: 0

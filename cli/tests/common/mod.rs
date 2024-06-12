@@ -35,7 +35,7 @@ pub fn test_img_path() -> PathBuf {
     fixture_path(TEST_IMAGE_WITH_MANIFEST)
 }
 
-pub fn cmd() -> Command {
+pub fn cli() -> Command {
     Command::new(get_cargo_bin("c2patool"))
 }
 
@@ -66,35 +66,41 @@ pub fn unescape_json(str: &str) -> Result<Value> {
     Ok(serde_json::from_str(str)?)
 }
 
-// Taken from: https://insta.rs/docs/cmd/
+// This macro filters unstable snapshot output values so that we can properly diff changes.
 #[macro_export]
-macro_rules! apply_path_filters {
+macro_rules! apply_filters {
     {} => {
+        // TODO: c2pa regex patterns can be more strict and granular
         let mut settings = insta::Settings::clone_current();
-        // Macos Temp Folder
+        // macOS temp folder
         settings.add_filter(r"/var/folders/\S+?/T/\S+", "[TEMP_FILE]");
-        // Linux Temp Folder
+        // Linux temp folder
         settings.add_filter(r"/tmp/\.tmp\S+", "[TEMP_FILE]");
-        // Windows Temp folder
+        // Windows temp folder
         settings.add_filter(r"\b[A-Z]:\\.*\\Local\\Temp\\\S+", "[TEMP_FILE]");
-        // Convert windows paths to Unix Paths.
+        // Convert Windows paths to Unix Paths
         settings.add_filter(r"\\\\?([\w\d.])", "/$1");
-        let _bound = settings.bind_to_scope();
+        // Jumbf URI
+        settings.add_filter(r#""self#jumbf=.*""#, r#""[JUMBF_URI]""#);
+        // Xmp id
+        settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
+        // Manifest URN
+        settings.add_filter(r#""(?:contentauth:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
+        // Timestamp1
+        settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
+        // Timestamp2
+        settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6} UTC"#, r#""[TIMESTAMP2]""#);
+        let _guard = settings.bind_to_scope();
     }
 }
 
+// When using assert_cmd_snapshot! with absolute file paths, it will include local filesystem structure and account
+// username. Ideally we'd be able to filter this information, but that's currently not supported: https://github.com/mitsuhiko/insta/issues/500
 #[macro_export]
-macro_rules! apply_manifest_filters {
+macro_rules! hide_info {
     {} => {
         let mut settings = insta::Settings::clone_current();
-        // jumbf uri
-        settings.add_filter(r#""self#jumbf=.*""#, r#""[JUMBF_URI]""#);
-        // xmp id
-        settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
-        // manifest urn
-        settings.add_filter(r#""(?:contentauth:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
-        // timestamp
-        settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP]""#);
-        let _bound = settings.bind_to_scope();
+        settings.remove_description();
+        let _guard = settings.bind_to_scope();
     }
 }

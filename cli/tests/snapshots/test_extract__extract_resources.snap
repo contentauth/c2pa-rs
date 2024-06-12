@@ -5,14 +5,13 @@ info:
   args:
     - extract
     - resources
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--output"
-    - /tmp/.tmprMOnr6
+    - /tmp/.tmpEtK3IP
     - "--force"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully extracted resources from file `/Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg`
 
 ----- stderr -----

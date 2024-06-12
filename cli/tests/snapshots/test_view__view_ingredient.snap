@@ -1,0 +1,31 @@
+---
+source: tests/test_view.rs
+info:
+  program: c2patool
+  args:
+    - view
+    - ingredient
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
+---
+success: true
+exit_code: 0
+----- stdout -----
+{
+  "title": "C.jpg",
+  "format": "image/jpeg",
+  "instance_id": [XMP_ID]",
+  "provenance": "[JUMBF_URI]",
+  "thumbnail": {
+    "format": "image/jpeg",
+    "identifier": "[JUMBF_URI]",
+    "hash": "BkI+QPdyZ1fEXETg2uOBTpM5wmlwx+erq7a8KnDTOt4="
+  },
+  "relationship": "componentOf",
+  "active_manifest": "[MANIFEST_URN]",
+  "manifest_data": {
+    "format": "application/c2pa",
+    "identifier": "manifest_data.c2pa"
+  }
+}
+
+----- stderr -----

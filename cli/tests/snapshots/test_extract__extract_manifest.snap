@@ -5,13 +5,12 @@ info:
   args:
     - extract
     - manifest
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
     - "--output"
-    - /tmp/.tmpvbFpN8/test_extract_manifest.json
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /tmp/.tmpcPWJtw/test_extract_manifest.json
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Sucessfully extracted manifest to `[TEMP_FILE]
 
 ----- stderr -----

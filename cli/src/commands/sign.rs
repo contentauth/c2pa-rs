@@ -209,8 +209,6 @@ impl Sign {
             manifest
                 .embed(&path, &output, signer.as_ref())
                 .context("embedding manifest")?;
-
-            println!("Sucessfully signed file to `{}`", output.display());
         }
 
         Ok(())

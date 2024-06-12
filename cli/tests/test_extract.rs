@@ -16,18 +16,16 @@ use std::fs;
 
 use anyhow::Result;
 use c2pa::ManifestStore;
-use common::{cmd, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST_FORMAT};
+use common::{cli, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST_FORMAT};
 use insta::assert_json_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 
 #[test]
 fn test_extract_manifest() -> Result<()> {
-    apply_path_filters!();
-
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path().join("test_extract_manifest.json");
 
-    assert_cmd_snapshot!(cmd()
+    assert_cmd_snapshot!(cli()
         .arg("extract")
         .arg("manifest")
         .arg(test_img_path())
@@ -41,12 +39,10 @@ fn test_extract_manifest() -> Result<()> {
 
 #[test]
 fn test_extract_ingredient() -> Result<()> {
-    apply_path_filters!();
-
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path();
 
-    assert_cmd_snapshot!(cmd()
+    assert_cmd_snapshot!(cli()
         .arg("extract")
         .arg("ingredient")
         .arg(test_img_path())
@@ -72,11 +68,11 @@ fn test_extract_ingredient() -> Result<()> {
 }
 
 #[test]
-fn test_extract_resourecs() -> Result<()> {
+fn test_extract_resources() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path();
 
-    assert_cmd_snapshot!(cmd()
+    assert_cmd_snapshot!(cli()
         .arg("extract")
         .arg("resources")
         .arg(test_img_path())
