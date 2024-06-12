@@ -18,14 +18,14 @@
 /// If only the path is given, this will generate a summary report of any claims in that file
 /// If a manifest definition json file is specified, the claim will be added to any existing claims
 use std::{
-    fs::{create_dir_all, remove_dir_all, File},
-    io::Write,
+    fs::{self, create_dir_all, remove_dir_all, File},
+    io::{self, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Error, Ingredient, Manifest, ManifestStoreReport, Reader, ResourceResolver};
+use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestStoreReport, Reader};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -166,7 +166,7 @@ enum Commands {
 // Add fields that are not part of the standard Manifest
 struct ManifestDef {
     #[serde(flatten)]
-    manifest: Manifest,
+    builder: Builder,
     // allows adding ingredients with file paths
     ingredient_paths: Option<Vec<PathBuf>>,
 }
@@ -372,67 +372,62 @@ fn main() -> Result<()> {
         let mut sign_config = SignConfig::from_json(&json)?;
 
         // read the manifest information
-        let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
-        let mut manifest = manifest_def.manifest;
+        let manifest_def: ManifestDef = serde_json::from_str(&json)?;
+        let mut builder = manifest_def.builder;
 
-        // add claim_tool generator so we know this was created using this tool
-        let tool_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        if manifest.claim_generator.starts_with("c2pa/") {
-            manifest.claim_generator = tool_generator // just replace the default generator
-        } else {
-            manifest.claim_generator = format!("{} {}", manifest.claim_generator, tool_generator);
-        }
+        let mut claim_gen_info = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+        claim_gen_info.set_version(env!("CARGO_PKG_VERSION"));
+        builder.definition.claim_generator_info.push(claim_gen_info);
 
-        // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
-            manifest.with_base_path(base)?;
             sign_config.set_base_path(base);
         }
 
-        // Add any ingredients specified as file paths
         if let Some(paths) = manifest_def.ingredient_paths {
             for mut path in paths {
-                // ingredient paths are relative to the manifest path
                 if let Some(base) = &base_path {
                     if !(path.is_absolute()) {
                         path = base.join(&path)
                     }
                 }
+
                 let ingredient = load_ingredient(&path)?;
-                manifest.add_ingredient(ingredient);
+                builder.definition.ingredients.push(ingredient);
             }
         }
 
         if let Some(parent_path) = args.parent {
             let ingredient = load_ingredient(&parent_path)?;
-            manifest.set_parent(ingredient)?;
+            // TODO: Relationship isn't exported from c2pa-rs
+            // ingredient.set_relationship(Relationship::ParentOf);
+            builder.definition.ingredients.push(ingredient);
         }
 
-        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-        // note: This could be treated as an update manifest eventually since the image is the same
-        if manifest.parent().is_none() {
+        let parent_exists = builder
+            .definition
+            .ingredients
+            .iter()
+            .any(|ingredient| ingredient.is_parent());
+        if !parent_exists {
             let source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
-                manifest.set_parent(source_ingredient)?;
+                // source_ingredient.set_relationship(Relationship::ParentOf);
+                builder.definition.ingredients.push(source_ingredient);
             }
         }
 
         if let Some(remote) = args.remote {
-            if args.sidecar {
-                manifest.set_remote_manifest(remote);
-            } else {
-                manifest.set_embedded_manifest_with_remote_ref(remote);
-            }
-        } else if args.sidecar {
-            manifest.set_sidecar_manifest();
+            builder.remote_url = Some(remote);
         }
+
+        // TODO: handle sidecar
 
         if let Some(output) = args.output {
             if ext_normal(&output) != ext_normal(&args.path) {
                 bail!("Output type must match source type");
             }
             if output.exists() && !args.force {
-                bail!("Output already exists, use -f/force to force write");
+                bail!("Output already exists, use -f/force to force overwrite");
             }
 
             if output.file_name().is_none() {
@@ -456,9 +451,22 @@ fn main() -> Result<()> {
                 sign_config.signer()?
             };
 
-            manifest
-                .embed(&args.path, &output, signer.as_ref())
-                .context("embedding manifest")?;
+            match args.sidecar {
+                true => {
+                    if let Some(ext) = c2pa::format_from_path(&args.path) {
+                        let binary_manifest = builder.sign(
+                            signer.as_ref(),
+                            &ext,
+                            &mut File::open(&args.path)?,
+                            &mut io::empty(),
+                        )?;
+                        fs::write(&output, binary_manifest)?;
+                    }
+                }
+                false => {
+                    builder.sign_file(signer.as_ref(), &args.path, &output)?;
+                }
+            }
 
             // generate a report on the output file
             if args.detailed {
@@ -506,9 +514,9 @@ fn main() -> Result<()> {
                             .parent()
                             .context("Failed to find resource parent path from label")?,
                     )?;
-                    std::io::copy(
-                        &mut manifest.resources().open(&resource_ref)?,
-                        &mut File::create(&resource_path)?,
+                    reader.resource_to_stream(
+                        &resource_ref.identifier,
+                        File::create(&resource_path)?,
                     )?;
                 }
             }
@@ -541,6 +549,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use c2pa::Manifest;
 
     use super::*;
 
