@@ -122,9 +122,7 @@ use async_trait::async_trait;
 /// This trait exists to allow the signature mechanism to be extended.
 ///
 /// Use this when the implementation is asynchronous.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait AsyncSigner: Sync {
+trait AsyncSignerBase {
     /// Returns a new byte array which is a signature over the original.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
 
@@ -196,6 +194,14 @@ pub trait AsyncSigner: Sync {
         false
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncSigner: AsyncSignerBase {}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+pub trait AsyncSigner: AsyncSignerBase + Sync {}
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
