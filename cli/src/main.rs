@@ -397,9 +397,8 @@ fn main() -> Result<()> {
         }
 
         if let Some(parent_path) = args.parent {
-            let ingredient = load_ingredient(&parent_path)?;
-            // TODO: Relationship isn't exported from c2pa-rs
-            // ingredient.set_relationship(Relationship::ParentOf);
+            let mut ingredient = load_ingredient(&parent_path)?;
+            ingredient.set_is_parent();
             builder.definition.ingredients.push(ingredient);
         }
 
@@ -409,9 +408,9 @@ fn main() -> Result<()> {
             .iter()
             .any(|ingredient| ingredient.is_parent());
         if !parent_exists {
-            let source_ingredient = Ingredient::from_file(&args.path)?;
+            let mut source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
-                // source_ingredient.set_relationship(Relationship::ParentOf);
+                source_ingredient.set_is_parent();
                 builder.definition.ingredients.push(source_ingredient);
             }
         }
@@ -419,8 +418,6 @@ fn main() -> Result<()> {
         if let Some(remote) = args.remote {
             builder.remote_url = Some(remote);
         }
-
-        // TODO: handle sidecar
 
         if let Some(output) = args.output {
             if ext_normal(&output) != ext_normal(&args.path) {
