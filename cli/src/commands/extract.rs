@@ -45,7 +45,7 @@ pub enum Extract {
         /// Input path to asset.
         path: PathBuf,
 
-        /// Path to output folder.
+        /// Path to output ingredient .json.
         #[clap(short, long)]
         output: PathBuf,
 
@@ -137,29 +137,18 @@ impl Extract {
                     bail!("Input path must be a file")
                 }
 
-                let ingredient_path = output.join("ingredient.json");
-                let manifest_data_path = output.join("manifest_data.c2pa");
-
-                if !output.exists() {
-                    fs::create_dir_all(output)?;
-                } else if !output.is_dir() {
-                    bail!("Output path must be a folder");
-                } else if !force && (ingredient_path.exists() || manifest_data_path.exists()) {
-                    bail!(
-                        "One or both paths already exist: `{}` or `{}` use `--force` to overwrite",
-                        ingredient_path.display(),
-                        manifest_data_path.display()
-                    );
+                if output.exists() {
+                    if !output.is_file() {
+                        bail!("Output path must be a file");
+                    } else if !force {
+                        bail!("Output path already exists use `--force` to overwrite");
+                    }
                 }
 
                 load_trust_settings(trust)?;
 
                 let ingredient = Ingredient::from_file(path)?;
-                fs::write(&ingredient_path, ingredient.to_string())?;
-
-                if let Some(manifest_data) = ingredient.manifest_data() {
-                    fs::write(&manifest_data_path, manifest_data.as_ref())?;
-                }
+                fs::write(output, ingredient.to_string())?;
             }
             Extract::Resources {
                 path,

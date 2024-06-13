@@ -1,0 +1,17 @@
+---
+source: tests/test_extract.rs
+info:
+  program: c2patool
+  args:
+    - extract
+    - manifest
+    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - "--output"
+    - /tmp/.tmpKfIZf5/manifest_data.c2pa
+    - "--binary"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----

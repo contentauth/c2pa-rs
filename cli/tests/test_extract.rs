@@ -38,31 +38,46 @@ fn test_extract_manifest() -> Result<()> {
 }
 
 #[test]
+fn test_extract_manifest_binary() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let output_path = tempdir.path().join("manifest_data.c2pa");
+
+    assert_cmd_snapshot!(cli()
+        .arg("extract")
+        .arg("manifest")
+        .arg(test_img_path())
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--binary"));
+
+    assert_json_snapshot!(unescape_json(
+        &ManifestStore::from_manifest_and_asset_bytes(
+            &fs::read(output_path)?,
+            TEST_IMAGE_WITH_MANIFEST_FORMAT,
+            &fs::read(test_img_path())?
+        )?
+        .to_string()
+    )?);
+
+    Ok(())
+}
+
+#[test]
 fn test_extract_ingredient() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
-    let output_path = tempdir.path();
+    let output_path = tempdir.path().join("ingredient.json");
 
     assert_cmd_snapshot!(cli()
         .arg("extract")
         .arg("ingredient")
         .arg(test_img_path())
         .arg("--output")
-        .arg(output_path));
+        .arg(&output_path));
 
-    assert_json_snapshot!(unescape_json(&fs::read_to_string(
-        output_path.join("ingredient.json")
-    )?)?, {
+    assert_json_snapshot!(
+        unescape_json(&fs::read_to_string(&output_path)?)?, {
         ".instance_id" => "[XMP_ID]"
     });
-
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_manifest_and_asset_bytes(
-            &fs::read(output_path.join("manifest_data.c2pa"))?,
-            TEST_IMAGE_WITH_MANIFEST_FORMAT,
-            &fs::read(test_img_path())?
-        )?
-        .to_string()
-    )?);
 
     Ok(())
 }
