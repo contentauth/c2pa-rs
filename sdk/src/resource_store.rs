@@ -280,13 +280,6 @@ impl ResourceStore {
         Ok(self)
     }
 
-    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
-    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
-        self.resources
-            .keys()
-            .map(|uri| ResourceRef::new(mime_from_uri(uri), uri.to_owned()))
-    }
-
     /// Returns a [`HashMap`] of internal resources.
     pub fn resources(&self) -> &HashMap<String, Vec<u8>> {
         &self.resources

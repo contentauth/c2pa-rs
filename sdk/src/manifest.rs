@@ -34,7 +34,7 @@ use crate::{
     ingredient::Ingredient,
     jumbf,
     manifest_assertion::ManifestAssertion,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer,
@@ -449,6 +449,14 @@ impl Manifest {
     /// Returns the time that the manifest was signed
     pub fn time(&self) -> Option<String> {
         self.signature_info.to_owned().and_then(|sig| sig.time)
+    }
+
+    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
+        self.resources
+            .resources()
+            .keys()
+            .map(|uri| ResourceRef::new(mime_from_uri(uri), uri.to_owned()))
     }
 
     /// Return an immutable reference to the manifest resources
