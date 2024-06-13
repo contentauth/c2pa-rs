@@ -35,6 +35,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate code coverage
+        id: run_tests
         env:
           RUST_BACKTRACE: 1
           CARGO_TERM_COLOR: always
@@ -42,6 +43,7 @@ jobs:
           INSTA_UPDATE: new
         run: cargo llvm-cov --tests --bins --all-features --lcov --output-path lcov.info
 
+      # https://insta.rs/docs/patterns/
       - name: Upload snapshots of failed tests
         if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
         uses: actions/upload-artifact@v3
