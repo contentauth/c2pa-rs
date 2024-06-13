@@ -5,7 +5,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
-    "adobe:urn:uuid:42404eb5-6df1-433c-92ee-69ca0cca16c1": {
+    "[MANIFEST_URN]": {
       "assertions": [
         {
           "data": {
@@ -144,7 +144,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         }
       ],
       "instance_id": [XMP_ID]",
-      "label": "adobe:urn:uuid:42404eb5-6df1-433c-92ee-69ca0cca16c1",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
         "cert_serial_number": "117468664790937121336398959340346743515",
@@ -155,9 +155,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "title": "landscape.jpg"
-    },
-    "adobe:urn:uuid:dd8c35e8-af60-4e1d-8506-733f6e63bd0c": {
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
           "data": {
@@ -281,7 +279,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
       "format": "image/jpeg",
       "ingredients": [
         {
-          "active_manifest": "adobe:urn:uuid:42404eb5-6df1-433c-92ee-69ca0cca16c1",
+          "active_manifest": "[MANIFEST_URN]",
           "document_id": [XMP_ID]",
           "format": "image/jpeg",
           "instance_id": [XMP_ID]",
@@ -311,7 +309,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         }
       ],
       "instance_id": [XMP_ID]",
-      "label": "adobe:urn:uuid:dd8c35e8-af60-4e1d-8506-733f6e63bd0c",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
         "cert_serial_number": "117468664790937121336398959340346743515",
@@ -322,9 +320,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "title": "sunset.jpg"
-    },
-    "adobe:urn:uuid:df1d2745-5beb-4d6c-bd99-3527e29c7df0": {
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
           "data": {
@@ -514,7 +510,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
       "format": "image/jpeg",
       "ingredients": [
         {
-          "active_manifest": "adobe:urn:uuid:dd8c35e8-af60-4e1d-8506-733f6e63bd0c",
+          "active_manifest": "[MANIFEST_URN]",
           "document_id": [XMP_ID]",
           "format": "image/jpeg",
           "instance_id": [XMP_ID]",
@@ -544,7 +540,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         }
       ],
       "instance_id": [XMP_ID]",
-      "label": "adobe:urn:uuid:df1d2745-5beb-4d6c-bd99-3527e29c7df0",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
         "cert_serial_number": "117468664790937121336398959340346743515",
@@ -555,9 +551,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "title": "moonrise.jpg"
-    },
-    "[MANIFEST_URN]": {
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
           "data": {
@@ -719,7 +713,7 @@ expression: "unescape_json(&ManifestStore::from_file(output_path)?.to_string())?
       "format": "image/jpeg",
       "ingredients": [
         {
-          "active_manifest": "adobe:urn:uuid:df1d2745-5beb-4d6c-bd99-3527e29c7df0",
+          "active_manifest": "[MANIFEST_URN]",
           "format": "image/jpeg",
           "instance_id": [XMP_ID]",
           "relationship": "parentOf",

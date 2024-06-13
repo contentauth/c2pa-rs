@@ -86,7 +86,7 @@ macro_rules! apply_filters {
         // Xmp id
         settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
         // Manifest URN
-        settings.add_filter(r#""(?:contentauth:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
+        settings.add_filter(r#""(?:[^:]+:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
         // Timestamp1
         settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
         // Timestamp2
