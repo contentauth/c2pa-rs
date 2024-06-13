@@ -87,13 +87,20 @@ pub struct Sign {
     pub trust: Trust,
 }
 
-// Add fields that are not part of the standard Manifest
 #[derive(Debug, Deserialize)]
 struct ExtendedManifest {
     #[serde(flatten)]
     manifest: Manifest,
-    // allows adding ingredients with file paths
-    ingredient_paths: Option<Vec<PathBuf>>,
+    // Allows ingredients to be specified as a path or inline.
+    ingredients: Vec<IngredientSource>,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum IngredientSource {
+    Ingredient(Ingredient),
+    Path(PathBuf),
 }
 
 #[derive(Debug)]
@@ -147,15 +154,20 @@ impl Sign {
             manifest.with_base_path(&base_path)?;
             sign_config.set_base_path(&base_path);
 
-            // Add any ingredients specified as file paths
-            if let Some(paths) = ext_manifest.ingredient_paths {
-                for mut path in paths {
-                    // ingredient paths are relative to the manifest path
-                    if !path.is_absolute() {
-                        path = base_path.join(&path)
+            for ingredient_source in ext_manifest.ingredients {
+                match ingredient_source {
+                    IngredientSource::Ingredient(mut ingredient) => {
+                        ingredient.with_base_path(&base_path)?;
+                        manifest.add_ingredient(ingredient);
                     }
+                    IngredientSource::Path(mut path) => {
+                        // ingredient paths are relative to the manifest path
+                        if !path.is_absolute() {
+                            path = base_path.join(&path);
+                        }
 
-                    manifest.add_ingredient(load_ingredient(&path)?);
+                        manifest.add_ingredient(load_ingredient(&path)?);
+                    }
                 }
             }
 

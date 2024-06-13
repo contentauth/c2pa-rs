@@ -123,10 +123,9 @@
               "identifier": "verify.jpeg"
             },
             "relationship": "componentOf"
-        }
-    ],
-    "ingredient_paths": [
-        "C.jpg", "ingredient/ingredient.json"
+        },
+        "C.jpg",
+        "ingredient/ingredient.json"
     ]
 }
 

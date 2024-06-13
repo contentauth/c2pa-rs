@@ -24,9 +24,7 @@
                         "format": "image/jpeg"
                     },
                     "relationship": "parentOf"
-                }
-            ],
-            "ingredient_paths": [
+                },
                 "C.jpg"
             ],
             "assertions": [
@@ -66,13 +64,8 @@
         },
         "ingredients": {
             "type": "array",
-            "format": "Array of JSON ingredients, such as those produced with the --ingredient option",
+            "format": "Array of JSON ingredients or paths to JSON ingredient definition files, such as those produced with the --ingredient option",
             "description": "Ingredients that were used to modify the asset referenced by this Manifest (if any)."
-        },
-        "ingredient_paths": {
-            "type": "array",
-            "format": "Array of local file system paths",
-            "description": "File paths to assets that were used to modify the asset referenced by this Manifest (if any). This may be a JSON Ingredient definition file."
         },
         "assertions": {
             "type": "object",
