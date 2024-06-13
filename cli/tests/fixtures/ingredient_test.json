@@ -120,11 +120,11 @@
             "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
             "thumbnail": {
               "format": "image/jpeg",
-              "identifier": "verify.jpeg"
+              "identifier": "signed-images/verify.jpeg"
             },
             "relationship": "componentOf"
         },
-        "C.jpg",
+        "signed-images/C.jpg",
         "ingredient/ingredient.json"
     ]
 }

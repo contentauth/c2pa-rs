@@ -21,7 +21,7 @@ use httpmock::{Method, Mock, MockServer};
 use insta_cmd::get_cargo_bin;
 use serde_json::Value;
 
-pub const TEST_IMAGE_WITH_MANIFEST: &str = "C.jpg";
+pub const TEST_IMAGE_WITH_MANIFEST: &str = "signed-images/C.jpg";
 pub const TEST_IMAGE_WITH_MANIFEST_FORMAT: &str = "image/jpeg";
 
 pub fn fixture_path(name: &str) -> PathBuf {
@@ -92,5 +92,16 @@ macro_rules! apply_filters {
         // Timestamp2
         settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
         let _guard = settings.bind_to_scope();
+    }
+}
+
+// The order of the output in some scenarios can be arbitrary, so we sort it beforehand
+// as to not affect the diff.
+#[macro_export]
+macro_rules! apply_sorted_output {
+    {} => {
+    let mut settings = Settings::clone_current();
+    settings.set_sort_maps(true);
+    let _guard = settings.bind_to_scope();
     }
 }
