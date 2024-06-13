@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     claim::ClaimAssetData,
     jumbf::labels::manifest_label_from_uri,
-    resource_store::ResourceStore,
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::base64,
@@ -83,8 +82,8 @@ impl ManifestStore {
         self.manifests.get(label)
     }
 
-    /// Finds the resource store that contains this uri
-    pub fn get_resource_store(&self, uri: &str) -> Result<&ResourceStore> {
+    // writes a resource identified uri to the given stream
+    pub fn get_resource(&self, uri: &str, stream: impl Write + Read + Seek + Send) -> Result<u64> {
         // get the manifest referenced by the uri, or the active one if None
         let manifest = match manifest_label_from_uri(uri) {
             Some(label) => self.get(&label),
@@ -101,17 +100,10 @@ impl ManifestStore {
                     }
                 }
             }
-            Ok(resources)
+            resources.write_stream(uri, stream)
         } else {
             Err(Error::ResourceNotFound(uri.to_owned()))
         }
-    }
-
-    // writes a resource identified uri to the given stream
-    pub fn get_resource(&self, uri: &str, stream: impl Write + Read + Seek + Send) -> Result<u64> {
-        let resource_store = self.get_resource_store(uri)?;
-
-        resource_store.write_stream(uri, stream)
     }
 
     /// Returns a reference the [ValidationStatus] Vec or None
