@@ -36,8 +36,18 @@ jobs:
 
       - name: Generate code coverage
         env:
-          RUST_BACKTRACE: "1"
+          RUST_BACKTRACE: 1
+          CARGO_TERM_COLOR: always
+          CLICOLOR_FORCE: 1
+          INSTA_UPDATE: new
         run: cargo llvm-cov --tests --bins --all-features --lcov --output-path lcov.info
+
+      - name: Upload snapshots of failed tests
+        if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: failed-snapshots
+          path: "**/snapshots/*.snap.new"
 
       - name: Upload code coverage results
         uses: codecov/codecov-action@v3
