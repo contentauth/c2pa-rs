@@ -91,6 +91,7 @@ fast-xml = "0.23.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.12.0"
+icu_collections = "1.4.0"
 img-parts = "0.3.0"
 jfifdump = "0.5.1"
 log = "0.4.8"
