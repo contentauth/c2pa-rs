@@ -61,12 +61,12 @@ impl Reader {
     /// println!("{}", reader.json());
     /// ```
     #[async_generic()]
-    pub fn from_stream(format: &str, stream: &mut (impl Read + Seek + Send)) -> Result<Reader> {
+    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let reader = if _sync {
-            ManifestStore::from_stream(format, stream, verify)
+            ManifestStore::from_stream(format, &mut stream, verify)
         } else {
-            ManifestStore::from_stream_async(format, stream, verify).await
+            ManifestStore::from_stream_async(format, &mut stream, verify).await
         }?;
         Ok(Reader {
             manifest_store: reader,
