@@ -115,7 +115,12 @@ impl SignConfig {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::fs;
+
+    use c2pa::{Manifest, ManifestStore};
+
     use super::*;
+
     const CONFIG: &str = r#"{    
         "alg": "es256",
         "private_key": "es256_private.key",
@@ -146,5 +151,42 @@ pub mod tests {
 
         let signer = sign_config.signer().expect("get signer");
         assert_eq!(signer.alg(), SigningAlg::Es256);
+    }
+
+    const CONFIG_ASSERTIONS: &str = r#"{
+        "alg": "es256",
+        "private_key": "es256_private.key",
+        "sign_cert": "es256_certs.pem",
+        "ta_url": "http://timestamp.digicert.com",
+        "assertions": [
+            {
+                "label": "org.contentauth.test",
+                 "data": {"my_key": "whatever I want"}
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn test_manifest_config() {
+        const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
+        const OUTPUT_PATH: &str = "target/tmp/unit_out.jpg";
+        fs::create_dir_all("target/tmp").expect("create_dir");
+        let mut manifest = Manifest::from_json(CONFIG_ASSERTIONS).expect("from_json");
+
+        let signer = SignConfig::from_json(CONFIG_ASSERTIONS)
+            .unwrap()
+            .set_base_path("sample")
+            .signer()
+            .expect("get_signer");
+
+        let _result = manifest
+            .embed(SOURCE_PATH, OUTPUT_PATH, signer.as_ref())
+            .expect("embed");
+
+        let ms = ManifestStore::from_file(OUTPUT_PATH)
+            .expect("from_file")
+            .to_string();
+        //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
+        assert!(ms.contains("my_key"));
     }
 }
