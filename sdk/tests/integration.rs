@@ -15,8 +15,6 @@
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
-
-    /*
     use std::path::PathBuf;
 
     use c2pa::{
@@ -381,5 +379,4 @@ mod integration_1 {
 
         Ok(())
     }
-    */
 }
