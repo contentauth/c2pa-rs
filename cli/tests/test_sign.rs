@@ -64,12 +64,15 @@ fn test_sign_glob() -> Result<()> {
 
     apply_sorted_output!();
 
+    let mut manifest_snapshots = Vec::new();
     for entry in fs::read_dir(input_dir)? {
         let output_path = output_path.join(entry?.file_name());
-        assert_json_snapshot!(unescape_json(
-            &ManifestStore::from_file(output_path)?.to_string()
+        manifest_snapshots.push(unescape_json(
+            &ManifestStore::from_file(output_path)?.to_string(),
         )?);
     }
+
+    assert_json_snapshot!(manifest_snapshots);
 
     Ok(())
 }
