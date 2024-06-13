@@ -713,7 +713,7 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                        check_cert(&ocsp_certs[0], th, validation_log, Some(tst_info))?;
                     }
                 }
                 result = Ok(ocsp_data);
