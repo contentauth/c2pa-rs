@@ -68,6 +68,16 @@ fn test_sign_glob() -> Result<()> {
         manifest_snapshots.push(ManifestStore::from_file(output_path)?);
     }
 
+    // Sort the order of manifest snapshots so that when we compare the diff, the order
+    // doesn't interfere.
+    manifest_snapshots.sort_by_key(|manifest_store| {
+        manifest_store
+            .get_active()
+            .expect("ManifestStore missing active manifest used in test")
+            .title()
+            .expect("Manifest is missing title used in test")
+            .to_owned()
+    });
     assert_json_snapshot!(manifest_snapshots);
 
     Ok(())

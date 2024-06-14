@@ -16,9 +16,11 @@ use std::fs;
 
 use anyhow::Result;
 use c2pa::ManifestStore;
-use common::{cli, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST_FORMAT};
+use common::{cli, test_img_path, TEST_IMAGE_WITH_MANIFEST_FORMAT};
 use insta::assert_json_snapshot;
 use insta_cmd::assert_cmd_snapshot;
+
+use crate::common::unescape_json;
 
 #[test]
 fn test_extract_manifest() -> Result<()> {
@@ -50,13 +52,10 @@ fn test_extract_manifest_binary() -> Result<()> {
         .arg(&output_path)
         .arg("--binary"));
 
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_manifest_and_asset_bytes(
-            &fs::read(output_path)?,
-            TEST_IMAGE_WITH_MANIFEST_FORMAT,
-            &fs::read(test_img_path())?
-        )?
-        .to_string()
+    assert_json_snapshot!(ManifestStore::from_manifest_and_asset_bytes(
+        &fs::read(output_path)?,
+        TEST_IMAGE_WITH_MANIFEST_FORMAT,
+        &fs::read(test_img_path())?
     )?);
 
     Ok(())
