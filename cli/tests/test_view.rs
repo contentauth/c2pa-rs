@@ -31,6 +31,11 @@ fn test_view_manifest_debug() {
 }
 
 #[test]
+fn test_view_manifest_default() {
+    assert_cmd_snapshot!(cli().arg(test_img_path()));
+}
+
+#[test]
 fn test_view_ingredient() {
     apply_filters!();
     assert_cmd_snapshot!(cli().arg("view").arg("ingredient").arg(test_img_path()));

@@ -16,7 +16,7 @@ use std::fs;
 
 use anyhow::Result;
 use c2pa::ManifestStore;
-use common::{cli, fixture_path, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST};
+use common::{cli, fixture_path, test_img_path, TEST_IMAGE_WITH_MANIFEST};
 use insta::{assert_json_snapshot, Settings};
 use insta_cmd::assert_cmd_snapshot;
 
@@ -37,9 +37,7 @@ fn test_sign() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_file(output_path)?.to_string()
-    )?);
+    assert_json_snapshot!(ManifestStore::from_file(output_path)?);
 
     Ok(())
 }
@@ -67,9 +65,7 @@ fn test_sign_glob() -> Result<()> {
     let mut manifest_snapshots = Vec::new();
     for entry in fs::read_dir(input_dir)? {
         let output_path = output_path.join(entry?.file_name());
-        manifest_snapshots.push(unescape_json(
-            &ManifestStore::from_file(output_path)?.to_string(),
-        )?);
+        manifest_snapshots.push(ManifestStore::from_file(output_path)?);
     }
 
     assert_json_snapshot!(manifest_snapshots);
@@ -96,9 +92,7 @@ fn test_sign_parent() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_file(output_path)?.to_string()
-    )?);
+    assert_json_snapshot!(ManifestStore::from_file(output_path)?);
 
     Ok(())
 }
@@ -121,12 +115,8 @@ fn test_sign_sidecar() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_file(output_path.join("C.jpg"))?.to_string()
-    )?);
-    assert_json_snapshot!(unescape_json(
-        &ManifestStore::from_file(output_path.join("C.c2pa"))?.to_string()
-    )?);
+    assert_json_snapshot!(&ManifestStore::from_file(output_path.join("C.jpg"))?);
+    assert_json_snapshot!(&ManifestStore::from_file(output_path.join("C.c2pa"))?);
 
     Ok(())
 }
