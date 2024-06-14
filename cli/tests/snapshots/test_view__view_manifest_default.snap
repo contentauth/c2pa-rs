@@ -1,0 +1,66 @@
+---
+source: tests/test_view.rs
+info:
+  program: c2patool
+  args:
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/C.jpg
+---
+success: true
+exit_code: 0
+----- stdout -----
+{
+  "active_manifest": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc",
+  "manifests": {
+    "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc": {
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:3de8baae-4de5-4961-8b5a-441bb699bf1b",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Gavin Peacock"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created"
+              },
+              {
+                "action": "c2pa.drawing",
+                "parameters": {
+                  "name": "gradient"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+      },
+      "label": "contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc"
+    }
+  }
+}
+
+----- stderr -----

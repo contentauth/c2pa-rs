@@ -1,13 +1,23 @@
 ---
 source: tests/test_sign.rs
-expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\"))?.to_string())?"
+expression: "&ManifestStore::from_file(output_path.join(\"C.jpg\"))?"
 ---
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [],
       "assertions": [
         {
+          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "http://schema.org/",
             "@type": "CreativeWork",
@@ -18,10 +28,10 @@ expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\")
               }
             ]
           },
-          "kind": "Json",
-          "label": "stds.schema-org.CreativeWork"
+          "kind": "Json"
         },
         {
+          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -34,29 +44,83 @@ expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\")
                 }
               }
             ]
-          },
-          "label": "c2pa.actions"
+          }
         }
       ],
-      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
-      "format": "image/jpeg",
-      "ingredients": [],
-      "instance_id": [XMP_ID]",
-      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "issuer": "C2PA Test Signing Cert"
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153"
       },
+      "label": "[MANIFEST_URN]"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
+      "claim_generator_info": [
+        {
+          "icon": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "name": "Test App",
+          "version": "0.0.1"
+        }
+      ],
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "title": "C.jpg"
-    },
-    "[MANIFEST_URN]": {
+      "ingredients": [
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "[MANIFEST_URN]"
+        },
+        {
+          "title": "earth_apollo17.jpg",
+          "format": "image/jpeg",
+          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        },
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "[MANIFEST_URN]"
+        },
+        {
+          "title": "test ingredient",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        }
+      ],
       "assertions": [
         {
+          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
@@ -122,10 +186,10 @@ expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\")
                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
               }
             ]
-          },
-          "label": "c2pa.actions.v2"
+          }
         },
         {
+          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -136,10 +200,10 @@ expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\")
               }
             ]
           },
-          "kind": "Json",
-          "label": "stds.schema-org.CreativeWork"
+          "kind": "Json"
         },
         {
+          "label": "cawg.training-mining",
           "data": {
             "entries": {
               "c2pa.ai_generative_training": {
@@ -149,80 +213,16 @@ expression: "unescape_json(&ManifestStore::from_file(output_path.join(\"C.jpg\")
                 "use": "allowed"
               }
             }
-          },
-          "label": "cawg.training-mining"
+          }
         }
       ],
-      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
-      "claim_generator_info": [
-        {
-          "icon": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "name": "Test App",
-          "version": "0.0.1"
-        }
-      ],
-      "format": "image/jpeg",
-      "ingredients": [
-        {
-          "active_manifest": "[MANIFEST_URN]",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "relationship": "parentOf",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "title": "C.jpg"
-        },
-        {
-          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
-          "format": "image/jpeg",
-          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
-          "relationship": "componentOf",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "title": "earth_apollo17.jpg"
-        },
-        {
-          "active_manifest": "[MANIFEST_URN]",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "relationship": "componentOf",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "title": "C.jpg"
-        },
-        {
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "relationship": "componentOf",
-          "thumbnail": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "title": "test ingredient"
-        }
-      ],
-      "instance_id": [XMP_ID]",
-      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Es256",
-        "cert_serial_number": "640229841392226413189608867977836244731148734950",
         "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "640229841392226413189608867977836244731148734950",
         "time": "[TIMESTAMP1]"
       },
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "title": "C.jpg"
+      "label": "[MANIFEST_URN]"
     }
   }
 }
