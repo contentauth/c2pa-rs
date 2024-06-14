@@ -20,7 +20,7 @@ use crate::{commands::Trust, load_trust_settings};
 
 #[derive(Debug, Parser)]
 pub enum Extract {
-    /// Extract the .json manifest.
+    /// Extract the .json or .c2pa manifest.
     Manifest {
         /// Input path to asset.
         path: PathBuf,
@@ -40,7 +40,7 @@ pub enum Extract {
         #[clap(flatten)]
         trust: Trust,
     },
-    /// Extract the .json ingredient and .c2pa manifest file.
+    /// Extract the .json ingredient.
     Ingredient {
         /// Input path to asset.
         path: PathBuf,

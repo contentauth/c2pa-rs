@@ -16,7 +16,7 @@ mod view;
 
 use std::{fs, path::PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Parser, Subcommand};
 use reqwest::Url;
 
@@ -49,6 +49,7 @@ pub enum Commands {
     Extract(Extract),
 }
 
+// TODO: separate arg for url with -url suffix to prevent windows path conflicts
 #[derive(Debug, Default, Parser)]
 pub struct Trust {
     /// Path or URL to file containing list of trust anchors in PEM format.
@@ -75,6 +76,20 @@ impl InputSource {
         match Url::parse(s) {
             Ok(url) => Ok(InputSource::Url(url)),
             Err(_) => Ok(InputSource::Path(s.into())),
+        }
+    }
+
+    pub fn from_path_or_url(path: Option<PathBuf>, url: Option<Url>) -> Result<InputSource> {
+        if path.is_some() && url.is_some() {
+            bail!("Must specify either path or url, not both")
+        }
+
+        if let Some(path) = path {
+            Ok(InputSource::Path(path))
+        } else if let Some(url) = url {
+            Ok(InputSource::Url(url))
+        } else {
+            unreachable!()
         }
     }
 
