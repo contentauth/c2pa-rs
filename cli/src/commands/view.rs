@@ -16,7 +16,7 @@ use anyhow::{anyhow, bail, Result};
 use c2pa::{Error, Ingredient, IngredientOptions, ManifestStore, ManifestStoreReport};
 use clap::Subcommand;
 
-use crate::{commands::Trust, load_trust_settings};
+use crate::commands::{load_trust_settings, Trust};
 
 #[derive(Debug, Subcommand)]
 pub enum View {

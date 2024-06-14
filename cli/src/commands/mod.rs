@@ -14,10 +14,13 @@ mod extract;
 mod sign;
 mod view;
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{bail, Context, Result};
-use clap::{ArgAction, Parser, Subcommand};
+use anyhow::{Context, Result};
+use clap::{ArgAction, Args, Parser, Subcommand};
 use reqwest::Url;
 
 pub use self::{extract::Extract, sign::Sign, view::View};
@@ -49,47 +52,69 @@ pub enum Commands {
     Extract(Extract),
 }
 
-// TODO: separate arg for url with -url suffix to prevent windows path conflicts
 #[derive(Debug, Default, Parser)]
 pub struct Trust {
-    /// Path or URL to file containing list of trust anchors in PEM format.
-    #[clap(long, env="C2PATOOL_TRUST_ANCHORS", value_parser = InputSource::parse)]
-    pub trust_anchors: Option<InputSource>,
+    #[clap(flatten)]
+    pub trust_anchors_source: TrustAnchorsSource,
 
-    /// Path or URL to file containing specific manifest signing certificates in PEM format to implicitly trust.
-    #[clap(long, env="C2PATOOL_ALLOWED_LIST", value_parser = InputSource::parse)]
-    pub allowed_list: Option<InputSource>,
+    #[clap(flatten)]
+    pub allowed_list_source: AllowedListSource,
 
-    /// Path or URL to file containing configured EKUs in Oid dot notation.
-    #[clap(long, env="C2PATOOL_TRUST_CONFIG", value_parser = InputSource::parse)]
-    pub trust_config: Option<InputSource>,
+    #[clap(flatten)]
+    pub trust_config_source: TrustConfigSource,
+}
+
+#[derive(Debug, Default, Args)]
+#[group(required = false, multiple = false)]
+pub struct TrustAnchorsSource {
+    /// Path to file containing list of trust anchors in PEM format.
+    #[clap(long, env = "C2PATOOL_TRUST_ANCHORS")]
+    pub trust_anchors: Option<PathBuf>,
+
+    /// URL to file containing list of trust anchors in PEM format.
+    #[clap(long, env = "C2PATOOL_TRUST_ANCHORS_URL")]
+    pub trust_anchors_url: Option<Url>,
+}
+
+#[derive(Debug, Default, Args)]
+#[group(required = false, multiple = false)]
+pub struct AllowedListSource {
+    /// Path to file containing list of trust anchors in PEM format.
+    #[clap(long, env = "C2PATOOL_ALLOWED_LIST")]
+    pub allowed_list: Option<PathBuf>,
+
+    /// URL to file containing list of trust anchors in PEM format.
+    #[clap(long, env = "C2PATOOL_ALLOWED_LISTURL")]
+    pub allowed_list_url: Option<Url>,
+}
+
+#[derive(Debug, Default, Args)]
+#[group(required = false, multiple = false)]
+pub struct TrustConfigSource {
+    /// Path to file containing configured EKUs in Oid dot notation.
+    #[clap(long, env = "C2PATOOL_TRUST_CONFIG")]
+    pub trust_config: Option<PathBuf>,
+
+    /// URL to file containing configured EKUs in Oid dot notation.
+    #[clap(long, env = "C2PATOOL_TRUST_CONFIG_URL")]
+    pub trust_config_url: Option<Url>,
 }
 
 #[derive(Debug, Clone)]
-pub enum InputSource {
-    Path(PathBuf),
-    Url(Url),
+pub enum InputSource<'a> {
+    Path(&'a Path),
+    Url(&'a Url),
 }
 
-impl InputSource {
-    fn parse(s: &str) -> Result<InputSource> {
-        match Url::parse(s) {
-            Ok(url) => Ok(InputSource::Url(url)),
-            Err(_) => Ok(InputSource::Path(s.into())),
-        }
-    }
-
-    pub fn from_path_or_url(path: Option<PathBuf>, url: Option<Url>) -> Result<InputSource> {
-        if path.is_some() && url.is_some() {
-            bail!("Must specify either path or url, not both")
-        }
-
+impl InputSource<'_> {
+    pub fn from_path_or_url<'a>(
+        path: Option<&'a Path>,
+        url: Option<&'a Url>,
+    ) -> Option<InputSource<'a>> {
         if let Some(path) = path {
-            Ok(InputSource::Path(path))
-        } else if let Some(url) = url {
-            Ok(InputSource::Url(url))
+            Some(InputSource::Path(path))
         } else {
-            unreachable!()
+            url.map(InputSource::Url)
         }
     }
 
@@ -97,9 +122,61 @@ impl InputSource {
         match self {
             InputSource::Path(path) => fs::read_to_string(path)
                 .with_context(|| format!("Failed to read input from path: {:?}", path)),
-            InputSource::Url(url) => reqwest::blocking::get(url.to_owned())?
+            InputSource::Url(url) => reqwest::blocking::get((*url).to_owned())?
                 .text()
                 .with_context(|| format!("Failed to read input from URL: {}", url)),
         }
     }
+}
+
+pub fn load_trust_settings(trust: &Trust) -> Result<()> {
+    let trust_anchors = InputSource::from_path_or_url(
+        trust.trust_anchors_source.trust_anchors.as_deref(),
+        trust.trust_anchors_source.trust_anchors_url.as_ref(),
+    );
+    if let Some(trust_anchors) = &trust_anchors {
+        let data = trust_anchors.resolve()?;
+
+        let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+        let setting = r#"{"trust": { "trust_anchors": replacement_val } }"#
+            .replace("replacement_val", &replacement_val);
+
+        c2pa::settings::load_settings_from_str(&setting, "json")?;
+    }
+
+    let allowed_list = InputSource::from_path_or_url(
+        trust.allowed_list_source.allowed_list.as_deref(),
+        trust.allowed_list_source.allowed_list_url.as_ref(),
+    );
+    if let Some(allowed_list) = &allowed_list {
+        let data = allowed_list.resolve()?;
+
+        let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+        let setting = r#"{"trust": { "allowed_list": replacement_val } }"#
+            .replace("replacement_val", &replacement_val);
+
+        c2pa::settings::load_settings_from_str(&setting, "json")?;
+    }
+
+    let trust_config = InputSource::from_path_or_url(
+        trust.trust_config_source.trust_config.as_deref(),
+        trust.trust_config_source.trust_config_url.as_ref(),
+    );
+    if let Some(trust_config) = &trust_config {
+        let data = trust_config.resolve()?;
+
+        let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+        let setting = r#"{"trust": { "trust_config": replacement_val } }"#
+            .replace("replacement_val", &replacement_val);
+
+        c2pa::settings::load_settings_from_str(&setting, "json")?;
+    }
+
+    if trust_anchors.is_some() || allowed_list.is_some() || trust_config.is_some() {
+        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": true} }"#, "json")?;
+    } else {
+        c2pa::settings::load_settings_from_str(r#"{"verify": { "verify_trust": false} }"#, "json")?;
+    }
+
+    Ok(())
 }

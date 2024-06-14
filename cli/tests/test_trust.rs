@@ -49,9 +49,9 @@ fn test_load_trust_from_trusted_url() {
         .arg("view")
         .arg("manifest")
         .arg(test_img_path())
-        .arg("--trust-anchors")
+        .arg("--trust-anchors-url")
         .arg(server.url("/trust/anchors.pem"))
-        .arg("--trust-config")
+        .arg("--trust-config-url")
         .arg(server.url("/trust/store.cfg")));
 
     mocks.iter().for_each(|m| m.assert());
@@ -66,9 +66,9 @@ fn test_load_trust_from_untrusted_url() {
         .arg("view")
         .arg("manifest")
         .arg(test_img_path())
-        .arg("--trust-anchors")
+        .arg("--trust-anchors-url")
         .arg(server.url("/trust/anchors.pem"))
-        .arg("--trust-config")
+        .arg("--trust-config-url")
         .arg(server.url("/trust/store.cfg")));
 
     mocks.iter().for_each(|m| m.assert());
@@ -83,8 +83,11 @@ fn test_load_trust_from_trusted_url_env() {
         .arg("view")
         .arg("manifest")
         .arg(test_img_path())
-        .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))
-        .env("C2PATOOL_TRUST_CONFIG", server.url("/trust/store.cfg")));
+        .env(
+            "C2PATOOL_TRUST_ANCHORS_URL",
+            server.url("/trust/anchors.pem")
+        )
+        .env("C2PATOOL_TRUST_CONFIG_URL", server.url("/trust/store.cfg")));
 
     mocks.iter().for_each(|m| m.assert());
 }
@@ -98,8 +101,11 @@ fn test_load_trust_from_untrusted_url_env() {
         .arg("view")
         .arg("manifest")
         .arg(test_img_path())
-        .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))
-        .env("C2PATOOL_TRUST_CONFIG", server.url("/trust/store.cfg")));
+        .env(
+            "C2PATOOL_TRUST_ANCHORS_URL",
+            server.url("/trust/anchors.pem")
+        )
+        .env("C2PATOOL_TRUST_CONFIG_URL", server.url("/trust/store.cfg")));
 
     mocks.iter().for_each(|m| m.assert());
 }

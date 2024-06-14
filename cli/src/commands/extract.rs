@@ -16,7 +16,7 @@ use anyhow::{bail, Result};
 use c2pa::{jumbf_io, Ingredient, ManifestStore};
 use clap::Parser;
 
-use crate::{commands::Trust, load_trust_settings};
+use crate::commands::{load_trust_settings, Trust};
 
 #[derive(Debug, Parser)]
 pub enum Extract {

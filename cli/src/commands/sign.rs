@@ -20,14 +20,13 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use c2pa::{Ingredient, Manifest};
-use clap::Parser;
+use clap::{Args, Parser};
 use reqwest::Url;
 use serde::Deserialize;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
-    commands::{InputSource, Trust},
-    load_trust_settings,
+    commands::{load_trust_settings, InputSource, Trust},
     signer::SignConfig,
 };
 
@@ -40,13 +39,8 @@ pub struct Sign {
     #[clap(short, long)]
     pub output: PathBuf,
 
-    /// Path to manifest .json.
-    #[clap(short, long, conflicts_with = "manifest_url")]
-    pub manifest: Option<PathBuf>,
-
-    /// URL to manifest .json.
-    #[clap(long, conflicts_with = "manifest")]
-    pub manifest_url: Option<Url>,
+    #[clap(flatten)]
+    pub manifest_source: ManifestSource,
 
     /// Generate a .c2pa manifest file next to the output without embedding.
     #[clap(short, long)]
@@ -92,6 +86,18 @@ pub struct Sign {
     pub trust: Trust,
 }
 
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct ManifestSource {
+    /// Path to manifest .json.
+    #[clap(short, long)]
+    pub manifest: Option<PathBuf>,
+
+    /// URL to manifest .json.
+    #[clap(long)]
+    pub manifest_url: Option<Url>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ExtendedManifest {
     #[serde(flatten)]
@@ -129,10 +135,12 @@ impl Sign {
         // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
         // reconstructing the entire manifest each iteration.
         for path in validation_results.paths {
+            // Safe to unwrap because we know at least one of thse fields is required
             let input_source = InputSource::from_path_or_url(
-                self.manifest.to_owned(),
-                self.manifest_url.to_owned(),
-            )?;
+                self.manifest_source.manifest.as_deref(),
+                self.manifest_source.manifest_url.as_ref(),
+            )
+            .unwrap();
             let json = input_source.resolve()?;
             // read the signing information from the manifest definition
             let mut sign_config = SignConfig::from_json(&json)?;
@@ -150,7 +158,7 @@ impl Sign {
                 format!("{} {}", manifest.claim_generator, tool_generator)
             };
 
-            let base_path = if let Some(ref manifest_path) = self.manifest {
+            let base_path = if let Some(ref manifest_path) = self.manifest_source.manifest {
                 fs::canonicalize(manifest_path)?
                     .parent()
                     .map(|p| p.to_path_buf())
