@@ -97,7 +97,7 @@ struct ExtendedManifest {
     #[serde(flatten)]
     manifest: Manifest,
     // Allows ingredients to be specified as a path or inline.
-    ingredients: Vec<IngredientSource>,
+    ingredients: Option<Vec<IngredientSource>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -163,19 +163,21 @@ impl Sign {
             manifest.with_base_path(&base_path)?;
             sign_config.set_base_path(&base_path);
 
-            for ingredient_source in ext_manifest.ingredients {
-                match ingredient_source {
-                    IngredientSource::Ingredient(mut ingredient) => {
-                        ingredient.with_base_path(&base_path)?;
-                        manifest.add_ingredient(ingredient);
-                    }
-                    IngredientSource::Path(mut path) => {
-                        // ingredient paths are relative to the manifest path
-                        if !path.is_absolute() {
-                            path = base_path.join(&path);
+            if let Some(ingredients) = ext_manifest.ingredients {
+                for ingredient_source in ingredients {
+                    match ingredient_source {
+                        IngredientSource::Ingredient(mut ingredient) => {
+                            ingredient.with_base_path(&base_path)?;
+                            manifest.add_ingredient(ingredient);
                         }
+                        IngredientSource::Path(mut path) => {
+                            // ingredient paths are relative to the manifest path
+                            if !path.is_absolute() {
+                                path = base_path.join(&path);
+                            }
 
-                        manifest.add_ingredient(load_ingredient(&path)?);
+                            manifest.add_ingredient(load_ingredient(&path)?);
+                        }
                     }
                 }
             }
