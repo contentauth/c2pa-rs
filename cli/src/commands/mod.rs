@@ -84,7 +84,7 @@ pub struct AllowedListSource {
     pub allowed_list: Option<PathBuf>,
 
     /// URL to file containing list of trust anchors in PEM format.
-    #[clap(long, env = "C2PATOOL_ALLOWED_LISTURL")]
+    #[clap(long, env = "C2PATOOL_ALLOWED_LIST_URL")]
     pub allowed_list_url: Option<Url>,
 }
 

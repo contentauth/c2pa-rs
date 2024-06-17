@@ -21,6 +21,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use c2pa::{Ingredient, Manifest};
 use clap::{Args, Parser};
+use log::info;
 use reqwest::Url;
 use serde::Deserialize;
 
@@ -135,7 +136,7 @@ impl Sign {
         // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
         // reconstructing the entire manifest each iteration.
         for path in validation_results.paths {
-            // Safe to unwrap because we know at least one of thse fields is required
+            // Safe to unwrap because we know at least one of the fields are required.
             let input_source = InputSource::from_path_or_url(
                 self.manifest_source.manifest.as_deref(),
                 self.manifest_source.manifest_url.as_ref(),
@@ -253,10 +254,15 @@ impl Sign {
     // a file or a folder.
     fn validate(&self) -> Result<ValidationResults> {
         let paths = glob::glob(&self.path)?.collect::<Result<Vec<PathBuf>, _>>()?;
+        let num_outputs = if self.sidecar {
+            paths.len() * 2
+        } else {
+            paths.len()
+        };
 
         // These restrictions allow a file or folder to be specified as output if there is only one input. If
         // there are multiple inputs, the output must be a folder.
-        let is_output_dir = match (self.output.exists(), self.output.is_dir(), paths.len()) {
+        let is_output_dir = match (self.output.exists(), self.output.is_dir(), num_outputs) {
             // If the output exists and there are at least two inputs, it must be a folder.
             (true, false, 2..) => {
                 bail!("Output path must be a folder if multiple inputs are specified")
@@ -264,11 +270,31 @@ impl Sign {
             // If the output exists and there are at least two inputs and the output is a folder,
             // then ensure each file within the folder doesn't already exist.
             (true, true, 2..) => {
-                for path in &paths {
-                    // A glob always returns a file path, so it's safe to unwrap.
-                    let output = self.output.join(path.file_name().unwrap());
-                    if output.exists() {
-                        bail!("Output path `{}` already exists", output.display());
+                if !self.force {
+                    let mut exists = 0;
+                    for path in &paths {
+                        // A glob always returns a file path, so it's safe to unwrap.
+                        let output = self.output.join(path.file_name().unwrap());
+                        if output.exists() {
+                            exists += 1;
+                            info!("Output path `{}` already exists", output.display());
+                        }
+
+                        if self.sidecar {
+                            let mut sidecar_output = self.output.join(path.file_name().unwrap());
+                            sidecar_output.set_extension("c2pa");
+                            if sidecar_output.exists() {
+                                info!("Sidecar output path `{}` already exists", output.display());
+                            }
+                        }
+                    }
+
+                    if exists > 0 {
+                        bail!(
+                            "{}/{} paths already exist, use `--verbose` for more info or `--force` to overwrite",
+                            exists,
+                            paths.len()
+                        );
                     }
                 }
 
@@ -285,10 +311,15 @@ impl Sign {
             // If the output exists and there's one input and the output is a folder, then ensure
             // the file doesn't exist in the output.
             (true, true, 1) => {
-                // A glob always returns a file path, so it's safe to unwrap.
-                let output = self.output.join(paths[0].file_name().unwrap());
-                if output.exists() {
-                    bail!("Output path `{}` already exists", output.display());
+                if !self.force {
+                    // A glob always returns a file path, so it's safe to unwrap.
+                    let output = self.output.join(paths[0].file_name().unwrap());
+                    if output.exists() {
+                        bail!(
+                            "Output path `{}` already exists use `--force` to overwrite",
+                            output.display()
+                        );
+                    }
                 }
 
                 true
