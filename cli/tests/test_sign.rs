@@ -12,8 +12,6 @@
 
 mod common;
 
-use std::fs;
-
 use anyhow::Result;
 use c2pa::ManifestStore;
 use common::{cli, fixture_path, test_img_path, TEST_IMAGE_WITH_MANIFEST};
@@ -49,12 +47,14 @@ fn test_sign_multiple() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path();
 
-    let input_dir = fixture_path("signed-images");
+    let input1_name = "C.jpg";
+    let input2_name = "verify.jpeg";
 
+    let input_dir = fixture_path("signed-images");
     assert_cmd_snapshot!(cli()
         .arg("sign")
-        .arg(input_dir.join("C.jpg"))
-        .arg(input_dir.join("verify.jpeg"))
+        .arg(input_dir.join(input1_name))
+        .arg(input_dir.join(input2_name))
         .arg("--manifest")
         .arg(fixture_path("ingredient_test.json"))
         .arg("--output")
@@ -62,23 +62,8 @@ fn test_sign_multiple() -> Result<()> {
 
     apply_sorted_output!();
 
-    let mut manifest_snapshots = Vec::new();
-    for entry in fs::read_dir(input_dir)? {
-        let output_path = output_path.join(entry?.file_name());
-        manifest_snapshots.push(ManifestStore::from_file(output_path)?);
-    }
-
-    // Sort the order of manifest snapshots so that when we compare the diff, the order
-    // doesn't interfere.
-    manifest_snapshots.sort_by_key(|manifest_store| {
-        manifest_store
-            .get_active()
-            .expect("ManifestStore missing active manifest used in test")
-            .title()
-            .expect("Manifest is missing title used in test")
-            .to_owned()
-    });
-    assert_json_snapshot!(manifest_snapshots);
+    assert_json_snapshot!(ManifestStore::from_file(output_path.join(input1_name))?);
+    assert_json_snapshot!(ManifestStore::from_file(output_path.join(input2_name))?);
 
     Ok(())
 }

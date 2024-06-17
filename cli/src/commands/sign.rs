@@ -21,7 +21,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use c2pa::{Ingredient, Manifest};
 use clap::{Args, Parser};
-use log::info;
+use log::{error, warn};
 use reqwest::Url;
 use serde::Deserialize;
 
@@ -129,117 +129,135 @@ impl Sign {
 
         // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
         // reconstructing the entire manifest each iteration.
-        for path in &self.paths {
-            // Safe to unwrap because we know at least one of the fields are required.
-            let input_source = InputSource::from_path_or_url(
-                self.manifest_source.manifest.as_deref(),
-                self.manifest_source.manifest_url.as_ref(),
-            )
-            .unwrap();
-            let json = input_source.resolve()?;
-            // read the signing information from the manifest definition
-            let mut sign_config = SignConfig::from_json(&json)?;
-
-            // read the manifest information
-            let ext_manifest: ExtendedManifest = serde_json::from_str(&json)?;
-            let mut manifest = ext_manifest.manifest;
-
-            // add claim_tool generator so we know this was created using this tool
-            let tool_generator =
-                format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            manifest.claim_generator = if manifest.claim_generator.starts_with("c2pa/") {
-                tool_generator // just replace the default generator
-            } else {
-                format!("{} {}", manifest.claim_generator, tool_generator)
-            };
-
-            let base_path = if let Some(ref manifest_path) = self.manifest_source.manifest {
-                fs::canonicalize(manifest_path)?
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .context("Cannot find manifest parent path")?
-            } else {
-                env::current_dir()?
-            };
-
-            // set manifest base path before ingredients so ingredients can override it
-            manifest.with_base_path(&base_path)?;
-            sign_config.set_base_path(&base_path);
-
-            if let Some(ingredients) = ext_manifest.ingredients {
-                for ingredient_source in ingredients {
-                    match ingredient_source {
-                        IngredientSource::Ingredient(mut ingredient) => {
-                            ingredient.with_base_path(&base_path)?;
-                            manifest.add_ingredient(ingredient);
-                        }
-                        IngredientSource::Path(mut path) => {
-                            // ingredient paths are relative to the manifest path
-                            if !path.is_absolute() {
-                                path = base_path.join(&path);
-                            }
-
-                            manifest.add_ingredient(load_ingredient(&path)?);
-                        }
-                    }
-                }
-            }
-
-            if let Some(parent_path) = &self.parent {
-                manifest.set_parent(load_ingredient(parent_path)?)?;
-            }
-
-            // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-            // note: This could be treated as an update manifest eventually since the image is the same
-            if manifest.parent().is_none() {
-                let source_ingredient = Ingredient::from_file(path)?;
-                if source_ingredient.manifest_data().is_some() {
-                    manifest.set_parent(source_ingredient)?;
-                }
-            }
-
-            match &input_source {
-                InputSource::Path(_) => {
-                    if self.sidecar {
-                        manifest.set_sidecar_manifest();
-                    }
-                }
-                InputSource::Url(url) => match self.sidecar {
-                    true => {
-                        manifest.set_remote_manifest(url.to_string());
-                    }
-                    false => {
-                        manifest.set_embedded_manifest_with_remote_ref(url.to_string());
-                    }
-                },
-            }
-
-            let signer = match &self.signer_path {
-                Some(signer_process_name) => {
-                    let cb_config = CallbackSignerConfig::new(&sign_config, self.reserve_size)?;
-
-                    let process_runner = Box::new(ExternalProcessRunner::new(
-                        cb_config.clone(),
-                        signer_process_name.to_owned(),
-                    ));
-                    let signer = CallbackSigner::new(process_runner, cb_config);
-
-                    Box::new(signer)
-                }
-                None => sign_config.signer()?,
-            };
-
-            let output = match is_output_dir {
+        let mut errs = Vec::new();
+        for src in &self.paths {
+            let dst = match is_output_dir {
                 true => {
                     // It's safe to unwrap because we already validated this in the beginning of the function.
-                    self.output.join(path.file_name().unwrap())
+                    &self.output.join(src.file_name().unwrap())
                 }
-                false => self.output.to_owned(),
+                false => &self.output,
             };
-            manifest
-                .embed(path, &output, signer.as_ref())
-                .context("embedding manifest")?;
+
+            if let Err(err) = self.sign_file(src, dst) {
+                error!(
+                    "Failed to sign asset at path `{}`, {}",
+                    src.display(),
+                    err.to_string()
+                );
+                errs.push(err);
+            }
         }
+
+        if !errs.is_empty() {
+            bail!("Failed to sign {}/{} assets", errs.len(), self.paths.len());
+        }
+
+        Ok(())
+    }
+
+    fn sign_file(&self, src: &Path, dst: &Path) -> Result<()> {
+        // Safe to unwrap because we know at least one of the fields are required.
+        let input_source = InputSource::from_path_or_url(
+            self.manifest_source.manifest.as_deref(),
+            self.manifest_source.manifest_url.as_ref(),
+        )
+        .unwrap();
+        let json = input_source.resolve()?;
+        // read the signing information from the manifest definition
+        let mut sign_config = SignConfig::from_json(&json)?;
+
+        // read the manifest information
+        let ext_manifest: ExtendedManifest = serde_json::from_str(&json)?;
+        let mut manifest = ext_manifest.manifest;
+
+        // add claim_tool generator so we know this was created using this tool
+        let tool_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        manifest.claim_generator = if manifest.claim_generator.starts_with("c2pa/") {
+            tool_generator // just replace the default generator
+        } else {
+            format!("{} {}", manifest.claim_generator, tool_generator)
+        };
+
+        let base_path = if let Some(ref manifest_path) = self.manifest_source.manifest {
+            fs::canonicalize(manifest_path)?
+                .parent()
+                .map(|p| p.to_path_buf())
+                .context("Cannot find manifest parent path")?
+        } else {
+            env::current_dir()?
+        };
+
+        // set manifest base path before ingredients so ingredients can override it
+        manifest.with_base_path(&base_path)?;
+        sign_config.set_base_path(&base_path);
+
+        if let Some(ingredients) = ext_manifest.ingredients {
+            for ingredient_source in ingredients {
+                match ingredient_source {
+                    IngredientSource::Ingredient(mut ingredient) => {
+                        ingredient.with_base_path(&base_path)?;
+                        manifest.add_ingredient(ingredient);
+                    }
+                    IngredientSource::Path(mut path) => {
+                        // ingredient paths are relative to the manifest path
+                        if !path.is_absolute() {
+                            path = base_path.join(&path);
+                        }
+
+                        manifest.add_ingredient(load_ingredient(&path)?);
+                    }
+                }
+            }
+        }
+
+        if let Some(parent_path) = &self.parent {
+            manifest.set_parent(load_ingredient(parent_path)?)?;
+        }
+
+        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
+        // note: This could be treated as an update manifest eventually since the image is the same
+        if manifest.parent().is_none() {
+            let source_ingredient = Ingredient::from_file(src)?;
+            if source_ingredient.manifest_data().is_some() {
+                manifest.set_parent(source_ingredient)?;
+            }
+        }
+
+        match &input_source {
+            InputSource::Path(_) => {
+                if self.sidecar {
+                    manifest.set_sidecar_manifest();
+                }
+            }
+            InputSource::Url(url) => match self.sidecar {
+                true => {
+                    manifest.set_remote_manifest(url.to_string());
+                }
+                false => {
+                    manifest.set_embedded_manifest_with_remote_ref(url.to_string());
+                }
+            },
+        }
+
+        let signer = match &self.signer_path {
+            Some(signer_process_name) => {
+                let cb_config = CallbackSignerConfig::new(&sign_config, self.reserve_size)?;
+
+                let process_runner = Box::new(ExternalProcessRunner::new(
+                    cb_config.clone(),
+                    signer_process_name.to_owned(),
+                ));
+                let signer = CallbackSigner::new(process_runner, cb_config);
+
+                Box::new(signer)
+            }
+            None => sign_config.signer()?,
+        };
+
+        manifest
+            .embed(src, dst, signer.as_ref())
+            .context("embedding manifest")?;
 
         Ok(())
     }
@@ -270,13 +288,13 @@ impl Sign {
                         let mut output = self.output.join(path.file_name().unwrap());
                         if output.exists() {
                             exists += 1;
-                            info!("Output path `{}` already exists", output.display());
+                            warn!("Output path `{}` already exists", output.display());
                         }
 
                         if self.sidecar {
                             output.set_extension("c2pa");
                             if output.exists() {
-                                info!("Sidecar output path `{}` already exists", output.display());
+                                warn!("Sidecar output path `{}` already exists", output.display());
                             }
                         }
                     }

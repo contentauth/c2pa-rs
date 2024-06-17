@@ -1,0 +1,1176 @@
+---
+source: tests/test_sign.rs
+expression: "ManifestStore::from_file(output_path.join(input2_name))?"
+---
+{
+  "active_manifest": "[MANIFEST_URN]",
+  "manifests": {
+    "[MANIFEST_URN]": {
+      "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
+      "title": "landscape.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [
+        {
+          "title": "AdobeStock_282070651.png",
+          "format": "image/png",
+          "document_id": [XMP_ID]",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "metadata": {
+            "dateTime": "2022-05-06T18:07:52.676Z"
+          }
+        }
+      ],
+      "credentials": [
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1"
+          ],
+          "credentialSubject": {
+            "id": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+            "name": "Pia Blumenthal"
+          },
+          "proof": {
+            "created": "2022-05-06T17:33:59.428935861Z",
+            "jws": "f119a2c5f74685624e5a0c805cae584263e1d5d2ef25b62f631aca23c512894d0d0dbec591140016adbd0ca86b388318f47e6dd8fce7cb59ea33742295a38fe06",
+            "proofPurpose": "assertionMethod",
+            "type": "Ed25519Signature2018",
+            "verificationMethod": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54"
+          },
+          "type": [
+            "VerifiableCredential"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "https://schema.org",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.behance.net/piablumenthal2",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.instagram.com/ppppiaaaa",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "ppppiaaaa"
+              },
+              {
+                "@id": "https://twitter.com/pia___b",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "pia___b"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "open"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "content-aware_fill"
+                }
+              }
+            ],
+            "metadata": {
+              "dateTime": "2022-05-06T18:07:52.649Z",
+              "reviewRatings": []
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "Adobe Inc.",
+        "cert_serial_number": "117468664790937121336398959340346743515",
+        "time": "[TIMESTAMP1]"
+      },
+      "label": "[MANIFEST_URN]"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
+      "title": "sunset.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [
+        {
+          "title": "landscape.jpg",
+          "format": "image/jpeg",
+          "document_id": [XMP_ID]",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "[MANIFEST_URN]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:10:49.227Z"
+          }
+        },
+        {
+          "title": "5a680667-6da9-d84c-a5a4-bc27a6bb7e2e.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
+          "instance_id": "xmp.iid:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf",
+          "metadata": {
+            "dateTime": "2022-05-06T18:12:13.802Z"
+          }
+        }
+      ],
+      "credentials": [
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1"
+          ],
+          "credentialSubject": {
+            "id": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+            "name": "Pia Blumenthal"
+          },
+          "proof": {
+            "created": "2022-05-06T17:33:59.428935861Z",
+            "jws": "f119a2c5f74685624e5a0c805cae584263e1d5d2ef25b62f631aca23c512894d0d0dbec591140016adbd0ca86b388318f47e6dd8fce7cb59ea33742295a38fe06",
+            "proofPurpose": "assertionMethod",
+            "type": "Ed25519Signature2018",
+            "verificationMethod": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54"
+          },
+          "type": [
+            "VerifiableCredential"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "https://schema.org",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.behance.net/piablumenthal2",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.instagram.com/ppppiaaaa",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "ppppiaaaa"
+              },
+              {
+                "@id": "https://twitter.com/pia___b",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "pia___b"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "open"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "sky_replacement"
+                }
+              }
+            ],
+            "metadata": {
+              "dateTime": "2022-05-06T18:10:49.194Z",
+              "reviewRatings": []
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "Adobe Inc.",
+        "cert_serial_number": "117468664790937121336398959340346743515",
+        "time": "[TIMESTAMP1]"
+      },
+      "label": "[MANIFEST_URN]"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
+      "title": "moonrise.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [
+        {
+          "title": "sunset.jpg",
+          "format": "image/jpeg",
+          "document_id": [XMP_ID]",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "[MANIFEST_URN]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:13:13.237Z"
+          }
+        },
+        {
+          "title": "AdobeStock_95590044.png",
+          "format": "image/png",
+          "document_id": [XMP_ID]",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf",
+          "metadata": {
+            "dateTime": "2022-05-06T18:13:51.119Z"
+          }
+        }
+      ],
+      "credentials": [
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1"
+          ],
+          "credentialSubject": {
+            "id": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+            "name": "Pia Blumenthal"
+          },
+          "proof": {
+            "created": "2022-05-06T17:33:59.428935861Z",
+            "jws": "f119a2c5f74685624e5a0c805cae584263e1d5d2ef25b62f631aca23c512894d0d0dbec591140016adbd0ca86b388318f47e6dd8fce7cb59ea33742295a38fe06",
+            "proofPurpose": "assertionMethod",
+            "type": "Ed25519Signature2018",
+            "verificationMethod": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54"
+          },
+          "type": [
+            "VerifiableCredential"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "label": "adobe.beta",
+          "data": {
+            "version": "0.12.5"
+          }
+        },
+        {
+          "label": "adobe.dictionary",
+          "data": {
+            "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "https://schema.org",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.behance.net/piablumenthal2",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "Pia Blumenthal"
+              },
+              {
+                "@id": "https://www.instagram.com/ppppiaaaa",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "ppppiaaaa"
+              },
+              {
+                "@id": "https://twitter.com/pia___b",
+                "@type": "Person",
+                "credential": [
+                  {
+                    "alg": "sha256",
+                    "hash": [
+                      203,
+                      120,
+                      131,
+                      22,
+                      117,
+                      46,
+                      127,
+                      210,
+                      39,
+                      76,
+                      145,
+                      131,
+                      37,
+                      153,
+                      227,
+                      127,
+                      64,
+                      153,
+                      152,
+                      132,
+                      20,
+                      227,
+                      17,
+                      46,
+                      224,
+                      26,
+                      227,
+                      217,
+                      253,
+                      19,
+                      49,
+                      10
+                    ],
+                    "url": "[JUMBF_URI]"
+                  }
+                ],
+                "identifier": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+                "name": "pia___b"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "open"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "place_image"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "blending_change"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "move"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "add_layer_mask"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "brush_tool"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "free_transform"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "layer_visibility"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "master_opacity_change"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "layer_style"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "new_color_lookup_layer"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "modify_color_lookup_layer"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "parameters": {
+                  "name": "enable_layer_mask"
+                }
+              }
+            ],
+            "metadata": {
+              "dateTime": "2022-05-06T18:13:13.214Z",
+              "reviewRatings": []
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "Adobe Inc.",
+        "cert_serial_number": "117468664790937121336398959340346743515",
+        "time": "[TIMESTAMP1]"
+      },
+      "label": "[MANIFEST_URN]"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Gavin Peacock"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created"
+              },
+              {
+                "action": "c2pa.drawing",
+                "parameters": {
+                  "name": "gradient"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+      },
+      "label": "[MANIFEST_URN]"
+    },
+    "[MANIFEST_URN]": {
+      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
+      "claim_generator_info": [
+        {
+          "icon": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "name": "Test App",
+          "version": "0.0.1"
+        }
+      ],
+      "title": "verify.jpeg",
+      "format": "image/jpeg",
+      "instance_id": [XMP_ID]",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "ingredients": [
+        {
+          "title": "verify.jpeg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "[MANIFEST_URN]"
+        },
+        {
+          "title": "earth_apollo17.jpg",
+          "format": "image/jpeg",
+          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        },
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "[MANIFEST_URN]"
+        },
+        {
+          "title": "test ingredient",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "relationship": "componentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "c2pa.actions.v2",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "something": "else",
+                  "version": "1.0"
+                }
+              },
+              {
+                "action": "c2pa.opened",
+                "changes": [
+                  {
+                    "description": "lip synced area",
+                    "region": [
+                      {
+                        "time": {},
+                        "type": "temporal"
+                      },
+                      {
+                        "item": {
+                          "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                          "value": "lips"
+                        },
+                        "type": "identified"
+                      }
+                    ]
+                  }
+                ],
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                "parameters": {
+                  "description": "import"
+                },
+                "softwareAgent": {
+                  "icon": {
+                    "format": "image/svg+xml",
+                    "identifier": "[JUMBF_URI]"
+                  },
+                  "name": "TestApp",
+                  "something": "else",
+                  "version": "1.0"
+                }
+              },
+              {
+                "action": "c2pa.edited",
+                "changes": [
+                  {
+                    "region": [
+                      {
+                        "item": {
+                          "identifier": "track_id",
+                          "value": "transcript"
+                        },
+                        "type": "identified"
+                      }
+                    ]
+                  }
+                ],
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
+              }
+            ]
+          }
+        },
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "https://schema.org",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "@type": "Person",
+                "name": "Joe Bloggs"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "cawg.training-mining",
+          "data": {
+            "entries": {
+              "c2pa.ai_generative_training": {
+                "use": "notAllowed"
+              },
+              "c2pa.ai_training": {
+                "use": "allowed"
+              }
+            }
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Es256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "640229841392226413189608867977836244731148734950",
+        "time": "[TIMESTAMP1]"
+      },
+      "label": "[MANIFEST_URN]"
+    }
+  }
+}
