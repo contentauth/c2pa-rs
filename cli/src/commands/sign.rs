@@ -33,10 +33,10 @@ use crate::{
 
 #[derive(Debug, Parser)]
 pub struct Sign {
-    /// Input glob path to asset.
-    pub path: String,
+    /// Input path(s) to asset(s).
+    pub paths: Vec<PathBuf>,
 
-    /// Path to output file or folder (if glob specified).
+    /// Path to output file or folder (if >1 path specified).
     #[clap(short, long)]
     pub output: PathBuf,
 
@@ -115,15 +115,9 @@ enum IngredientSource {
     Path(PathBuf),
 }
 
-#[derive(Debug)]
-struct ValidationResults {
-    paths: Vec<PathBuf>,
-    is_output_dir: bool,
-}
-
 impl Sign {
     pub fn execute(&self) -> Result<()> {
-        let validation_results = self.validate()?;
+        let is_output_dir = self.validate()?;
 
         load_trust_settings(&self.trust)?;
 
@@ -135,7 +129,7 @@ impl Sign {
 
         // In the c2pa unstable_api we will be able to reuse a lot of this work rather than
         // reconstructing the entire manifest each iteration.
-        for path in validation_results.paths {
+        for path in &self.paths {
             // Safe to unwrap because we know at least one of the fields are required.
             let input_source = InputSource::from_path_or_url(
                 self.manifest_source.manifest.as_deref(),
@@ -198,7 +192,7 @@ impl Sign {
             // If the source file has a manifest store, and no parent is specified treat the source as a parent.
             // note: This could be treated as an update manifest eventually since the image is the same
             if manifest.parent().is_none() {
-                let source_ingredient = Ingredient::from_file(&path)?;
+                let source_ingredient = Ingredient::from_file(path)?;
                 if source_ingredient.manifest_data().is_some() {
                     manifest.set_parent(source_ingredient)?;
                 }
@@ -235,7 +229,7 @@ impl Sign {
                 None => sign_config.signer()?,
             };
 
-            let output = match validation_results.is_output_dir {
+            let output = match is_output_dir {
                 true => {
                     // It's safe to unwrap because we already validated this in the beginning of the function.
                     self.output.join(path.file_name().unwrap())
@@ -243,7 +237,7 @@ impl Sign {
                 false => self.output.to_owned(),
             };
             manifest
-                .embed(&path, &output, signer.as_ref())
+                .embed(path, &output, signer.as_ref())
                 .context("embedding manifest")?;
         }
 
@@ -252,12 +246,11 @@ impl Sign {
 
     // Validates input and output paths for conflicts and returns whether the output is
     // a file or a folder.
-    fn validate(&self) -> Result<ValidationResults> {
-        let paths = glob::glob(&self.path)?.collect::<Result<Vec<PathBuf>, _>>()?;
+    fn validate(&self) -> Result<bool> {
         let num_outputs = if self.sidecar {
-            paths.len() * 2
+            self.paths.len() * 2
         } else {
-            paths.len()
+            self.paths.len()
         };
 
         // These restrictions allow a file or folder to be specified as output if there is only one input. If
@@ -272,18 +265,17 @@ impl Sign {
             (true, true, 2..) => {
                 if !self.force {
                     let mut exists = 0;
-                    for path in &paths {
+                    for path in &self.paths {
                         // A glob always returns a file path, so it's safe to unwrap.
-                        let output = self.output.join(path.file_name().unwrap());
+                        let mut output = self.output.join(path.file_name().unwrap());
                         if output.exists() {
                             exists += 1;
                             info!("Output path `{}` already exists", output.display());
                         }
 
                         if self.sidecar {
-                            let mut sidecar_output = self.output.join(path.file_name().unwrap());
-                            sidecar_output.set_extension("c2pa");
-                            if sidecar_output.exists() {
+                            output.set_extension("c2pa");
+                            if output.exists() {
                                 info!("Sidecar output path `{}` already exists", output.display());
                             }
                         }
@@ -293,7 +285,7 @@ impl Sign {
                         bail!(
                             "{}/{} paths already exist, use `--verbose` for more info or `--force` to overwrite",
                             exists,
-                            paths.len()
+                            num_outputs
                         );
                     }
                 }
@@ -313,7 +305,7 @@ impl Sign {
             (true, true, 1) => {
                 if !self.force {
                     // A glob always returns a file path, so it's safe to unwrap.
-                    let output = self.output.join(paths[0].file_name().unwrap());
+                    let output = self.output.join(self.paths[0].file_name().unwrap());
                     if output.exists() {
                         bail!(
                             "Output path `{}` already exists use `--force` to overwrite",
@@ -334,7 +326,7 @@ impl Sign {
             (false, false, 1) => {
                 // TODO: this will be removed eventually, see https://github.com/contentauth/c2patool/issues/150
                 if !self.sidecar {
-                    let input_ext = ext_normal(&paths[0]);
+                    let input_ext = ext_normal(&self.paths[0]);
                     let output_ext = ext_normal(&self.output);
                     if input_ext != output_ext {
                         bail!("Manifest cannot be embedded if extensions do not match {}≠{}, specify `--sidecar` to sidecar the manifest", input_ext, output_ext);
@@ -349,10 +341,7 @@ impl Sign {
             (false, true, _) => unreachable!(),
         };
 
-        Ok(ValidationResults {
-            paths,
-            is_output_dir,
-        })
+        Ok(is_output_dir)
     }
 }
 

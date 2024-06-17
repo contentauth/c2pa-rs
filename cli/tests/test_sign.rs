@@ -43,18 +43,18 @@ fn test_sign() -> Result<()> {
 }
 
 #[test]
-fn test_sign_glob() -> Result<()> {
+fn test_sign_multiple() -> Result<()> {
     apply_filters!();
 
     let tempdir = tempfile::tempdir()?;
     let output_path = tempdir.path();
 
     let input_dir = fixture_path("signed-images");
-    let input_glob = format!("{}/*", input_dir.to_string_lossy().as_ref());
 
     assert_cmd_snapshot!(cli()
         .arg("sign")
-        .arg(fixture_path(&input_glob))
+        .arg(input_dir.join("C.jpg"))
+        .arg(input_dir.join("verify.jpeg"))
         .arg("--manifest")
         .arg(fixture_path("ingredient_test.json"))
         .arg("--output")

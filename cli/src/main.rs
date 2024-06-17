@@ -25,7 +25,7 @@ mod callback_signer;
 mod signer;
 
 fn main() -> Result<()> {
-    let args = CliArgs::parse();
+    let args = CliArgs::parse_from(wild::args_os());
 
     // Normally default behavior, but since we mark the input and subcommands as optional
     // clap will require the input arg or else error, which isn't want we want.

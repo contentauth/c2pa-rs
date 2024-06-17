@@ -4,11 +4,12 @@ info:
   program: c2patool
   args:
     - sign
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/signed-images/*
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/verify.jpeg
     - "--manifest"
-    - /Users/nsalvemini/Documents/repos/c2patool/tests/fixtures/ingredient_test.json
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/ingredient_test.json
     - "--output"
-    - /tmp/.tmph0raVC
+    - /tmp/.tmpzEZ0SJ
 ---
 success: true
 exit_code: 0

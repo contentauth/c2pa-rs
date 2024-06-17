@@ -58,8 +58,8 @@ pub enum Extract {
     },
     /// Extract known resources from a manifest (e.g. thumbnails).
     Resources {
-        /// Input glob path to asset.
-        path: String,
+        /// Input path(s) to asset(s).
+        paths: Vec<PathBuf>,
 
         /// Path to output folder.
         #[clap(short, long)]
@@ -151,12 +151,11 @@ impl Extract {
                 fs::write(output, ingredient.to_string())?;
             }
             Extract::Resources {
-                path,
+                paths,
                 output,
                 force,
                 trust,
             } => {
-                let paths = glob::glob(path)?.collect::<Result<Vec<PathBuf>, _>>()?;
                 if paths.is_empty() {
                     bail!("Input path does not exist")
                 }
@@ -178,7 +177,7 @@ impl Extract {
                         bail!("Input path cannot be a folder when extracting resources");
                     }
 
-                    ManifestStore::from_file_with_resources(&path, output)?;
+                    ManifestStore::from_file_with_resources(path, output)?;
                 }
             }
         }
