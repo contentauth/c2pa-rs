@@ -698,7 +698,6 @@ dependencies = [
  "c2pa",
  "clap",
  "env_logger",
- "glob",
  "httpmock",
  "insta",
  "insta-cmd",
@@ -711,6 +710,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
+ "wild",
 ]
 
 [[package]]
@@ -4333,6 +4333,15 @@ name = "weezl"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
+
+[[package]]
+name = "wild"
+version = "2.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3131afc8c575281e1e80f36ed6a092aa502c08b18ed7524e86fbbb12bb410e1"
+dependencies = [
+ "glob",
+]
 
 [[package]]
 name = "winapi"
