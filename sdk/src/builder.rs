@@ -14,6 +14,7 @@
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
+    path::PathBuf,
 };
 
 use async_generic::async_generic;
@@ -198,6 +199,8 @@ pub struct Builder {
 
     // If true, the manifest store will not be embedded in the asset on sign
     pub no_embed: bool,
+
+    pub base_path: Option<PathBuf>,
 
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
@@ -719,6 +722,10 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
+
+        if let Some(base_path) = &self.base_path {
+            self.resources.set_base_path(base_path);
+        }
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
