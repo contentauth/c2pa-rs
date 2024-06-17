@@ -15,6 +15,7 @@ use std::{fs, path::PathBuf};
 use anyhow::{bail, Result};
 use c2pa::{jumbf_io, Ingredient, ManifestStore};
 use clap::Parser;
+use log::error;
 
 use crate::commands::{load_trust_settings, Trust};
 
@@ -172,12 +173,28 @@ impl Extract {
 
                 load_trust_settings(trust)?;
 
+                let mut errs = Vec::new();
                 for path in paths {
                     if path.is_dir() {
                         bail!("Input path cannot be a folder when extracting resources");
                     }
 
-                    ManifestStore::from_file_with_resources(path, output)?;
+                    if let Err(err) = ManifestStore::from_file_with_resources(path, output) {
+                        error!(
+                            "Failed to extract resources from asset at path `{}`, {}",
+                            path.display(),
+                            err.to_string()
+                        );
+                        errs.push(err);
+                    }
+                }
+
+                if !errs.is_empty() {
+                    bail!(
+                        "Failed to extract resources from {}/{} assets",
+                        errs.len(),
+                        paths.len()
+                    );
                 }
             }
         }
