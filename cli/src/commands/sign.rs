@@ -294,6 +294,7 @@ impl Sign {
                         if self.sidecar {
                             output.set_extension("c2pa");
                             if output.exists() {
+                                exists += 1;
                                 warn!("Sidecar output path `{}` already exists", output.display());
                             }
                         }
