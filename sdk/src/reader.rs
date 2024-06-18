@@ -186,6 +186,11 @@ impl Reader {
         self.manifest_store.active_label()
     }
 
+    /// Returns an iterator over [`Manifest`][Manifest]s.
+    pub fn iter_manifests(&self) -> impl Iterator<Item = &Manifest> + '_ {
+        self.manifest_store.manifests().values()
+    }
+
     /// Return a [`Manifest`] for a given label if it exists.
     /// # Arguments
     /// * `label` - The label of the requested [`Manifest`]
