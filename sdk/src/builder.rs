@@ -14,6 +14,7 @@
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
+    path::PathBuf,
 };
 
 use async_generic::async_generic;
@@ -198,6 +199,9 @@ pub struct Builder {
 
     // If true, the manifest store will not be embedded in the asset on sign
     pub no_embed: bool,
+
+    /// Base path to search for resources.
+    pub base_path: Option<PathBuf>,
 
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
@@ -715,6 +719,10 @@ impl Builder {
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+
+        if let Some(base_path) = &self.base_path {
+            self.resources.set_base_path(base_path);
+        }
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
