@@ -274,13 +274,12 @@ impl SettingsValidate for Settings {
 // Get snapshot of the Settings objects, returns None if there is an error
 #[allow(unused)]
 pub(crate) fn get_settings() -> Option<Settings> {
-    SETTINGS.with(|source| {
-        let config = source.borrow().clone();
-        match config.try_deserialize::<Settings>() {
+    SETTINGS.with_borrow(
+        |config| match config.clone().try_deserialize::<Settings>() {
             Ok(s) => Some(s),
             Err(_) => None,
-        }
-    })
+        },
+    )
 }
 
 // Load settings from configuration file
@@ -356,9 +355,9 @@ pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value
 pub(crate) fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(
     value_path: &str,
 ) -> Result<T> {
-    SETTINGS.with(|current_settings| {
+    SETTINGS.with_borrow(|current_settings| {
         current_settings
-            .borrow()
+            .clone()
             .get::<T>(value_path)
             .map_err(|_| Error::NotFound)
     })

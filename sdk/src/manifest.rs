@@ -1321,7 +1321,7 @@ impl Manifest {
     /// Generate a placed manifest.  The returned manifest is complete
     /// as if it were inserted into the asset specified by input_stream
     /// expect that it has not been placed into an output asset and has not
-    /// been signed.  Use embed_placed_manifest to insert into an asset
+    /// been signed.  Use embed_placed_manifest to insert into the asset
     /// referenced by input_stream
     pub fn get_placed_manifest(
         &mut self,

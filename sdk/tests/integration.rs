@@ -15,22 +15,18 @@
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
 mod integration_1 {
-
     use std::path::PathBuf;
 
     use c2pa::{
-        //assertions::{c2pa_action, Action, Actions},
+        assertions::{c2pa_action, Action, Actions},
         create_signer,
-        //Ingredient,
-        //Manifest,
-        //ManifestStore,
-        Result,
-        Signer,
+        settings::load_settings_from_str,
+        Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore, Result, Signer,
         SigningAlg,
     };
-    //use tempfile::tempdir;
+    use tempfile::tempdir;
 
-    //const GENERATOR: &str = "app";
+    const GENERATOR: &str = "app";
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
@@ -47,14 +43,6 @@ mod integration_1 {
             .expect("get_signer_from_files")
     }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_get_signer() -> Result<()> {
-        let _s = get_temp_signer();
-        Ok(())
-    }
-
-    /*
     fn configure_trust(
         trust_anchors: Option<String>,
         allowed_list: Option<String>,
@@ -99,9 +87,7 @@ mod integration_1 {
 
         Ok(())
     }
-    */
 
-    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
@@ -393,5 +379,4 @@ mod integration_1 {
 
         Ok(())
     }
-    */
 }

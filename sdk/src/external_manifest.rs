@@ -16,7 +16,12 @@ use crate::Result;
 // Callback to allow user to change assertion data before the manifest is
 // signed and embedded into an assert.  The input manifest_store is the
 // JUMBF of C2PA manifest store. The size of the Vec returned from patch_manifest
-// must be the same size as the source manifest_store.
+// must be the same size as the source manifest_store.  The returned manifest
+// is checked for validity and consistency.  You are not allowed to change the
+// set of manifests in the store.  You are allowed to change the content of the
+// assertions in the active manifest.  You cannot add or remove assertions. Special
+// assertions like hash assertions (c2pa.hash.{data | boxes | bmff | bmff.v2}), ingredients,
+// or action assertions cannot be changed.
 pub trait ManifestPatchCallback {
     fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>>;
 }
