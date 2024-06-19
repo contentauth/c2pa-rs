@@ -134,12 +134,12 @@ impl Sign {
             let dst = match is_output_dir {
                 true => {
                     // It's safe to unwrap because we already validated this in the beginning of the function.
-                    &self.output.join(src.file_name().unwrap())
+                    self.output.join(src.file_name().unwrap())
                 }
-                false => &self.output,
+                false => self.output.clone(),
             };
 
-            if let Err(err) = self.sign_file(src, dst) {
+            if let Err(err) = self.sign_file(src, &dst) {
                 error!(
                     "Failed to sign asset at path `{}`, {}",
                     src.display(),
