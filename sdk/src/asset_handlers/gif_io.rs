@@ -11,6 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// TODO: temp
+#![allow(dead_code)]
+
 use std::{
     fs::File,
     io::{self, Read, SeekFrom},
@@ -28,19 +31,21 @@ use crate::{
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
+#[derive(Debug)]
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         self.parse_preamble(asset_reader)?;
 
-        self.start_block_extensions(asset_reader)?
+        self.parse_start_block_extensions(asset_reader)?
             .into_iter()
             .find_map(|block| match block.kind {
-                BlockExtensionKind::Application {
-                    content: AppBlockExtContent::C2pa(content),
-                    ..
-                } => Some(content),
+                BlockExtension::Application(app_block_ext)
+                    if matches!(app_block_ext.kind(), AppBlockExtKind::C2pa) =>
+                {
+                    Some(app_block_ext.bytes)
+                }
                 _ => None,
             })
             .ok_or(Error::JumbfNotFound)
@@ -64,20 +69,22 @@ impl CAIWriter for GifIO {
         // Cache the start pos here before we start reading any blocks.
         let start_pos = input_stream.stream_position()?;
 
-        let c2pa_block = self
-            .start_block_extensions(input_stream)?
+        let old_block = self
+            .parse_start_block_extensions(input_stream)?
             .into_iter()
             .find(|block| {
-                matches!(
-                    block.kind,
-                    BlockExtensionKind::Application {
-                        content: AppBlockExtContent::C2pa(_),
-                        ..
-                    }
-                )
+                matches!(&block.kind, BlockExtension::Application(app_block_ext) if {
+                    matches!(app_block_ext.kind(), AppBlockExtKind::C2pa)
+                })
             });
-        let data_sub_blocks = bytes_to_data_sub_blocks(store_bytes)?;
-        match c2pa_block {
+
+        let new_block = AppBlockExtension {
+            identifier: String::from("C2PA_GIF"),
+            authentication_code: [0x01, 0x00, 0x00],
+            bytes: store_bytes.to_owned(),
+        };
+
+        match old_block {
             Some(block) => {
                 let start_pos = block.start_pos;
 
@@ -87,8 +94,10 @@ impl CAIWriter for GifIO {
                 let mut start_stream = input_stream.take(start_pos);
                 io::copy(&mut start_stream, output_stream)?;
 
+                // TODO: we need to write the block header first
                 let input_stream = start_stream.into_inner();
-                output_stream.write_all(&data_sub_blocks)?;
+                output_stream.write_all(&new_block.to_bytes()?)?;
+
                 // Move the rest of the data from the gif.
                 io::copy(input_stream, output_stream)?;
             }
@@ -98,7 +107,9 @@ impl CAIWriter for GifIO {
                 let mut start_stream = input_stream.take(start_pos);
                 io::copy(&mut start_stream, output_stream)?;
 
-                output_stream.write_all(&data_sub_blocks)?;
+                output_stream.write_all(&new_block.to_bytes()?)?;
+
+                io::copy(input_stream, output_stream)?;
             }
         }
 
@@ -195,14 +206,17 @@ impl GifIO {
     // TODO: create an iterator over block extensions so we don't need to parse them all
     // Block extensions can be located before the image data or afater. The C2PA manifest will
     // always be before, so we don't worry about other cases.
-    fn start_block_extensions(&self, stream: &mut dyn CAIRead) -> Result<Vec<BlockExtension>> {
+    fn parse_start_block_extensions(
+        &self,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Vec<BlockExtensionMeta>> {
         let mut blocks = Vec::new();
         loop {
             let extension_introducer = stream.read_u8()?;
             match extension_introducer {
                 // If it's a block extension, parse it.
                 0x21 => {
-                    blocks.push(BlockExtension::new(stream)?);
+                    blocks.push(BlockExtensionMeta::new(stream)?);
                 }
                 // If it's the start of an image descriptor, there's no C2PA manifest.
                 // According to the C2PA spec, it must be before the first image descriptor.
@@ -226,6 +240,7 @@ impl Header {
     }
 }
 
+#[derive(Debug)]
 struct LogicalScreenDescriptor {
     color_table_flag: bool,
     color_resolution: u8,
@@ -256,48 +271,83 @@ impl GlobalColorTable {
     fn new(lsd: &LogicalScreenDescriptor, stream: &mut dyn CAIRead) -> Result<GlobalColorTable> {
         // Just need to skip it.
         stream.seek(SeekFrom::Current(
-            3 * (2 ^ (lsd.color_resolution as i64 + 1)),
+            3 * (2_i64.pow(lsd.color_resolution as u32 + 1)),
         ))?;
 
         Ok(GlobalColorTable {})
     }
 }
 
-enum AppBlockExtContent {
-    C2pa(Vec<u8>),
-    Xmp(String),
+#[derive(Debug)]
+enum AppBlockExtKind {
+    C2pa,
+    Xmp,
     Unknown,
 }
 
-enum BlockExtensionKind {
-    Application {
-        identifier: String,
-        authentication_code: [u8; 3],
-        content: AppBlockExtContent,
-    },
+#[derive(Debug, PartialEq)]
+struct AppBlockExtension {
+    identifier: String,
+    authentication_code: [u8; 3],
+    bytes: Vec<u8>,
+}
+
+impl AppBlockExtension {
+    fn kind(&self) -> AppBlockExtKind {
+        match (self.identifier.as_str(), self.authentication_code) {
+            ("C2PA_GIF", [0x01, 0x00, 0x00]) => AppBlockExtKind::C2pa,
+            ("XMP Data", [0x58, 0x4d, 0x50]) => AppBlockExtKind::Xmp,
+            (_, _) => AppBlockExtKind::Unknown,
+        }
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        // Get the amount of byte length markers plus one for terminator, the amount of bytes stored,
+        // and the size of the header.
+        let mut header = Vec::with_capacity((self.bytes.len() / 255) + 1 + self.bytes.len() + 14);
+        header[0] = 0x21;
+        header[1] = 0xff;
+        header[2] = 0x0b;
+        header[3..11].copy_from_slice(self.identifier.as_bytes());
+        header[11..14].copy_from_slice(&self.authentication_code);
+
+        let data_sub_blocks = bytes_to_data_sub_blocks(&self.bytes)?;
+        header.extend_from_slice(&data_sub_blocks);
+
+        Ok(header)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum BlockExtension {
+    Application(AppBlockExtension),
     PlainText,
-    GraphicsControl,
+    GraphicControl,
     Comment,
 }
 
-struct BlockExtension {
+#[derive(Debug, PartialEq)]
+struct BlockExtensionMeta {
     start_pos: u64,
     length: u64,
-    kind: BlockExtensionKind,
+    kind: BlockExtension,
 }
 
-impl BlockExtension {
-    pub fn new(stream: &mut dyn CAIRead) -> Result<BlockExtension> {
+impl BlockExtensionMeta {
+    fn new(stream: &mut dyn CAIRead) -> Result<BlockExtensionMeta> {
+        // TODO: pass in extension introducer (seek -1 stream), it is part of the block.
+        // Subtracted by 1 to account for extension introducer.
         let start_pos = stream.stream_position()?;
 
         let extension_label = stream.read_u8()?;
+
         // Next we check if the extension is an application data block.
         match extension_label {
             // Application Extension
             0xff => {
                 let app_block_size = stream.read_u8()?;
                 // App block size is a fixed value.
-                if app_block_size == 0xb {
+                if app_block_size == 0x0b {
                     // First 8 bytes is the app identifier.
                     let mut app_id = [0u8; 8];
                     stream.read_exact(&mut app_id)?;
@@ -307,70 +357,68 @@ impl BlockExtension {
                     let mut app_auth_code = [0u8; 3];
                     stream.read_exact(&mut app_auth_code)?;
 
-                    match (app_id, app_auth_code) {
-                        // C2PA app block
-                        ("C2PA_GIF", [0x01, 0x00, 0x00]) => {
+                    let mut app_block_ext = AppBlockExtension {
+                        identifier: app_id.to_owned(),
+                        authentication_code: app_auth_code,
+                        bytes: Vec::new(),
+                    };
+
+                    // Ignore caching unknown app blocks as we don't need it.
+                    let (bytes, data_len) = match app_block_ext.kind() {
+                        AppBlockExtKind::C2pa | AppBlockExtKind::Xmp => {
                             let bytes = data_sub_block_bytes(stream)?;
                             // First calculate how many bytes we need to represent each sub block length,
                             // then add one to account for terminator, then add the total amount of bytes.
-                            let data_sub_block_total_length =
-                                ((bytes.len() / 255) + 1) + bytes.len();
-                            return Ok(BlockExtension {
-                                start_pos,
-                                // 21 is size of header
-                                length: (data_sub_block_total_length + 21) as u64,
-                                kind: BlockExtensionKind::Application {
-                                    identifier: app_id.to_owned(),
-                                    authentication_code: app_auth_code,
-                                    content: AppBlockExtContent::C2pa(bytes),
-                                },
-                            });
+                            let data_len =
+                                ((app_block_ext.bytes.len() / 255) + 1) + app_block_ext.bytes.len();
+                            (bytes, data_len as u64)
                         }
-                        // TODO: XMP app block
-                        // Unknown app block
-                        (_, _) => {
-                            return Ok(BlockExtension {
-                                start_pos,
-                                length: data_sub_block_length(stream)? + 21,
-                                kind: BlockExtensionKind::Application {
-                                    identifier: app_id.to_owned(),
-                                    authentication_code: app_auth_code,
-                                    content: AppBlockExtContent::Unknown,
-                                },
-                            });
-                        }
-                    }
-                }
+                        AppBlockExtKind::Unknown => (Vec::new(), data_sub_block_length(stream)?),
+                    };
+                    app_block_ext.bytes = bytes;
 
-                Err(Error::UnsupportedType)
+                    Ok(BlockExtensionMeta {
+                        start_pos,
+                        length: data_len + 14,
+                        kind: BlockExtension::Application(app_block_ext),
+                    })
+                } else {
+                    Err(Error::UnsupportedType)
+                }
             }
             // Plain Text Extension
             0x01 => {
-                // 13 bytes for the header
-                stream.seek(SeekFrom::Current(13))?;
-                Ok(BlockExtension {
+                // 13 bytes for the header (excluding ext introducer and label).
+                stream.seek(SeekFrom::Current(11))?;
+
+                Ok(BlockExtensionMeta {
                     start_pos,
-                    length: data_sub_block_length(stream)? + 12,
-                    kind: BlockExtensionKind::PlainText,
+                    length: data_sub_block_length(stream)? + 13,
+                    kind: BlockExtension::PlainText,
                 })
             }
             // Comment Extension
             0xfe => {
-                // 2 bytes for the header
-                stream.seek(SeekFrom::Current(2))?;
+                // 2 bytes for the header (excluding ext introducer and label).
+                // stream.seek(SeekFrom::Current(0))?;
 
-                Ok(BlockExtension {
+                Ok(BlockExtensionMeta {
                     start_pos,
                     length: data_sub_block_length(stream)? + 2,
-                    kind: BlockExtensionKind::Comment,
+                    kind: BlockExtension::Comment,
                 })
             }
             // Graphics Control Extension
-            0xf9 => Ok(BlockExtension {
-                start_pos,
-                length: 8,
-                kind: BlockExtensionKind::GraphicsControl,
-            }),
+            0xf9 => {
+                // 8 bytes for everything (excluding ext introducer and label).
+                stream.seek(SeekFrom::Current(6))?;
+
+                Ok(BlockExtensionMeta {
+                    start_pos,
+                    length: 8,
+                    kind: BlockExtension::GraphicControl,
+                })
+            }
             _ => Err(Error::UnsupportedType),
         }
     }
@@ -428,4 +476,54 @@ fn data_sub_block_length(stream: &mut dyn CAIRead) -> Result<u64> {
     }
 
     Ok(length)
+}
+
+#[cfg(test)]
+mod tests {
+
+    use io::Cursor;
+
+    use super::*;
+
+    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
+
+    #[test]
+    fn test_gif_read_blocks() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let gif_io = GifIO {};
+        gif_io.parse_preamble(&mut stream)?;
+
+        let blocks = gif_io.parse_start_block_extensions(&mut stream)?;
+        assert!(
+            blocks[0]
+                == BlockExtensionMeta {
+                    start_pos: 782,
+                    length: 19,
+                    kind: BlockExtension::Application(AppBlockExtension {
+                        identifier: String::from("NETSCAPE"),
+                        authentication_code: [50, 46, 48],
+                        bytes: Vec::new()
+                    })
+                }
+        );
+        assert!(
+            blocks[1]
+                == BlockExtensionMeta {
+                    start_pos: 801,
+                    length: 8,
+                    kind: BlockExtension::GraphicControl
+                }
+        );
+        assert!(
+            blocks[2]
+                == BlockExtensionMeta {
+                    start_pos: 809,
+                    length: 52,
+                    kind: BlockExtension::Comment
+                }
+        );
+
+        Ok(())
+    }
 }
