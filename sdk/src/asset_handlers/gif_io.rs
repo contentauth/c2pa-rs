@@ -66,7 +66,8 @@ impl CAIWriter for GifIO {
     ) -> Result<()> {
         self.parse_preamble(input_stream)?;
 
-        // Cache the start pos here before we start reading any blocks.
+        // Cache the start pos here before we start reading any blocks. This position
+        // represents the start of where block extensions should be written.
         let start_pos = input_stream.stream_position()?;
 
         let old_block = self
@@ -81,10 +82,12 @@ impl CAIWriter for GifIO {
         let new_block = AppBlockExtension {
             identifier: String::from("C2PA_GIF"),
             authentication_code: [0x01, 0x00, 0x00],
+            // TODO: do not clone manifest bytes here
             bytes: store_bytes.to_owned(),
         };
 
         match old_block {
+            // TODO: fix this, working on None currently
             Some(block) => {
                 let start_pos = block.start_pos;
 
@@ -94,21 +97,20 @@ impl CAIWriter for GifIO {
                 let mut start_stream = input_stream.take(start_pos);
                 io::copy(&mut start_stream, output_stream)?;
 
-                // TODO: we need to write the block header first
-                let input_stream = start_stream.into_inner();
                 output_stream.write_all(&new_block.to_bytes()?)?;
 
                 // Move the rest of the data from the gif.
+                let input_stream = start_stream.into_inner();
                 io::copy(input_stream, output_stream)?;
             }
             None => {
                 // TODO: same here
-                input_stream.seek(SeekFrom::Start(0))?;
                 let mut start_stream = input_stream.take(start_pos);
                 io::copy(&mut start_stream, output_stream)?;
 
                 output_stream.write_all(&new_block.to_bytes()?)?;
 
+                let input_stream = start_stream.into_inner();
                 io::copy(input_stream, output_stream)?;
             }
         }
@@ -305,11 +307,11 @@ impl AppBlockExtension {
         // Get the amount of byte length markers plus one for terminator, the amount of bytes stored,
         // and the size of the header.
         let mut header = Vec::with_capacity((self.bytes.len() / 255) + 1 + self.bytes.len() + 14);
-        header[0] = 0x21;
-        header[1] = 0xff;
-        header[2] = 0x0b;
-        header[3..11].copy_from_slice(self.identifier.as_bytes());
-        header[11..14].copy_from_slice(&self.authentication_code);
+        header.push(0x21);
+        header.push(0xff);
+        header.push(0x0b);
+        header.extend_from_slice(self.identifier.as_bytes());
+        header.extend_from_slice(&self.authentication_code);
 
         let data_sub_blocks = bytes_to_data_sub_blocks(&self.bytes)?;
         header.extend_from_slice(&data_sub_blocks);
@@ -432,6 +434,9 @@ fn bytes_to_data_sub_blocks(bytes: &[u8]) -> Result<Vec<u8>> {
         data_sub_blocks.extend_from_slice(chunk);
     }
 
+    // Add terminator.
+    data_sub_blocks.push(0);
+
     Ok(data_sub_blocks)
 }
 
@@ -481,48 +486,73 @@ fn data_sub_block_length(stream: &mut dyn CAIRead) -> Result<u64> {
 #[cfg(test)]
 mod tests {
 
-    use io::Cursor;
+    use io::{Cursor, Seek};
 
     use super::*;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
     #[test]
-    fn test_gif_read_blocks() -> Result<()> {
+    fn test_read_start_block_exts() -> Result<()> {
         let mut stream = Cursor::new(SAMPLE1);
 
         let gif_io = GifIO {};
         gif_io.parse_preamble(&mut stream)?;
 
         let blocks = gif_io.parse_start_block_extensions(&mut stream)?;
-        assert!(
-            blocks[0]
-                == BlockExtensionMeta {
-                    start_pos: 782,
-                    length: 19,
-                    kind: BlockExtension::Application(AppBlockExtension {
-                        identifier: String::from("NETSCAPE"),
-                        authentication_code: [50, 46, 48],
-                        bytes: Vec::new()
-                    })
-                }
+        assert_eq!(
+            blocks[0],
+            BlockExtensionMeta {
+                start_pos: 782,
+                length: 19,
+                kind: BlockExtension::Application(AppBlockExtension {
+                    identifier: String::from("NETSCAPE"),
+                    authentication_code: [50, 46, 48],
+                    bytes: Vec::new()
+                })
+            }
         );
-        assert!(
-            blocks[1]
-                == BlockExtensionMeta {
-                    start_pos: 801,
-                    length: 8,
-                    kind: BlockExtension::GraphicControl
-                }
+        assert_eq!(
+            blocks[1],
+            BlockExtensionMeta {
+                start_pos: 801,
+                length: 8,
+                kind: BlockExtension::GraphicControl
+            }
         );
-        assert!(
-            blocks[2]
-                == BlockExtensionMeta {
-                    start_pos: 809,
-                    length: 52,
-                    kind: BlockExtension::Comment
-                }
+        assert_eq!(
+            blocks[2],
+            BlockExtensionMeta {
+                start_pos: 809,
+                length: 52,
+                kind: BlockExtension::Comment
+            }
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bytes() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let gif_io = GifIO {};
+
+        assert!(matches!(
+            gif_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
+
+        stream.seek(SeekFrom::Start(0))?;
+
+        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+        assert!(gif_io
+            .write_cai(&mut stream, &mut output_stream, &random_bytes)
+            .is_ok());
+
+        let data_written = gif_io.read_cai(&mut output_stream).unwrap();
+        assert_eq!(data_written, random_bytes);
 
         Ok(())
     }
