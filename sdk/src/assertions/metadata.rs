@@ -78,7 +78,7 @@ impl Metadata {
         self.data_source.as_ref()
     }
 
-    /// Returns the [`other`] custom metadata fields.
+    /// Returns map containing custom metadata fields.
     pub fn other(&self) -> &HashMap<String, Value> {
         &self.other
     }
