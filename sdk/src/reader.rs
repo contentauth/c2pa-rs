@@ -16,7 +16,7 @@
 
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 
 use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,20 @@ impl Reader {
     /// ```
     #[async_generic()]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        let reader = if _sync {
+            ManifestStore::from_stream(format, &mut stream, verify)
+        } else {
+            ManifestStore::from_stream_async(format, &mut stream, verify).await
+        }?;
+        Ok(Reader {
+            manifest_store: reader,
+        })
+    }
+
+    #[async_generic()]
+    pub fn from_buffer(format: &str, buffer: &[u8]) -> Result<Reader> {
+        let mut stream = Cursor::new(buffer);
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let reader = if _sync {
             ManifestStore::from_stream(format, &mut stream, verify)
