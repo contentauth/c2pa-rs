@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.2
+_19 June 2024_
+
+* Add iterators over manifests and resources in unstable API ([#482](https://github.com/contentauth/c2pa-rs/pull/482))
+* OCSP certificate should be valid at signing time ([#481](https://github.com/contentauth/c2pa-rs/pull/481))
+* url crate version 2.5.1 introduces new license "Unicode-3.0" ([#483](https://github.com/contentauth/c2pa-rs/pull/483))
+* Implement `Debug` w/ detailed manifest for `Reader` ([#473](https://github.com/contentauth/c2pa-rs/pull/473))
+* Bump MSRV to 1.74 ([#478](https://github.com/contentauth/c2pa-rs/pull/478))
+* Allow empty Merkle proof for last leaf node. ([#470](https://github.com/contentauth/c2pa-rs/pull/470))
+
 ## 0.32.1
 _10 May 2024_
 

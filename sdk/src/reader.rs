@@ -26,13 +26,13 @@ use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
     settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
-    validation_status::ValidationStatus, Manifest,
+    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
 };
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 
 /// A reader for the manifest store.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
@@ -154,7 +154,7 @@ impl Reader {
         }
 
         Ok(Reader {
-            manifest_store: ManifestStore::from_store(&store, &validation_log),
+            manifest_store: ManifestStore::from_store(store, &validation_log),
         })
     }
 
@@ -189,6 +189,11 @@ impl Reader {
     /// Return the active [`Manifest`] label if one exists.
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
+    }
+
+    /// Returns an iterator over [`Manifest`][Manifest]s.
+    pub fn iter_manifests(&self) -> impl Iterator<Item = &Manifest> + '_ {
+        self.manifest_store.manifests().values()
     }
 
     /// Return a [`Manifest`] for a given label if it exists.
@@ -237,5 +242,13 @@ impl Default for Reader {
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.json().as_str())
+    }
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let report = ManifestStoreReport::from_store(self.manifest_store.store())
+            .map_err(|_| std::fmt::Error)?;
+        f.write_str(&report.to_string())
     }
 }
