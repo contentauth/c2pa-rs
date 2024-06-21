@@ -15,7 +15,7 @@
 #![allow(dead_code)]
 
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{self, Read, SeekFrom},
     path::Path,
     str,
@@ -25,28 +25,27 @@ use byteorder::ReadBytesExt;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{rename_or_copy, AssetIO, CAIReader, CAIWriter, HashObjectPositions},
+    asset_io::{self, AssetIO, CAIReader, CAIWriter, HashObjectPositions},
     error::Result,
     CAIRead, CAIReadWrite, Error,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
-#[derive(Debug)]
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         self.parse_preamble(asset_reader)?;
 
-        self.parse_start_block_extensions(asset_reader)?
-            .into_iter()
-            .find_map(|block| match block.kind {
+        self.find_c2pa_block(asset_reader)?
+            .map(|c2pa_block| match c2pa_block.kind {
                 BlockExtension::Application(app_block_ext)
                     if matches!(app_block_ext.kind(), AppBlockExtKind::C2pa) =>
                 {
-                    Some(app_block_ext.bytes)
+                    app_block_ext.bytes
                 }
-                _ => None,
+                // TODO: don't like having to do this, we know it's a c2pa block
+                _ => unreachable!(),
             })
             .ok_or(Error::JumbfNotFound)
     }
@@ -66,19 +65,16 @@ impl CAIWriter for GifIO {
     ) -> Result<()> {
         self.parse_preamble(input_stream)?;
 
-        let old_block = self
-            .parse_start_block_extensions(input_stream)?
-            .into_iter()
-            .find(|block| {
-                matches!(&block.kind, BlockExtension::Application(app_block_ext) if {
-                    matches!(app_block_ext.kind(), AppBlockExtKind::C2pa)
-                })
-            });
+        let old_block = self.find_c2pa_block(input_stream)?;
 
         let new_block = BlockExtension::Application(AppBlockExtension {
             identifier: String::from("C2PA_GIF"),
             authentication_code: [0x01, 0x00, 0x00],
-            // TODO: don't clone here
+            // TODO: don't clone here, we can store bytes as a Cow,
+            //       but that significantly increases code complexity
+            //       best choice is probably to create a separate struct
+            //       that takes borrowed bytes for the sole purpose of
+            //       writing
             bytes: store_bytes.to_owned(),
         });
 
@@ -100,10 +96,17 @@ impl CAIWriter for GifIO {
 
     fn remove_cai_store_from_stream(
         &self,
-        _input_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        todo!()
+        self.parse_preamble(input_stream)?;
+
+        match self.find_c2pa_block(input_stream)? {
+            Some(c2pa_block) => {
+                self.remove_block_extension(input_stream, output_stream, &c2pa_block)
+            }
+            None => Err(Error::JumbfNotFound),
+        }
     }
 }
 
@@ -129,7 +132,7 @@ impl AssetIO for GifIO {
     }
 
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> crate::Result<()> {
-        let mut stream = std::fs::OpenOptions::new()
+        let mut stream = fs::OpenOptions::new()
             .read(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
@@ -141,8 +144,7 @@ impl AssetIO for GifIO {
 
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
-        // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        asset_io::rename_or_copy(temp_file, asset_path)
     }
 
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
@@ -151,7 +153,19 @@ impl AssetIO for GifIO {
     }
 
     fn remove_cai_store(&self, asset_path: &Path) -> crate::Result<()> {
-        self.save_cai_store(asset_path, &[])
+        let mut stream = fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        let mut temp_file = Builder::new()
+            .prefix("c2pa_temp")
+            .rand_bytes(5)
+            .tempfile()?;
+
+        self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
+
+        asset_io::rename_or_copy(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -181,7 +195,7 @@ impl GifIO {
     }
 
     // TODO: create an iterator over block extensions so we don't need to parse them all
-    // Block extensions can be located before the image data or afater. The C2PA manifest will
+    // Block extensions can be located before the image data or after. The C2PA manifest will
     // always be before, so we don't worry about other cases.
     fn parse_start_block_extensions(
         &self,
@@ -206,6 +220,28 @@ impl GifIO {
         Ok(blocks)
     }
 
+    fn remove_block_extension(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        block_meta: &BlockExtensionMeta,
+    ) -> Result<()> {
+        self.parse_preamble(input_stream)?;
+
+        input_stream.rewind()?;
+        output_stream.rewind()?;
+
+        // TODO: same here
+        let mut start_stream = input_stream.take(block_meta.start_pos - 1);
+        io::copy(&mut start_stream, output_stream)?;
+
+        let input_stream = start_stream.into_inner();
+        input_stream.seek(SeekFrom::Current(i64::try_from(block_meta.length)?))?;
+        io::copy(input_stream, output_stream)?;
+
+        Ok(())
+    }
+
     fn replace_block_extension(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -225,7 +261,6 @@ impl GifIO {
         io::copy(&mut start_stream, output_stream)?;
 
         output_stream.write_all(&new_block.to_bytes()?)?;
-        println!("{}", old_block_meta.length);
 
         // Write everything after the replacement block.
         let input_stream = start_stream.into_inner();
@@ -259,6 +294,17 @@ impl GifIO {
         io::copy(input_stream, output_stream)?;
 
         Ok(())
+    }
+
+    fn find_c2pa_block(&self, stream: &mut dyn CAIRead) -> Result<Option<BlockExtensionMeta>> {
+        Ok(self
+            .parse_start_block_extensions(stream)?
+            .into_iter()
+            .find(|block| {
+                matches!(&block.kind, BlockExtension::Application(app_block_ext) if {
+                    matches!(app_block_ext.kind(), AppBlockExtKind::C2pa)
+                })
+            }))
     }
 }
 
@@ -418,7 +464,9 @@ impl BlockExtensionMeta {
 
                             (bytes, data_len as u64)
                         }
-                        AppBlockExtKind::Unknown => (Vec::new(), data_sub_block_length(stream)?),
+                        AppBlockExtKind::Unknown => {
+                            (app_block_ext.bytes, data_sub_block_length(stream)?)
+                        }
                     };
                     app_block_ext.bytes = bytes;
 
@@ -470,8 +518,8 @@ impl BlockExtensionMeta {
 }
 
 fn bytes_to_data_sub_blocks(bytes: &[u8]) -> Result<Vec<u8>> {
-    // The amount of bytes + the amount of byte length bytes + terminator byte.
-    let mut data_sub_blocks = Vec::with_capacity(bytes.len() + (bytes.len() / 255) + 1);
+    // The amount of length marker bytes + amount of bytes + terminator byte.
+    let mut data_sub_blocks = Vec::with_capacity(bytes.len().div_ceil(255) + bytes.len() + 1);
     for chunk in bytes.chunks(255) {
         data_sub_blocks.push(chunk.len() as u8);
         data_sub_blocks.extend_from_slice(chunk);
@@ -570,6 +618,35 @@ mod tests {
                 kind: BlockExtension::Comment
             }
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_remove_block() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let gif_io = GifIO {};
+
+        assert!(matches!(
+            gif_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
+
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+
+        let data_written = gif_io.read_cai(&mut output_stream1)?;
+        assert_eq!(data_written, random_bytes);
+
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        gif_io.remove_cai_store_from_stream(&mut output_stream1, &mut output_stream2)?;
+
+        assert!(matches!(
+            gif_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
 
         Ok(())
     }
