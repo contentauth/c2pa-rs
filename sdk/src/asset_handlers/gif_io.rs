@@ -16,7 +16,7 @@
 
 use std::{
     fs::{self, File},
-    io::{self, Read, SeekFrom},
+    io::{self, Cursor, Read, SeekFrom},
     path::Path,
     str,
 };
@@ -25,8 +25,12 @@ use byteorder::ReadBytesExt;
 use tempfile::Builder;
 
 use crate::{
-    asset_io::{self, AssetIO, AssetPatch, CAIReader, CAIWriter, HashObjectPositions},
+    asset_io::{
+        self, AssetIO, AssetPatch, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions,
+        RemoteRefEmbed, RemoteRefEmbedType,
+    },
     error::Result,
+    utils::xmp_inmemory_utils::{self, MIN_XMP},
     CAIRead, CAIReadWrite, Error,
 };
 
@@ -145,6 +149,93 @@ impl CAIWriter for GifIO {
     }
 }
 
+impl AssetPatch for GifIO {
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+        let mut stream = fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        let old_block = match self.find_app_block(&mut stream, AppBlockExtKind::C2pa)? {
+            Some(old_block) => old_block,
+            None => return Err(Error::JumbfNotFound),
+        };
+
+        let new_block = BlockExtension::Application(AppBlockExtension::new(
+            AppBlockExtKind::C2pa,
+            // TODO: don't clone here as well
+            store_bytes.to_owned(),
+        )?);
+
+        self.replace_block_extension_in_place(&mut stream, &old_block, &new_block)
+    }
+}
+
+impl RemoteRefEmbed for GifIO {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match &embed_ref {
+            RemoteRefEmbedType::Xmp(_) => {
+                let mut input_stream = File::open(asset_path)?;
+                let mut output_stream = Cursor::new(Vec::new());
+                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+                fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            RemoteRefEmbedType::Xmp(url) => {
+                let xmp = xmp_inmemory_utils::add_provenance(
+                    // TODO: we read xmp here, then search for it again after, we can cache it
+                    &self
+                        .read_xmp(source_stream)
+                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                    &url,
+                )?;
+
+                // TODO: same problem here as in read_xmp (we need to search after image descs)
+                let old_block = self.find_app_block(source_stream, AppBlockExtKind::Xmp)?;
+
+                let new_block = BlockExtension::Application(AppBlockExtension::new(
+                    AppBlockExtKind::C2pa,
+                    // TODO: avoid cloning
+                    xmp.as_bytes().to_owned(),
+                )?);
+
+                match old_block {
+                    Some(old_block) => self.replace_block_extension(
+                        source_stream,
+                        output_stream,
+                        &old_block,
+                        &new_block,
+                    ),
+                    None => self.insert_block_extension(source_stream, output_stream, &new_block),
+                }
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+}
+
+impl ComposedManifestRef for GifIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        BlockExtension::Application(AppBlockExtension::new(
+            AppBlockExtKind::C2pa,
+            // TODO: don't clone here
+            manifest_data.to_owned(),
+        )?)
+        .to_bytes()
+    }
+}
+
 impl AssetIO for GifIO {
     fn new(_asset_type: &str) -> Self
     where
@@ -166,6 +257,14 @@ impl AssetIO for GifIO {
     }
 
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
+
+    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
@@ -213,28 +312,6 @@ impl AssetIO for GifIO {
 
     fn supported_types(&self) -> &[&str] {
         &["gif", "image/gif"]
-    }
-}
-
-impl AssetPatch for GifIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let old_block = match self.find_app_block(&mut stream, AppBlockExtKind::C2pa)? {
-            Some(old_block) => old_block,
-            None => return Err(Error::JumbfNotFound),
-        };
-
-        let new_block = BlockExtension::Application(AppBlockExtension::new(
-            AppBlockExtKind::C2pa,
-            // TODO: don't clone here as well
-            store_bytes.to_owned(),
-        )?);
-
-        self.replace_block_extension_in_place(&mut stream, &old_block, &new_block)
     }
 }
 
