@@ -39,7 +39,7 @@ pub struct Metadata {
     date_time: Option<DateT>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<HashedUri>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "dataSource", skip_serializing_if = "Option::is_none")]
     data_source: Option<DataSource>,
     #[serde(flatten)]
     other: HashMap<String, Value>,
@@ -76,6 +76,11 @@ impl Metadata {
     /// Returns the [`DataSource`] for this assertion if it exists.
     pub fn data_source(&self) -> Option<&DataSource> {
         self.data_source.as_ref()
+    }
+
+    /// Returns the [`other`] custom metadata fields.
+    pub fn other(&self) -> &HashMap<String, Value> {
+        &self.other
     }
 
     /// Adds a [`ReviewRating`] associated with the assertion.
