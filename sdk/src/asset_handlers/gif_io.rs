@@ -86,14 +86,13 @@ impl CAIWriter for GifIO {
             bytes: store_bytes.to_owned(),
         };
 
-        match old_block {
-            // TODO: fix this, working on None currently
-            Some(block) => {
-                let start_pos = block.start_pos;
+        output_stream.rewind()?;
 
+        match old_block {
+            Some(block) => {
                 // TODO: we shouldn't need to read from the stream again, we already read it
                 //       from parse_preamble
-                input_stream.seek(SeekFrom::Start(0))?;
+                let start_pos = block.start_pos;
                 let mut start_stream = input_stream.take(start_pos);
                 io::copy(&mut start_stream, output_stream)?;
 
@@ -191,6 +190,8 @@ impl GifIO {
         &self,
         mut stream: &mut dyn CAIRead,
     ) -> Result<(Header, LogicalScreenDescriptor, Option<GlobalColorTable>)> {
+        stream.rewind()?;
+
         let header = Header::new(&mut stream)?;
         let logical_screen_descriptor = LogicalScreenDescriptor::new(&mut stream)?;
         let global_color_table = if logical_screen_descriptor.color_table_flag {
@@ -486,14 +487,14 @@ fn data_sub_block_length(stream: &mut dyn CAIRead) -> Result<u64> {
 #[cfg(test)]
 mod tests {
 
-    use io::{Cursor, Seek};
+    use io::Cursor;
 
     use super::*;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
     #[test]
-    fn test_read_start_block_exts() -> Result<()> {
+    fn test_read_start_blocks() -> Result<()> {
         let mut stream = Cursor::new(SAMPLE1);
 
         let gif_io = GifIO {};
@@ -543,7 +544,28 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        stream.seek(SeekFrom::Start(0))?;
+        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+        assert!(gif_io
+            .write_cai(&mut stream, &mut output_stream, &random_bytes)
+            .is_ok());
+
+        let data_written = gif_io.read_cai(&mut output_stream)?;
+        assert_eq!(data_written, random_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bytes_at_existing_block() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let gif_io = GifIO {};
+
+        assert!(matches!(
+            gif_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
 
         let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
@@ -551,7 +573,15 @@ mod tests {
             .write_cai(&mut stream, &mut output_stream, &random_bytes)
             .is_ok());
 
-        let data_written = gif_io.read_cai(&mut output_stream).unwrap();
+        let data_written = gif_io.read_cai(&mut output_stream)?;
+        assert_eq!(data_written, random_bytes);
+
+        let random_bytes = [1, 2, 1];
+        assert!(gif_io
+            .write_cai(&mut stream, &mut output_stream, &random_bytes)
+            .is_ok());
+
+        let data_written = gif_io.read_cai(&mut output_stream)?;
         assert_eq!(data_written, random_bytes);
 
         Ok(())
