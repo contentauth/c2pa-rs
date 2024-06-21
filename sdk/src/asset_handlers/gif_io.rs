@@ -66,10 +66,6 @@ impl CAIWriter for GifIO {
     ) -> Result<()> {
         self.parse_preamble(input_stream)?;
 
-        // Cache the start pos here before we start reading any blocks. This position
-        // represents the start of where block extensions should be written.
-        let start_pos = input_stream.stream_position()?;
-
         let old_block = self
             .parse_start_block_extensions(input_stream)?
             .into_iter()
@@ -79,42 +75,20 @@ impl CAIWriter for GifIO {
                 })
             });
 
-        let new_block = AppBlockExtension {
+        let new_block = BlockExtension::Application(AppBlockExtension {
             identifier: String::from("C2PA_GIF"),
             authentication_code: [0x01, 0x00, 0x00],
-            // TODO: do not clone manifest bytes here
+            // TODO: don't clone here
             bytes: store_bytes.to_owned(),
-        };
+        });
 
-        output_stream.rewind()?;
-
+        // TODO: add with_premable functions so we don't have to parse it again
         match old_block {
-            Some(block) => {
-                // TODO: we shouldn't need to read from the stream again, we already read it
-                //       from parse_preamble
-                let start_pos = block.start_pos;
-                let mut start_stream = input_stream.take(start_pos);
-                io::copy(&mut start_stream, output_stream)?;
-
-                output_stream.write_all(&new_block.to_bytes()?)?;
-
-                // Move the rest of the data from the gif.
-                let input_stream = start_stream.into_inner();
-                io::copy(input_stream, output_stream)?;
+            Some(old_block) => {
+                self.replace_block_extension(input_stream, output_stream, &old_block, &new_block)
             }
-            None => {
-                // TODO: same here
-                let mut start_stream = input_stream.take(start_pos);
-                io::copy(&mut start_stream, output_stream)?;
-
-                output_stream.write_all(&new_block.to_bytes()?)?;
-
-                let input_stream = start_stream.into_inner();
-                io::copy(input_stream, output_stream)?;
-            }
+            None => self.insert_block_extension(input_stream, output_stream, &new_block),
         }
-
-        Ok(())
     }
 
     fn get_object_locations_from_stream(
@@ -231,6 +205,61 @@ impl GifIO {
 
         Ok(blocks)
     }
+
+    fn replace_block_extension(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        old_block_meta: &BlockExtensionMeta,
+        new_block: &BlockExtension,
+    ) -> Result<()> {
+        self.parse_preamble(input_stream)?;
+
+        input_stream.rewind()?;
+        output_stream.rewind()?;
+
+        // TODO: we shouldn't need to read from the stream again, we already read it
+        //       from parse_preamble
+        // Write everything before the replacement block.
+        let mut start_stream = input_stream.take(old_block_meta.start_pos - 1);
+        io::copy(&mut start_stream, output_stream)?;
+
+        output_stream.write_all(&new_block.to_bytes()?)?;
+        println!("{}", old_block_meta.length);
+
+        // Write everything after the replacement block.
+        let input_stream = start_stream.into_inner();
+        input_stream.seek(SeekFrom::Current(i64::try_from(old_block_meta.length)?))?;
+        io::copy(input_stream, output_stream)?;
+
+        Ok(())
+    }
+
+    fn insert_block_extension(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        block: &BlockExtension,
+    ) -> Result<()> {
+        self.parse_preamble(input_stream)?;
+
+        // Position before any blocks start.
+        let end_preamble_pos = input_stream.stream_position()?;
+
+        input_stream.rewind()?;
+        output_stream.rewind()?;
+
+        // TODO: same here
+        let mut start_stream = input_stream.take(end_preamble_pos);
+        io::copy(&mut start_stream, output_stream)?;
+
+        output_stream.write_all(&block.to_bytes()?)?;
+
+        let input_stream = start_stream.into_inner();
+        io::copy(input_stream, output_stream)?;
+
+        Ok(())
+    }
 }
 
 struct Header {}
@@ -288,7 +317,7 @@ enum AppBlockExtKind {
     Unknown,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct AppBlockExtension {
     identifier: String,
     authentication_code: [u8; 3],
@@ -311,6 +340,7 @@ impl AppBlockExtension {
         header.push(0x21);
         header.push(0xff);
         header.push(0x0b);
+        // TODO: if identifier <8 bytes pad it, if it's >8 bytes error
         header.extend_from_slice(self.identifier.as_bytes());
         header.extend_from_slice(&self.authentication_code);
 
@@ -321,12 +351,22 @@ impl AppBlockExtension {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum BlockExtension {
     Application(AppBlockExtension),
     PlainText,
     GraphicControl,
     Comment,
+}
+
+impl BlockExtension {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        match self {
+            BlockExtension::Application(app_block_ext) => app_block_ext.to_bytes(),
+            // We only care about app block extensions.
+            _ => Err(Error::UnsupportedType),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -370,10 +410,12 @@ impl BlockExtensionMeta {
                     let (bytes, data_len) = match app_block_ext.kind() {
                         AppBlockExtKind::C2pa | AppBlockExtKind::Xmp => {
                             let bytes = data_sub_block_bytes(stream)?;
-                            // First calculate how many bytes we need to represent each sub block length,
-                            // then add one to account for terminator, then add the total amount of bytes.
-                            let data_len =
-                                ((app_block_ext.bytes.len() / 255) + 1) + app_block_ext.bytes.len();
+
+                            // Amount of bytes needed for the data sub block length markers.
+                            let length_marker_bytes = bytes.len().div_ceil(255);
+                            // Add one for terminator.
+                            let data_len = length_marker_bytes + bytes.len() + 1;
+
                             (bytes, data_len as u64)
                         }
                         AppBlockExtKind::Unknown => (Vec::new(), data_sub_block_length(stream)?),
@@ -486,7 +528,6 @@ fn data_sub_block_length(stream: &mut dyn CAIRead) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-
     use io::Cursor;
 
     use super::*;
@@ -534,6 +575,44 @@ mod tests {
     }
 
     #[test]
+    fn test_write_insert_two_blocks() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+
+        let gif_io = GifIO {};
+
+        let test_block = BlockExtension::Application(AppBlockExtension {
+            identifier: String::from("12345678"),
+            authentication_code: [0, 0, 0],
+            bytes: Vec::new(),
+        });
+        gif_io.insert_block_extension(&mut stream, &mut output_stream1, &test_block)?;
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        gif_io.insert_block_extension(&mut output_stream1, &mut output_stream2, &test_block)?;
+
+        gif_io.parse_preamble(&mut output_stream2)?;
+        let blocks = gif_io.parse_start_block_extensions(&mut output_stream2)?;
+        assert_eq!(
+            blocks[0],
+            BlockExtensionMeta {
+                start_pos: 782,
+                length: 15,
+                kind: test_block.clone()
+            }
+        );
+        assert_eq!(
+            blocks[1],
+            BlockExtensionMeta {
+                start_pos: 797,
+                length: 15,
+                kind: test_block
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_write_bytes() -> Result<()> {
         let mut stream = Cursor::new(SAMPLE1);
 
@@ -546,9 +625,7 @@ mod tests {
 
         let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        assert!(gif_io
-            .write_cai(&mut stream, &mut output_stream, &random_bytes)
-            .is_ok());
+        gif_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
 
         let data_written = gif_io.read_cai(&mut output_stream)?;
         assert_eq!(data_written, random_bytes);
@@ -567,21 +644,18 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        assert!(gif_io
-            .write_cai(&mut stream, &mut output_stream, &random_bytes)
-            .is_ok());
+        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream)?;
+        let data_written = gif_io.read_cai(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 3));
         let random_bytes = [1, 2, 1];
-        assert!(gif_io
-            .write_cai(&mut stream, &mut output_stream, &random_bytes)
-            .is_ok());
+        gif_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream)?;
+        let data_written = gif_io.read_cai(&mut output_stream2)?;
         assert_eq!(data_written, random_bytes);
 
         Ok(())
