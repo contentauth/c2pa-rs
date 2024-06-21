@@ -35,24 +35,43 @@ pub struct GifIO {}
 
 impl CAIReader for GifIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        self.parse_preamble(asset_reader)?;
-
-        self.find_c2pa_block(asset_reader)?
+        self.find_app_block(asset_reader, AppBlockExtKind::C2pa)?
+            // TODO: don't like having to do this, we know it's a c2pa block
             .map(|c2pa_block| match c2pa_block.kind {
-                BlockExtension::Application(app_block_ext)
-                    if matches!(app_block_ext.kind(), AppBlockExtKind::C2pa) =>
-                {
-                    app_block_ext.bytes
-                }
-                // TODO: don't like having to do this, we know it's a c2pa block
+                BlockExtension::Application(app_block_ext) => app_block_ext.bytes,
                 _ => unreachable!(),
             })
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        // TODO: gif is supported by xmp, need to find xmp block
-        None
+    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+        self.parse_preamble(asset_reader).ok()?;
+
+        // TODO: find_app_block only checks for block extensions before image data (corresponding to c2pa spec)
+        //       xmp doesn't specify if it's before or after, so we need to check both
+        let mut bytes = self
+            .find_app_block(asset_reader, AppBlockExtKind::Xmp)
+            .ok()?
+            // TODO: same here
+            .map(|c2pa_block| match c2pa_block.kind {
+                BlockExtension::Application(app_block_ext) => app_block_ext.bytes,
+                _ => unreachable!(),
+            })?;
+
+        // Validate the 258-byte XMP magic trailer.
+        if let Some(byte) = bytes.get(bytes.len() - 258) {
+            if *byte != 1 {
+                return None;
+            }
+        }
+        for (i, byte) in bytes.iter().rev().take(258).enumerate() {
+            if *byte != i as u8 {
+                return None;
+            }
+        }
+
+        bytes.truncate(bytes.len() - 258);
+        String::from_utf8(bytes).ok()
     }
 }
 
@@ -63,9 +82,7 @@ impl CAIWriter for GifIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        self.parse_preamble(input_stream)?;
-
-        let old_block = self.find_c2pa_block(input_stream)?;
+        let old_block = self.find_app_block(input_stream, AppBlockExtKind::C2pa)?;
 
         let new_block = BlockExtension::Application(AppBlockExtension {
             identifier: String::from("C2PA_GIF"),
@@ -99,9 +116,7 @@ impl CAIWriter for GifIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        self.parse_preamble(input_stream)?;
-
-        match self.find_c2pa_block(input_stream)? {
+        match self.find_app_block(input_stream, AppBlockExtKind::C2pa)? {
             Some(c2pa_block) => {
                 self.remove_block_extension(input_stream, output_stream, &c2pa_block)
             }
@@ -220,6 +235,21 @@ impl GifIO {
         Ok(blocks)
     }
 
+    fn find_app_block(
+        &self,
+        stream: &mut dyn CAIRead,
+        kind: AppBlockExtKind,
+    ) -> Result<Option<BlockExtensionMeta>> {
+        self.parse_preamble(stream)?;
+
+        Ok(self
+            .parse_start_block_extensions(stream)?
+            .into_iter()
+            .find(|block| {
+                matches!(&block.kind, BlockExtension::Application(app_block_ext) if app_block_ext.kind() == kind)
+            }))
+    }
+
     fn remove_block_extension(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -295,17 +325,6 @@ impl GifIO {
 
         Ok(())
     }
-
-    fn find_c2pa_block(&self, stream: &mut dyn CAIRead) -> Result<Option<BlockExtensionMeta>> {
-        Ok(self
-            .parse_start_block_extensions(stream)?
-            .into_iter()
-            .find(|block| {
-                matches!(&block.kind, BlockExtension::Application(app_block_ext) if {
-                    matches!(app_block_ext.kind(), AppBlockExtKind::C2pa)
-                })
-            }))
-    }
 }
 
 struct Header {}
@@ -356,7 +375,7 @@ impl GlobalColorTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum AppBlockExtKind {
     C2pa,
     Xmp,
