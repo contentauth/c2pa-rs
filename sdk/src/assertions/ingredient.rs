@@ -15,6 +15,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::AssetType;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Metadata, ReviewRating},
@@ -22,8 +23,6 @@ use crate::{
     hashed_uri::HashedUri,
     validation_status::ValidationStatus,
 };
-
-use super::AssetType;
 
 const ASSERTION_CREATION_VERSION: usize = 2;
 
