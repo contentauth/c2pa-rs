@@ -10,6 +10,12 @@
             }
         }
     ],
+    "metadata": [
+        {
+            "dateTime": "1985-04-12T23:20:50.52Z",
+            "my_custom_metadata": "my custom metatdata value"
+        }
+    ],
     "format" : "image/jpeg",
     "thumbnail": {
         "format": "image/jpeg",
