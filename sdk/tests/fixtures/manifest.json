@@ -63,6 +63,11 @@
                     }
                 ]
             }
+        },
+        {
+            "kind": "Json",
+            "label": "com.mycompany.myassertion",
+            "data": {"some_tag": "here is my custom value"}
         }
     ],
     "ingredients": [{

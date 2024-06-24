@@ -879,7 +879,7 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    fn update_assertion<MatchFn, PatchFn>(
+    pub(crate) fn update_assertion<MatchFn, PatchFn>(
         &mut self,
         replace_with: Assertion,
         match_fn: MatchFn,
@@ -930,6 +930,10 @@ impl Claim {
 
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
+
+        // clear original since content has changed
+        self.clear_data();
+
         Ok(())
     }
 
@@ -1634,6 +1638,10 @@ impl Claim {
             Some(ref ob) => Ok(ob.clone()),
             None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
+    }
+
+    fn clear_data(&mut self) {
+        self.original_bytes = None;
     }
 
     /// Create claim from binary data (not including assertions).
