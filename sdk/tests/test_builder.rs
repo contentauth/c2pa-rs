@@ -16,7 +16,7 @@ use std::io::Cursor;
 use c2pa::{Builder, Result};
 
 mod common;
-use common::{/*compare_stream_to_known_good,*/ fixtures_path, test_signer};
+use common::{compare_stream_to_known_good, fixtures_path, test_signer};
 
 #[test]
 fn test_builder_ca_jpg() -> Result<()> {
@@ -37,7 +37,5 @@ fn test_builder_ca_jpg() -> Result<()> {
     // std::fs::write(path, reader.json())?;
 
     dest.set_position(0);
-    //todo: Disable until Gavin returns since this is not behaving as expected.
-    //compare_stream_to_known_good(&mut dest, format, "CA_test.json")
-    Ok(())
+    compare_stream_to_known_good(&mut dest, format, "CA_test.json")
 }
