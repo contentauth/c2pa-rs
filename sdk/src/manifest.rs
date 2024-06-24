@@ -26,7 +26,8 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{
-        labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+        labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
@@ -58,6 +59,10 @@ pub struct Manifest {
     /// A list of claim generator info data identifying the software/hardware/system produced this claim
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+
+    /// A list of user metadata for this claim
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<Metadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -523,6 +528,12 @@ impl Manifest {
             manifest.claim_generator_info = Some(generators);
         }
 
+        if let Some(metadata_vec) = claim.metadata() {
+            if !metadata_vec.is_empty() {
+                manifest.metadata = Some(metadata_vec.to_vec())
+            }
+        }
+
         manifest.set_label(claim.label());
         manifest.resources.set_label(claim.label()); // default manifest for relative urls
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
@@ -726,6 +737,12 @@ impl Manifest {
                     claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
                 }
                 claim.add_claim_generator_info(claim_info);
+            }
+        }
+
+        if let Some(metadata_vec) = self.metadata.as_ref() {
+            for metadata in metadata_vec {
+                claim.add_claim_metadata(metadata.to_owned());
             }
         }
 
@@ -2104,6 +2121,12 @@ pub(crate) mod tests {
                     "format": "image/svg+xml",
                     "identifier": "sample1.svg"
                 }
+            }
+        ],
+        "metadata": [
+            {
+                "dateTime": "1985-04-12T23:20:50.52Z",
+                "my_metadata": "some custom response"
             }
         ],
         "format" : "image/jpeg",
