@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.3
+_24 June 2024_
+
+* External placed manifest ([#472](https://github.com/contentauth/c2pa-rs/pull/472))
+* Support metadata field in claims. ([#488](https://github.com/contentauth/c2pa-rs/pull/488))
+
 ## 0.32.2
 _19 June 2024_
 
