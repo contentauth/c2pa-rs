@@ -942,13 +942,17 @@ impl Manifest {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
-                        &UserCbor::new(
-                            manifest_assertion.label(),
-                            serde_cbor::to_vec(&manifest_assertion.value()?)?,
-                        ),
-                        &salt,
-                    ),
+                    ManifestAssertionKind::Cbor => {
+                        let cbor = match manifest_assertion.value() {
+                            Ok(value) => serde_cbor::to_vec(value)?,
+                            Err(_) => manifest_assertion.binary()?.to_vec(),
+                        };
+
+                        claim.add_assertion_with_salt(
+                            &UserCbor::new(manifest_assertion.label(), cbor),
+                            &salt,
+                        )
+                    }
                     ManifestAssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
