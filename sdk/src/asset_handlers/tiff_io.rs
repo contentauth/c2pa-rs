@@ -27,7 +27,7 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
@@ -1428,7 +1428,7 @@ impl AssetIO for TiffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1452,7 +1452,7 @@ impl AssetIO for TiffIO {
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn new(_asset_type: &str) -> Self
