@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.5
+_28 June 2024_
+
+* (PATCH) ensures temp files are removed ([#494](https://github.com/contentauth/c2pa-rs/pull/494))
+* Update async_generic to 1.1 ([#493](https://github.com/contentauth/c2pa-rs/pull/493))
+
 ## 0.32.4
 _25 June 2024_
 
