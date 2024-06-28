@@ -349,7 +349,7 @@ pub(crate) fn check_cert(
     // check cert values
     let tbscert = &signcert.tbs_certificate;
 
-    let is_self_signed = tbscert.is_ca() && tbscert.issuer_uid == tbscert.subject_uid;
+    let is_self_signed = tbscert.is_ca() && tbscert.issuer() == tbscert.subject();
 
     // self signed certs are disallowed
     if is_self_signed {
@@ -721,7 +721,7 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                        check_cert(&ocsp_certs[0], th, validation_log, Some(tst_info))?;
                     }
                 }
                 result = Ok(ocsp_data);
