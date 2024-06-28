@@ -11,9 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::ops::Deref;
+
 use async_generic::async_generic;
 use bcder::encode::Values;
-use bcder::{decode::Constructed, ConstOid};
+use bcder::{
+    decode::{Constructed, SliceSource},
+    ConstOid,
+};
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
@@ -22,7 +27,8 @@ use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{
-            CertificateChoices::Certificate, SignedAttributesDer, SignedData, OID_ID_SIGNED_DATA,
+            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA,
+            OID_SIGNING_TIME,
         },
     },
     cose_validator::{
@@ -329,6 +335,18 @@ pub fn gt_to_datetime(
 ) -> chrono::DateTime<chrono::Utc> {
     gt.into()
 }
+pub fn timestamp_to_gt(dt: i64) -> Option<x509_certificate::asn1time::GeneralizedTime> {
+    let time = chrono::DateTime::from_timestamp(dt, 0)?;
+    let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
+
+    x509_certificate::asn1time::GeneralizedTime::parse(
+        SliceSource::new(formatted_time.as_bytes()),
+        false,
+        x509_certificate::asn1time::GeneralizedTimeAllowedTimezone::Z,
+    )
+    .ok()
+}
+
 fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chrono::Utc> {
     match t {
         x509_certificate::asn1time::Time::UtcTime(u) => *u,
@@ -427,6 +445,7 @@ fn get_validator_type(
 /// Returns TimeStamp token info if ts verifies against supplied data
 #[async_generic]
 pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
+    let mut last_err = Error::CoseInvalidTimeStamp;
     let ts_resp = get_timestamp_response(ts)?;
 
     // check for timestamp expiration during stamping
@@ -436,8 +455,10 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             .clone()
             .ok_or(Error::CoseTimeStampValidity)?;
 
+        // look for any valid signer
         for signer_info in sd.signer_infos.iter() {
-            if let Some(cert) = certs.iter().find_map(|cc| {
+            // find signer's cert
+            let cert = match certs.iter().find_map(|cc| {
                 let c = match cc {
                     Certificate(c) => c,
                     _ => return None,
@@ -472,115 +493,216 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     }
                 }
             }) {
-                // timestamp cert expiration
-                let tst_opt = ts_resp.tst_info()?;
-                let tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
+                Some(c) => c,
+                None => continue,
+            };
 
-                let signing_time = gt_to_datetime(tst.gen_time.clone()).timestamp();
-                let not_before =
-                    time_to_datetime(cert.tbs_certificate.validity.not_before.clone()).timestamp();
+            // load unprotected TstInfo.  We will verify its contents below against signed values
+            let tst_opt = ts_resp.tst_info()?;
+            let mut tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
+            let mi = &tst.message_imprint;
 
-                let not_after =
-                    time_to_datetime(cert.tbs_certificate.validity.not_after.clone()).timestamp();
+            // timestamp cert expiration
+            let signing_time = gt_to_datetime(tst.gen_time.clone()).timestamp();
 
-                if !(signing_time >= not_before && signing_time <= not_after) {
-                    return Err(Error::CoseTimeStampValidity);
+            // check the signer info signed attributes
+            if let Some(attributes) = &signer_info.signed_attributes {
+                // if there is a signed signing time make sure it has not changed
+                if let Some(Some(attrib_signing_time)) = attributes
+                    .iter()
+                    .find(|attr| attr.typ == OID_SIGNING_TIME)
+                    .map(|attr| {
+                        if attr.values.len() != 1 {
+                            // per CMS spec can only contain 1 signing time value
+                            return None;
+                        }
+
+                        attr.values
+                            .get(0)
+                            .unwrap()
+                            .deref()
+                            .clone()
+                            .decode(x509_certificate::asn1time::Time::take_from)
+                            .ok()
+                    })
+                {
+                    let signed_signing_time = match attrib_signing_time {
+                        x509_certificate::asn1time::Time::UtcTime(u) => u.timestamp(),
+                        x509_certificate::asn1time::Time::GeneralTime(g) => {
+                            gt_to_datetime(g).timestamp()
+                        }
+                    };
+
+                    // used sign date to avoid spoofing
+                    // check to see if time string has been modified todo: when is this an error case
+                    let _time_diff = (signing_time - signed_signing_time).abs();
+
+                    if let Some(gt) = timestamp_to_gt(signed_signing_time) {
+                        tst.gen_time = gt;
+                    };
                 }
 
-                // build CMS structure to verify
-                #[allow(unused_variables)]
-                let tbs = match &signer_info.signed_attributes {
-                    Some(d) => {
-                        let sa_der = SignedAttributesDer::new(d.clone(), None);
+                // check the mandatory signed message digest is self consistent
+                /*
+                match attributes
+                    .iter()
+                    .find(|attr| attr.typ == OID_MESSAGE_DIGEST)
+                {
+                    Some(message_digest) => {
+                        // message digest attribute MUST have exactly 1 value.
+                        if message_digest.values.len() != 1 {
+                            last_err = Error::CoseTimeStampMismatch;
+                            continue;
+                        }
 
-                        let mut tbs_der = Vec::new();
-                        sa_der.write_encoded(bcder::Mode::Der, &mut tbs_der)?;
+                        // get signed message digest
+                        let signed_message_digest = message_digest
+                            .values
+                            .get(0)
+                            .unwrap()
+                            .deref()
+                            .clone()
+                            .decode(OctetString::take_from)
+                            .map_err(|_| Error::CoseTimeStampMismatch)?
+                            .to_bytes()
+                            .to_vec();
 
-                        tbs_der
+                        let mut tst_digest = Vec::new();
+                        let av = x509_certificate::rfc5652::AttributeValue::new(
+                            bcder::Captured::from_values(
+                                bcder::Mode::Der,
+                                <bcder::OctetString as Clone>::clone(mi.hashed_message.as_ref())
+                                    .encode(),
+                            ),
+                        );
+                        av.write_encoded(bcder::Mode::Der, &mut tst_digest).unwrap();
+
+                        if vec_compare(&signed_message_digest, &tst_digest) {
+                            last_err = Error::CoseTimeStampMismatch;
+                            continue;
+                        }
                     }
+                    None => {
+                        last_err = Error::CoseTimeStampMismatch;
+                        continue;
+                    }
+                }
+                */
+            }
+
+            // build CMS structure to verify
+            let tbs = match signer_info.signed_attributes_digested_content() {
+                Ok(sdc) => match sdc {
+                    Some(tbs) => tbs,
                     None => match &sd.content_info.content {
                         Some(d) => d.to_bytes().to_vec(),
-                        None => return Err(Error::CoseTimeStampValidity),
+                        None => return Err(Error::CoseTimeStampMismatch),
                     },
-                };
+                },
+                Err(_) => {
+                    last_err = Error::CoseTimeStampMismatch;
+                    continue;
+                }
+            };
 
-                #[allow(unused_variables)]
-                let sig_val = &signer_info.signature;
-                #[allow(unused_variables)]
-                let mut signing_key_der = Vec::<u8>::new();
-                cert.tbs_certificate
-                    .subject_public_key_info
-                    .encode_ref()
-                    .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
+            // grab signing certificate
+            let sig_val = &signer_info.signature;
+            let mut signing_key_der = Vec::<u8>::new();
+            cert.tbs_certificate
+                .subject_public_key_info
+                .encode_ref()
+                .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
 
-                // verify signature of timestamp signature
+            let hash_alg = &signer_info.digest_algorithm.algorithm;
+            let sig_alg = &signer_info.signature_algorithm.algorithm;
+            let pk_alg = &cert.tbs_certificate.signature.algorithm;
 
-                #[allow(unused_variables)]
-                let hash_alg = &signer_info.digest_algorithm.algorithm;
-                #[allow(unused_variables)]
-                let sig_alg = &signer_info.signature_algorithm.algorithm;
-                #[allow(unused_variables)]
-                let pk_alg = &cert.tbs_certificate.signature.algorithm;
+            // verify signature of timestamp signature
+            let validated_res = if _sync {
+                #[cfg(feature = "openssl")]
+                {
+                    let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                    validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                }
 
-                let validated = if _sync {
-                    #[cfg(feature = "openssl")]
-                    {
-                        let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
-                        validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)?
-                    }
+                #[cfg(not(feature = "openssl"))]
+                {
+                    last_err = Error::UnsupportedType;
+                    continue;
+                }
+            } else {
+                #[cfg(feature = "openssl")]
+                {
+                    let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                    validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                }
 
-                    #[cfg(not(feature = "openssl"))]
-                    {
-                        false
-                    }
-                } else {
-                    #[cfg(feature = "openssl")]
-                    {
-                        let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
-                        validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)?
-                    }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    crate::wasm::verify_data(
+                        signing_key_der,
+                        get_validator_type(sig_alg, hash_alg, pk_alg),
+                        sig_val.to_bytes().to_vec(),
+                        tbs,
+                    )
+                    .await
+                }
 
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        crate::wasm::verify_data(
-                            signing_key_der,
-                            get_validator_type(sig_alg, hash_alg, pk_alg),
-                            sig_val.to_bytes().to_vec(),
-                            tbs,
-                        )
-                        .await?
-                    }
+                #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+                {
+                    false
+                }
+            };
 
-                    #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
-                    {
-                        false
-                    }
-                };
-
+            if let Ok(validated) = validated_res {
                 if validated {
                     // make sure this signature matches the expected data
-                    let tst_opt = ts_resp.tst_info()?;
-                    let tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
-                    let mi = &tst.message_imprint;
 
-                    let digest_algorithm = DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm)
-                        .map_err(|_e| Error::UnsupportedType)?;
+                    // timestamp cert expiration
+                    let not_before =
+                        time_to_datetime(cert.tbs_certificate.validity.not_before.clone())
+                            .timestamp();
+
+                    let not_after =
+                        time_to_datetime(cert.tbs_certificate.validity.not_after.clone())
+                            .timestamp();
+
+                    if !(signing_time >= not_before && signing_time <= not_after) {
+                        last_err = Error::CoseTimeStampValidity;
+                        continue;
+                    }
+
+                    // message imprint check
+                    let digest_algorithm =
+                        match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
+                            Ok(d) => d,
+                            Err(_) => {
+                                last_err = Error::UnsupportedType;
+                                continue;
+                            }
+                        };
 
                     let mut h = digest_algorithm.digester();
                     h.update(data);
                     let digest = h.finish();
 
                     if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
-                        return Err(Error::CoseTimeStampMismatch);
+                        last_err = Error::CoseTimeStampMismatch;
+                        continue;
                     }
+
+                    // found a good value so return
                     return Ok(tst);
                 } else {
-                    return Err(Error::CoseTimeStampAuthority);
+                    last_err = Error::CoseTimeStampMismatch;
+                    continue;
                 }
+            } else {
+                last_err = Error::CoseTimeStampMismatch;
             }
         }
     }
-    Err(Error::CoseInvalidTimeStamp)
+    Err(last_err)
 }
 
 /// Get TimeStampResponse from DER TimeStampResp bytes

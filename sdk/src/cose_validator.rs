@@ -1162,7 +1162,7 @@ pub(crate) fn verify_cose(
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
-                            "timestamp message imprint did not match",
+                            "timestamp did not match signed data",
                             "verify_cose"
                         )
                         .error(Error::CoseTimeStampMismatch)
