@@ -737,13 +737,12 @@ impl ApplicationExtension {
             ApplicationExtensionKind::C2pa => Ok(ApplicationExtension {
                 identifier: *b"C2PA_GIF",
                 authentication_code: [0x01, 0x00, 0x00],
-                bytes: bytes_to_data_sub_blocks(&bytes)?,
+                bytes,
             }),
             ApplicationExtensionKind::Xmp => Ok(ApplicationExtension {
                 identifier: *b"XMP Data",
                 authentication_code: [0x58, 0x4d, 0x50],
-                // TODO: we need to add magict trailer to end of data
-                bytes: bytes_to_data_sub_blocks(&bytes)?,
+                bytes,
             }),
             ApplicationExtensionKind::Unknown => Err(Error::UnsupportedType),
         }
@@ -803,6 +802,7 @@ impl ApplicationExtension {
         header.extend_from_slice(&self.identifier);
         header.extend_from_slice(&self.authentication_code);
 
+        // TODO: we need to add magict trailer to end of XMP block data
         let data_sub_blocks = bytes_to_data_sub_blocks(&self.bytes)?;
         header.extend_from_slice(&data_sub_blocks);
 
