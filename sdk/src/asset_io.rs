@@ -33,7 +33,7 @@ impl fmt::Display for HashBlockObjectType {
         write!(f, "{self:?}")
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct HashObjectPositions {
     pub offset: usize, // offset from beginning of file to the beginning of object
     pub length: usize, // length of object
