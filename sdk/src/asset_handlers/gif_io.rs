@@ -341,7 +341,7 @@ impl AssetIO for GifIO {
 
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
-        asset_io::rename_or_copy(temp_file, asset_path)
+        asset_io::rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
@@ -362,7 +362,7 @@ impl AssetIO for GifIO {
 
         self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
 
-        asset_io::rename_or_copy(temp_file, asset_path)
+        asset_io::rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
