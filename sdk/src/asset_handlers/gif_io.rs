@@ -24,10 +24,10 @@ use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::BoxMap,
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         self, AssetBoxHash, AssetIO, AssetPatch, CAIReader, CAIWriter, ComposedManifestRef,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::Result,
     utils::xmp_inmemory_utils::{self, MIN_XMP},
@@ -99,22 +99,26 @@ impl CAIWriter for GifIO {
                 HashObjectPositions {
                     offset: 0,
                     length: usize::try_from(c2pa_block.start() - 1)?,
-                    htype: asset_io::HashBlockObjectType::Other,
+                    htype: HashBlockObjectType::Other,
                 },
                 HashObjectPositions {
                     offset: usize::try_from(c2pa_block.start())?,
                     length: usize::try_from(c2pa_block.len())?,
-                    htype: asset_io::HashBlockObjectType::Cai,
+                    htype: HashBlockObjectType::Cai,
                 },
                 HashObjectPositions {
                     offset: usize::try_from(c2pa_block.end())?,
                     length: usize::try_from(
                         input_stream.seek(SeekFrom::End(0))? - c2pa_block.end(),
                     )?,
-                    htype: asset_io::HashBlockObjectType::Other,
+                    htype: HashBlockObjectType::Other,
                 },
             ]),
-            None => Err(Error::JumbfNotFound),
+            None => Ok(vec![HashObjectPositions {
+                offset: 0,
+                length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?,
+                htype: HashBlockObjectType::Other,
+            }]),
         }
     }
 
@@ -213,9 +217,10 @@ impl AssetBoxHash for GifIO {
                         vec![marker.to_box_map("GraphicControlExtension")]
                     }
                     Block::PlainTextExtension(_) => vec![marker.to_box_map("PlainTextExtension")],
-                    Block::ApplicationExtension(_) => {
-                        vec![marker.to_box_map("ApplicationExtension")]
-                    }
+                    Block::ApplicationExtension(ref app_block_ext) => match app_block_ext.kind() {
+                        ApplicationExtensionKind::C2pa => vec![marker.to_box_map(C2PA_BOXHASH)],
+                        _ => vec![marker.to_box_map("ApplicationExtension")],
+                    },
                     Block::CommentExtension(_) => vec![marker.to_box_map("CommentExtension")],
                     Block::Image(Image {
                         image_descriptor,
@@ -353,12 +358,7 @@ impl GifIO {
         &self,
         stream: &'a mut dyn CAIRead,
     ) -> Result<impl Iterator<Item = Result<BlockMarker<Block>>> + 'a> {
-        let preamble = Preamble::from_stream(stream)?;
-        if preamble.header.version == *b"87a" {
-            return Err(Error::InvalidAsset(
-                "GIF version 87a does not support block extensions".to_owned(),
-            ));
-        }
+        Preamble::from_stream(stream)?;
 
         let mut parse = || -> Result<BlockMarker<Block>> {
             let start = stream.stream_position()?;
@@ -378,8 +378,7 @@ impl GifIO {
         }))
     }
 
-    // Parsing C2PA blocks are a little different than parsing XMP because C2PA blocks must be located
-    // before the first image descriptor, whereas XMP doesn't have this restriction.
+    // C2PA blocks must come before the first image descriptor, whereas XMP doesn't have this restriction.
     fn find_c2pa_block(
         &self,
         stream: &mut dyn CAIRead,
@@ -526,7 +525,7 @@ impl GifIO {
 
 #[derive(Debug)]
 struct Preamble {
-    header: Header,
+    // header: Header,
     // logical_screen_descriptor: LogicalScreenDescriptor,
     // global_color_table: Option<GlobalColorTable>,
 }
@@ -535,7 +534,7 @@ impl Preamble {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<Preamble> {
         stream.rewind()?;
 
-        let header = Header::from_stream(stream)?;
+        let _header = Header::from_stream(stream)?;
         let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
         let _global_color_table = if logical_screen_descriptor.color_table_flag {
             Some(GlobalColorTable::from_stream(
@@ -547,7 +546,7 @@ impl Preamble {
         };
 
         Ok(Preamble {
-            header,
+            // header,
             // logical_screen_descriptor,
             // global_color_table,
         })
@@ -556,7 +555,7 @@ impl Preamble {
 
 #[derive(Debug)]
 struct Header {
-    version: [u8; 3],
+    // version: [u8; 3],
 }
 
 impl Header {
@@ -570,7 +569,9 @@ impl Header {
         let mut version = [0u8; 3];
         stream.read_exact(&mut version)?;
 
-        Ok(Header { version })
+        Ok(Header {
+            // version
+        })
     }
 }
 
@@ -734,7 +735,7 @@ impl ApplicationExtension {
 
     fn new_xmp(mut bytes: Vec<u8>) -> Result<ApplicationExtension> {
         // Add XMP magic trailer.
-        bytes.reserve(258);
+        bytes.reserve(257);
         bytes.push(1);
         for byte in (0..=255).rev() {
             bytes.push(byte);
@@ -1227,10 +1228,16 @@ mod tests {
 
         let gif_io = GifIO {};
 
-        assert!(matches!(
-            gif_io.get_object_locations_from_stream(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+        let obj_locations = gif_io.get_object_locations_from_stream(&mut stream)?;
+        assert_eq!(
+            obj_locations.first(),
+            Some(&HashObjectPositions {
+                offset: 0,
+                length: 740473,
+                htype: HashBlockObjectType::Other
+            })
+        );
+        assert_eq!(obj_locations.len(), 1);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         gif_io.write_cai(&mut stream, &mut output_stream1, &[])?;
@@ -1243,7 +1250,7 @@ mod tests {
             Some(&HashObjectPositions {
                 offset: 0,
                 length: 780,
-                htype: asset_io::HashBlockObjectType::Other,
+                htype: HashBlockObjectType::Other,
             })
         );
         assert_eq!(
@@ -1251,7 +1258,7 @@ mod tests {
             Some(&HashObjectPositions {
                 offset: 781,
                 length: 15,
-                htype: asset_io::HashBlockObjectType::Cai,
+                htype: HashBlockObjectType::Cai,
             })
         );
         assert_eq!(
@@ -1259,7 +1266,7 @@ mod tests {
             Some(&HashObjectPositions {
                 offset: 796,
                 length: 739692,
-                htype: asset_io::HashBlockObjectType::Other,
+                htype: HashBlockObjectType::Other,
             })
         );
         assert_eq!(obj_locations.len(), 3);
