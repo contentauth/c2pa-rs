@@ -179,7 +179,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     if _sync {
         sign1.signature = signer.sign(&tbs)?;
     } else {
-        sign1.signature = signer.sign(tbs).await?;
+        sign1.signature = signer.sign(&tbs).await?;
     }
 
     sign1.payload = None; // clear the payload since it is known

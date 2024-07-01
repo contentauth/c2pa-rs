@@ -298,7 +298,7 @@ pub(crate) struct AsyncTestGoodSigner {}
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::AsyncSigner for AsyncTestGoodSigner {
-    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+    async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -476,7 +476,7 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
         Ok(self.certs.clone())
     }
 
-    async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+    async fn sign(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen_futures::JsFuture;
         use web_sys::CryptoKey;
@@ -485,7 +485,7 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
         let context = WindowOrWorker::new().unwrap();
         let crypto = context.subtle_crypto().unwrap();
 
-        let mut data = claim_bytes.clone();
+        let mut data = claim_bytes;
         let promise = crypto
             .digest_with_str_and_u8_array("SHA-256", &mut data)
             .unwrap();
@@ -542,14 +542,14 @@ struct TempAsyncRemoteSigner {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
+    async fn sign(&self, claim_bytes: &[u8]) -> Result<Vec<u8>> {
         #[cfg(feature = "openssl_sign")]
         {
             let signer =
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
         #[cfg(not(feature = "openssl_sign"))]
         {
@@ -558,7 +558,7 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
             let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
 
             sign_bytes.rewind()?;
-            sign_bytes.write_all(&claim_bytes)?;
+            sign_bytes.write_all(claim_bytes)?;
 
             // fake sig
             Ok(sign_bytes.into_inner())
