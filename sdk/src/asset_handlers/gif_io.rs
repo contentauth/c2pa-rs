@@ -11,9 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// TODO: temp
-#![allow(dead_code)]
-
 use std::{
     fs::{self, File},
     io::{self, Cursor, Read, SeekFrom},
@@ -530,8 +527,8 @@ impl GifIO {
 #[derive(Debug)]
 struct Preamble {
     header: Header,
-    logical_screen_descriptor: LogicalScreenDescriptor,
-    global_color_table: Option<GlobalColorTable>,
+    // logical_screen_descriptor: LogicalScreenDescriptor,
+    // global_color_table: Option<GlobalColorTable>,
 }
 
 impl Preamble {
@@ -540,7 +537,7 @@ impl Preamble {
 
         let header = Header::from_stream(stream)?;
         let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
-        let global_color_table = if logical_screen_descriptor.color_table_flag {
+        let _global_color_table = if logical_screen_descriptor.color_table_flag {
             Some(GlobalColorTable::from_stream(
                 stream,
                 &logical_screen_descriptor,
@@ -551,8 +548,8 @@ impl Preamble {
 
         Ok(Preamble {
             header,
-            logical_screen_descriptor,
-            global_color_table,
+            // logical_screen_descriptor,
+            // global_color_table,
         })
     }
 }
@@ -952,9 +949,9 @@ impl DataSubBlocks {
         DataSubBlocks { bytes: vec![0] }
     }
 
-    fn from_encoded_bytes(bytes: Vec<u8>) -> DataSubBlocks {
-        DataSubBlocks { bytes }
-    }
+    // fn from_encoded_bytes(bytes: Vec<u8>) -> DataSubBlocks {
+    //     DataSubBlocks { bytes }
+    // }
 
     fn from_decoded_bytes(bytes: &[u8]) -> Result<DataSubBlocks> {
         // The amount of length marker bytes + first length marker byte + amount of bytes + terminator byte.
