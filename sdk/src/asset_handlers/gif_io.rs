@@ -22,7 +22,7 @@ use std::{
     str,
 };
 
-use byteorder::ReadBytesExt;
+use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
@@ -43,7 +43,7 @@ pub struct GifIO {}
 impl CAIReader for GifIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
         self.find_c2pa_block(asset_reader)?
-            .map(|marker| marker.block.bytes)
+            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
             .ok_or(Error::JumbfNotFound)
     }
 
@@ -51,15 +51,16 @@ impl CAIReader for GifIO {
         let mut bytes = self
             .find_xmp_block(asset_reader)
             .ok()?
-            .map(|marker| marker.block.bytes)?;
+            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
-        // Validate the 258-byte XMP magic trailer.
-        if let Some(byte) = bytes.get(bytes.len() - 258) {
+        // TODO: this should be validated on construction
+        // Validate the 258-byte XMP magic trailer (excluding terminator).
+        if let Some(byte) = bytes.get(bytes.len() - 257) {
             if *byte != 1 {
                 return None;
             }
         }
-        for (i, byte) in bytes.iter().rev().take(258).enumerate() {
+        for (i, byte) in bytes.iter().rev().take(256).enumerate() {
             if *byte != i as u8 {
                 return None;
             }
@@ -78,15 +79,7 @@ impl CAIWriter for GifIO {
         store_bytes: &[u8],
     ) -> Result<()> {
         let old_block_marker = self.find_c2pa_block(input_stream)?;
-        let new_block = ApplicationExtension::new(
-            ApplicationExtensionKind::C2pa,
-            // TODO: don't clone here, we can store bytes as a Cow,
-            //       but that significantly increases code complexity
-            //       best choice is probably to create a separate struct
-            //       that takes borrowed bytes for the sole purpose of
-            //       writing
-            store_bytes.to_owned(),
-        )?;
+        let new_block = ApplicationExtension::new_c2pa(store_bytes)?;
 
         match old_block_marker {
             Some(old_block_marker) => self.replace_block(
@@ -154,11 +147,7 @@ impl AssetPatch for GifIO {
             None => return Err(Error::JumbfNotFound),
         };
 
-        let new_block = ApplicationExtension::new(
-            ApplicationExtensionKind::C2pa,
-            // TODO: don't clone here as well
-            store_bytes.to_owned(),
-        )?;
+        let new_block = ApplicationExtension::new_c2pa(store_bytes)?;
 
         self.replace_block_in_place(&mut stream, &old_block_marker.into(), &new_block.into())
     }
@@ -195,12 +184,7 @@ impl RemoteRefEmbed for GifIO {
                 )?;
 
                 let old_block_marker = self.find_xmp_block(source_stream)?;
-
-                let new_block = ApplicationExtension::new(
-                    ApplicationExtensionKind::Xmp,
-                    // TODO: avoid cloning
-                    xmp.as_bytes().to_owned(),
-                )?;
+                let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
 
                 match old_block_marker {
                     Some(old_block_marker) => self.replace_block(
@@ -219,12 +203,7 @@ impl RemoteRefEmbed for GifIO {
 
 impl ComposedManifestRef for GifIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
-        ApplicationExtension::new(
-            ApplicationExtensionKind::C2pa,
-            // TODO: don't clone here
-            manifest_data.to_owned(),
-        )?
-        .to_bytes()
+        ApplicationExtension::new_c2pa(manifest_data)?.to_bytes()
     }
 }
 
@@ -279,6 +258,8 @@ impl AssetBoxHash for GifIO {
 
                         boxes
                     }
+                    // TODO: parse_blocks stops right before it reaches trailer, should this be the case?
+                    //       should box map include the trailer?
                     Block::Trailer => vec![marker.to_box_map("Trailer")],
                 })
             })
@@ -371,32 +352,16 @@ impl AssetIO for GifIO {
 }
 
 impl GifIO {
-    fn parse_preamble(&self, mut stream: &mut dyn CAIRead) -> Result<Preamble> {
-        stream.rewind()?;
-
-        let header = Header::from_stream(&mut stream)?;
-        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(&mut stream)?;
-        let global_color_table = if logical_screen_descriptor.color_table_flag {
-            Some(GlobalColorTable::from_stream(
-                &mut stream,
-                &logical_screen_descriptor,
-            )?)
-        } else {
-            None
-        };
-
-        Ok(Preamble {
-            header,
-            logical_screen_descriptor,
-            global_color_table,
-        })
-    }
-
     fn parse_blocks<'a>(
         &self,
         stream: &'a mut dyn CAIRead,
     ) -> Result<impl Iterator<Item = Result<BlockMarker<Block>>> + 'a> {
-        self.parse_preamble(stream)?;
+        let preamble = Preamble::from_stream(stream)?;
+        if preamble.header.version == *b"87a" {
+            return Err(Error::InvalidAsset(
+                "GIF version 87a does not support block extensions".to_owned(),
+            ));
+        }
 
         let mut parse = || -> Result<BlockMarker<Block>> {
             let start = stream.stream_position()?;
@@ -532,7 +497,7 @@ impl GifIO {
         output_stream: &mut dyn CAIReadWrite,
         block: &Block,
     ) -> Result<()> {
-        self.parse_preamble(input_stream)?;
+        Preamble::from_stream(input_stream)?;
 
         // Position before any blocks start.
         let end_preamble_pos = input_stream.stream_position()?;
@@ -548,6 +513,16 @@ impl GifIO {
         let input_stream = start_stream.into_inner();
         io::copy(input_stream, output_stream)?;
 
+        self.update_to_89a(output_stream)
+    }
+
+    // TODO: do we need to do anything else to update to 89a?
+    // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
+    // 87a we need to update it to 89a.
+    fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<()> {
+        stream.seek(SeekFrom::Start(5))?;
+        // 9 in ASCII.
+        stream.write_u8(0x71)?;
         Ok(())
     }
 }
@@ -559,8 +534,33 @@ struct Preamble {
     global_color_table: Option<GlobalColorTable>,
 }
 
+impl Preamble {
+    fn from_stream(stream: &mut dyn CAIRead) -> Result<Preamble> {
+        stream.rewind()?;
+
+        let header = Header::from_stream(stream)?;
+        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
+        let global_color_table = if logical_screen_descriptor.color_table_flag {
+            Some(GlobalColorTable::from_stream(
+                stream,
+                &logical_screen_descriptor,
+            )?)
+        } else {
+            None
+        };
+
+        Ok(Preamble {
+            header,
+            logical_screen_descriptor,
+            global_color_table,
+        })
+    }
+}
+
 #[derive(Debug)]
-struct Header {}
+struct Header {
+    version: [u8; 3],
+}
 
 impl Header {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<Header> {
@@ -572,13 +572,8 @@ impl Header {
 
         let mut version = [0u8; 3];
         stream.read_exact(&mut version)?;
-        // TODO: some libraries prefer v87a and only update to 89a if necessary.. so we will need to add migration support
-        // Version 87a (before 89a) does not support app block extensions.
-        if version != *b"89a" {
-            return Err(Error::InvalidAsset("GIF version invalid".to_owned()));
-        }
 
-        Ok(Header {})
+        Ok(Header { version })
     }
 }
 
@@ -683,15 +678,14 @@ impl Block {
                     0xff => Ok(Block::ApplicationExtension(
                         ApplicationExtension::from_stream(stream)?,
                     )),
+                    // TODO: Image cannot come next
                     0x01 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
                         stream,
                     )?)),
                     0xfe => Ok(Block::CommentExtension(CommentExtension::from_stream(
                         stream,
                     )?)),
-                    // TODO: image descriptor or plain text MUST come next
-                    //       we can either validate that right after we parse graphic control extension
-                    //       or we can keep some state outside of Block
+                    // TODO: Image or plain text MUST come next
                     0xf9 => Ok(Block::GraphicControlExtension(
                         GraphicControlExtension::from_stream(stream)?,
                     )),
@@ -700,6 +694,7 @@ impl Block {
                     ))),
                 }
             }
+            // TODO: Plain text cannot come next
             0x2c => Ok(Block::Image(Image::from_stream(stream)?)),
             0x3b => Ok(Block::Trailer),
             ext_introducer => Err(Error::InvalidAsset(format!(
@@ -728,24 +723,31 @@ enum ApplicationExtensionKind {
 struct ApplicationExtension {
     identifier: [u8; 8],
     authentication_code: [u8; 3],
-    bytes: Vec<u8>,
+    data_sub_blocks: DataSubBlocks,
 }
 
 impl ApplicationExtension {
-    fn new(kind: ApplicationExtensionKind, bytes: Vec<u8>) -> Result<ApplicationExtension> {
-        match kind {
-            ApplicationExtensionKind::C2pa => Ok(ApplicationExtension {
-                identifier: *b"C2PA_GIF",
-                authentication_code: [0x01, 0x00, 0x00],
-                bytes,
-            }),
-            ApplicationExtensionKind::Xmp => Ok(ApplicationExtension {
-                identifier: *b"XMP Data",
-                authentication_code: [0x58, 0x4d, 0x50],
-                bytes,
-            }),
-            ApplicationExtensionKind::Unknown => Err(Error::UnsupportedType),
+    fn new_c2pa(bytes: &[u8]) -> Result<ApplicationExtension> {
+        Ok(ApplicationExtension {
+            identifier: *b"C2PA_GIF",
+            authentication_code: [0x01, 0x00, 0x00],
+            data_sub_blocks: DataSubBlocks::from_decoded_bytes(bytes)?,
+        })
+    }
+
+    fn new_xmp(mut bytes: Vec<u8>) -> Result<ApplicationExtension> {
+        // Add XMP magic trailer.
+        bytes.reserve(258);
+        bytes.push(1);
+        for byte in (0..=255).rev() {
+            bytes.push(byte);
         }
+
+        Ok(ApplicationExtension {
+            identifier: *b"XMP Data",
+            authentication_code: [0x58, 0x4d, 0x50],
+            data_sub_blocks: DataSubBlocks::from_decoded_bytes(&bytes)?,
+        })
     }
 
     fn from_stream(stream: &mut dyn CAIRead) -> Result<ApplicationExtension> {
@@ -767,17 +769,16 @@ impl ApplicationExtension {
         let mut app_block_ext = ApplicationExtension {
             identifier: app_id,
             authentication_code: app_auth_code,
-            bytes: Vec::new(),
+            data_sub_blocks: DataSubBlocks::empty(),
         };
 
-        // Ignore caching unknown app blocks as we don't need it.
-        app_block_ext.bytes = match app_block_ext.kind() {
+        match app_block_ext.kind() {
             ApplicationExtensionKind::C2pa | ApplicationExtensionKind::Xmp => {
-                data_sub_block_bytes(stream)?
+                app_block_ext.data_sub_blocks = DataSubBlocks::from_encoded_stream(stream)?;
             }
+            // Ignore caching unknown app blocks as we don't need it.
             ApplicationExtensionKind::Unknown => {
-                data_sub_block_length(stream)?;
-                app_block_ext.bytes
+                DataSubBlocks::from_encoded_stream_and_skip(stream)?;
             }
         };
 
@@ -795,16 +796,15 @@ impl ApplicationExtension {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         // Get the amount of byte length markers plus one for terminator, the amount of bytes stored,
         // and the size of the header.
-        let mut header = Vec::with_capacity((self.bytes.len() / 255) + 1 + self.bytes.len() + 14);
+        let bytes = self.data_sub_blocks.to_encoded_bytes();
+        let mut header = Vec::with_capacity((bytes.len() / 255) + 1 + bytes.len() + 14);
         header.push(0x21);
         header.push(0xff);
         header.push(0x0b);
         header.extend_from_slice(&self.identifier);
         header.extend_from_slice(&self.authentication_code);
 
-        // TODO: we need to add magict trailer to end of XMP block data
-        let data_sub_blocks = bytes_to_data_sub_blocks(&self.bytes)?;
-        header.extend_from_slice(&data_sub_blocks);
+        header.extend_from_slice(bytes);
 
         Ok(header)
     }
@@ -822,7 +822,7 @@ struct PlainTextExtension {}
 impl PlainTextExtension {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<PlainTextExtension> {
         stream.seek(SeekFrom::Current(11))?;
-        data_sub_block_length(stream)?;
+        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(PlainTextExtension {})
     }
 }
@@ -833,7 +833,7 @@ struct CommentExtension {}
 impl CommentExtension {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension> {
         // stream.seek(SeekFrom::Current(0))?;
-        data_sub_block_length(stream)?;
+        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(CommentExtension {})
     }
 }
@@ -930,7 +930,7 @@ struct TableBasedImageData {
 impl TableBasedImageData {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<TableBasedImageData> {
         stream.seek(SeekFrom::Current(1))?;
-        let data_len = data_sub_block_length(stream)?;
+        let data_len = DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(TableBasedImageData {
             byte_len: data_len + 1,
         })
@@ -941,57 +941,95 @@ impl TableBasedImageData {
     }
 }
 
-fn bytes_to_data_sub_blocks(bytes: &[u8]) -> Result<Vec<u8>> {
-    // The amount of length marker bytes + amount of bytes + terminator byte.
-    let mut data_sub_blocks = Vec::with_capacity(bytes.len().div_ceil(255) + bytes.len() + 1);
-    for chunk in bytes.chunks(255) {
-        data_sub_blocks.push(chunk.len() as u8);
-        data_sub_blocks.extend_from_slice(chunk);
-    }
-
-    // Add terminator.
-    data_sub_blocks.push(0);
-
-    Ok(data_sub_blocks)
+#[derive(Debug, Clone, PartialEq)]
+struct DataSubBlocks {
+    bytes: Vec<u8>,
 }
 
-fn data_sub_block_bytes(stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
-    let mut data = Vec::new();
-    loop {
-        // First byte is the sub block size.
-        let sub_block_size = stream.read_u8()? as usize;
-
-        // If we are at the last block.
-        if sub_block_size == 0 {
-            break;
-        }
-
-        let start = data.len();
-        let end = start + sub_block_size;
-        data.resize(end, 0);
-
-        stream.read_exact(&mut data[start..end])?;
+impl DataSubBlocks {
+    fn empty() -> DataSubBlocks {
+        // Terminator byte.
+        DataSubBlocks { bytes: vec![0] }
     }
 
-    Ok(data)
-}
-
-fn data_sub_block_length(stream: &mut dyn CAIRead) -> Result<u64> {
-    let mut length = 0;
-    loop {
-        let sub_block_size = stream.read_u8()?;
-        // Add one to account for the block size byte.
-        length += 1;
-
-        if sub_block_size == 0 {
-            break;
-        } else {
-            length += sub_block_size as u64;
-            stream.seek(SeekFrom::Current(sub_block_size as i64))?;
-        }
+    fn from_encoded_bytes(bytes: Vec<u8>) -> DataSubBlocks {
+        DataSubBlocks { bytes }
     }
 
-    Ok(length)
+    fn from_decoded_bytes(bytes: &[u8]) -> Result<DataSubBlocks> {
+        // The amount of length marker bytes + first length marker byte + amount of bytes + terminator byte.
+        let mut data_sub_blocks =
+            Vec::with_capacity(bytes.len().div_ceil(255) + 1 + bytes.len() + 1);
+        for chunk in bytes.chunks(255) {
+            data_sub_blocks.push(chunk.len() as u8);
+            data_sub_blocks.extend_from_slice(chunk);
+        }
+
+        // Add terminator.
+        data_sub_blocks.push(0);
+
+        Ok(DataSubBlocks {
+            bytes: data_sub_blocks,
+        })
+    }
+
+    fn from_encoded_stream(stream: &mut dyn CAIRead) -> Result<DataSubBlocks> {
+        let mut data_sub_blocks = Vec::new();
+        loop {
+            let sub_block_size = stream.read_u8()?;
+            if sub_block_size == 0 {
+                break;
+            }
+
+            data_sub_blocks.push(sub_block_size);
+
+            let start = data_sub_blocks.len();
+            let end = start + sub_block_size as usize;
+            data_sub_blocks.resize(end, 0);
+
+            stream.read_exact(&mut data_sub_blocks[start..end])?;
+        }
+
+        data_sub_blocks.push(0);
+
+        Ok(DataSubBlocks {
+            bytes: data_sub_blocks,
+        })
+    }
+
+    fn from_encoded_stream_and_skip(stream: &mut dyn CAIRead) -> Result<u64> {
+        let mut length = 0;
+        loop {
+            let sub_block_size = stream.read_u8()?;
+            length += 1;
+
+            if sub_block_size == 0 {
+                break;
+            } else {
+                length += sub_block_size as u64;
+                stream.seek(SeekFrom::Current(sub_block_size as i64))?;
+            }
+        }
+
+        Ok(length)
+    }
+
+    fn to_encoded_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn to_decoded_bytes(&self) -> Vec<u8> {
+        // TODO: self.bytes.len() is a bit of an overestimate
+        let mut bytes = Vec::with_capacity(self.bytes.len());
+        for chunk in self.bytes.chunks(256) {
+            bytes.extend_from_slice(&chunk[1..]);
+        }
+
+        // Remove terminator.
+        bytes.remove(bytes.len() - 1);
+
+        bytes
+    }
 }
 
 #[cfg(test)]
@@ -1017,7 +1055,7 @@ mod tests {
                 block: Block::ApplicationExtension(ApplicationExtension {
                     identifier: *b"NETSCAPE",
                     authentication_code: [50, 46, 48],
-                    bytes: Vec::new()
+                    data_sub_blocks: DataSubBlocks::empty(),
                 })
             })
         );
@@ -1080,7 +1118,7 @@ mod tests {
         let test_block = Block::ApplicationExtension(ApplicationExtension {
             identifier: *b"12345678",
             authentication_code: [0, 0, 0],
-            bytes: Vec::new(),
+            data_sub_blocks: DataSubBlocks::empty(),
         });
         gif_io.insert_block(&mut stream, &mut output_stream1, &test_block)?;
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
@@ -1290,25 +1328,24 @@ mod tests {
         Ok(())
     }
 
-    // TODO: commented out until we add magic trailer to XMP in ApplicationExtension::new
-    // #[test]
-    // fn test_remote_ref() -> Result<()> {
-    //     let mut stream = Cursor::new(SAMPLE1);
+    #[test]
+    fn test_remote_ref() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
 
-    //     let gif_io = GifIO {};
+        let gif_io = GifIO {};
 
-    //     assert!(gif_io.read_xmp(&mut stream).is_none());
+        assert!(gif_io.read_xmp(&mut stream).is_none());
 
-    //     let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
-    //     gif_io.embed_reference_to_stream(
-    //         &mut stream,
-    //         &mut output_stream1,
-    //         RemoteRefEmbedType::Xmp("Test".to_owned()),
-    //     )?;
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        gif_io.embed_reference_to_stream(
+            &mut stream,
+            &mut output_stream1,
+            RemoteRefEmbedType::Xmp("Test".to_owned()),
+        )?;
 
-    //     let xmp = gif_io.read_xmp(&mut output_stream1);
-    //     assert_eq!(xmp, Some("".to_owned()));
+        let xmp = gif_io.read_xmp(&mut output_stream1);
+        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_owned()));
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
