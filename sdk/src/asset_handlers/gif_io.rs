@@ -131,9 +131,12 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos + 15,
+                        // We don't need to add/subtract 15 (size of C2PA block) because we expect
+                        // our stream to be 15 bytes longer and our offset to be 15 bytes ahead. So,
+                        // naturally we'd do (end_stream_pos + 15) - (end_preamble_pos + 15), but the
+                        // 15s cancel each other out.
                         length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
-                            - end_preamble_pos
-                            - 15,
+                            - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
                     },
                 ])
@@ -1334,7 +1337,7 @@ mod tests {
             obj_locations.get(2),
             Some(&HashObjectPositions {
                 offset: 796,
-                length: 739677,
+                length: 739692,
                 htype: HashBlockObjectType::Other,
             })
         );
