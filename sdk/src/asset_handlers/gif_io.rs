@@ -14,7 +14,6 @@
 use std::{
     fs::{self, File},
     io::{self, Cursor, Read, SeekFrom},
-    iter,
     path::Path,
     str,
 };
@@ -114,11 +113,17 @@ impl CAIWriter for GifIO {
                     htype: HashBlockObjectType::Other,
                 },
             ]),
-            None => Ok(vec![HashObjectPositions {
-                offset: 0,
-                length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?,
-                htype: HashBlockObjectType::Other,
-            }]),
+            None => {
+                // Minimum application extension size is 15.
+                let len = usize::try_from(input_stream.seek(SeekFrom::End(0))?)? + 15;
+                let mut output_stream = Cursor::new(Vec::with_capacity(len));
+                self.insert_block(
+                    input_stream,
+                    &mut output_stream,
+                    &Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[])?),
+                )?;
+                self.get_object_locations_from_stream(&mut output_stream)
+            }
         }
     }
 
@@ -210,63 +215,24 @@ impl ComposedManifestRef for GifIO {
 
 impl AssetBoxHash for GifIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        self.parse_blocks(input_stream)?
-            .flat_map(|marker| {
-                marker.map(|marker| match marker.block {
-                    Block::GraphicControlExtension(_) => {
-                        vec![marker.to_box_map("GraphicControlExtension")]
-                    }
-                    Block::PlainTextExtension(_) => vec![marker.to_box_map("PlainTextExtension")],
-                    Block::ApplicationExtension(ref app_block_ext) => match app_block_ext.kind() {
-                        ApplicationExtensionKind::C2pa => vec![marker.to_box_map(C2PA_BOXHASH)],
-                        _ => vec![marker.to_box_map("ApplicationExtension")],
-                    },
-                    Block::CommentExtension(_) => vec![marker.to_box_map("CommentExtension")],
-                    Block::Image(Image {
-                        image_descriptor,
-                        local_color_table,
-                        table_based_image_data,
-                    }) => {
-                        let mut boxes = Vec::with_capacity(3);
-                        boxes.push(
-                            BlockMarker {
-                                start: marker.start,
-                                length: image_descriptor.byte_len(),
-                                block: image_descriptor,
-                            }
-                            .to_box_map("ImageDescriptor"),
-                        );
-                        if let Some(local_color_table) = local_color_table {
-                            boxes.push(
-                                BlockMarker {
-                                    start: marker.start + marker.length
-                                        - table_based_image_data.byte_len()
-                                        - local_color_table.byte_len(),
-                                    length: local_color_table.byte_len(),
-                                    block: local_color_table,
-                                }
-                                .to_box_map("LocalColorTable"),
-                            );
-                        }
-                        boxes.push(
-                            BlockMarker {
-                                start: marker.start + marker.length
-                                    - table_based_image_data.byte_len(),
-                                length: table_based_image_data.byte_len(),
-                                block: table_based_image_data,
-                            }
-                            .to_box_map("TableBasedImageData"),
-                        );
-
-                        boxes
-                    }
-                    // TODO: parse_blocks stops right before it reaches trailer, should this be the case?
-                    //       should box map include the trailer?
-                    Block::Trailer => vec![marker.to_box_map("Trailer")],
-                })
-            })
-            .flatten()
-            .collect()
+        Blocks::new(input_stream)?.try_fold(Vec::new(), |mut box_maps, marker| -> Result<Vec<_>> {
+            let marker = marker?;
+            // According to C2PA spec, these blocks must be grouped into the same box map.
+            match marker.block {
+                // If it's a local color table, then an image descriptor MUST have come before it.
+                // If it's a global color table, then a logical screen descriptor MUST have come before it.
+                Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
+                    // Safe to unwrap for the reasons above.
+                    #[allow(clippy::unwrap_used)]
+                    let last_box_map = box_maps.last_mut().unwrap();
+                    marker.extend_box_map(last_box_map)?;
+                }
+                _ => {
+                    box_maps.push(marker.to_box_map()?);
+                }
+            }
+            Ok(box_maps)
+        })
     }
 }
 
@@ -354,42 +320,30 @@ impl AssetIO for GifIO {
 }
 
 impl GifIO {
-    fn parse_blocks<'a>(
-        &self,
-        stream: &'a mut dyn CAIRead,
-    ) -> Result<impl Iterator<Item = Result<BlockMarker<Block>>> + 'a> {
-        Preamble::from_stream(stream)?;
+    fn skip_preamble(&self, stream: &mut dyn CAIRead) -> Result<()> {
+        stream.rewind()?;
 
-        let mut parse = || -> Result<BlockMarker<Block>> {
-            let start = stream.stream_position()?;
-            Ok(BlockMarker {
-                block: Block::from_stream(stream)?,
-                start,
-                length: stream.stream_position()? - start,
-            })
-        };
+        Header::from_stream(stream)?;
+        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
+        if logical_screen_descriptor.color_table_flag {
+            GlobalColorTable::from_stream(stream, logical_screen_descriptor.color_resolution)?;
+        }
 
-        Ok(iter::from_fn(move || match parse() {
-            Ok(marker) => match marker.block {
-                Block::Trailer => None,
-                _ => Some(Ok(marker)),
-            },
-            Err(err) => Some(Err(err)),
-        }))
+        Ok(())
     }
 
-    // C2PA blocks must come before the first image descriptor, whereas XMP doesn't have this restriction.
+    // According to spec, C2PA blocks must come before the first image descriptor.
     fn find_c2pa_block(
         &self,
         stream: &mut dyn CAIRead,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
         self.find_app_block_from_iterator(
             ApplicationExtensionKind::C2pa,
-            self.parse_blocks(stream)?.take_while(|marker| {
+            Blocks::new(stream)?.take_while(|marker| {
                 !matches!(
                     marker,
                     Ok(BlockMarker {
-                        block: Block::Image(_),
+                        block: Block::ImageDescriptor(_),
                         ..
                     })
                 )
@@ -401,7 +355,7 @@ impl GifIO {
         &self,
         stream: &mut dyn CAIRead,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
-        self.find_app_block_from_iterator(ApplicationExtensionKind::Xmp, self.parse_blocks(stream)?)
+        self.find_app_block_from_iterator(ApplicationExtensionKind::Xmp, Blocks::new(stream)?)
     }
 
     fn find_app_block_from_iterator(
@@ -415,7 +369,7 @@ impl GifIO {
                     Block::ApplicationExtension(app_ext) if app_ext.kind() == kind => {
                         Some(Ok(BlockMarker {
                             start: marker.start,
-                            length: marker.length,
+                            len: marker.len,
                             block: app_ext,
                         }))
                     }
@@ -425,6 +379,8 @@ impl GifIO {
             })
             .transpose()
     }
+
+    // TODO: the methods below can be implemented much more conveniently within impl BlockMarker<Block>
 
     fn remove_block(
         &self,
@@ -493,7 +449,7 @@ impl GifIO {
         output_stream: &mut dyn CAIReadWrite,
         block: &Block,
     ) -> Result<()> {
-        Preamble::from_stream(input_stream)?;
+        self.skip_preamble(input_stream)?;
 
         // Position before any blocks start.
         let end_preamble_pos = input_stream.stream_position()?;
@@ -523,37 +479,274 @@ impl GifIO {
     }
 }
 
-#[derive(Debug)]
-struct Preamble {
-    // header: Header,
-    // logical_screen_descriptor: LogicalScreenDescriptor,
-    // global_color_table: Option<GlobalColorTable>,
+struct Blocks<'a> {
+    next: Option<BlockMarker<Block>>,
+    stream: &'a mut dyn CAIRead,
+    reached_trailer: bool,
 }
 
-impl Preamble {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Preamble> {
+impl<'a> Blocks<'a> {
+    fn new(stream: &'a mut dyn CAIRead) -> Result<Blocks<'a>> {
         stream.rewind()?;
 
-        let _header = Header::from_stream(stream)?;
-        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
-        let _global_color_table = if logical_screen_descriptor.color_table_flag {
-            Some(GlobalColorTable::from_stream(
-                stream,
-                &logical_screen_descriptor,
-            )?)
-        } else {
-            None
-        };
+        let start = stream.stream_position()?;
+        let block = Block::Header(Header::from_stream(stream)?);
+        let end = stream.stream_position()?;
 
-        Ok(Preamble {
-            // header,
-            // logical_screen_descriptor,
-            // global_color_table,
+        Ok(Blocks {
+            next: Some(BlockMarker {
+                len: end - start,
+                start,
+                block,
+            }),
+            stream,
+            reached_trailer: false,
         })
+    }
+
+    fn parse(&mut self) -> Result<BlockMarker<Block>> {
+        match self.next.take() {
+            Some(marker) => {
+                self.next = marker.block.next_block_hint(self.stream)?;
+                Ok(marker)
+            }
+            None => self.parse_next(),
+        }
+    }
+
+    fn parse_next(&mut self) -> Result<BlockMarker<Block>> {
+        let marker = Block::from_stream(self.stream)?;
+        self.next = marker.block.next_block_hint(self.stream)?;
+
+        if let Block::Trailer = marker.block {
+            self.reached_trailer = true;
+        }
+
+        Ok(marker)
     }
 }
 
-#[derive(Debug)]
+impl Iterator for Blocks<'_> {
+    type Item = Result<BlockMarker<Block>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.reached_trailer {
+            true => None,
+            false => match self.parse() {
+                Ok(marker) => Some(Ok(marker)),
+                Err(err) => Some(Err(err)),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BlockMarker<T> {
+    start: u64,
+    len: u64,
+    block: T,
+}
+
+impl<T> BlockMarker<T> {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn start(&self) -> u64 {
+        self.start
+    }
+
+    fn end(&self) -> u64 {
+        self.start + self.len
+    }
+}
+
+impl BlockMarker<Block> {
+    fn to_box_map(&self) -> Result<BoxMap> {
+        Ok(BoxMap {
+            names: vec![self.block.box_id().to_owned()],
+            alg: None,
+            hash: ByteBuf::from(Vec::new()),
+            pad: ByteBuf::from(Vec::new()),
+            range_start: usize::try_from(self.start())?,
+            range_len: usize::try_from(self.len())?,
+        })
+    }
+
+    fn extend_box_map(&self, box_map: &mut BoxMap) -> Result<()> {
+        box_map.range_len += usize::try_from(self.len())?;
+        box_map.names.push(self.block.box_id().to_owned());
+        Ok(())
+    }
+}
+
+impl From<BlockMarker<ApplicationExtension>> for BlockMarker<Block> {
+    fn from(value: BlockMarker<ApplicationExtension>) -> Self {
+        BlockMarker {
+            start: value.start,
+            len: value.len,
+            block: Block::ApplicationExtension(value.block),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Block {
+    Header(Header),
+    LogicalScreenDescriptor(LogicalScreenDescriptor),
+    GlobalColorTable(GlobalColorTable),
+    GraphicControlExtension(GraphicControlExtension),
+    PlainTextExtension(PlainTextExtension),
+    ApplicationExtension(ApplicationExtension),
+    CommentExtension(CommentExtension),
+    ImageDescriptor(ImageDescriptor),
+    LocalColorTable(LocalColorTable),
+    ImageData(ImageData),
+    Trailer,
+}
+
+impl Block {
+    fn from_stream(stream: &mut dyn CAIRead) -> Result<BlockMarker<Block>> {
+        let start = stream.stream_position()?;
+
+        let ext_introducer = stream.read_u8()?;
+        let block = match ext_introducer {
+            0x21 => {
+                let ext_label = stream.read_u8()?;
+                match ext_label {
+                    0xff => Ok(Block::ApplicationExtension(
+                        ApplicationExtension::from_stream(stream)?,
+                    )),
+                    0xfe => Ok(Block::CommentExtension(CommentExtension::from_stream(
+                        stream,
+                    )?)),
+                    0xf9 => Ok(Block::GraphicControlExtension(
+                        GraphicControlExtension::from_stream(stream)?,
+                    )),
+                    0x21 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
+                        stream,
+                    )?)),
+                    ext_label => Err(Error::InvalidAsset(format!(
+                        "Invalid block extension label: {ext_label}"
+                    ))),
+                }
+            }
+            0x2c => Ok(Block::ImageDescriptor(ImageDescriptor::from_stream(
+                stream,
+            )?)),
+            0x3b => Ok(Block::Trailer),
+            ext_introducer => Err(Error::InvalidAsset(format!(
+                "Invalid block id: {ext_introducer}"
+            ))),
+        }?;
+
+        let end = stream.stream_position()?;
+        Ok(BlockMarker {
+            start,
+            len: end - start,
+            block,
+        })
+    }
+
+    // Some blocks MUST come after other blocks, this function ensures that.
+    fn next_block_hint(&self, stream: &mut dyn CAIRead) -> Result<Option<BlockMarker<Block>>> {
+        let start = stream.stream_position()?;
+        let next_block = match self {
+            Block::Header(_) => Some(Block::LogicalScreenDescriptor(
+                LogicalScreenDescriptor::from_stream(stream)?,
+            )),
+            Block::LogicalScreenDescriptor(logical_screen_descriptor) => {
+                match logical_screen_descriptor.color_table_flag {
+                    true => Some(Block::GlobalColorTable(GlobalColorTable::from_stream(
+                        stream,
+                        logical_screen_descriptor.color_resolution,
+                    )?)),
+                    false => None,
+                }
+            }
+            Block::GlobalColorTable(_) => None,
+            // Block::GraphicControlExtension(_) => match stream.read_u8()? {
+            //     0x21 => match stream.read_u8()? {
+            //         0x01 => Some(Block::PlainTextExtension(PlainTextExtension::from_stream(
+            //             stream,
+            //         )?)),
+            //         ext_label => {
+            //             return Err(Error::InvalidAsset(format!(
+            //             "Block extension `{ext_label}` cannot come after graphic control extension"
+            //         )))
+            //         }
+            //     },
+            //     0x2c => Some(Block::ImageDescriptor(ImageDescriptor::from_stream(
+            //         stream,
+            //     )?)),
+            //     ext_introducer => {
+            //         return Err(Error::InvalidAsset(format!(
+            //             "Block id `{ext_introducer}` cannot come after graphic control extension"
+            //         )))
+            //     }
+            // },
+            // In a valid GIF, a plain text extension or image descriptor MUST come after a graphic control extension.
+            // However, it turns out not even our sample GIF follows this restriction! Since we don't really care about
+            // the correctness of the GIF (more so that our modifications are correct), we ignore this restriction.
+            Block::GraphicControlExtension(_) => None,
+            Block::PlainTextExtension(_) => None,
+            Block::ApplicationExtension(_) => None,
+            Block::CommentExtension(_) => None,
+            Block::ImageDescriptor(image_descriptor) => {
+                match image_descriptor.local_color_table_flag {
+                    true => Some(Block::LocalColorTable(LocalColorTable::from_stream(
+                        stream,
+                        image_descriptor.local_color_table_size,
+                    )?)),
+                    false => Some(Block::ImageData(ImageData::from_stream(stream)?)),
+                }
+            }
+            Block::LocalColorTable(_) => Some(Block::ImageData(ImageData::from_stream(stream)?)),
+            Block::ImageData(_) => None,
+            Block::Trailer => None,
+        };
+
+        let end = stream.stream_position()?;
+        Ok(next_block.map(|block| BlockMarker {
+            len: end - start,
+            start,
+            block,
+        }))
+    }
+
+    fn box_id(&self) -> &'static str {
+        match self {
+            Block::Header(_) => "GIF89a",
+            Block::LogicalScreenDescriptor(_) => "LSD",
+            // TODO: not defined in spec
+            Block::GlobalColorTable(_) => "GCT",
+            Block::GraphicControlExtension(_) => "21F9",
+            Block::PlainTextExtension(_) => "2101",
+            Block::ApplicationExtension(application_extension) => {
+                match ApplicationExtensionKind::C2pa == application_extension.kind() {
+                    true => C2PA_BOXHASH,
+                    false => "21FF",
+                }
+            }
+            Block::CommentExtension(_) => "21FE",
+            Block::ImageDescriptor(_) => "2C",
+            // TODO: not defined in spec
+            Block::LocalColorTable(_) => "LCT",
+            Block::ImageData(_) => "TBID",
+            Block::Trailer => "3B",
+        }
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        match self {
+            Block::ApplicationExtension(app_ext) => app_ext.to_bytes(),
+            // We only care about app extensions.
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct Header {
     // version: [u8; 3],
 }
@@ -575,7 +768,7 @@ impl Header {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 struct LogicalScreenDescriptor {
     color_table_flag: bool,
     color_resolution: u8,
@@ -598,115 +791,16 @@ impl LogicalScreenDescriptor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 struct GlobalColorTable {}
 
 impl GlobalColorTable {
-    fn from_stream(
-        stream: &mut dyn CAIRead,
-        logical_screen_descriptor: &LogicalScreenDescriptor,
-    ) -> Result<GlobalColorTable> {
+    fn from_stream(stream: &mut dyn CAIRead, color_resolution: u8) -> Result<GlobalColorTable> {
         stream.seek(SeekFrom::Current(
-            3 * (2_i64.pow(logical_screen_descriptor.color_resolution as u32 + 1)),
+            3 * (2_i64.pow(color_resolution as u32 + 1)),
         ))?;
 
         Ok(GlobalColorTable {})
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct BlockMarker<T> {
-    start: u64,
-    length: u64,
-    block: T,
-}
-
-impl<T> BlockMarker<T> {
-    fn len(&self) -> u64 {
-        self.length
-    }
-
-    fn start(&self) -> u64 {
-        self.start
-    }
-
-    fn end(&self) -> u64 {
-        self.start + self.length
-    }
-
-    fn to_box_map<S: Into<String>>(&self, name: S) -> Result<BoxMap> {
-        Ok(BoxMap {
-            names: vec![name.into()],
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            pad: ByteBuf::from(Vec::new()),
-            range_start: usize::try_from(self.start())?,
-            range_len: usize::try_from(self.len())?,
-        })
-    }
-}
-
-impl From<BlockMarker<ApplicationExtension>> for BlockMarker<Block> {
-    fn from(value: BlockMarker<ApplicationExtension>) -> Self {
-        BlockMarker {
-            start: value.start,
-            length: value.length,
-            block: Block::ApplicationExtension(value.block),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Block {
-    GraphicControlExtension(GraphicControlExtension),
-    PlainTextExtension(PlainTextExtension),
-    ApplicationExtension(ApplicationExtension),
-    CommentExtension(CommentExtension),
-    Image(Image),
-    Trailer,
-}
-
-impl Block {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Block> {
-        let ext_introducer = stream.read_u8()?;
-        match ext_introducer {
-            0x21 => {
-                let ext_label = stream.read_u8()?;
-                match ext_label {
-                    0xff => Ok(Block::ApplicationExtension(
-                        ApplicationExtension::from_stream(stream)?,
-                    )),
-                    // TODO: Image cannot come next
-                    0x01 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
-                        stream,
-                    )?)),
-                    0xfe => Ok(Block::CommentExtension(CommentExtension::from_stream(
-                        stream,
-                    )?)),
-                    // TODO: Image or plain text MUST come next
-                    0xf9 => Ok(Block::GraphicControlExtension(
-                        GraphicControlExtension::from_stream(stream)?,
-                    )),
-                    ext_label => Err(Error::InvalidAsset(format!(
-                        "Invalid block extension label: {ext_label}"
-                    ))),
-                }
-            }
-            // TODO: Plain text cannot come next
-            0x2c => Ok(Block::Image(Image::from_stream(stream)?)),
-            0x3b => Ok(Block::Trailer),
-            ext_introducer => Err(Error::InvalidAsset(format!(
-                "Invalid block id: {ext_introducer}"
-            ))),
-        }
-    }
-
-    fn to_bytes(&self) -> Result<Vec<u8>> {
-        match self {
-            Block::ApplicationExtension(app_ext) => app_ext.to_bytes(),
-            // We only care about app extensions.
-            _ => Err(Error::UnsupportedType),
-        }
     }
 }
 
@@ -848,34 +942,6 @@ impl GraphicControlExtension {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Image {
-    image_descriptor: ImageDescriptor,
-    local_color_table: Option<LocalColorTable>,
-    table_based_image_data: TableBasedImageData,
-}
-
-impl Image {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Image> {
-        let image_descriptor = ImageDescriptor::from_stream(stream)?;
-        let local_color_table = match image_descriptor.local_color_table_flag {
-            true => Some(LocalColorTable::from_stream(
-                stream,
-                image_descriptor.local_color_table_size,
-            )?),
-            false => None,
-        };
-
-        let table_based_image_data = TableBasedImageData::from_stream(stream)?;
-
-        Ok(Image {
-            image_descriptor,
-            local_color_table,
-            table_based_image_data,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 struct ImageDescriptor {
     local_color_table_flag: bool,
     local_color_table_size: u8,
@@ -894,48 +960,31 @@ impl ImageDescriptor {
             local_color_table_size,
         })
     }
-
-    fn byte_len(&self) -> u64 {
-        10
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct LocalColorTable {
-    byte_len: u64,
-}
+struct LocalColorTable {}
 
 impl LocalColorTable {
     fn from_stream(
         stream: &mut dyn CAIRead,
         local_color_table_size: u8,
     ) -> Result<LocalColorTable> {
-        let byte_len = 3 * (2_u64.pow(local_color_table_size as u32 + 1));
-        stream.seek(SeekFrom::Current(byte_len as i64))?;
-        Ok(LocalColorTable { byte_len })
-    }
-
-    fn byte_len(&self) -> u64 {
-        self.byte_len
+        stream.seek(SeekFrom::Current(
+            3 * (2_i64.pow(local_color_table_size as u32 + 1)),
+        ))?;
+        Ok(LocalColorTable {})
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct TableBasedImageData {
-    byte_len: u64,
-}
+struct ImageData {}
 
-impl TableBasedImageData {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<TableBasedImageData> {
+impl ImageData {
+    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageData> {
         stream.seek(SeekFrom::Current(1))?;
-        let data_len = DataSubBlocks::from_encoded_stream_and_skip(stream)?;
-        Ok(TableBasedImageData {
-            byte_len: data_len + 1,
-        })
-    }
-
-    fn byte_len(&self) -> u64 {
-        self.byte_len
+        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
+        Ok(ImageData {})
     }
 }
 
@@ -1042,14 +1091,39 @@ mod tests {
     fn test_read_blocks() -> Result<()> {
         let mut stream = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
-
-        let blocks: Vec<_> = gif_io.parse_blocks(&mut stream)?.collect::<Result<_>>()?;
+        let blocks: Vec<_> = Blocks::new(&mut stream)?.collect::<Result<_>>()?;
         assert_eq!(
             blocks.first(),
             Some(&BlockMarker {
+                start: 0,
+                len: 6,
+                block: Block::Header(Header {})
+            })
+        );
+        assert_eq!(
+            blocks.get(1),
+            Some(&BlockMarker {
+                start: 6,
+                len: 7,
+                block: Block::LogicalScreenDescriptor(LogicalScreenDescriptor {
+                    color_table_flag: true,
+                    color_resolution: 7
+                })
+            })
+        );
+        assert_eq!(
+            blocks.get(2),
+            Some(&BlockMarker {
+                start: 13,
+                len: 768,
+                block: Block::GlobalColorTable(GlobalColorTable {})
+            })
+        );
+        assert_eq!(
+            blocks.get(3),
+            Some(&BlockMarker {
                 start: 781,
-                length: 19,
+                len: 19,
                 block: Block::ApplicationExtension(ApplicationExtension {
                     identifier: *b"NETSCAPE",
                     authentication_code: [50, 46, 48],
@@ -1058,18 +1132,18 @@ mod tests {
             })
         );
         assert_eq!(
-            blocks.get(1),
+            blocks.get(4),
             Some(&BlockMarker {
                 start: 800,
-                length: 8,
+                len: 8,
                 block: Block::GraphicControlExtension(GraphicControlExtension {})
             })
         );
         assert_eq!(
-            blocks.get(2),
+            blocks.get(5),
             Some(&BlockMarker {
                 start: 808,
-                length: 52,
+                len: 52,
                 block: Block::CommentExtension(CommentExtension {})
             })
         );
@@ -1122,22 +1196,20 @@ mod tests {
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         gif_io.insert_block(&mut output_stream1, &mut output_stream2, &test_block)?;
 
-        let blocks: Vec<_> = gif_io
-            .parse_blocks(&mut output_stream2)?
-            .collect::<Result<_>>()?;
+        let blocks: Vec<_> = Blocks::new(&mut output_stream2)?.collect::<Result<_>>()?;
         assert_eq!(
-            blocks.first(),
+            blocks.get(3),
             Some(&BlockMarker {
                 start: 781,
-                length: 15,
+                len: 15,
                 block: test_block.clone()
             })
         );
         assert_eq!(
-            blocks.get(1),
+            blocks.get(4),
             Some(&BlockMarker {
                 start: 796,
-                length: 15,
+                len: 15,
                 block: test_block
             })
         );
@@ -1233,22 +1305,6 @@ mod tests {
             obj_locations.first(),
             Some(&HashObjectPositions {
                 offset: 0,
-                length: 740473,
-                htype: HashBlockObjectType::Other
-            })
-        );
-        assert_eq!(obj_locations.len(), 1);
-
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
-        gif_io.write_cai(&mut stream, &mut output_stream1, &[])?;
-
-        let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
-        obj_locations.sort_by_key(|pos| pos.offset);
-
-        assert_eq!(
-            obj_locations.first(),
-            Some(&HashObjectPositions {
-                offset: 0,
                 length: 780,
                 htype: HashBlockObjectType::Other,
             })
@@ -1271,6 +1327,38 @@ mod tests {
         );
         assert_eq!(obj_locations.len(), 3);
 
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        gif_io.write_cai(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
+
+        let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
+        obj_locations.sort_by_key(|pos| pos.offset);
+
+        assert_eq!(
+            obj_locations.first(),
+            Some(&HashObjectPositions {
+                offset: 0,
+                length: 780,
+                htype: HashBlockObjectType::Other,
+            })
+        );
+        assert_eq!(
+            obj_locations.get(1),
+            Some(&HashObjectPositions {
+                offset: 781,
+                length: 20,
+                htype: HashBlockObjectType::Cai,
+            })
+        );
+        assert_eq!(
+            obj_locations.get(2),
+            Some(&HashObjectPositions {
+                offset: 801,
+                length: 739692,
+                htype: HashBlockObjectType::Other,
+            })
+        );
+        assert_eq!(obj_locations.len(), 3);
+
         Ok(())
     }
 
@@ -1284,37 +1372,37 @@ mod tests {
         assert_eq!(
             box_map.first(),
             Some(&BoxMap {
-                names: vec!["ApplicationExtension".to_owned()],
+                names: vec!["GIF89a".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 781,
-                range_len: 19
+                range_start: 0,
+                range_len: 6
             })
         );
         assert_eq!(
             box_map.get(box_map.len() / 2),
             Some(&BoxMap {
-                names: vec!["TableBasedImageData".to_owned()],
+                names: vec!["2C".to_owned(), "LCT".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 369272,
-                range_len: 7654
+                range_start: 368494,
+                range_len: 778
             })
         );
         assert_eq!(
             box_map.last(),
             Some(&BoxMap {
-                names: vec!["TableBasedImageData".to_owned()],
+                names: vec!["3B".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 733636,
-                range_len: 6836
+                range_start: 740472,
+                range_len: 1
             })
         );
-        assert_eq!(box_map.len(), 361);
+        assert_eq!(box_map.len(), 275);
 
         Ok(())
     }
@@ -1340,7 +1428,7 @@ mod tests {
 
         assert!(gif_io.read_xmp(&mut stream).is_none());
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         gif_io.embed_reference_to_stream(
             &mut stream,
             &mut output_stream1,
