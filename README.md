@@ -59,6 +59,7 @@ The library has been tested on the following operating systems:
  | `tif`,`tiff`  | `image/tiff`                                        |
  | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
+ | `mp3`         | `audio/mpeg`                                        |
 
 ## Usage
 
