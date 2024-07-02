@@ -520,25 +520,23 @@ impl<'a> Blocks<'a> {
         })
     }
 
-    fn parse(&mut self) -> Result<BlockMarker<Block>> {
+    fn parse_next(&mut self) -> Result<BlockMarker<Block>> {
         match self.next.take() {
             Some(marker) => {
                 self.next = marker.block.next_block_hint(self.stream)?;
                 Ok(marker)
             }
-            None => self.parse_next(),
+            None => {
+                let marker = Block::from_stream(self.stream)?;
+                self.next = marker.block.next_block_hint(self.stream)?;
+
+                if let Block::Trailer = marker.block {
+                    self.reached_trailer = true;
+                }
+
+                Ok(marker)
+            }
         }
-    }
-
-    fn parse_next(&mut self) -> Result<BlockMarker<Block>> {
-        let marker = Block::from_stream(self.stream)?;
-        self.next = marker.block.next_block_hint(self.stream)?;
-
-        if let Block::Trailer = marker.block {
-            self.reached_trailer = true;
-        }
-
-        Ok(marker)
     }
 }
 
@@ -548,7 +546,7 @@ impl Iterator for Blocks<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.reached_trailer {
             true => None,
-            false => match self.parse() {
+            false => match self.parse_next() {
                 Ok(marker) => Some(Ok(marker)),
                 Err(err) => Some(Err(err)),
             },
