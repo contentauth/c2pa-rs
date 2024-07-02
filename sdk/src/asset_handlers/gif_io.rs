@@ -468,13 +468,12 @@ impl GifIO {
         self.update_to_89a(output_stream)
     }
 
-    // TODO: do we need to do anything else to update to 89a?
     // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
     // 87a we need to update it to 89a.
     fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<()> {
-        stream.seek(SeekFrom::Start(5))?;
-        // 9 in ASCII.
-        stream.write_u8(0x71)?;
+        stream.seek(SeekFrom::Start(4))?;
+        // 0x57 is 9 in ASCII.
+        stream.write_u8(0x39)?;
         Ok(())
     }
 }
