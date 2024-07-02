@@ -114,15 +114,29 @@ impl CAIWriter for GifIO {
                 },
             ]),
             None => {
-                // Minimum application extension size is 15.
-                let len = usize::try_from(input_stream.seek(SeekFrom::End(0))?)? + 15;
-                let mut output_stream = Cursor::new(Vec::with_capacity(len));
-                self.insert_block(
-                    input_stream,
-                    &mut output_stream,
-                    &Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[])?),
-                )?;
-                self.get_object_locations_from_stream(&mut output_stream)
+                self.skip_preamble(input_stream)?;
+
+                let end_preamble_pos = usize::try_from(input_stream.stream_position()?)?;
+                Ok(vec![
+                    HashObjectPositions {
+                        offset: 0,
+                        length: end_preamble_pos - 1,
+                        htype: HashBlockObjectType::Other,
+                    },
+                    HashObjectPositions {
+                        offset: end_preamble_pos,
+                        // Minimum application extension size is 15.
+                        length: 15,
+                        htype: HashBlockObjectType::Cai,
+                    },
+                    HashObjectPositions {
+                        offset: end_preamble_pos + 15,
+                        length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
+                            - end_preamble_pos
+                            - 15,
+                        htype: HashBlockObjectType::Other,
+                    },
+                ])
             }
         }
     }
@@ -472,7 +486,7 @@ impl GifIO {
     // 87a we need to update it to 89a.
     fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<()> {
         stream.seek(SeekFrom::Start(4))?;
-        // 0x57 is 9 in ASCII.
+        // 0x39 is 9 in ASCII.
         stream.write_u8(0x39)?;
         Ok(())
     }
@@ -1320,7 +1334,7 @@ mod tests {
             obj_locations.get(2),
             Some(&HashObjectPositions {
                 offset: 796,
-                length: 739692,
+                length: 739677,
                 htype: HashBlockObjectType::Other,
             })
         );
