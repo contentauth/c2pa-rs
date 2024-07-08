@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{self, Read},
+    io::{self, Read, Seek},
     path::Path,
 };
 
@@ -8,12 +8,13 @@ use tempfile::Builder;
 use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
+    assertions::UriHashedDataMap,
     asset_io::{
         self, AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIReader, CAIWriter,
         HashObjectPositions,
     },
     error::Result,
-    CAIRead, CAIReadWrite, Error,
+    CAIRead, CAIReadWrite, Error, HashRange,
 };
 
 pub struct ZipIO {}
@@ -230,4 +231,40 @@ impl ZipIO {
             reader: input_stream,
         })
     }
+}
+
+pub fn central_directory_inclusions<R>(reader: &mut R) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let _reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
+
+    // TODO: https://github.com/zip-rs/zip2/pull/71
+    //       or
+    //       https://gitlab.com/xMAC94x/zip-core (https://github.com/zip-rs/zip2/issues/204)
+
+    todo!()
+}
+
+pub fn uri_inclusions<R>(reader: &mut R, uri_maps: &[UriHashedDataMap]) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
+
+    let mut ranges = Vec::new();
+    for uri_map in uri_maps {
+        let index = reader
+            .index_for_path(Path::new(&uri_map.uri))
+            .ok_or(Error::JumbfNotFound)?;
+        let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+        // TODO: hash from header or data? does compressed_size include header?
+        //       and fix error type
+        ranges.push(HashRange::new(
+            usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
+            usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
+        ));
+    }
+
+    Ok(ranges)
 }
