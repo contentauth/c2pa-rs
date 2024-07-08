@@ -1091,7 +1091,7 @@ impl DataSubBlocks {
 
 #[cfg(test)]
 mod tests {
-    use io::Cursor;
+    use io::{Cursor, Seek};
 
     use super::*;
 
@@ -1186,6 +1186,11 @@ mod tests {
             gif_io.read_cai(&mut stream),
             Err(Error::JumbfNotFound)
         ));
+
+        let mut bytes = Vec::new();
+        output_stream2.rewind()?;
+        output_stream2.read_to_end(&mut bytes)?;
+        assert_eq!(SAMPLE1, bytes);
 
         Ok(())
     }
@@ -1300,6 +1305,11 @@ mod tests {
 
         let data_written = gif_io.read_cai(&mut output_stream2)?;
         assert_eq!(data_written, random_bytes);
+
+        let mut bytes = Vec::new();
+        stream.rewind()?;
+        stream.read_to_end(&mut bytes)?;
+        assert_eq!(SAMPLE1, bytes);
 
         Ok(())
     }
