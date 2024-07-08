@@ -20,7 +20,7 @@ use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::FileOptions, ZipArchive, ZipWriter};
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionBase,
@@ -370,7 +370,7 @@ impl Builder {
             {
                 let mut zip = ZipWriter::new(stream);
                 let options =
-                    FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
