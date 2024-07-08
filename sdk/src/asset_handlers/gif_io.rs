@@ -900,18 +900,15 @@ impl ApplicationExtension {
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        // Get the amount of byte length markers plus one for terminator, the amount of bytes stored,
-        // and the size of the header.
         let bytes = self.data_sub_blocks.to_encoded_bytes();
-        let mut header = Vec::with_capacity((bytes.len() / 255) + 1 + bytes.len() + 14);
+        // The header size + the amount of byte length markers + the amount of bytes stored + terminator.
+        let mut header = Vec::with_capacity(14 + bytes.len().div_ceil(255) + bytes.len() + 1);
         header.push(0x21);
         header.push(0xff);
         header.push(0x0b);
         header.extend_from_slice(&self.identifier);
         header.extend_from_slice(&self.authentication_code);
-
         header.extend_from_slice(bytes);
-
         Ok(header)
     }
 }
@@ -1018,9 +1015,8 @@ impl DataSubBlocks {
     // }
 
     fn from_decoded_bytes(bytes: &[u8]) -> Result<DataSubBlocks> {
-        // The amount of length marker bytes + first length marker byte + amount of bytes + terminator byte.
-        let mut data_sub_blocks =
-            Vec::with_capacity(bytes.len().div_ceil(255) + 1 + bytes.len() + 1);
+        // The amount of length marker bytes + amount of bytes + terminator byte.
+        let mut data_sub_blocks = Vec::with_capacity(bytes.len().div_ceil(255) + bytes.len() + 1);
         for chunk in bytes.chunks(255) {
             data_sub_blocks.push(chunk.len() as u8);
             data_sub_blocks.extend_from_slice(chunk);
@@ -1080,14 +1076,14 @@ impl DataSubBlocks {
     }
 
     fn to_decoded_bytes(&self) -> Vec<u8> {
-        // TODO: self.bytes.len() is a bit of an overestimate
-        let mut bytes = Vec::with_capacity(self.bytes.len());
+        // Amount of bytes - (length markers + terminator).
+        let mut bytes = Vec::with_capacity(self.bytes.len() - (self.bytes.len().div_ceil(255) + 1));
         for chunk in self.bytes.chunks(256) {
             bytes.extend_from_slice(&chunk[1..]);
         }
 
         // Remove terminator.
-        bytes.remove(bytes.len() - 1);
+        bytes.truncate(bytes.len() - 1);
 
         bytes
     }
