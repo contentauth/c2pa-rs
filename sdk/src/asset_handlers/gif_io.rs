@@ -1172,7 +1172,7 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
         gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
 
@@ -1243,39 +1243,11 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
         gif_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
 
         let data_written = gif_io.read_cai(&mut output_stream)?;
-        assert_eq!(data_written, random_bytes);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_write_bytes_at_existing_block() -> Result<()> {
-        let mut stream = Cursor::new(SAMPLE1);
-
-        let gif_io = GifIO {};
-
-        assert!(matches!(
-            gif_io.read_cai(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
-
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
-        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
-
-        let data_written = gif_io.read_cai(&mut output_stream1)?;
-        assert_eq!(data_written, random_bytes);
-
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 3));
-        let random_bytes = [1, 2, 1];
-        gif_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
-
-        let data_written = gif_io.read_cai(&mut output_stream2)?;
         assert_eq!(data_written, random_bytes);
 
         Ok(())
@@ -1292,14 +1264,14 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
         gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
 
         let data_written = gif_io.read_cai(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 3));
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
         let random_bytes = [3, 2, 1, 2, 3];
         gif_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
@@ -1347,7 +1319,7 @@ mod tests {
         );
         assert_eq!(obj_locations.len(), 3);
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 4));
         gif_io.write_cai(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
 
         let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
