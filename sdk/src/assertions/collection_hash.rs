@@ -37,10 +37,6 @@ pub struct UriHashedDataMap {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
-
-    // When parsing zips we can cache the hash ranges as well in one shot.
-    #[serde(skip)]
-    pub(crate) zip_inclusion: Option<HashRange>,
 }
 
 impl CollectionHash {
@@ -81,11 +77,13 @@ impl CollectionHash {
         Ok(())
     }
 
+    // We overwrite all URIs with all existing URIs in the ZIP because all URIs in the ZIP represent all
+    // possible valid URIs — we don't want duplicates!
     pub fn gen_uris_from_zip_stream<R>(&mut self, stream: &mut R) -> Result<()>
     where
         R: Read + Seek + ?Sized,
     {
-        self.uris = zip_io::uri_inclusions(stream)?;
+        self.uris = zip_io::uri_maps(stream)?;
         Ok(())
     }
 
@@ -103,23 +101,14 @@ impl CollectionHash {
         }
         self.zip_central_directory_hash = Some(zip_central_directory_hash);
 
-        for uri_map in self.uris.iter_mut() {
-            match &uri_map.zip_inclusion {
-                Some(inclusion) => {
-                    let hash =
-                        hash_stream_by_alg(&alg, stream, Some(vec![inclusion.clone()]), false)?;
-                    if hash.is_empty() {
-                        return Err(Error::BadParam("could not generate data hash".to_string()));
-                    }
-
-                    uri_map.hash = hash;
-                }
-                None => {
-                    return Err(Error::BadParam(
-                        "must generate zip stream uris before generating hashes".to_owned(),
-                    ))
-                }
+        let hash_ranges = zip_io::uri_inclusions(stream, &self.uris)?;
+        for (uri_map, hash_range) in self.uris.iter_mut().zip(hash_ranges) {
+            let hash = hash_stream_by_alg(&alg, stream, Some(vec![hash_range]), false)?;
+            if hash.is_empty() {
+                return Err(Error::BadParam("could not generate data hash".to_string()));
             }
+
+            uri_map.hash = hash;
         }
 
         Ok(())
@@ -178,19 +167,9 @@ impl CollectionHash {
             ));
         }
 
-        // TODO: we don't need to generate new uri maps, only ranges, and we only need the ranges for the
-        //       files that exist in the uri_map, or should we always do all of them?
-        let uris = zip_io::uri_inclusions(stream)?;
-        for (uri_map, uri_map_inclusion) in self.uris.iter().zip(uris) {
-            if !verify_stream_by_alg(
-                alg,
-                &uri_map.hash,
-                stream,
-                // Safe to unwrap because zip_io::uri_inclusions guarantees this field to be valid.
-                #[allow(clippy::unwrap_used)]
-                Some(vec![uri_map_inclusion.zip_inclusion.unwrap()]),
-                false,
-            ) {
+        let hash_ranges = zip_io::uri_inclusions(stream, &self.uris)?;
+        for (uri_map, hash_range) in self.uris.iter().zip(hash_ranges) {
+            if !verify_stream_by_alg(alg, &uri_map.hash, stream, Some(vec![hash_range]), false) {
                 return Err(Error::HashMismatch(format!(
                     "hash for {} does not match",
                     uri_map.uri.display()

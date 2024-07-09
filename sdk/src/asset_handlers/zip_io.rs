@@ -233,6 +233,7 @@ impl ZipIO {
     }
 }
 
+// TODO: probably doesn't need to return a vec
 pub fn central_directory_inclusions<R>(reader: &mut R) -> Result<Vec<HashRange>>
 where
     R: Read + Seek + ?Sized,
@@ -246,13 +247,13 @@ where
     todo!()
 }
 
-pub fn uri_inclusions<R>(stream: &mut R) -> Result<Vec<UriHashedDataMap>>
+pub fn uri_maps<R>(stream: &mut R) -> Result<Vec<UriHashedDataMap>>
 where
     R: Read + Seek + ?Sized,
 {
     let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
 
-    let mut ranges = Vec::new();
+    let mut uri_maps = Vec::new();
     let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
     for file_name in file_names {
         let file = reader
@@ -260,7 +261,7 @@ where
             .map_err(|_| Error::JumbfNotFound)?;
 
         if !file.is_dir() {
-            ranges.push(UriHashedDataMap {
+            uri_maps.push(UriHashedDataMap {
                 // TODO: temp unwrap
                 #[allow(clippy::unwrap_used)]
                 uri: file.enclosed_name().unwrap(),
@@ -269,13 +270,33 @@ where
                 size: Some(file.header_start() - file.compressed_size()),
                 dc_format: None,  // TODO
                 data_types: None, // TODO
-                // TODO: hash from header or data? does compressed_size include header?
-                //       and fix error type
-                zip_inclusion: Some(HashRange::new(
-                    usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
-                    usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
-                )),
             });
+        }
+    }
+
+    Ok(uri_maps)
+}
+
+pub fn uri_inclusions<R>(stream: &mut R, uri_maps: &[UriHashedDataMap]) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
+
+    let mut ranges = Vec::new();
+    for uri_map in uri_maps {
+        let index = reader
+            .index_for_path(&uri_map.uri)
+            .ok_or(Error::JumbfNotFound)?;
+        let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+
+        if !file.is_dir() {
+            // TODO: hash from header or data? does compressed_size include header?
+            //       and fix error type
+            ranges.push(HashRange::new(
+                usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
+                usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
+            ));
         }
     }
 
