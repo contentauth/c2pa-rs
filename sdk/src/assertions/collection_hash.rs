@@ -2,7 +2,11 @@ use std::io::{Read, Seek};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{assertions::AssetType, asset_handlers::zip_io, hash_stream_by_alg, Error, Result};
+use crate::{
+    assertions::AssetType,
+    asset_handlers::zip_io::{self, ZipHashResolver},
+    hash_stream_by_alg, CAIRead, Error, HashRange, Result,
+};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CollectionHash {
@@ -41,32 +45,19 @@ impl CollectionHash {
         }
     }
 
-    fn add_uri_map(&mut self, uri_map: UriHashedDataMap) {
+    pub fn add_uri_map(&mut self, uri_map: UriHashedDataMap) {
         self.uri_maps.push(uri_map);
     }
 
-    // TODO: support custom collection hashes
-    pub fn gen_hash_from_stream<R>(&mut self, stream: &mut R) -> Result<()>
+    pub fn gen_hash_from_stream<R, T>(&mut self, stream: &mut R, mut resolver: T) -> Result<()>
     where
         R: Read + Seek + ?Sized,
+        T: UriHashResolver,
     {
-        let alg = match self.alg {
-            Some(ref a) => a.clone(),
-            None => "sha256".to_string(),
-        };
-
-        let zip_central_directory_inclusions = zip_io::central_directory_inclusions(stream)?;
-        let zip_central_directory_hash =
-            hash_stream_by_alg(&alg, stream, Some(zip_central_directory_inclusions), false)?;
-        if zip_central_directory_hash.is_empty() {
-            return Err(Error::BadParam("could not generate data hash".to_string()));
-        }
-        self.zip_central_directory_hash = Some(zip_central_directory_hash);
-
-        let uri_inclusions = zip_io::uri_inclusions(stream, &self.uri_maps)?;
-        for (i, uri_map) in self.uri_maps.iter_mut().enumerate() {
-            let hash =
-                hash_stream_by_alg(&alg, stream, Some(vec![uri_inclusions[i].clone()]), false)?;
+        let alg = self.alg();
+        for uri_map in &mut self.uri_maps {
+            let inclusions = resolver.resolve(uri_map);
+            let hash = hash_stream_by_alg(&alg, stream, Some(inclusions), false)?;
             if hash.is_empty() {
                 return Err(Error::BadParam("could not generate data hash".to_string()));
             }
@@ -76,4 +67,39 @@ impl CollectionHash {
 
         Ok(())
     }
+
+    pub fn gen_hash_from_zip_stream<R>(&mut self, stream: &mut R) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        let alg = self.alg();
+
+        let zip_central_directory_inclusions = zip_io::central_directory_inclusions(stream)?;
+        let zip_central_directory_hash =
+            hash_stream_by_alg(&alg, stream, Some(zip_central_directory_inclusions), false)?;
+        if zip_central_directory_hash.is_empty() {
+            return Err(Error::BadParam("could not generate data hash".to_string()));
+        }
+        self.zip_central_directory_hash = Some(zip_central_directory_hash);
+
+        let resolver = ZipHashResolver::new(stream, &self.uri_maps)?;
+        self.gen_hash_from_stream(stream, resolver)?;
+
+        Ok(())
+    }
+
+    pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+
+    fn alg(&self) -> String {
+        match self.alg {
+            Some(ref a) => a.clone(),
+            None => "sha256".to_string(),
+        }
+    }
+}
+
+pub trait UriHashResolver {
+    fn resolve(&mut self, uri_map: &UriHashedDataMap) -> Vec<HashRange>;
 }

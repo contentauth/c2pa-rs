@@ -26,7 +26,7 @@ mod data_hash;
 pub use data_hash::DataHash;
 
 mod collection_hash;
-pub use collection_hash::{CollectionHash, UriHashedDataMap};
+pub use collection_hash::{CollectionHash, UriHashResolver, UriHashedDataMap};
 
 mod creative_work;
 pub use creative_work::CreativeWork;
