@@ -77,6 +77,35 @@ impl CollectionHash {
         Ok(())
     }
 
+    pub fn verify_hash<R>(&self, alg: Option<&str>, base_path: &Path) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        let alg = alg.unwrap_or_else(|| self.alg());
+        for uri_map in &self.uris {
+            let path = base_path.join(&uri_map.uri);
+            let mut file = File::open(&path)?;
+            let file_len = file.metadata()?.len();
+
+            if !verify_stream_by_alg(
+                alg,
+                &uri_map.hash,
+                &mut file,
+                // TODO: temp unwrap
+                #[allow(clippy::unwrap_used)]
+                Some(vec![HashRange::new(0, usize::try_from(file_len).unwrap())]),
+                false,
+            ) {
+                return Err(Error::HashMismatch(format!(
+                    "hash for {} does not match",
+                    path.display()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     // We overwrite all URIs with all existing URIs in the ZIP because all URIs in the ZIP represent all
     // possible valid URIs — we don't want duplicates!
     pub fn gen_uris_from_zip_stream<R>(&mut self, stream: &mut R) -> Result<()>
@@ -109,35 +138,6 @@ impl CollectionHash {
             }
 
             uri_map.hash = hash;
-        }
-
-        Ok(())
-    }
-
-    pub fn verify_stream_hash<R>(&self, alg: Option<&str>, base_path: &Path) -> Result<()>
-    where
-        R: Read + Seek + ?Sized,
-    {
-        let alg = alg.unwrap_or_else(|| self.alg());
-        for uri_map in &self.uris {
-            let path = base_path.join(&uri_map.uri);
-            let mut file = File::open(&path)?;
-            let file_len = file.metadata()?.len();
-
-            if !verify_stream_by_alg(
-                alg,
-                &uri_map.hash,
-                &mut file,
-                // TODO: temp unwrap
-                #[allow(clippy::unwrap_used)]
-                Some(vec![HashRange::new(0, usize::try_from(file_len).unwrap())]),
-                false,
-            ) {
-                return Err(Error::HashMismatch(format!(
-                    "hash for {} does not match",
-                    path.display()
-                )));
-            }
         }
 
         Ok(())

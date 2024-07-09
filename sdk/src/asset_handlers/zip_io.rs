@@ -177,11 +177,11 @@ impl AssetIO for ZipIO {
             "pptx",
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "docm",
-            "application/vnd.ms-word.document.macroEnabled.12",
+            "application/vnd.ms-word.document.macroenabled.12",
             "xlsm",
-            "application/vnd.ms-excel.sheet.macroEnabled.12",
+            "application/vnd.ms-excel.sheet.macroenabled.12",
             "pptm",
-            "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+            "application/vnd.ms-powerpoint.presentation.macroenabled.12",
             // Open Document
             "odt",
             "application/vnd.oasis.opendocument.text",
@@ -207,6 +207,15 @@ impl AssetIO for ZipIO {
 }
 
 impl ZipIO {
+    fn reader<'a>(
+        &self,
+        input_stream: &'a mut dyn CAIRead,
+    ) -> ZipResult<ZipArchive<CAIReadWrapper<'a>>> {
+        ZipArchive::new(CAIReadWrapper {
+            reader: input_stream,
+        })
+    }
+
     fn writer<'a>(
         &self,
         input_stream: &'a mut dyn CAIRead,
@@ -221,15 +230,6 @@ impl ZipIO {
         })?)?;
 
         Ok(writer)
-    }
-
-    fn reader<'a>(
-        &self,
-        input_stream: &'a mut dyn CAIRead,
-    ) -> ZipResult<ZipArchive<CAIReadWrapper<'a>>> {
-        ZipArchive::new(CAIReadWrapper {
-            reader: input_stream,
-        })
     }
 }
 
