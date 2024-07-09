@@ -8,7 +8,7 @@ use tempfile::Builder;
 use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
-    assertions::{UriHashResolver, UriHashedDataMap},
+    assertions::UriHashedDataMap,
     asset_io::{
         self, AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIReader, CAIWriter,
         HashObjectPositions,
@@ -246,40 +246,38 @@ where
     todo!()
 }
 
-pub struct ZipHashResolver {
-    ranges: Vec<HashRange>,
-    i: usize,
-}
+pub fn uri_inclusions<R>(stream: &mut R) -> Result<Vec<UriHashedDataMap>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
 
-impl ZipHashResolver {
-    pub fn new<R: Read + Seek + ?Sized>(
-        stream: &mut R,
-        uri_maps: &[UriHashedDataMap],
-    ) -> Result<Self> {
-        let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
+    let mut ranges = Vec::new();
+    let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
+    for file_name in file_names {
+        let file = reader
+            .by_name(&file_name)
+            .map_err(|_| Error::JumbfNotFound)?;
 
-        let mut ranges = Vec::new();
-        for uri_map in uri_maps {
-            let index = reader
-                .index_for_path(Path::new(&uri_map.uri))
-                .ok_or(Error::JumbfNotFound)?;
-            let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
-            // TODO: hash from header or data? does compressed_size include header?
-            //       and fix error type
-            ranges.push(HashRange::new(
-                usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
-                usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
-            ));
+        if !file.is_dir() {
+            ranges.push(UriHashedDataMap {
+                // TODO: temp unwrap
+                #[allow(clippy::unwrap_used)]
+                uri: file.enclosed_name().unwrap(),
+                hash: Vec::new(),
+                // TODO: same here
+                size: Some(file.header_start() - file.compressed_size()),
+                dc_format: None,  // TODO
+                data_types: None, // TODO
+                // TODO: hash from header or data? does compressed_size include header?
+                //       and fix error type
+                zip_inclusion: Some(HashRange::new(
+                    usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
+                    usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
+                )),
+            });
         }
-
-        Ok(Self { ranges, i: 0 })
     }
-}
 
-impl UriHashResolver for ZipHashResolver {
-    fn resolve(&mut self, _uri_map: &UriHashedDataMap) -> Vec<HashRange> {
-        let range = self.ranges[self.i].clone();
-        self.i += 1;
-        vec![range]
-    }
+    Ok(ranges)
 }
