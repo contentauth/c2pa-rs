@@ -5,7 +5,11 @@ use std::{
 };
 
 use tempfile::Builder;
-use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::{
+    result::{ZipError, ZipResult},
+    write::SimpleFileOptions,
+    CompressionMethod, ZipArchive, ZipWriter,
+};
 
 use crate::{
     assertions::UriHashedDataMap,
@@ -30,17 +34,30 @@ impl CAIWriter for ZipIO {
             .writer(input_stream, output_stream)
             .map_err(|_| Error::EmbeddingError)?;
 
-        // TODO: what happens if the dir exists?
-        writer
-            .add_directory("META-INF", SimpleFileOptions::default())
-            .map_err(|_| Error::EmbeddingError)?;
+        match writer.add_directory("META-INF", SimpleFileOptions::default()) {
+            Err(ZipError::InvalidArchive("Duplicate filename")) => {}
+            Err(_) => return Err(Error::EmbeddingError),
+            _ => {}
+        }
 
-        writer
-            .start_file_from_path(
-                Path::new("META-INF/content_credential.c2pa"),
-                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
-            )
-            .map_err(|_| Error::EmbeddingError)?;
+        match writer.start_file_from_path(
+            Path::new("META-INF/content_credential.c2pa"),
+            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+        ) {
+            Err(ZipError::InvalidArchive("Duplicate filename")) => {
+                writer.abort_file().map_err(|_| Error::EmbeddingError)?;
+                // TODO: remove code duplication
+                writer
+                    .start_file_from_path(
+                        Path::new("META-INF/content_credential.c2pa"),
+                        SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                    )
+                    .map_err(|_| Error::EmbeddingError)?;
+            }
+            Err(_) => return Err(Error::EmbeddingError),
+            _ => {}
+        }
+
         io::copy(&mut store_bytes, &mut writer)?;
         writer.finish().map_err(|_| Error::EmbeddingError)?;
 
@@ -64,12 +81,14 @@ impl CAIWriter for ZipIO {
             .writer(input_stream, output_stream)
             .map_err(|_| Error::EmbeddingError)?;
 
-        writer
-            .start_file_from_path(
-                Path::new("META-INF/content_credential.c2pa"),
-                SimpleFileOptions::default(),
-            )
-            .map_err(|_| Error::EmbeddingError)?;
+        match writer.start_file_from_path(
+            Path::new("META-INF/content_credential.c2pa"),
+            SimpleFileOptions::default(),
+        ) {
+            Err(ZipError::InvalidArchive("Duplicate filename")) => {}
+            Err(_) => return Err(Error::EmbeddingError),
+            _ => {}
+        }
         writer.abort_file().map_err(|_| Error::EmbeddingError)?;
         writer.finish().map_err(|_| Error::EmbeddingError)?;
 
@@ -221,15 +240,12 @@ impl ZipIO {
         input_stream: &'a mut dyn CAIRead,
         output_stream: &'a mut dyn CAIReadWrite,
     ) -> ZipResult<ZipWriter<CAIReadWriteWrapper<'a>>> {
-        let mut writer = ZipWriter::new_append(CAIReadWriteWrapper {
+        input_stream.rewind()?;
+        io::copy(input_stream, output_stream)?;
+
+        ZipWriter::new_append(CAIReadWriteWrapper {
             reader_writer: output_stream,
-        })?;
-
-        writer.merge_archive(ZipArchive::new(CAIReadWrapper {
-            reader: input_stream,
-        })?)?;
-
-        Ok(writer)
+        })
     }
 }
 
@@ -301,4 +317,67 @@ where
     }
 
     Ok(ranges)
+}
+
+#[cfg(test)]
+mod tests {
+    use io::{Cursor, Seek};
+
+    use super::*;
+
+    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+
+    #[test]
+    fn test_write_bytes() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let zip_io = ZipIO {};
+
+        assert!(matches!(
+            zip_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
+
+        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+        zip_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+
+        let data_written = zip_io.read_cai(&mut output_stream)?;
+        assert_eq!(data_written, random_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bytes_replace() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLE1);
+
+        let zip_io = ZipIO {};
+
+        assert!(matches!(
+            zip_io.read_cai(&mut stream),
+            Err(Error::JumbfNotFound)
+        ));
+
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+        zip_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+
+        let data_written = zip_io.read_cai(&mut output_stream1)?;
+        assert_eq!(data_written, random_bytes);
+
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
+        let random_bytes = [3, 2, 1, 2, 3];
+        zip_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+
+        let data_written = zip_io.read_cai(&mut output_stream2)?;
+        assert_eq!(data_written, random_bytes);
+
+        let mut bytes = Vec::new();
+        stream.rewind()?;
+        stream.read_to_end(&mut bytes)?;
+        assert_eq!(SAMPLE1, bytes);
+
+        Ok(())
+    }
 }
