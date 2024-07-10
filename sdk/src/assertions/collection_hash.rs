@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
@@ -52,12 +52,13 @@ impl CollectionHash {
         self.uris.push(uri_map);
     }
 
-    // TODO: is it safe to assume self.uris includes the stream that's being embedded into? or should
-    //       we pass it as a param?
+    // The base path MUST be the folder of the manifest. A URI MUST NOT reference a path outside of that folder.
     pub fn gen_hash<R>(&mut self, base_path: &Path) -> Result<()>
     where
         R: Read + Seek + ?Sized,
     {
+        self.validate_paths()?;
+
         let alg = self.alg().to_owned();
         for uri_map in &mut self.uris {
             let path = base_path.join(&uri_map.uri);
@@ -81,6 +82,8 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
+        self.validate_paths()?;
+
         let alg = alg.unwrap_or_else(|| self.alg());
         for uri_map in &self.uris {
             let path = base_path.join(&uri_map.uri);
@@ -182,5 +185,23 @@ impl CollectionHash {
 
     fn alg(&self) -> &str {
         self.alg.as_deref().unwrap_or("sha256")
+    }
+
+    fn validate_paths(&self) -> Result<()> {
+        for uri_map in &self.uris {
+            for component in uri_map.uri.components() {
+                match component {
+                    Component::CurDir | Component::ParentDir => {
+                        return Err(Error::BadParam(format!(
+                            "URI `{}` must not contain relative components: `.` nor `..`",
+                            uri_map.uri.display()
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
     }
 }

@@ -338,7 +338,7 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
         zip_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
 
@@ -359,14 +359,14 @@ mod tests {
             Err(Error::JumbfNotFound)
         ));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
         zip_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
 
         let data_written = zip_io.read_cai(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
+        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 5));
         let random_bytes = [3, 2, 1, 2, 3];
         zip_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
