@@ -125,16 +125,12 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos,
-                        // Minimum application extension size is 15.
-                        length: 15,
+                        // Size doesn't matter for placeholder block.
+                        length: 0,
                         htype: HashBlockObjectType::Cai,
                     },
                     HashObjectPositions {
-                        offset: end_preamble_pos + 15,
-                        // We don't need to add/subtract 15 (size of C2PA block) because we expect
-                        // our stream to be 15 bytes longer and our offset to be 15 bytes ahead. So,
-                        // naturally we'd do (end_stream_pos + 15) - (end_preamble_pos + 15), but the
-                        // 15s cancel each other out.
+                        offset: end_preamble_pos,
                         length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
                             - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
@@ -232,24 +228,64 @@ impl ComposedManifestRef for GifIO {
 
 impl AssetBoxHash for GifIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        Blocks::new(input_stream)?.try_fold(Vec::new(), |mut box_maps, marker| -> Result<Vec<_>> {
-            let marker = marker?;
-            // According to C2PA spec, these blocks must be grouped into the same box map.
-            match marker.block {
-                // If it's a local color table, then an image descriptor MUST have come before it.
-                // If it's a global color table, then a logical screen descriptor MUST have come before it.
-                Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
-                    // Safe to unwrap for the reasons above.
-                    #[allow(clippy::unwrap_used)]
-                    let last_box_map = box_maps.last_mut().unwrap();
-                    marker.extend_box_map(last_box_map)?;
-                }
-                _ => {
-                    box_maps.push(marker.to_box_map()?);
-                }
-            }
-            Ok(box_maps)
-        })
+        let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
+
+        Blocks::new(input_stream)?
+            .try_fold(
+                (Vec::new(), None),
+                |(mut box_maps, last_marker),
+                 marker|
+                 -> Result<(Vec<_>, Option<BlockMarker<Block>>)> {
+                    let marker = marker?;
+
+                    // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
+                    // if it exists, or otherwise after the logical screen descriptor.
+                    if !c2pa_block_exists {
+                        if let Some(last_marker) = last_marker {
+                            let should_insert_placeholder = match last_marker.block {
+                                Block::GlobalColorTable(_) => true,
+                                // If the current block is a global color table, then wait til the next iteration to insert.
+                                Block::LogicalScreenDescriptor(_)
+                                    if !matches!(marker.block, Block::GlobalColorTable(_)) =>
+                                {
+                                    true
+                                }
+                                _ => false,
+                            };
+                            if should_insert_placeholder {
+                                box_maps.push(
+                                    BlockMarker {
+                                        block: Block::ApplicationExtension(
+                                            ApplicationExtension::new_c2pa(&[])?,
+                                        ),
+                                        start: marker.start,
+                                        // Size doesn't matter for placeholder block.
+                                        len: 0,
+                                    }
+                                    .to_box_map()?,
+                                );
+                            }
+                        }
+                    }
+
+                    // According to C2PA spec, these blocks must be grouped into the same box map.
+                    match marker.block {
+                        // If it's a local color table, then an image descriptor MUST have come before it.
+                        // If it's a global color table, then a logical screen descriptor MUST have come before it.
+                        Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
+                            // Safe to unwrap for the reasons above.
+                            #[allow(clippy::unwrap_used)]
+                            let last_box_map = box_maps.last_mut().unwrap();
+                            marker.extend_box_map(last_box_map)?;
+                        }
+                        _ => {
+                            box_maps.push(marker.to_box_map()?);
+                        }
+                    }
+                    Ok((box_maps, Some(marker)))
+                },
+            )
+            .map(|(box_maps, _)| box_maps)
     }
 }
 
@@ -1305,14 +1341,14 @@ mod tests {
             obj_locations.get(1),
             Some(&HashObjectPositions {
                 offset: 781,
-                length: 15,
+                length: 0,
                 htype: HashBlockObjectType::Cai,
             })
         );
         assert_eq!(
             obj_locations.get(2),
             Some(&HashObjectPositions {
-                offset: 796,
+                offset: 781,
                 length: 739692,
                 htype: HashBlockObjectType::Other,
             })
@@ -1394,7 +1430,7 @@ mod tests {
                 range_len: 1
             })
         );
-        assert_eq!(box_map.len(), 275);
+        assert_eq!(box_map.len(), 276);
 
         Ok(())
     }
