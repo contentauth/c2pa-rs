@@ -11,7 +11,7 @@ use crate::{
     hash_utils::verify_stream_by_alg, Error, HashRange, Result,
 };
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub struct CollectionHash {
     pub uris: Vec<UriHashedDataMap>,
 
@@ -40,12 +40,8 @@ pub struct UriHashedDataMap {
 }
 
 impl CollectionHash {
-    pub fn new(alg: String) -> Self {
-        CollectionHash {
-            uris: Vec::new(),
-            alg: Some(alg),
-            zip_central_directory_hash: None,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn add_uri_map(&mut self, uri_map: UriHashedDataMap) {
@@ -201,6 +197,91 @@ impl CollectionHash {
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    const ZIP_SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+
+    #[test]
+    fn test_zip_uri_gen() -> Result<()> {
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+
+        let mut collection = CollectionHash::new();
+        collection.gen_uris_from_zip_stream(&mut stream)?;
+
+        assert_eq!(
+            collection.uris.first(),
+            Some(&UriHashedDataMap {
+                uri: PathBuf::from("sample1/test1.txt"),
+                hash: Vec::new(),
+                size: Some(44),
+                dc_format: None,
+                data_types: None
+            })
+        );
+        assert_eq!(
+            collection.uris.get(1),
+            Some(&UriHashedDataMap {
+                uri: PathBuf::from("sample1/test1/test1.txt"),
+                hash: Vec::new(),
+                size: Some(87),
+                dc_format: None,
+                data_types: None
+            })
+        );
+        assert_eq!(
+            collection.uris.get(2),
+            Some(&UriHashedDataMap {
+                uri: PathBuf::from("sample1/test1/test2.txt"),
+                hash: Vec::new(),
+                size: Some(148),
+                dc_format: None,
+                data_types: None
+            })
+        );
+        assert_eq!(
+            collection.uris.get(3),
+            Some(&UriHashedDataMap {
+                uri: PathBuf::from("sample1/test1/test3.txt"),
+                hash: Vec::new(),
+                size: Some(186),
+                dc_format: None,
+                data_types: None
+            })
+        );
+        assert_eq!(
+            collection.uris.get(4),
+            Some(&UriHashedDataMap {
+                uri: PathBuf::from("sample1/test2.txt"),
+                hash: Vec::new(),
+                size: Some(304),
+                dc_format: None,
+                data_types: None
+            })
+        );
+        assert_eq!(collection.uris.len(), 5);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_hash_gen() -> Result<()> {
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+
+        // TODO: blocked by zip_io::central_directory_inclusions
+        // let mut collection = CollectionHash::new();
+        // collection.gen_uris_from_zip_stream(&mut stream)?;
+        // collection.gen_hash_from_zip_stream(&mut stream)?;
+
+        // TODO: assert central dir hash + uri map hashes
 
         Ok(())
     }
