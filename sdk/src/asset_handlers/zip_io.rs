@@ -280,10 +280,9 @@ where
                 #[allow(clippy::unwrap_used)]
                 uri: file.enclosed_name().unwrap(),
                 hash: Vec::new(),
-                // TODO: same here
-                size: Some(file.header_start() - file.compressed_size()),
-                dc_format: None,  // TODO
-                data_types: None, // TODO
+                size: Some((file.data_start() + file.compressed_size()) - file.header_start()),
+                dc_format: None,
+                data_types: None,
             });
         }
     }
@@ -305,11 +304,11 @@ where
         let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
 
         if !file.is_dir() {
-            // TODO: hash from header or data? does compressed_size include header?
-            //       and fix error type
+            // TODO: fix error type
             ranges.push(HashRange::new(
                 usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
-                usize::try_from(file.compressed_size()).map_err(|_| Error::JumbfNotFound)?,
+                usize::try_from((file.data_start() + file.compressed_size()) - file.header_start())
+                    .map_err(|_| Error::JumbfNotFound)?,
             ));
         }
     }

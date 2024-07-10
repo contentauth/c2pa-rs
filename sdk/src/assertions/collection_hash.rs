@@ -222,7 +222,7 @@ mod tests {
             Some(&UriHashedDataMap {
                 uri: PathBuf::from("sample1/test1.txt"),
                 hash: Vec::new(),
-                size: Some(44),
+                size: Some(47),
                 dc_format: None,
                 data_types: None
             })
@@ -232,7 +232,7 @@ mod tests {
             Some(&UriHashedDataMap {
                 uri: PathBuf::from("sample1/test1/test1.txt"),
                 hash: Vec::new(),
-                size: Some(87),
+                size: Some(57),
                 dc_format: None,
                 data_types: None
             })
@@ -242,7 +242,7 @@ mod tests {
             Some(&UriHashedDataMap {
                 uri: PathBuf::from("sample1/test1/test2.txt"),
                 hash: Vec::new(),
-                size: Some(148),
+                size: Some(53),
                 dc_format: None,
                 data_types: None
             })
@@ -252,7 +252,7 @@ mod tests {
             Some(&UriHashedDataMap {
                 uri: PathBuf::from("sample1/test1/test3.txt"),
                 hash: Vec::new(),
-                size: Some(186),
+                size: Some(68),
                 dc_format: None,
                 data_types: None
             })
@@ -262,7 +262,7 @@ mod tests {
             Some(&UriHashedDataMap {
                 uri: PathBuf::from("sample1/test2.txt"),
                 hash: Vec::new(),
-                size: Some(304),
+                size: Some(56),
                 dc_format: None,
                 data_types: None
             })
