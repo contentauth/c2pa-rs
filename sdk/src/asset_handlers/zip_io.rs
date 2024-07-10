@@ -256,9 +256,7 @@ where
 {
     let _reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
 
-    // TODO: https://github.com/zip-rs/zip2/pull/71
-    //       or
-    //       https://gitlab.com/xMAC94x/zip-core (https://github.com/zip-rs/zip2/issues/204)
+    // TODO: https://github.com/zip-rs/zip2/issues/209
 
     todo!()
 }

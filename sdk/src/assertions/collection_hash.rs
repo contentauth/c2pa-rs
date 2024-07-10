@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_zip_hash_gen() -> Result<()> {
-        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        // let mut stream = Cursor::new(ZIP_SAMPLE1);
 
         // TODO: blocked by zip_io::central_directory_inclusions
         // let mut collection = CollectionHash::new();
