@@ -1168,19 +1168,25 @@ pub(crate) fn verify_cose(
                         .error(Error::CoseTimeStampMismatch)
                         .validation_status(validation_status::TIMESTAMP_MISMATCH);
                         validation_log.log(log_item, Some(Error::CoseTimeStampMismatch))?;
+                        return Err(Error::CoseTimeStampMismatch);
                     }
                     Error::CoseTimeStampValidity => {
-                        let log_item =
-                            log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
-                                .error(Error::CoseTimeStampValidity)
-                                .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
+                        let log_item = log_item!(
+                            "Cose_Sign1",
+                            "timestamp certificate outside of validity",
+                            "verify_cose"
+                        )
+                        .error(Error::CoseTimeStampValidity)
+                        .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
                         validation_log.log(log_item, Some(Error::CoseTimeStampValidity))?;
+                        return Err(Error::CoseTimeStampValidity);
                     }
                     _ => {
                         let log_item =
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
+                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }

@@ -27,8 +27,7 @@ use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{
-            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA,
-            OID_SIGNING_TIME,
+            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_SIGNING_TIME,
         },
     },
     cose_validator::{
@@ -336,7 +335,9 @@ pub fn gt_to_datetime(
     gt.into()
 }
 pub fn timestamp_to_gt(dt: i64) -> Option<x509_certificate::asn1time::GeneralizedTime> {
-    let time = chrono::DateTime::from_timestamp(dt, 0)?;
+    use chrono::{DateTime, Utc};
+
+    let time: DateTime<Utc> = DateTime::<Utc>::from_timestamp(dt, 0)?;
     let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
 
     x509_certificate::asn1time::GeneralizedTime::parse(

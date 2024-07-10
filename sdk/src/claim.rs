@@ -1177,9 +1177,8 @@ impl Claim {
                     "claim signature is not valid",
                     "verify_internal"
                 )
-                .error(parse_err)
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH);
-                validation_log.log(log_item, Some(Error::CoseSignature))?;
+                .error(parse_err);
+                validation_log.log(log_item, None)?;
             }
         };
 
