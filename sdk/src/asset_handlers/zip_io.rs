@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{self, Read, Seek},
+    io::{self, Read},
     path::Path,
 };
 
@@ -12,13 +12,12 @@ use zip::{
 };
 
 use crate::{
-    assertions::UriHashedDataMap,
     asset_io::{
         self, AssetIO, CAIReadWrapper, CAIReadWriteWrapper, CAIReader, CAIWriter,
         HashObjectPositions,
     },
     error::Result,
-    CAIRead, CAIReadWrite, Error, HashRange,
+    CAIRead, CAIReadWrite, Error,
 };
 
 pub struct ZipIO {}
@@ -247,73 +246,6 @@ impl ZipIO {
             reader_writer: output_stream,
         })
     }
-}
-
-// TODO: probably doesn't need to return a vec
-pub fn central_directory_inclusions<R>(reader: &mut R) -> Result<Vec<HashRange>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let _reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
-
-    // TODO: https://github.com/zip-rs/zip2/issues/209
-
-    todo!()
-}
-
-pub fn uri_maps<R>(stream: &mut R) -> Result<Vec<UriHashedDataMap>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
-
-    let mut uri_maps = Vec::new();
-    let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
-    for file_name in file_names {
-        let file = reader
-            .by_name(&file_name)
-            .map_err(|_| Error::JumbfNotFound)?;
-
-        if !file.is_dir() {
-            uri_maps.push(UriHashedDataMap {
-                // TODO: temp unwrap
-                #[allow(clippy::unwrap_used)]
-                uri: file.enclosed_name().unwrap(),
-                hash: Vec::new(),
-                size: Some((file.data_start() + file.compressed_size()) - file.header_start()),
-                dc_format: None,
-                data_types: None,
-            });
-        }
-    }
-
-    Ok(uri_maps)
-}
-
-pub fn uri_inclusions<R>(stream: &mut R, uri_maps: &[UriHashedDataMap]) -> Result<Vec<HashRange>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
-
-    let mut ranges = Vec::new();
-    for uri_map in uri_maps {
-        let index = reader
-            .index_for_path(&uri_map.uri)
-            .ok_or(Error::JumbfNotFound)?;
-        let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
-
-        if !file.is_dir() {
-            // TODO: fix error type
-            ranges.push(HashRange::new(
-                usize::try_from(file.header_start()).map_err(|_| Error::JumbfNotFound)?,
-                usize::try_from((file.data_start() + file.compressed_size()) - file.header_start())
-                    .map_err(|_| Error::JumbfNotFound)?,
-            ));
-        }
-    }
-
-    Ok(ranges)
 }
 
 #[cfg(test)]
