@@ -83,6 +83,10 @@ impl Reader {
         })
     }
 
+    pub fn from_manifest_store(manifest_store: ManifestStore) -> Result<Reader> {
+        Ok(Reader { manifest_store })
+    }
+
     #[cfg(feature = "file_io")]
     /// Create a manifest store Reader from a file.
     /// # Arguments
