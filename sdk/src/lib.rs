@@ -117,6 +117,7 @@ pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use error::{Error, Result};
+pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]
@@ -147,6 +148,7 @@ pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod cose_validator;
 pub(crate) mod error;
+pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
 #[allow(dead_code)]

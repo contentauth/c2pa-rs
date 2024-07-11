@@ -44,6 +44,12 @@ mod integration_v2 {
                 "version": env!("CARGO_PKG_VERSION")
             }
         ],
+        "metadata": [
+            {
+                "dateTime": "1985-04-12T23:20:50.52Z",
+                "my_custom_metadata": "my custom metatdata value"
+            }
+        ],
         "thumbnail": {
             "format": "image/jpeg",
             "identifier": "manifest_thumbnail.jpg"
