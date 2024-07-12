@@ -83,28 +83,15 @@ impl CollectionHash {
     ///
     /// The base path may either be a file or a directory. However, if it s a file, it will use the parent
     /// directory as the root.
-    pub fn new(base_path: PathBuf) -> Self {
-        Self {
-            uris: Vec::new(),
-            alg: None,
-            // TODO: if base_path is a file, then do .parent() or error?
-            base_path,
-            zip_central_directory_hash: None,
-            zip_central_directory_hash_range: None,
-        }
+    pub fn new(base_path: PathBuf) -> Result<Self> {
+        Self::new_raw(base_path, None)
     }
 
     /// Create a new collection hash with the specified algorithm.
     ///
     /// For more details on base_path, read [`CollectionHash::new`][CollectionHash::new].
-    pub fn with_alg(base_path: PathBuf, alg: String) -> Self {
-        Self {
-            uris: Vec::new(),
-            alg: Some(alg),
-            base_path,
-            zip_central_directory_hash: None,
-            zip_central_directory_hash_range: None,
-        }
+    pub fn with_alg(base_path: PathBuf, alg: String) -> Result<Self> {
+        Self::new_raw(base_path, Some(alg))
     }
 
     /// Adds a new file to the collection hash.
@@ -144,9 +131,12 @@ impl CollectionHash {
             uri_map.hash = Some(hash_stream_by_alg(
                 &alg,
                 &mut file,
-                // TODO: temp unwrap
-                #[allow(clippy::unwrap_used)]
-                Some(vec![HashRange::new(0, usize::try_from(file_len).unwrap())]),
+                Some(vec![HashRange::new(
+                    0,
+                    usize::try_from(file_len).map_err(|_| {
+                        Error::BadParam(format!("Value {} out of usize range", file_len))
+                    })?,
+                )]),
                 false,
             )?);
         }
@@ -173,9 +163,12 @@ impl CollectionHash {
                         alg,
                         hash,
                         &mut file,
-                        // TODO: temp unwrap
-                        #[allow(clippy::unwrap_used)]
-                        Some(vec![HashRange::new(0, usize::try_from(file_len).unwrap())]),
+                        Some(vec![HashRange::new(
+                            0,
+                            usize::try_from(file_len).map_err(|_| {
+                                Error::BadParam(format!("Value {} out of usize range", file_len))
+                            })?,
+                        )]),
                         false,
                     ) {
                         return Err(Error::HashMismatch(format!(
@@ -184,7 +177,11 @@ impl CollectionHash {
                         )));
                     }
                 }
-                None => todo!(),
+                None => {
+                    return Err(Error::BadParam(
+                        "Must generate hashes before verifying".to_owned(),
+                    ));
+                }
             }
         }
 
@@ -272,11 +269,38 @@ impl CollectionHash {
                         )));
                     }
                 }
-                None => todo!(),
+                None => {
+                    return Err(Error::BadParam(
+                        "Must generate hashes before verifying".to_owned(),
+                    ));
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn new_raw(base_path: PathBuf, alg: Option<String>) -> Result<Self> {
+        let base_path = match base_path.is_file() {
+            true => match base_path.parent() {
+                Some(path) => path.to_path_buf(),
+                None => {
+                    return Err(Error::BadParam(
+                        "Base path must be a directory or a file with a parent directory"
+                            .to_owned(),
+                    ))
+                }
+            },
+            false => base_path,
+        };
+
+        Ok(Self {
+            uris: Vec::new(),
+            alg,
+            base_path,
+            zip_central_directory_hash: None,
+            zip_central_directory_hash_range: None,
+        })
     }
 
     fn add_file_raw(&mut self, path: PathBuf, data_types: Option<Vec<AssetType>>) -> Result<()> {
@@ -376,28 +400,32 @@ where
             match file.enclosed_name() {
                 Some(path) => {
                     if path != Path::new("META-INF/content_credential.c2pa") {
+                        let start = file.header_start();
+                        let len =
+                            (file.data_start() + file.compressed_size()) - file.header_start();
                         uri_maps.push(UriHashedDataMap {
                             dc_format: crate::format_from_path(&path),
                             uri: path,
                             hash: Some(Vec::new()),
-                            size: Some(
-                                (file.data_start() + file.compressed_size()) - file.header_start(),
-                            ),
+                            size: Some(len),
                             data_types: None,
-                            // TODO: fix error types
                             zip_hash_range: Some(HashRange::new(
-                                usize::try_from(file.header_start())
-                                    .map_err(|_| Error::JumbfNotFound)?,
-                                usize::try_from(
-                                    (file.data_start() + file.compressed_size())
-                                        - file.header_start(),
-                                )
-                                .map_err(|_| Error::JumbfNotFound)?,
+                                usize::try_from(start).map_err(|_| {
+                                    Error::BadParam(format!("Value {} out of usize range", start))
+                                })?,
+                                usize::try_from(len).map_err(|_| {
+                                    Error::BadParam(format!("Value {} out of usize range", len))
+                                })?,
                             )),
                         });
                     }
                 }
-                None => todo!(),
+                None => {
+                    return Err(Error::BadParam(format!(
+                        "Invalid stored path `{}` in zip file",
+                        file_name
+                    )))
+                }
             }
         }
     }
