@@ -273,10 +273,13 @@ impl AssetBoxHash for GifIO {
                         // If it's a local color table, then an image descriptor MUST have come before it.
                         // If it's a global color table, then a logical screen descriptor MUST have come before it.
                         Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
-                            // Safe to unwrap for the reasons above.
-                            #[allow(clippy::unwrap_used)]
-                            let last_box_map = box_maps.last_mut().unwrap();
-                            marker.extend_box_map(last_box_map)?;
+                            match box_maps.last_mut() {
+                                Some(last_box_map) => {
+                                    last_box_map.range_len += usize::try_from(marker.len())?
+                                }
+                                // Realistically, this case is unreachable, but to play it safe, we error.
+                                None => return Err(Error::NotFound),
+                            }
                         }
                         _ => {
                             box_maps.push(marker.to_box_map()?);
@@ -613,20 +616,19 @@ impl<T> BlockMarker<T> {
 
 impl BlockMarker<Block> {
     fn to_box_map(&self) -> Result<BoxMap> {
+        let mut names = Vec::new();
+        if let Some(name) = self.block.box_id() {
+            names.push(name.to_owned());
+        }
+
         Ok(BoxMap {
-            names: vec![self.block.box_id().to_owned()],
+            names,
             alg: None,
             hash: ByteBuf::from(Vec::new()),
             pad: ByteBuf::from(Vec::new()),
             range_start: usize::try_from(self.start())?,
             range_len: usize::try_from(self.len())?,
         })
-    }
-
-    fn extend_box_map(&self, box_map: &mut BoxMap) -> Result<()> {
-        box_map.range_len += usize::try_from(self.len())?;
-        box_map.names.push(self.block.box_id().to_owned());
-        Ok(())
     }
 }
 
@@ -764,26 +766,24 @@ impl Block {
         }))
     }
 
-    fn box_id(&self) -> &'static str {
+    fn box_id(&self) -> Option<&'static str> {
         match self {
-            Block::Header(_) => "GIF89a",
-            Block::LogicalScreenDescriptor(_) => "LSD",
-            // TODO: not defined in spec
-            Block::GlobalColorTable(_) => "GCT",
-            Block::GraphicControlExtension(_) => "21F9",
-            Block::PlainTextExtension(_) => "2101",
+            Block::Header(_) => Some("GIF89a"),
+            Block::LogicalScreenDescriptor(_) => Some("LSD"),
+            Block::GlobalColorTable(_) => None,
+            Block::GraphicControlExtension(_) => Some("21F9"),
+            Block::PlainTextExtension(_) => Some("2101"),
             Block::ApplicationExtension(application_extension) => {
                 match ApplicationExtensionKind::C2pa == application_extension.kind() {
-                    true => C2PA_BOXHASH,
-                    false => "21FF",
+                    true => Some(C2PA_BOXHASH),
+                    false => Some("21FF"),
                 }
             }
-            Block::CommentExtension(_) => "21FE",
-            Block::ImageDescriptor(_) => "2C",
-            // TODO: not defined in spec
-            Block::LocalColorTable(_) => "LCT",
-            Block::ImageData(_) => "TBID",
-            Block::Trailer => "3B",
+            Block::CommentExtension(_) => Some("21FE"),
+            Block::ImageDescriptor(_) => Some("2C"),
+            Block::LocalColorTable(_) => None,
+            Block::ImageData(_) => Some("TBID"),
+            Block::Trailer => Some("3B"),
         }
     }
 
@@ -1411,7 +1411,7 @@ mod tests {
         assert_eq!(
             box_map.get(box_map.len() / 2),
             Some(&BoxMap {
-                names: vec!["2C".to_owned(), "LCT".to_owned()],
+                names: vec!["2C".to_owned()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
