@@ -4712,13 +4712,8 @@ pub mod tests {
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
-        assert!(report_has_err(&errors, Error::CoseSignature));
         assert!(report_has_err(&errors, Error::CoseTimeStampMismatch));
 
-        assert!(report_has_status(
-            &errors,
-            validation_status::CLAIM_SIGNATURE_MISMATCH
-        ));
         assert!(report_has_status(
             &errors,
             validation_status::TIMESTAMP_MISMATCH

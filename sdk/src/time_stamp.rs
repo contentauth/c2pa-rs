@@ -619,7 +619,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             let pk_alg = &cert.tbs_certificate.signature.algorithm;
 
             // verify signature of timestamp signature
-            let validated_res = if _sync {
+            let validated_res: Result<bool> = if _sync {
                 #[cfg(feature = "openssl")]
                 {
                     let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
