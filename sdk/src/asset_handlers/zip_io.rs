@@ -254,59 +254,67 @@ mod tests {
 
     use super::*;
 
-    // TODO: add office, epub, and other file types for testing
-    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+    // TODO: add more sample file types
+    const SAMPLES: [&[u8]; 3] = [
+        include_bytes!("../../tests/fixtures/sample1.zip"),
+        include_bytes!("../../tests/fixtures/sample1.docx"),
+        include_bytes!("../../tests/fixtures/sample1.odt"),
+    ];
 
     #[test]
     fn test_write_bytes() -> Result<()> {
-        let mut stream = Cursor::new(SAMPLE1);
+        for sample in SAMPLES {
+            let mut stream = Cursor::new(sample);
 
-        let zip_io = ZipIO {};
+            let zip_io = ZipIO {};
 
-        assert!(matches!(
-            zip_io.read_cai(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+            assert!(matches!(
+                zip_io.read_cai(&mut stream),
+                Err(Error::JumbfNotFound)
+            ));
 
-        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
-        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        zip_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+            let mut output_stream = Cursor::new(Vec::with_capacity(sample.len() + 7));
+            let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+            zip_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
 
-        let data_written = zip_io.read_cai(&mut output_stream)?;
-        assert_eq!(data_written, random_bytes);
+            let data_written = zip_io.read_cai(&mut output_stream)?;
+            assert_eq!(data_written, random_bytes);
+        }
 
         Ok(())
     }
 
     #[test]
     fn test_write_bytes_replace() -> Result<()> {
-        let mut stream = Cursor::new(SAMPLE1);
+        for sample in SAMPLES {
+            let mut stream = Cursor::new(sample);
 
-        let zip_io = ZipIO {};
+            let zip_io = ZipIO {};
 
-        assert!(matches!(
-            zip_io.read_cai(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+            assert!(matches!(
+                zip_io.read_cai(&mut stream),
+                Err(Error::JumbfNotFound)
+            ));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 7));
-        let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        zip_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+            let mut output_stream1 = Cursor::new(Vec::with_capacity(sample.len() + 7));
+            let random_bytes = [1, 2, 3, 4, 3, 2, 1];
+            zip_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = zip_io.read_cai(&mut output_stream1)?;
-        assert_eq!(data_written, random_bytes);
+            let data_written = zip_io.read_cai(&mut output_stream1)?;
+            assert_eq!(data_written, random_bytes);
 
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 5));
-        let random_bytes = [3, 2, 1, 2, 3];
-        zip_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+            let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
+            let random_bytes = [3, 2, 1, 2, 3];
+            zip_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-        let data_written = zip_io.read_cai(&mut output_stream2)?;
-        assert_eq!(data_written, random_bytes);
+            let data_written = zip_io.read_cai(&mut output_stream2)?;
+            assert_eq!(data_written, random_bytes);
 
-        let mut bytes = Vec::new();
-        stream.rewind()?;
-        stream.read_to_end(&mut bytes)?;
-        assert_eq!(SAMPLE1, bytes);
+            let mut bytes = Vec::new();
+            stream.rewind()?;
+            stream.read_to_end(&mut bytes)?;
+            assert_eq!(sample, bytes);
+        }
 
         Ok(())
     }
