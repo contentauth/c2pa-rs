@@ -254,6 +254,7 @@ mod tests {
 
     use super::*;
 
+    // TODO: add office, epub, and other file types for testing
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
 
     #[test]
