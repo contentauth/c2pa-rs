@@ -471,13 +471,6 @@ impl Assertion {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct JsonAssertionData {
-    label: String,
-    data: Value,
-    is_cbor: bool,
-}
-
 /// This error type is returned when an assertion can not be decoded.
 #[non_exhaustive]
 pub struct AssertionDecodeError {
