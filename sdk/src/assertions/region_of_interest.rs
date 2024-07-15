@@ -16,6 +16,7 @@ pub struct Coordinate {
 /// The type of shape for the range.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum ShapeType {
     /// A rectangle.
     Rectangle,
@@ -28,6 +29,7 @@ pub enum ShapeType {
 /// The type of unit for the range.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum UnitType {
     /// Use pixels.
     Pixel,
@@ -65,10 +67,12 @@ pub struct Shape {
 }
 
 /// The type of time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum TimeType {
     /// Times are described using Normal Play Time (npt) as described in RFC 2326.
+    #[default]
     Npt,
 }
 
@@ -77,7 +81,7 @@ pub enum TimeType {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Time {
     /// The type of time.
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub time_type: TimeType,
     /// The start time or the start of the asset if not present.
     pub start: Option<String>,
@@ -136,6 +140,7 @@ pub struct Text {
 /// The type of range for the region of interest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum RangeType {
     /// A spatial range, see [`Shape`][Shape] for more details.
     Spatial,
@@ -169,6 +174,7 @@ pub struct Range {
 /// A role describing the region.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
 pub enum Role {
     /// Arbitrary area worth identifying.
     #[serde(rename = "c2pa.areaOfInterest")]
@@ -206,6 +212,8 @@ pub enum Role {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct RegionOfInterest {
+    /// A range describing the region of interest for the specific asset.
+    pub region: Vec<Range>,
     /// A free-text string representing a human-readable name for the region which might be used in a user interface.
     pub name: Option<String>,
     /// A free-text string representing a machine-readable, unique to this assertion, identifier for the region.
@@ -221,8 +229,6 @@ pub struct RegionOfInterest {
     pub role: Option<Role>,
     /// A free-text string.
     pub description: Option<String>,
-    /// A range describing the region of interest for the specific asset.
-    pub region: Vec<Range>,
     // If we didn't have a box, `Metadata` would recursively use `RegionOfInterest` causing an infinite size error.
     //
     /// Additional information about the asset.

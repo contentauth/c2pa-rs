@@ -19,10 +19,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::regions_of_interest::RegionOfInterest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::labels,
+    assertions::{labels, region_of_interest::RegionOfInterest},
     error::Result,
     hashed_uri::HashedUri,
     utils::cbor_types::DateT,

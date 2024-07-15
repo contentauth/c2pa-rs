@@ -16,10 +16,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
-use super::regions_of_interest::RegionOfInterest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, Actor, Metadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
@@ -754,13 +753,6 @@ pub mod tests {
                                 {
                                     "type": "temporal",
                                     "time": {}
-                                },
-                                {
-                                    "type": "identified",
-                                    "item": {
-                                        "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
-                                        "value": "lips"
-                                    }
                                 }
                             ]
                         }
@@ -797,7 +789,8 @@ pub mod tests {
         );
         assert_eq!(
             result.actions[3].changes.as_deref().unwrap()[0]
-                .get("description")
+                .description
+                .as_deref()
                 .unwrap(),
             "translated to klingon"
         );
