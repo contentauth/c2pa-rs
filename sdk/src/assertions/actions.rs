@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_cbor::Value;
 
+use super::regions_of_interest::RegionOfInterest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Actor, Metadata},
@@ -90,7 +91,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -113,7 +114,7 @@ pub struct Action {
     /// When tracking changes and the scope of the changed components is unknown,
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changes: Option<Vec<serde_json::Value>>,
+    changes: Option<Vec<RegionOfInterest>>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
     #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
@@ -188,6 +189,11 @@ impl Action {
     /// (output) resource.
     pub fn instance_id(&self) -> Option<&str> {
         self.instance_id.as_deref()
+    }
+
+    /// Returns the regions of interest that changed].
+    pub fn changes(&self) -> Option<&[RegionOfInterest]> {
+        self.changes.as_deref()
     }
 
     /// Returns the additional parameters for this action.
@@ -313,6 +319,14 @@ impl Action {
         self.reason = Some(reason.into());
         self
     }
+
+    /// Adds a region of interest that changed.
+    pub fn add_change(mut self, region_of_interest: RegionOfInterest) -> Self {
+        if let Some(changes) = &mut self.changes {
+            changes.push(region_of_interest);
+        }
+        self
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
@@ -357,7 +371,7 @@ impl ActionTemplate {
 /// other information such as what software performed the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
     /// A list of [`Action`]s.

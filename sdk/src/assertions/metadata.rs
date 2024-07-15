@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::regions_of_interest::RegionOfInterest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -30,7 +31,7 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// The Metadata structure can be used as part of other assertions or on its own to reference others
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Metadata {
     #[serde(rename = "reviewRatings", skip_serializing_if = "Option::is_none")]
@@ -41,6 +42,8 @@ pub struct Metadata {
     reference: Option<HashedUri>,
     #[serde(rename = "dataSource", skip_serializing_if = "Option::is_none")]
     data_source: Option<DataSource>,
+    #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
+    region_of_interest: Option<RegionOfInterest>,
     #[serde(flatten)]
     other: HashMap<String, Value>,
 }
@@ -59,6 +62,7 @@ impl Metadata {
             )),
             reference: None,
             data_source: None,
+            region_of_interest: None,
             other: HashMap::new(),
         }
     }
@@ -76,6 +80,11 @@ impl Metadata {
     /// Returns the [`DataSource`] for this assertion if it exists.
     pub fn data_source(&self) -> Option<&DataSource> {
         self.data_source.as_ref()
+    }
+
+    /// Returns the [`RegionOfInterest`] for this assertion if it exists.
+    pub fn region_of_interest(&self) -> Option<&RegionOfInterest> {
+        self.region_of_interest.as_ref()
     }
 
     /// Returns map containing custom metadata fields.
@@ -116,6 +125,12 @@ impl Metadata {
     /// Sets a description of the source of the assertion data, selected from a predefined list.
     pub fn set_data_source(mut self, data_source: DataSource) -> Self {
         self.data_source = Some(data_source);
+        self
+    }
+
+    /// Sets the region of interest.
+    pub fn set_region_of_interest(mut self, region_of_interest: RegionOfInterest) -> Self {
+        self.region_of_interest = Some(region_of_interest);
         self
     }
 
