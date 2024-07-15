@@ -3902,7 +3902,7 @@ pub mod tests {
             assert!(claim1.get_databox(&rel_hr).is_some());
 
             // test values
-            assert_eq!(db, claim1.get_databox(&uri).unwrap());
+            assert_eq!(db, claim1.get_databox(uri).unwrap());
         }
     }
 
