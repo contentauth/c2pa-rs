@@ -1031,7 +1031,7 @@ impl Ingredient {
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
-                    .get_data_box_from_uri_and_claim(&hashed_uri, &target_claim_label)
+                    .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
                             &hashed_uri.url(),
