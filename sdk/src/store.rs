@@ -5614,7 +5614,7 @@ pub mod tests {
         // my manifest callback handler
         // set some data needed by callback to do what it needs to
         // for this example lets tell it which jumbf box we can to change
-        let my_assertion_path = to_normalized_uri(&to_absolute_uri(
+        let my_assertion_path = to_normalized_uri(&jumbf::labels::to_absolute_uri(
             &store.provenance_label().unwrap(),
             &my_assertion.url(),
         ));
