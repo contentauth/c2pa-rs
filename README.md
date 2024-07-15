@@ -59,6 +59,7 @@ The library has been tested on the following operating systems:
  | `tif`,`tiff`  | `image/tiff`                                        |
  | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
+ | `mp3`         | `audio/mpeg`                                        |
 
 ## Usage
 
@@ -66,7 +67,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.32.1"
+c2pa = "0.32.5"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
