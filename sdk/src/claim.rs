@@ -716,15 +716,8 @@ impl Claim {
         &self.data_boxes
     }
 
-    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
-        self.data_boxes
-            .iter()
-            .find(|(h, _d)| h.url() == uri)
-            .map(|(_sh, data_box)| data_box)
-    }
-
     /// Load known VC with optional salt
-    pub(crate) fn put_data_box(
+    pub(crate) fn put_databox(
         &mut self,
         label: &str,
         databox_cbor: &[u8],
@@ -748,16 +741,16 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+    pub fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
         // normalize uri
-        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(&hr.url()) {
             if manifest != self.label() {
                 return None;
             }
-            uri.to_owned()
+            hr.url()
         } else {
             // make a full path
-            if let Some(box_name) = box_name_from_uri(uri) {
+            if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
                 return None;
@@ -765,7 +758,7 @@ impl Claim {
         };
 
         self.data_boxes.iter().find_map(|x| {
-            if x.0.url() == normalized_uri {
+            if x.0.url() == normalized_uri && vec_compare(&x.0.hash(), &hr.hash()) {
                 Some(&x.1)
             } else {
                 None

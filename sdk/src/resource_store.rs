@@ -68,8 +68,7 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let uri = crate::jumbf::labels::to_absolute_uri(claim.label(), &h.url());
-                let data_box = claim.find_databox(&uri).ok_or(Error::MissingDataBox)?;
+                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
                 let resource_ref =
                     resources.add_with(&h.url(), &data_box.format, data_box.data.clone())?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
