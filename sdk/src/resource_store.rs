@@ -442,10 +442,10 @@ mod tests {
 
         let mut builder = Builder::from_json(json).expect("from json");
         builder
-            .add_resource("abc123", &mut Cursor::new(value))
+            .add_resource("abc123", Cursor::new(value))
             .expect("add_resource");
         builder
-            .add_resource("cba321", &mut Cursor::new(value))
+            .add_resource("cba321", Cursor::new(value))
             .expect("add_resource");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
