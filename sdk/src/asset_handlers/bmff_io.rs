@@ -510,11 +510,7 @@ where
                     let desired_flags = u32::from_be_bytes(temp_bytes);
 
                     if let Some(box_flags) = box_info.flags {
-                        let exact = if let Some(is_exact) = bmff_exclusion.exact {
-                            is_exact
-                        } else {
-                            true
-                        };
+                        let exact = bmff_exclusion.exact.unwrap_or(true);
 
                         if exact {
                             if desired_flags != box_flags {

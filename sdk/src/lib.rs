@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(warnings)]
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
