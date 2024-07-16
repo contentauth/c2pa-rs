@@ -95,7 +95,7 @@ impl crate::AsyncSigner for AsyncSignerAdapter {
         self.tsa_url.clone()
     }
 
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
         self.ocsp_val.clone()
     }
 }

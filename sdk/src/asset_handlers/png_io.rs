@@ -26,7 +26,7 @@ use tempfile::Builder;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_copy, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
@@ -488,7 +488,7 @@ impl AssetIO for PngIO {
         self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -607,7 +607,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
 
     if let Some(xmp) = xmp_box {
         // overwrite existing box
-        Some((xmp.start, xmp.length))
+        Some((xmp.start, xmp.length + PNG_HDR_LEN as u32))
     } else {
         // insert after IHDR
         ps.iter()

@@ -141,6 +141,18 @@ impl ManifestAssertion {
         ))
     }
 
+    /// TO DO: Docs ...
+    pub fn from_cbor_assertion<S: Into<String>, T: Serialize>(label: S, data: &T) -> Result<Self> {
+        Ok(Self {
+            label: label.into(),
+            data: ManifestData::Binary(
+                serde_cbor::to_vec(data).map_err(|_err| Error::AssertionEncoding)?,
+            ),
+            instance: None,
+            kind: Some(ManifestAssertionKind::Cbor),
+        })
+    }
+
     /// Creates a ManifestAssertion from an AssertionBase object
     ///
     /// # Example: Creating a custom assertion an Action assertion
@@ -153,7 +165,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let _ma = ManifestAssertion::from_assertion(&actions)?;
+    /// let _ma = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -175,7 +187,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let manifest_assertion = ManifestAssertion::from_assertion(&actions)?;
+    /// let manifest_assertion = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
     /// for action in actions.actions {

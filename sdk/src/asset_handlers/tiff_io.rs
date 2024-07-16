@@ -27,7 +27,7 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
@@ -52,11 +52,12 @@ const TILEOFFSETS: u16 = 324;
 
 const SUBFILES: [u16; 3] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG];
 
-static SUPPORTED_TYPES: [&str; 9] = [
+static SUPPORTED_TYPES: [&str; 10] = [
     "tif",
     "tiff",
     "image/tiff",
     "dng",
+    "image/dng",
     "image/x-adobe-dng",
     "arw",
     "image/x-sony-arw",
@@ -160,9 +161,9 @@ pub(crate) struct TiffStructure {
 
 impl TiffStructure {
     #[allow(dead_code)]
-    pub fn load<R: ?Sized>(reader: &mut R) -> Result<Self>
+    pub fn load<R>(reader: &mut R) -> Result<Self>
     where
-        R: Read + Seek,
+        R: Read + Seek + ?Sized,
     {
         let mut endianness = [0u8, 2];
         reader.read_exact(&mut endianness)?;
@@ -230,14 +231,14 @@ impl TiffStructure {
     }
 
     // read IFD entries, all value_offset are in source endianness
-    pub fn read_ifd_entries<R: ?Sized>(
+    pub fn read_ifd_entries<R>(
         byte_reader: &mut ByteOrdered<&mut R, Endianness>,
         big_tiff: bool,
         entry_cnt: u64,
         entries: &mut HashMap<u16, IfdEntry>,
     ) -> Result<()>
     where
-        R: Read + Seek,
+        R: Read + Seek + ?Sized,
     {
         for _ in 0..entry_cnt {
             let tag = byte_reader.read_u16()?;
@@ -289,14 +290,14 @@ impl TiffStructure {
     }
 
     // read IFD from reader
-    pub fn read_ifd<R: ?Sized>(
+    pub fn read_ifd<R>(
         reader: &mut R,
         byte_order: Endianness,
         big_tiff: bool,
         ifd_type: IfdType,
     ) -> Result<ImageFileDirectory>
     where
-        R: Read + Seek + ReadBytesExt,
+        R: Read + Seek + ReadBytesExt + ?Sized,
     {
         let mut byte_reader = ByteOrdered::runtime(reader, byte_order);
 
@@ -364,11 +365,9 @@ fn stream_len(reader: &mut dyn CAIRead) -> crate::Result<u64> {
     Ok(len)
 }
 // create tree of TIFF structure IFDs and IFD entries.
-fn map_tiff<R: ?Sized>(
-    input: &mut R,
-) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
+fn map_tiff<R>(input: &mut R) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let _size = input.seek(SeekFrom::End(0))?;
     input.rewind()?;
@@ -1014,7 +1013,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.seek(SeekFrom::Start(curr_pos))?;
             self.writer.write_u32(0)?;
         }
-
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -1328,9 +1327,9 @@ fn add_required_tags_to_stream(
     }
 }
 
-fn get_cai_data<R: ?Sized>(asset_reader: &mut R) -> Result<Vec<u8>>
+fn get_cai_data<R>(asset_reader: &mut R) -> Result<Vec<u8>>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let (tiff_tree, page_0, e, big_tiff) = map_tiff(asset_reader)?;
 
@@ -1361,9 +1360,9 @@ where
     Ok(data)
 }
 
-fn get_xmp_data<R: ?Sized>(asset_reader: &mut R) -> Option<Vec<u8>>
+fn get_xmp_data<R>(asset_reader: &mut R) -> Option<Vec<u8>>
 where
-    R: Read + Seek,
+    R: Read + Seek + ?Sized,
 {
     let (tiff_tree, page_0, e, big_tiff) = map_tiff(asset_reader).ok()?;
     let first_ifd = &tiff_tree[page_0].data;
@@ -1429,7 +1428,7 @@ impl AssetIO for TiffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1453,7 +1452,7 @@ impl AssetIO for TiffIO {
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn new(_asset_type: &str) -> Self
@@ -1559,13 +1558,9 @@ impl CAIWriter for TiffIO {
         let mut bo = ByteOrdered::new(output_stream, e);
         let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
 
-        match idfs[page_0].data.entries.remove(&C2PA_TAG) {
-            Some(_ifd) => {
-                tc.clone_tiff(&mut idfs, page_0, input_stream)?;
-                Ok(())
-            }
-            None => Ok(()),
-        }
+        idfs[page_0].data.entries.remove(&C2PA_TAG);
+        tc.clone_tiff(&mut idfs, page_0, input_stream)?;
+        Ok(())
     }
 }
 
@@ -1631,6 +1626,7 @@ impl RemoteRefEmbed for TiffIO {
                 }
 
                 // write will replace exisiting contents
+                output_stream.rewind()?;
                 std::fs::write(asset_path, output_stream.into_inner())?;
                 Ok(())
             }
@@ -1753,6 +1749,9 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
+
+        // first make sure that calling this without a manifest does not error
+        tiff_io.remove_cai_store(&output).unwrap();
 
         // save data to tiff
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();

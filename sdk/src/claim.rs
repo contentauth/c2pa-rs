@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, fmt, path::Path};
+#[cfg(feature = "file_io")]
+use std::path::Path;
+use std::{collections::HashMap, fmt};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -26,7 +28,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
@@ -42,7 +44,7 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::{get_assetio_handler, get_assetio_handler_from_path},
+    jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
@@ -67,6 +69,7 @@ const GH_UA: &str = "Sec-CH-UA";
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
 pub enum ClaimAssetData<'a> {
+    #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
@@ -251,6 +254,9 @@ pub struct Claim {
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Vec<Metadata>>,
+
     #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 }
@@ -338,6 +344,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -372,6 +379,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -529,6 +537,18 @@ impl Claim {
 
     pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
         self.claim_generator_info.as_deref()
+    }
+
+    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+        match self.metadata.as_mut() {
+            Some(md_vec) => md_vec.push(md),
+            None => self.metadata = Some([md].to_vec()),
+        }
+        self
+    }
+
+    pub fn metadata(&self) -> Option<&[Metadata]> {
+        self.metadata.as_deref()
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -713,15 +733,8 @@ impl Claim {
         &self.data_boxes
     }
 
-    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
-        self.data_boxes
-            .iter()
-            .find(|(h, _d)| h.url() == uri)
-            .map(|(_sh, data_box)| data_box)
-    }
-
     /// Load known VC with optional salt
-    pub(crate) fn put_data_box(
+    pub(crate) fn put_databox(
         &mut self,
         label: &str,
         databox_cbor: &[u8],
@@ -745,16 +758,16 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+    pub fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
         // normalize uri
-        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(&hr.url()) {
             if manifest != self.label() {
                 return None;
             }
-            uri.to_owned()
+            hr.url()
         } else {
             // make a full path
-            if let Some(box_name) = box_name_from_uri(uri) {
+            if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
                 return None;
@@ -762,7 +775,7 @@ impl Claim {
         };
 
         self.data_boxes.iter().find_map(|x| {
-            if x.0.url() == normalized_uri {
+            if x.0.url() == normalized_uri && vec_compare(&x.0.hash(), &hr.hash()) {
                 Some(&x.1)
             } else {
                 None
@@ -859,7 +872,7 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    fn update_assertion<MatchFn, PatchFn>(
+    pub(crate) fn update_assertion<MatchFn, PatchFn>(
         &mut self,
         replace_with: Assertion,
         match_fn: MatchFn,
@@ -910,6 +923,10 @@ impl Claim {
 
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
+
+        // clear original since content has changed
+        self.clear_data();
+
         Ok(())
     }
 
@@ -935,7 +952,6 @@ impl Claim {
     }
 
     // Crate private function to allow for patching a BMFF hash with final contents.
-    #[cfg(feature = "file_io")]
     pub(crate) fn update_bmff_hash(&mut self, bmff_hash: BmffHash) -> Result<()> {
         self.replace_assertion(bmff_hash.to_assertion()?)
     }
@@ -943,7 +959,6 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    #[cfg(feature = "file_io")]
     pub(crate) fn replace_assertion(&mut self, replace_with: Assertion) -> Result<()> {
         self.update_assertion(
             replace_with,
@@ -1294,6 +1309,7 @@ impl Claim {
                     if !dh.is_remote_hash() {
                         // only verify local hashes here
                         let hash_result = match asset_data {
+                            #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
                                 dh.verify_hash(asset_path, Some(claim.alg()))
                             }
@@ -1341,6 +1357,7 @@ impl Claim {
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
                     let hash_result = match asset_data {
+                        #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
                             dh.verify_hash(asset_path, Some(claim.alg()))
                         }
@@ -1391,11 +1408,15 @@ impl Claim {
                     let bh = BoxHash::from_assertion(hash_binding_assertion)?;
 
                     let hash_result = match asset_data {
+                        #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor = get_assetio_handler_from_path(asset_path)
-                                .ok_or(Error::UnsupportedType)?
-                                .asset_box_hash_ref()
-                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
+                            let box_hash_processor =
+                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
+                                    .ok_or(Error::UnsupportedType)?
+                                    .asset_box_hash_ref()
+                                    .ok_or(Error::HashMismatch(
+                                        "Box hash not supported".to_string(),
+                                    ))?;
 
                             bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
                         }
@@ -1610,6 +1631,10 @@ impl Claim {
             Some(ref ob) => Ok(ob.clone()),
             None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
+    }
+
+    fn clear_data(&mut self) {
+        self.original_bytes = None;
     }
 
     /// Create claim from binary data (not including assertions).

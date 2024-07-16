@@ -6,6 +6,58 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.6
+_15 July 2024_
+
+* Fetching of databoxes must always use HashedURI to enforce hash checks. ([#505](https://github.com/contentauth/c2pa-rs/pull/505))
+* Temporarily allow unused `JsonAssertionData` to fix unused error in CI ([#498](https://github.com/contentauth/c2pa-rs/pull/498))
+* Add remote manifest support to MP3 ([#496](https://github.com/contentauth/c2pa-rs/pull/496))
+
+## 0.32.5
+_28 June 2024_
+
+* (PATCH) ensures temp files are removed ([#494](https://github.com/contentauth/c2pa-rs/pull/494))
+* Update async_generic to 1.1 ([#493](https://github.com/contentauth/c2pa-rs/pull/493))
+
+## 0.32.4
+_25 June 2024_
+
+* Add data_type (future) to Ingredient_V2 ([#490](https://github.com/contentauth/c2pa-rs/pull/490))
+* Let's not assume that third-party assertions are using serde_cbor ([#491](https://github.com/contentauth/c2pa-rs/pull/491))
+
+## 0.32.3
+_24 June 2024_
+
+* External placed manifest ([#472](https://github.com/contentauth/c2pa-rs/pull/472))
+* Support metadata field in claims. ([#488](https://github.com/contentauth/c2pa-rs/pull/488))
+
+## 0.32.2
+_19 June 2024_
+
+* Add iterators over manifests and resources in unstable API ([#482](https://github.com/contentauth/c2pa-rs/pull/482))
+* OCSP certificate should be valid at signing time ([#481](https://github.com/contentauth/c2pa-rs/pull/481))
+* url crate version 2.5.1 introduces new license "Unicode-3.0" ([#483](https://github.com/contentauth/c2pa-rs/pull/483))
+* Implement `Debug` w/ detailed manifest for `Reader` ([#473](https://github.com/contentauth/c2pa-rs/pull/473))
+* Bump MSRV to 1.74 ([#478](https://github.com/contentauth/c2pa-rs/pull/478))
+* Allow empty Merkle proof for last leaf node. ([#470](https://github.com/contentauth/c2pa-rs/pull/470))
+
+## 0.32.1
+_10 May 2024_
+
+* Steps toward removing RemoteSigner APIs. ([#466](https://github.com/contentauth/c2pa-rs/pull/466))
+
+## 0.32.0
+_07 May 2024_
+
+* (Minor) Additional unit tests and fixes for injection (or previously untested) issues. ([#464](https://github.com/contentauth/c2pa-rs/pull/464))
+* Expose authoring support in WASM ([#369](https://github.com/contentauth/c2pa-rs/pull/369))
+* Move signer to first parameter on Builder.sign ([#457](https://github.com/contentauth/c2pa-rs/pull/457))
+* Gpeacock/embed_remote_settings ([#460](https://github.com/contentauth/c2pa-rs/pull/460))
+* (MINOR) Removes xmp_write feature and xmp_toolkit ([#461](https://github.com/contentauth/c2pa-rs/pull/461))
+* Async Signer: add support for async OCSP call ([#458](https://github.com/contentauth/c2pa-rs/pull/458))
+* Use cargo test in CI ([#459](https://github.com/contentauth/c2pa-rs/pull/459))
+* (MINOR) Initial V2 API work ([#437](https://github.com/contentauth/c2pa-rs/pull/437))
+
 ## 0.31.3
 _05 April 2024_
 

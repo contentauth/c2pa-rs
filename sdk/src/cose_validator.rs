@@ -347,7 +347,7 @@ pub(crate) fn check_cert(
     // check cert values
     let tbscert = &signcert.tbs_certificate;
 
-    let is_self_signed = tbscert.is_ca() && tbscert.issuer_uid == tbscert.subject_uid;
+    let is_self_signed = tbscert.is_ca() && tbscert.issuer() == tbscert.subject();
 
     // self signed certs are disallowed
     if is_self_signed {
@@ -713,7 +713,7 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(&ocsp_certs[0], th, validation_log, None)?;
+                        check_cert(&ocsp_certs[0], th, validation_log, Some(tst_info))?;
                     }
                 }
                 result = Ok(ocsp_data);
@@ -762,7 +762,7 @@ pub(crate) fn check_ocsp_status(
 }
 
 // internal util function to dump the cert chain in PEM format
-fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> Result<Vec<u8>> {
+fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     let mut out_buf: Vec<u8> = Vec::new();
     let mut writer = Cursor::new(out_buf);
 
@@ -771,12 +771,7 @@ fn dump_cert_chain(certs: &[Vec<u8>], output_path: Option<&std::path::Path>) -> 
             .map_err(|_e| Error::UnsupportedType)?;
         c.write_pem(&mut writer)?;
     }
-
     out_buf = writer.into_inner();
-    if let Some(op) = output_path {
-        std::fs::write(op, &out_buf).map_err(Error::IoError)?;
-    }
-
     Ok(out_buf)
 }
 
@@ -1044,7 +1039,7 @@ pub(crate) async fn verify_cose_async(
         result.date = get_signing_time(&sign1, &data);
 
         // return cert chain
-        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?, None)?;
+        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
     }
 
     Ok(result)
@@ -1081,7 +1076,7 @@ pub(crate) fn get_signing_info(
 
     let certs = match sign1 {
         Ok(s) => match get_sign_certs(&s) {
-            Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
+            Ok(c) => dump_cert_chain(&c).unwrap_or_default(),
             Err(_) => Vec::new(),
         },
         Err(_e) => Vec::new(),
@@ -1205,7 +1200,7 @@ pub(crate) fn verify_cose(
             result.date = get_signing_time(&sign1, data);
 
             // return cert chain
-            result.cert_chain = dump_cert_chain(&certs, None)?;
+            result.cert_chain = dump_cert_chain(&certs)?;
 
             result.revocation_status = Some(true);
         }
@@ -1298,10 +1293,10 @@ async fn validate_with_cert_async(
     }
 }
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use sha2::digest::generic_array::sequence::Shorten;
 

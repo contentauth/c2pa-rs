@@ -1,6 +1,6 @@
 name: CI
 
-on:  
+on:
   pull_request:
   push:
     branches: main
@@ -8,7 +8,7 @@ on:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
-  tests:
+  tests-cargo:
     name: Unit tests
     runs-on: ${{ matrix.os }}
 
@@ -16,38 +16,22 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.73.0]
-        # exclude:
-        #   - os: windows-latest
-        #     rust_version: stable
-        #     # Disable latest Windows version due to build instability.
-        #     # See https://github.com/rust-lang/cargo/issues/12979.
+        rust_version: [stable, 1.74.0]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-      - name: Upload code coverage results
-        uses: codecov/codecov-action@v3
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-          verbose: true
+      - name: Run unit tests
+        run: cargo test --all-features --verbose
 
   tests-cross:
     name: Unit tests
@@ -57,12 +41,12 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.73.0]
+        rust_version: [stable, 1.74.0]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -89,10 +73,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-          
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
@@ -112,7 +96,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -137,7 +121,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -156,7 +140,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -195,7 +179,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install nightly Rust toolchain
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
@@ -241,7 +225,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
@@ -260,7 +244,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-        
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

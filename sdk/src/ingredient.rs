@@ -22,9 +22,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::utils::mime::extension_to_mime;
+#[cfg(doc)]
+use crate::Manifest;
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
-    assertions::{self, labels, Metadata, Relationship, Thumbnail},
+    assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
@@ -114,6 +118,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
+    /// Additional information about the data's type to the ingredient V2 structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_types: Option<Vec<AssetType>>,
+
     /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
     ///
     /// [`ManifestStore`]: crate::ManifestStore
@@ -196,6 +204,7 @@ impl Ingredient {
             || self.description.is_some()
             || self.informational_uri.is_some()
             || self.relationship == Relationship::InputTo
+            || self.data_types.is_some()
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -274,8 +283,6 @@ impl Ingredient {
     /// if one exists.
     ///
     /// If `None`, the ingredient has no [`Manifest`]s.
-    ///
-    /// [`Manifest`]: crate::Manifest
     pub fn active_manifest(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
@@ -309,6 +316,11 @@ impl Ingredient {
     /// Returns an informational uri for the ingredient if it exists.
     pub fn informational_uri(&self) -> Option<&str> {
         self.informational_uri.as_deref()
+    }
+
+    /// Returns an list AssetType info
+    pub fn data_types(&self) -> Option<&[AssetType]> {
+        self.data_types.as_deref()
     }
 
     /// Sets a human-readable title for this ingredient.
@@ -434,17 +446,13 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
-        // verify the resource referenced exists
-        if !self.resources.exists(&data_ref.identifier) {
-            return Err(Error::NotFound);
-        };
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let base_id = self.instance_id().to_string();
+        let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
                 .add_with(&base_id, "application/c2pa", data)?,
@@ -474,6 +482,17 @@ impl Ingredient {
         self
     }
 
+    /// Add AssetType info for Ingredient
+    pub fn add_data_type(&mut self, data_type: AssetType) -> &mut Self {
+        if let Some(data_types) = self.data_types.as_mut() {
+            data_types.push(data_type);
+        } else {
+            self.data_types = Some([data_type].to_vec());
+        }
+
+        self
+    }
+
     /// Return an immutable reference to the ingredient resources
     pub fn resources(&self) -> &ResourceStore {
         &self.resources
@@ -498,8 +517,8 @@ impl Ingredient {
             .unwrap_or_else(|| "".into())
             .to_lowercase();
 
-        let format = crate::utils::mime::extension_to_mime(&extension)
-            .unwrap_or("application/binary")
+        let format = extension_to_mime(&extension)
+            .unwrap_or("application/octet-stream")
             .to_owned();
         (title, extension, format)
     }
@@ -507,9 +526,7 @@ impl Ingredient {
     /// Generates an `Ingredient` from a file path, including XMP info
     /// from the file if available.
     ///
-    /// This is used for making asset ingredients that should not load [`ManifestStore`]s.
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
+    /// This does not read c2pa_data in a file, it only reads XMP
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         // get required information from the file path
@@ -533,7 +550,8 @@ impl Ingredient {
         S: Into<String>,
     {
         let format = format.into();
-        // if we can open the file try tto get xmp info
+
+        // try to get xmp info, if this fails all XmpInfo fields will be None
         let xmp_info = XmpInfo::from_source(stream, &format);
 
         let id = if let Some(id) = xmp_info.instance_id {
@@ -772,9 +790,62 @@ impl Ingredient {
     /// This does not set title or hash
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
+        ingredient.add_stream_internal(format, stream)
+    }
 
+    /// Create an Ingredient from JSON
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_str(json).map_err(Error::JsonError)
+    }
+
+    /// Adds a stream to an ingredient
+    ///
+    /// This allows you to predefine fields before adding the stream.
+    /// Sets manifest_data if the stream contains a manifest_store.
+    /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
+    /// Instance_id, document_id, and provenance will be overridden if found in the stream.
+    /// Format will be overridden only if it is the default (application/octet-stream).
+    #[cfg(feature = "unstable_api")]
+    pub(crate) fn with_stream<S: Into<String>>(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Self> {
+        let format = format.into();
+
+        // try to get xmp info, if this fails all XmpInfo fields will be None
+        let xmp_info = XmpInfo::from_source(stream, &format);
+
+        if let Some(id) = xmp_info.instance_id {
+            self.instance_id = Some(id);
+        };
+
+        if let Some(id) = xmp_info.document_id {
+            self.document_id = Some(id);
+        };
+
+        if let Some(provenance) = xmp_info.provenance {
+            self.provenance = Some(provenance);
+        };
+
+        // only override format if it is the default
+        if self.format == "application/octet-stream" {
+            self.format = format.to_string();
+        };
+
+        // ensure we have an instance Id for v1 ingredients
+        if self.instance_id.is_none() {
+            self.instance_id = Some(default_instance_id());
+        };
+
+        stream.rewind()?;
+        self.add_stream_internal(&format, stream)
+    }
+
+    // Internal implementation to avoid code bloat.
+    fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
@@ -785,13 +856,8 @@ impl Ingredient {
                     Store::from_jumbf(&manifest_bytes, &mut validation_log)
                         .and_then(|mut store| {
                             // verify the store
-                            //todo, change this when we have a stream version of verify
-                            let mut buf: Vec<u8> = Vec::new();
-                            stream.rewind()?;
-                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                            store
-                                .verify_from_buffer(&buf, format, &mut validation_log)
-                                .map(|_| store)
+                            store.verify_from_stream(stream, format, &mut validation_log)?;
+                            Ok(store)
                         })
                         .map_err(|e| {
                             // add a log entry for the error so we act like verify
@@ -808,15 +874,15 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
+        if self.thumbnail.is_none() {
             stream.rewind()?;
             match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
                 Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
+                    self.set_thumbnail(format, image)?;
                 }
                 Err(err) => {
                     log::warn!("Could not create thumbnail. {err}");
@@ -824,7 +890,7 @@ impl Ingredient {
             }
         }
 
-        Ok(ingredient)
+        Ok(self)
     }
 
     /// Creates an `Ingredient` from a memory buffer (async version).
@@ -965,7 +1031,7 @@ impl Ingredient {
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
-                    .get_data_box_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                    .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
                             &hashed_uri.url(),
@@ -991,7 +1057,7 @@ impl Ingredient {
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let data_box = store
-                .get_data_box_from_uri_and_claim(&data_uri.url(), claim_label)
+                .get_data_box_from_uri_and_claim(data_uri, claim_label)
                 .ok_or_else(|| {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                     Error::AssertionMissing {
@@ -1004,7 +1070,7 @@ impl Ingredient {
                 &data_box.format,
                 data_box.data.clone(),
             )?;
-            data_ref.data_types = data_box.data_types.clone();
+            data_ref.data_types.clone_from(&data_box.data_types);
             ingredient.set_data_ref(data_ref)?;
         }
 
@@ -1024,8 +1090,17 @@ impl Ingredient {
         &self,
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
+        resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
     ) -> Result<HashedUri> {
         let mut thumbnail = None;
+        // for Builder model, ingredient resources may be in the manifest
+        let get_resource = |id: &str| {
+            self.resources.get(id).or_else(|_| {
+                resources
+                    .ok_or_else(|| Error::NotFound)
+                    .and_then(|r| r.get(id))
+            })
+        };
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
@@ -1048,7 +1123,7 @@ impl Ingredient {
                 };
 
                 // get the c2pa manifest bytes
-                let manifest_data = self.resources.get(&resource_ref.identifier)?;
+                let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store = Store::load_ingredient_to_claim(
@@ -1120,7 +1195,10 @@ impl Ingredient {
                     HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                 }
                 None => {
-                    let data = self.thumbnail_bytes()?;
+                    let data = match self.thumbnail.as_ref() {
+                        Some(thumbnail) => get_resource(&thumbnail.identifier),
+                        None => Err(Error::NotFound),
+                    }?;
                     if self.is_v2() {
                         // v2 ingredients use databoxes for thumbnails
                         claim.add_databox(
@@ -1144,7 +1222,7 @@ impl Ingredient {
 
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let box_data = self.resources.get(&data_ref.identifier)?;
+            let box_data = get_resource(&data_ref.identifier)?;
             let hash_url = claim.add_databox(
                 &data_ref.format,
                 box_data.into_owned(),
@@ -1171,15 +1249,22 @@ impl Ingredient {
 
         let mut ingredient_assertion = assertions::Ingredient::new_v2(&self.title, &self.format);
         ingredient_assertion.instance_id = instance_id;
-        ingredient_assertion.document_id = self.document_id.to_owned();
+        self.document_id
+            .clone_into(&mut ingredient_assertion.document_id);
         ingredient_assertion.c2pa_manifest = c2pa_manifest;
         ingredient_assertion.relationship = self.relationship.clone();
         ingredient_assertion.thumbnail = thumbnail;
-        ingredient_assertion.metadata = self.metadata.clone();
-        ingredient_assertion.validation_status = self.validation_status.clone();
+        ingredient_assertion.metadata.clone_from(&self.metadata);
+        ingredient_assertion
+            .validation_status
+            .clone_from(&self.validation_status);
         ingredient_assertion.data = data;
-        ingredient_assertion.description = self.description.clone();
-        ingredient_assertion.informational_uri = self.informational_uri.clone();
+        ingredient_assertion
+            .description
+            .clone_from(&self.description);
+        ingredient_assertion
+            .informational_uri
+            .clone_from(&self.informational_uri);
         claim.add_assertion(&ingredient_assertion)
     }
 
@@ -1783,9 +1868,9 @@ mod tests_file_io {
         ingredient.resources.set_base_path(folder);
 
         assert!(ingredient.thumbnail_ref().is_none());
-        assert!(ingredient
-            .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
-            .is_err());
+        // assert!(ingredient
+        //     .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+        //     .is_err());
         assert!(ingredient.manifest_data_ref().is_none());
         // verify we can set a reference
         assert!(ingredient

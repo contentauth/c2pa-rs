@@ -27,7 +27,7 @@ use tempfile::Builder;
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
@@ -435,11 +435,14 @@ fn get_top_level_boxes(
     tl_boxes
 }
 
-pub fn bmff_to_jumbf_exclusions(
-    reader: &mut dyn CAIRead,
+pub fn bmff_to_jumbf_exclusions<R>(
+    reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
-) -> Result<Vec<HashRange>> {
+) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
     let size = reader.seek(SeekFrom::End(0))?;
     reader.rewind()?;
 
@@ -507,11 +510,7 @@ pub fn bmff_to_jumbf_exclusions(
                     let desired_flags = u32::from_be_bytes(temp_bytes);
 
                     if let Some(box_flags) = box_info.flags {
-                        let exact = if let Some(is_exact) = bmff_exclusion.exact {
-                            is_exact
-                        } else {
-                            true
-                        };
+                        let exact = bmff_exclusion.exact.unwrap_or(true);
 
                         if exact {
                             if desired_flags != box_flags {
@@ -1290,7 +1289,7 @@ impl AssetIO for BmffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1312,7 +1311,7 @@ impl AssetIO for BmffIO {
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn new(asset_type: &str) -> Self

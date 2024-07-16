@@ -83,6 +83,13 @@ impl ConfigurableSigner for RsaSigner {
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
 
+        // make sure cert chains are in order
+        if !check_chain_order(&signcerts) {
+            return Err(Error::BadParam(
+                "certificate chain is not in correct order".to_string(),
+            ));
+        }
+
         // rebuild RSA keys to eliminate incompatible values
         let n = rsa.n().to_owned().map_err(wrap_openssl_err)?;
         let e = rsa.e().to_owned().map_err(wrap_openssl_err)?;
@@ -115,13 +122,6 @@ impl ConfigurableSigner for RsaSigner {
         let new_rsa = builder.build();
 
         let pkey = PKey::from_rsa(new_rsa).map_err(wrap_openssl_err)?;
-
-        // make sure cert chains are in order
-        if !check_chain_order(&signcerts) {
-            return Err(Error::BadParam(
-                "certificate chain is not in correct order".to_string(),
-            ));
-        }
 
         let signer = RsaSigner {
             signcerts,
@@ -230,9 +230,9 @@ fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
 }
 
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use super::*;
     use crate::{
