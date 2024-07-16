@@ -1728,11 +1728,7 @@ impl JUMBFEmbeddedFileDescriptionBox {
             .position(|&c| c == b'\0')
             .unwrap_or(bytes.len());
 
-        if let Ok(r_str) = String::from_utf8(bytes[0..nul_range_end].to_vec()) {
-            r_str
-        } else {
-            String::new()
-        }
+        String::from_utf8(bytes[0..nul_range_end].to_vec()).unwrap_or_default()
     }
 
     pub fn media_type(&self) -> String {

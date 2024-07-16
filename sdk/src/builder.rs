@@ -260,7 +260,7 @@ impl Builder {
         stream.read_to_end(&mut resource)?;
         // add the resource and set the resource reference
         self.resources
-            .add(&self.definition.instance_id.clone(), resource)?;
+            .add(self.definition.instance_id.clone(), resource)?;
         self.definition.thumbnail = Some(ResourceRef::new(
             format,
             self.definition.instance_id.clone(),
@@ -682,7 +682,7 @@ impl Builder {
             {
                 stream.rewind()?;
                 self.resources
-                    .add(&self.definition.instance_id.clone(), image)?;
+                    .add(self.definition.instance_id.clone(), image)?;
                 self.definition.thumbnail = Some(ResourceRef::new(
                     format,
                     self.definition.instance_id.clone(),
@@ -1113,7 +1113,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(&parent_json(), format, &mut source)
+            .add_ingredient(parent_json(), format, &mut source)
             .unwrap();
 
         builder
