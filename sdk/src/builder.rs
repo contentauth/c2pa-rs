@@ -458,7 +458,7 @@ impl Builder {
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
-                let manifest_label = manifest_label.replace("_", ":");
+                let manifest_label = manifest_label.replace(['_'], ":");
                 for ingredient in builder.definition.ingredients.iter_mut() {
                     if let Some(active_manifest) = ingredient.active_manifest() {
                         if manifest_label.starts_with(active_manifest) {
