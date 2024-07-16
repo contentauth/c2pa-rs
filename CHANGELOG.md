@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.6
+_15 July 2024_
+
+* Fetching of databoxes must always use HashedURI to enforce hash checks. ([#505](https://github.com/contentauth/c2pa-rs/pull/505))
+* Temporarily allow unused `JsonAssertionData` to fix unused error in CI ([#498](https://github.com/contentauth/c2pa-rs/pull/498))
+* Add remote manifest support to MP3 ([#496](https://github.com/contentauth/c2pa-rs/pull/496))
+
 ## 0.32.5
 _28 June 2024_
 
