@@ -16,12 +16,10 @@ mod test_signer;
 
 use std::{
     fs,
-    io::{Read, Seek},
     path::{Path, PathBuf},
 };
 
 use c2pa::{format_from_path, Reader, Result};
-pub use compare_readers::compare_readers;
 #[allow(unused)]
 pub use test_signer::test_signer;
 
@@ -84,9 +82,9 @@ pub fn fixtures_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
     PathBuf::from("tests/fixtures").join(file_name)
 }
 
-pub fn known_good_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
-    PathBuf::from("tests/known_good").join(file_name)
-}
+// pub fn known_good_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
+//     PathBuf::from("tests/known_good").join(file_name)
+// }
 
 /// get a file from path without requiring file_io feature enabled in the c2pa crate
 pub fn reader_from_file<P: AsRef<Path>>(path: P) -> Result<Reader> {
@@ -94,43 +92,43 @@ pub fn reader_from_file<P: AsRef<Path>>(path: P) -> Result<Reader> {
     Reader::from_stream(&format, &mut fs::File::open(&path)?)
 }
 
-#[allow(unused)]
-pub fn write_known_good<P: AsRef<Path>>(file_name: P) -> Result<()> {
-    let reader = reader_from_file(fixtures_path(&file_name))?;
-    let mut path = known_good_path(file_name);
-    path.set_extension("json");
-    fs::write(path, reader.json()).map_err(Into::into)
-}
+// #[allow(unused)]
+// pub fn write_known_good<P: AsRef<Path>>(file_name: P) -> Result<()> {
+//     let reader = reader_from_file(fixtures_path(&file_name))?;
+//     let mut path = known_good_path(file_name);
+//     path.set_extension("json");
+//     fs::write(path, reader.json()).map_err(Into::into)
+// }
 
-pub fn read_known_good<P: AsRef<Path>>(file_name: P) -> std::io::Result<String> {
-    let mut path = known_good_path(file_name);
-    path.set_extension("json");
-    fs::read_to_string(path)
-}
+// pub fn read_known_good<P: AsRef<Path>>(file_name: P) -> std::io::Result<String> {
+//     let mut path = known_good_path(file_name);
+//     path.set_extension("json");
+//     fs::read_to_string(path)
+// }
 
-#[allow(unused)]
-pub fn compare_to_known_good<P: AsRef<Path>>(reader: &Reader, file_name: P) -> Result<()> {
-    let known = read_known_good(&file_name)?;
-    let reader1 = Reader::from_json(&known)?;
-    //et reader2 = reader_from_file(fixtures_path(file_name))?;
-    let result = compare_readers(&reader1, reader)?;
-    assert!(result.is_empty(), "{}", result.join("\n"));
-    Ok(())
-}
+// #[allow(unused)]
+// pub fn compare_to_known_good<P: AsRef<Path>>(reader: &Reader, file_name: P) -> Result<()> {
+//     let known = read_known_good(&file_name)?;
+//     let reader1 = Reader::from_json(&known)?;
+//     //et reader2 = reader_from_file(fixtures_path(file_name))?;
+//     let result = compare_readers(&reader1, reader)?;
+//     assert!(result.is_empty(), "{}", result.join("\n"));
+//     Ok(())
+// }
 
-#[allow(unused)]
-pub fn compare_stream_to_known_good<P: AsRef<Path>, S: Read + Seek + Send>(
-    stream: &mut S,
-    format: &str,
-    known_file: P,
-) -> Result<()> {
-    let known = read_known_good(&known_file)?;
-    let reader1 = Reader::from_json(&known)?;
-    let reader2 = Reader::from_stream(format, stream)?;
-    let result = compare_readers(&reader1, &reader2)?;
-    assert!(result.is_empty(), "{}", result.join("\n"));
-    Ok(())
-}
+// #[allow(unused)]
+// pub fn compare_stream_to_known_good<P: AsRef<Path>, S: Read + Seek + Send>(
+//     stream: &mut S,
+//     format: &str,
+//     known_file: P,
+// ) -> Result<()> {
+//     let known = read_known_good(&known_file)?;
+//     let reader1 = Reader::from_json(&known)?;
+//     let reader2 = Reader::from_stream(format, stream)?;
+//     let result = compare_readers(&reader1, &reader2)?;
+//     assert!(result.is_empty(), "{}", result.join("\n"));
+//     Ok(())
+// }
 
 #[allow(unused)]
 pub fn fixture_stream(name: &str) -> Result<(String, fs::File)> {
