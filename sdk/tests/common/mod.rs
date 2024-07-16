@@ -37,6 +37,49 @@ macro_rules! assert_err {
 #[allow(unused_imports)]
 pub(super) use assert_err;
 
+// This macro filters unstable snapshot output values so that we can properly diff changes.
+#[macro_export]
+macro_rules! apply_filters {
+    {} => {
+        // TODO: c2pa regex patterns can be more strict and granular
+        let mut settings = insta::Settings::clone_current();
+        // macOS temp folder
+        settings.add_filter(r"/var/folders/\S+?/T/\S+", "[TEMP_FILE]");
+        // Linux temp folder
+        settings.add_filter(r"/tmp/\.tmp\S+", "[TEMP_FILE]");
+        // Windows temp folder
+        settings.add_filter(r"\b[A-Z]:\\.*\\Local\\Temp\\\S+", "[TEMP_FILE]");
+        // Convert Windows paths to Unix Paths
+        settings.add_filter(r"\\\\?([\w\d.])", "/$1");
+        // Jumbf URI
+        settings.add_filter(r#""self#jumbf=.*""#, r#""[JUMBF_URI]""#);
+        // Xmp id
+        settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
+        // Manifest URN
+        settings.add_filter(r#""(?:[^:]+:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
+        // Timestamp1
+        settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
+        // Timestamp2
+        settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
+        let _guard = settings.bind_to_scope();
+    }
+}
+
+// The order of the output in some scenarios can be arbitrary, so we sort it beforehand
+// as to not affect the diff.
+#[macro_export]
+macro_rules! apply_sorted_output {
+    {} => {
+    let mut settings = Settings::clone_current();
+    settings.set_sort_maps(true);
+    let _guard = settings.bind_to_scope();
+    }
+}
+
+pub fn unescape_json(str: &str) -> Result<serde_json::Value> {
+    Ok(serde_json::from_str(str)?)
+}
+
 pub fn fixtures_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
     PathBuf::from("tests/fixtures").join(file_name)
 }

@@ -13,10 +13,11 @@
 
 use std::io::Cursor;
 
-use c2pa::{Builder, Result};
+use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{compare_stream_to_known_good, fixtures_path, test_signer};
+use common::{fixtures_path, test_signer, unescape_json};
+use insta::assert_json_snapshot;
 
 #[test]
 fn test_builder_ca_jpg() -> Result<()> {
@@ -28,14 +29,12 @@ fn test_builder_ca_jpg() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
 
     let mut dest = Cursor::new(Vec::new());
-
     builder.sign(&test_signer(), format, &mut source, &mut dest)?;
 
-    // dest.set_position(0);
-    // let path = common::known_good_path("CA_test.json");
-    // let reader = c2pa::Reader::from_stream(format, &mut dest)?;
-    // std::fs::write(path, reader.json())?;
+    apply_filters!();
+    assert_json_snapshot!(unescape_json(
+        &Reader::from_stream(format, &mut dest)?.json()
+    )?);
 
-    dest.set_position(0);
-    compare_stream_to_known_good(&mut dest, format, "CA_test.json")
+    Ok(())
 }
