@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, collections::HashMap, io::Cursor};
+use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
@@ -26,19 +26,21 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{
-        labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
+        labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
+        UserCbor,
     },
     asset_io::{CAIRead, CAIReadWrite},
     claim::{Claim, RemoteManifest},
     error::{Error, Result},
+    hashed_uri::HashedUri,
     ingredient::Ingredient,
     jumbf,
     manifest_assertion::ManifestAssertion,
-    resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
+    resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, RemoteSigner, Signer,
-    SigningAlg,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, ManifestPatchCallback,
+    RemoteSigner, Signer, SigningAlg,
 };
 
 /// A Manifest represents all the information in a c2pa manifest
@@ -58,6 +60,10 @@ pub struct Manifest {
     /// A list of claim generator info data identifying the software/hardware/system produced this claim
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+
+    /// A list of user metadata for this claim
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<Metadata>>,
 
     /// A human-readable title, generally source filename.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,6 +94,10 @@ pub struct Manifest {
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
     assertions: Vec<ManifestAssertion>,
+
+    /// A list of assertion hash references.
+    #[serde(skip)]
+    assertion_references: Vec<HashedUri>,
 
     /// A list of redactions - URIs to a redacted assertions
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,6 +200,11 @@ impl Manifest {
     /// Returns Assertions for this Manifest
     pub fn assertions(&self) -> &[ManifestAssertion] {
         &self.assertions
+    }
+
+    /// Returns raw assertion references
+    pub fn assertion_references(&self) -> Iter<HashedUri> {
+        self.assertion_references.iter()
     }
 
     /// Returns Verifiable Credentials
@@ -351,6 +366,17 @@ impl Manifest {
         Ok(self)
     }
 
+    /// TO DO: Add docs
+    pub fn add_cbor_assertion<S: Into<String>, T: Serialize>(
+        &mut self,
+        label: S,
+        data: &T,
+    ) -> Result<&mut Self> {
+        self.assertions
+            .push(ManifestAssertion::from_cbor_assertion(label, data)?);
+        Ok(self)
+    }
+
     /// Adds ManifestAssertions from existing assertions
     /// The data for standard assertions must be in correct format
     ///
@@ -451,6 +477,14 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.time)
     }
 
+    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
+        self.resources
+            .resources()
+            .keys()
+            .map(|uri| ResourceRef::new(mime_from_uri(uri), uri.to_owned()))
+    }
+
     /// Return an immutable reference to the manifest resources
     pub fn resources(&self) -> &ResourceStore {
         &self.resources
@@ -515,6 +549,12 @@ impl Manifest {
             manifest.claim_generator_info = Some(generators);
         }
 
+        if let Some(metadata_vec) = claim.metadata() {
+            if !metadata_vec.is_empty() {
+                manifest.metadata = Some(metadata_vec.to_vec())
+            }
+        }
+
         manifest.set_label(claim.label());
         manifest.resources.set_label(claim.label()); // default manifest for relative urls
         manifest.claim_generator_hints = claim.get_claim_generator_hint_map().cloned();
@@ -544,6 +584,15 @@ impl Manifest {
         }
         manifest.set_format(claim.format());
         manifest.set_instance_id(claim.instance_id());
+
+        manifest.assertion_references = claim
+            .assertions()
+            .iter()
+            .map(|h| {
+                let alg = h.alg().or_else(|| Some(claim.alg().to_string()));
+                HashedUri::new(h.url(), alg, &h.hash())
+            })
+            .collect();
 
         for assertion in claim.assertions() {
             let claim_assertion = store.get_claim_assertion_from_uri(
@@ -629,6 +678,7 @@ impl Manifest {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(base_label, value)
                                 .set_instance(claim_assertion.instance());
+
                             manifest.assertions.push(ma);
                         }
                         AssertionData::Json(_) => {
@@ -718,6 +768,12 @@ impl Manifest {
                     claim_info.icon = Some(icon.to_hashed_uri(self.resources(), &mut claim)?);
                 }
                 claim.add_claim_generator_info(claim_info);
+            }
+        }
+
+        if let Some(metadata_vec) = self.metadata.as_ref() {
+            for metadata in metadata_vec {
+                claim.add_claim_metadata(metadata.to_owned());
             }
         }
 
@@ -886,13 +942,17 @@ impl Manifest {
                     claim.add_assertion_with_salt(&exif, &salt)
                 }
                 _ => match manifest_assertion.kind() {
-                    ManifestAssertionKind::Cbor => claim.add_assertion_with_salt(
-                        &UserCbor::new(
-                            manifest_assertion.label(),
-                            serde_cbor::to_vec(&manifest_assertion.value()?)?,
-                        ),
-                        &salt,
-                    ),
+                    ManifestAssertionKind::Cbor => {
+                        let cbor = match manifest_assertion.value() {
+                            Ok(value) => serde_cbor::to_vec(value)?,
+                            Err(_) => manifest_assertion.binary()?.to_vec(),
+                        };
+
+                        claim.add_assertion_with_salt(
+                            &UserCbor::new(manifest_assertion.label(), cbor),
+                            &salt,
+                        )
+                    }
                     ManifestAssertionKind::Json => claim.add_assertion_with_salt(
                         &User::new(
                             manifest_assertion.label(),
@@ -1286,6 +1346,48 @@ impl Manifest {
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format)
     }
+
+    /// Generate a placed manifest.  The returned manifest is complete
+    /// as if it were inserted into the asset specified by input_stream
+    /// expect that it has not been placed into an output asset and has not
+    /// been signed.  Use embed_placed_manifest to insert into the asset
+    /// referenced by input_stream
+    pub fn get_placed_manifest(
+        &mut self,
+        reserve_size: usize,
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+    ) -> Result<(Vec<u8>, String)> {
+        let mut store = self.to_store()?;
+
+        Ok((
+            store.get_placed_manifest(reserve_size, format, input_stream)?,
+            store.provenance_label().ok_or(Error::NotFound)?,
+        ))
+    }
+
+    /// Signs and embeds the manifest specified by manifest_bytes into output_stream. format
+    /// specifies the format of the asset. The input_stream should point to the same asset
+    /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
+    /// traits to make any modifications to assertions.  The callbacks are processed before
+    /// the manifest is signed.  
+    pub fn embed_placed_manifest(
+        manifest_bytes: &[u8],
+        format: &str,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        signer: &dyn Signer,
+        manifest_callbacks: &[Box<dyn ManifestPatchCallback>],
+    ) -> Result<Vec<u8>> {
+        Store::embed_placed_manifest(
+            manifest_bytes,
+            format,
+            input_stream,
+            output_stream,
+            signer,
+            manifest_callbacks,
+        )
+    }
 }
 
 impl std::fmt::Display for Manifest {
@@ -1300,26 +1402,26 @@ impl std::fmt::Display for Manifest {
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    alg: Option<SigningAlg>,
+    pub alg: Option<SigningAlg>,
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    issuer: Option<String>,
+    pub issuer: Option<String>,
 
     /// The serial number of the certificate
     #[serde(skip_serializing_if = "Option::is_none")]
-    cert_serial_number: Option<String>,
+    pub cert_serial_number: Option<String>,
 
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
-    time: Option<String>,
+    pub time: Option<String>,
+
+    /// revocation status of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_status: Option<bool>,
 
     /// the cert chain for this claim
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
-
-    /// revocation status of the certificate
-    #[serde(skip_serializing_if = "Option::is_none")]
-    revocation_status: Option<bool>,
 }
 
 impl SignatureInfo {
@@ -2098,6 +2200,12 @@ pub(crate) mod tests {
                 }
             }
         ],
+        "metadata": [
+            {
+                "dateTime": "1985-04-12T23:20:50.52Z",
+                "my_metadata": "some custom response"
+            }
+        ],
         "format" : "image/jpeg",
         "thumbnail": {
             "format": "image/jpeg",
@@ -2561,15 +2669,12 @@ pub(crate) mod tests {
             .data_hash_embeddable_manifest_remote(
                 &dh,
                 signer.as_ref(),
-                "c2pa", // force an uncomposed manifest - you could send this to the cloud
+                "image/jpeg",
                 Some(&mut output_file),
             )
             .await
             .unwrap();
 
-        // test composed manifest here to ensure it works
-        let signed_manifest =
-            Manifest::composed_manifest(&signed_manifest, "image/jpeg").expect("composed_manifest");
         use std::io::{Seek, SeekFrom, Write};
 
         // path in new composed manifest
