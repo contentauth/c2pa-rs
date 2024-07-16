@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+pub mod assets;
 mod compare_readers;
 mod test_signer;
 
