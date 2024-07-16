@@ -60,6 +60,7 @@ The library has been tested on the following operating systems:
  | `wav`         | `audio/wav`                                         |
  | `webp`        | `image/webp`                                        |
  | `mp3`         | `audio/mpeg`                                        |
+ | `gif`         | `image/gif`                                         |
 
 ## Usage
 
