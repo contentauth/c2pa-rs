@@ -471,6 +471,7 @@ impl Assertion {
     }
 }
 
+#[allow(dead_code)] // TODO: temp, see #498
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct JsonAssertionData {
     label: String,

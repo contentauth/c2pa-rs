@@ -24,7 +24,9 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionBase,
-    assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
+    assertions::{
+        labels, Actions, CreativeWork, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+    },
     claim::Claim,
     error::{Error, Result},
     ingredient::Ingredient,
@@ -50,6 +52,9 @@ pub struct ManifestDefinition {
     /// Clam Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
+
+    /// Optional manifest metadata
+    pub metadata: Option<Vec<Metadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
@@ -255,7 +260,7 @@ impl Builder {
         stream.read_to_end(&mut resource)?;
         // add the resource and set the resource reference
         self.resources
-            .add(&self.definition.instance_id.clone(), resource)?;
+            .add(self.definition.instance_id.clone(), resource)?;
         self.definition.thumbnail = Some(ResourceRef::new(
             format,
             self.definition.instance_id.clone(),
@@ -456,6 +461,7 @@ impl Builder {
     fn to_claim(&self) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
+        let metadata = definition.metadata.clone();
         // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
@@ -485,6 +491,13 @@ impl Builder {
                 claim_info.icon = Some(icon.to_hashed_uri(&self.resources, &mut claim)?);
             }
             claim.add_claim_generator_info(claim_info);
+        }
+
+        // add claim metadata
+        if let Some(metadata_vec) = metadata {
+            for m in metadata_vec {
+                claim.add_claim_metadata(m);
+            }
         }
 
         if let Some(remote_url) = &self.remote_url {
@@ -673,7 +686,7 @@ impl Builder {
             {
                 stream.rewind()?;
                 self.resources
-                    .add(&self.definition.instance_id.clone(), image)?;
+                    .add(self.definition.instance_id.clone(), image)?;
                 self.definition.thumbnail = Some(ResourceRef::new(
                     format,
                     self.definition.instance_id.clone(),
@@ -810,6 +823,12 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
+            "metadata": [
+                {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
+            ],
             "title": "Test_Manifest",
             "format": "image/tiff",
             "instance_id": "1234",
@@ -916,6 +935,16 @@ mod tests {
         assert_eq!(
             definition.assertions[0].label,
             "org.test.assertion".to_string()
+        );
+
+        assert_eq!(
+            definition.metadata.as_ref().unwrap()[0]
+                .other()
+                .get("my_custom_metadata")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "mycustommetatdatavalue"
         );
 
         // convert back to json and compare to original
@@ -1085,7 +1114,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(&parent_json(), format, &mut source)
+            .add_ingredient(parent_json(), format, &mut source)
             .unwrap();
 
         builder

@@ -28,7 +28,7 @@ use crate::utils::mime::extension_to_mime;
 use crate::Manifest;
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
-    assertions::{self, labels, Metadata, Relationship, Thumbnail},
+    assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
@@ -118,6 +118,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
+    /// Additional information about the data's type to the ingredient V2 structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_types: Option<Vec<AssetType>>,
+
     /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
     ///
     /// [`ManifestStore`]: crate::ManifestStore
@@ -200,6 +204,7 @@ impl Ingredient {
             || self.description.is_some()
             || self.informational_uri.is_some()
             || self.relationship == Relationship::InputTo
+            || self.data_types.is_some()
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -311,6 +316,11 @@ impl Ingredient {
     /// Returns an informational uri for the ingredient if it exists.
     pub fn informational_uri(&self) -> Option<&str> {
         self.informational_uri.as_deref()
+    }
+
+    /// Returns an list AssetType info
+    pub fn data_types(&self) -> Option<&[AssetType]> {
+        self.data_types.as_deref()
     }
 
     /// Sets a human-readable title for this ingredient.
@@ -469,6 +479,17 @@ impl Ingredient {
     /// Sets an informational uri if needed
     pub fn set_informational_uri<S: Into<String>>(&mut self, uri: S) -> &mut Self {
         self.informational_uri = Some(uri.into());
+        self
+    }
+
+    /// Add AssetType info for Ingredient
+    pub fn add_data_type(&mut self, data_type: AssetType) -> &mut Self {
+        if let Some(data_types) = self.data_types.as_mut() {
+            data_types.push(data_type);
+        } else {
+            self.data_types = Some([data_type].to_vec());
+        }
+
         self
     }
 
@@ -1010,7 +1031,7 @@ impl Ingredient {
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
-                    .get_data_box_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                    .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
                             &hashed_uri.url(),
@@ -1036,7 +1057,7 @@ impl Ingredient {
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let data_box = store
-                .get_data_box_from_uri_and_claim(&data_uri.url(), claim_label)
+                .get_data_box_from_uri_and_claim(data_uri, claim_label)
                 .ok_or_else(|| {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                     Error::AssertionMissing {
