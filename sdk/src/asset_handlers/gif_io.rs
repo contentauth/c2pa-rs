@@ -125,12 +125,11 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos,
-                        // Size doesn't matter for placeholder block.
-                        length: 0,
+                        length: 1, // Need at least size 1.
                         htype: HashBlockObjectType::Cai,
                     },
                     HashObjectPositions {
-                        offset: end_preamble_pos,
+                        offset: end_preamble_pos + 1,
                         length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
                             - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
@@ -259,7 +258,7 @@ impl AssetBoxHash for GifIO {
                                             ApplicationExtension::new_c2pa(&[])?,
                                         ),
                                         start: marker.start,
-                                        // Size doesn't matter for placeholder block.
+                                        // TODO: should this size be >1?
                                         len: 0,
                                     }
                                     .to_box_map()?,
