@@ -1402,26 +1402,26 @@ impl std::fmt::Display for Manifest {
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    alg: Option<SigningAlg>,
+    pub alg: Option<SigningAlg>,
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    issuer: Option<String>,
+    pub issuer: Option<String>,
 
     /// The serial number of the certificate
     #[serde(skip_serializing_if = "Option::is_none")]
-    cert_serial_number: Option<String>,
+    pub cert_serial_number: Option<String>,
 
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
-    time: Option<String>,
+    pub time: Option<String>,
+
+    /// revocation status of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_status: Option<bool>,
 
     /// the cert chain for this claim
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
-
-    /// revocation status of the certificate
-    #[serde(skip_serializing_if = "Option::is_none")]
-    revocation_status: Option<bool>,
 }
 
 impl SignatureInfo {
