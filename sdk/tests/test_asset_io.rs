@@ -23,24 +23,30 @@ use common::{
 use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
 fn test_asset_io(assets: Vec<&[u8]>) -> Result<()> {
-    for asset in assets {
-        // TODO: add module holding json manifests
-        let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    allow_duplicates! {
+        || -> Result<()> {
+            for asset in assets {
+                // TODO: add module holding json manifests
+                let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
 
-        let format = infer::get(asset).unwrap().mime_type();
-        let mut source = Cursor::new(asset);
-        let mut dest = Cursor::new(Vec::new());
+                let format = infer::get(asset).unwrap().mime_type();
+                let mut source = Cursor::new(asset);
+                let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_def)?;
-        builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+                let mut builder = Builder::from_json(&manifest_def)?;
+                builder.sign(&test_signer(), format, &mut source, &mut dest)?;
 
-        apply_filters!();
-        assert_json_snapshot!(unescape_json(
-            &Reader::from_stream(format, &mut dest)?.json()
-        )?, {
-           ".manifests.*.format" => "[FORMAT]",
-        });
-    }
+                apply_filters!();
+                assert_json_snapshot!(unescape_json(
+                    &Reader::from_stream(format, &mut dest)?.json()
+                )?, {
+                   ".manifests.*.format" => "[FORMAT]",
+                });
+            }
+
+            Ok(())
+        }().unwrap()
+    };
 
     Ok(())
 }
@@ -50,12 +56,8 @@ fn test_asset_io_data_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("data_hash");
     settings.bind(|| {
-        allow_duplicates! {
-            test_asset_io(iter_assets(&[JPEGS, PNGS, RIFFS, SVGS, MP3S, TIFFS, GIFS]).collect()).unwrap()
-        }
-    });
-
-    Ok(())
+        test_asset_io(iter_assets(&[JPEGS, PNGS, RIFFS, SVGS, MP3S, TIFFS, GIFS]).collect())
+    })
 }
 
 #[test]
@@ -63,13 +65,7 @@ fn test_asset_io_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
-    settings.bind(|| {
-        allow_duplicates! {
-            test_asset_io(iter_assets(&[BMFFS]).collect()).unwrap()
-        }
-    });
-
-    Ok(())
+    settings.bind(|| test_asset_io(iter_assets(&[BMFFS]).collect()))
 }
 
 #[test]
