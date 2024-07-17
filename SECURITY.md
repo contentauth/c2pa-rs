@@ -1,6 +1,6 @@
 # Security
 
-C2PA open source repos are maintained in partnership with Adobe. At this time, security policies are maintained solely by Adobe employees.
+This C2PA open-source library is maintained in partnership with Adobe. At this time, Adobe is taking point on accepting security reports through its HackerOne portal and public bug bounty program.
 
 ## Reporting a vulnerability
 
