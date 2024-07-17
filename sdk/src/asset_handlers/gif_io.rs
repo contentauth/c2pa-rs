@@ -259,8 +259,7 @@ impl AssetBoxHash for GifIO {
                                             ApplicationExtension::new_c2pa(&[])?,
                                         ),
                                         start: marker.start,
-                                        // TODO: should this size be >1?
-                                        len: 0,
+                                        len: 1,
                                     }
                                     .to_box_map()?,
                                 );
