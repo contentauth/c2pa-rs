@@ -126,6 +126,8 @@ pub struct Mp3IO {
 
 impl CAIReader for Mp3IO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
+
         let mut manifest: Option<Vec<u8>> = None;
 
         if let Ok(tag) = Tag::read_from(input_stream) {
@@ -145,6 +147,8 @@ impl CAIReader for Mp3IO {
     }
 
     fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        input_stream.rewind().ok()?;
+
         if let Ok(tag) = Tag::read_from(input_stream) {
             for frame in tag.frames() {
                 if let Content::Private(private) = frame.content() {
@@ -181,6 +185,8 @@ impl RemoteRefEmbed for Mp3IO {
     ) -> Result<()> {
         match embed_ref {
             RemoteRefEmbedType::Xmp(url) => {
+                source_stream.rewind()?;
+
                 let header = ID3V2Header::read_header(source_stream)?;
                 source_stream.rewind()?;
 
@@ -337,6 +343,8 @@ impl CAIWriter for Mp3IO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
+        input_stream.rewind()?;
+
         let header = ID3V2Header::read_header(input_stream)?;
         input_stream.rewind()?;
 
