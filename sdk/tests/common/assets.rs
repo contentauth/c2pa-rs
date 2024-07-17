@@ -22,26 +22,25 @@ pub const PNGS: &[&[u8]] = &[
     include_bytes!("../fixtures/sample1.png"),
 ];
 
+// NOTE: writing currently isn't supported
 pub const PDFS: &[&[u8]] = &[
-    // TODO: Writing not supported
-    // include_bytes!("../fixtures/basic-annotation.pdf"),
-    // include_bytes!("../fixtures/basic-attachments.pdf"),
-    // include_bytes!("../fixtures/basic-no-xmp.pdf"),
-    // include_bytes!("../fixtures/basic-password.pdf"),
-    // include_bytes!("../fixtures/basic-retest.pdf"),
-    // include_bytes!("../fixtures/basic-signed.pdf"),
-    // include_bytes!("../fixtures/basic.pdf"),
-    // include_bytes!("../fixtures/express-signed.pdf"),
-    // include_bytes!("../fixtures/express.pdf"),
+    include_bytes!("../fixtures/basic-annotation.pdf"),
+    include_bytes!("../fixtures/basic-attachments.pdf"),
+    include_bytes!("../fixtures/basic-no-xmp.pdf"),
+    include_bytes!("../fixtures/basic-password.pdf"),
+    include_bytes!("../fixtures/basic-retest.pdf"),
+    include_bytes!("../fixtures/basic-signed.pdf"),
+    include_bytes!("../fixtures/basic.pdf"),
+    include_bytes!("../fixtures/express-signed.pdf"),
+    include_bytes!("../fixtures/express.pdf"),
 ];
 
 pub const BMFFS: &[&[u8]] = &[
-    // TODO: need to filter bmff assertion or test separately
-    // include_bytes!("../fixtures/legacy.mp4"),
-    // include_bytes!("../fixtures/video1.mp4"),
-    // include_bytes!("../fixtures/sample1.avif"),
-    // include_bytes!("../fixtures/sample1.heic"),
-    // include_bytes!("../fixtures/sample1.heif"),
+    include_bytes!("../fixtures/legacy.mp4"),
+    include_bytes!("../fixtures/video1.mp4"),
+    include_bytes!("../fixtures/sample1.avif"),
+    include_bytes!("../fixtures/sample1.heic"),
+    include_bytes!("../fixtures/sample1.heif"),
 ];
 
 pub const RIFFS: &[&[u8]] = &[
@@ -68,15 +67,24 @@ pub const MP3S: &[&[u8]] = &[
 
 pub const TIFFS: &[&[u8]] = &[include_bytes!("../fixtures/TUSCANY.TIF")];
 
-pub const ASSETS: &[&[&[u8]]] = &[JPEGS, PNGS, PDFS, BMFFS, RIFFS, SVGS, MP3S, TIFFS];
+pub const GIFS: &[&[u8]] = &[
+    // TODO: waiting for PR
+    // include_bytes!("../fixtures/sample1.gif")
+];
 
-pub fn iter_assets() -> impl Iterator<Item = &'static [u8]> {
-    ASSETS.iter().flat_map(|&asset| asset.iter()).copied()
-}
+pub const ASSETS: &[&[&[u8]]] = &[JPEGS, PNGS, PDFS, BMFFS, RIFFS, SVGS, MP3S, TIFFS, GIFS];
 
-pub fn iter_num_assets(num: usize) -> impl Iterator<Item = &'static [u8]> {
-    ASSETS
-        .iter()
-        .flat_map(move |&asset| asset.iter().take(num))
-        .copied()
+// pub fn iter_assets() -> impl Iterator<Item = &'static [u8]> {
+//     ASSETS.iter().flat_map(|&asset| asset.iter()).copied()
+// }
+
+// pub fn iter_num_assets(num: usize) -> impl Iterator<Item = &'static [u8]> {
+//     ASSETS
+//         .iter()
+//         .flat_map(move |&asset| asset.iter().take(num))
+//         .copied()
+// }
+
+pub fn iter_assets<'a>(assets: &'a [&[&[u8]]]) -> impl Iterator<Item = &'a [u8]> {
+    assets.iter().flat_map(|&asset| asset.iter()).copied()
 }

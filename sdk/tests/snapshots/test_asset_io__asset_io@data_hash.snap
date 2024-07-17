@@ -1,5 +1,5 @@
 ---
-source: sdk/tests/test_builder.rs
+source: sdk/tests/test_asset_io.rs
 expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
 ---
 {
