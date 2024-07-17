@@ -26,12 +26,37 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Run unit tests
-        run: cargo test --all-features --verbose
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        id: run_tests
+        env:
+          RUST_BACKTRACE: 1
+          CARGO_TERM_COLOR: always
+          CLICOLOR_FORCE: 1
+          INSTA_UPDATE: new
+        run: cargo llvm-cov --tests --bins --all-features --lcov --output-path lcov.info
+
+      # https://insta.rs/docs/patterns/
+      - name: Upload snapshots of failed tests
+        if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: failed-snapshots
+          path: "**/snapshots/*.snap.new"
+
+      - name: Upload code coverage results
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
 
   tests-cross:
     name: Unit tests
