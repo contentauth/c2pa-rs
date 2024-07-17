@@ -17,24 +17,25 @@ use c2pa::{Builder, Reader, Result};
 
 mod common;
 use common::{
-    assets::{iter_assets, BMFFS, GIFS, JPEGS, MP3S, PNGS, RIFFS, SVGS, TIFFS},
+    assets::{test_asset_kind, test_asset_kinds, Asset},
     fixtures_path, test_signer, unescape_json,
 };
 use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
-fn test_asset_io(assets: Vec<&[u8]>) -> Result<()> {
+fn test_asset_io(assets: Vec<Asset>) -> Result<()> {
     allow_duplicates! {
         || -> Result<()> {
-            for asset in assets {
+            for mut asset in assets {
                 // TODO: add module holding json manifests
                 let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
 
-                let format = infer::get(asset).unwrap().mime_type();
-                let mut source = Cursor::new(asset);
+                // TODO: temp, c2pa-rs should infer from signature
+                let format = infer::get(&asset.to_bytes()?).unwrap().mime_type();
+
                 let mut dest = Cursor::new(Vec::new());
 
                 let mut builder = Builder::from_json(&manifest_def)?;
-                builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+                builder.sign(&test_signer(), format, &mut asset, &mut dest)?;
 
                 apply_filters!();
                 assert_json_snapshot!(unescape_json(
@@ -56,7 +57,9 @@ fn test_asset_io_data_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("data_hash");
     settings.bind(|| {
-        test_asset_io(iter_assets(&[JPEGS, PNGS, RIFFS, SVGS, MP3S, TIFFS, GIFS]).collect())
+        test_asset_io(test_asset_kinds(&[
+            "jpeg", "png", "riff", "svg", "mp3", "tiff", "gif",
+        ])?)
     })
 }
 
@@ -65,7 +68,7 @@ fn test_asset_io_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
-    settings.bind(|| test_asset_io(iter_assets(&[BMFFS]).collect()))
+    settings.bind(|| test_asset_io(test_asset_kind("bmff")?))
 }
 
 #[test]

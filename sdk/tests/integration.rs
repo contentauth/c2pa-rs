@@ -95,9 +95,9 @@ mod integration_1 {
         let dir = tempdir()?;
         let output_path = dir.path().join("test_file.jpg");
         let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("tests/fixtures/earth_apollo17.jpg");
+        parent_path.push("tests/fixtures/assets/jpeg/earth_apollo17.jpg");
         let mut ingredient_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        ingredient_path.push("tests/fixtures/libpng-test.png");
+        ingredient_path.push("tests/fixtures/assets/png/libpng-test.png");
 
         let config = include_bytes!("../tests/fixtures/certs/trust/store.cfg");
         let priv_trust = include_bytes!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
@@ -178,7 +178,7 @@ mod integration_1 {
         fixture_path.push("tests/fixtures");
 
         let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
+        parent_path.push("assets/jpeg/earth_apollo17.jpg");
         let mut manifest_path = fixture_path.clone();
         manifest_path.push("manifest.json");
 
@@ -262,7 +262,7 @@ mod integration_1 {
         let mut manifest_path = fixture_path.clone();
         manifest_path.push("manifest.json");
         let mut parent_path = fixture_path.clone();
-        parent_path.push("earth_apollo17.jpg");
+        parent_path.push("assets/jpeg/earth_apollo17.jpg");
 
         let json = std::fs::read_to_string(manifest_path)?;
 
@@ -328,7 +328,7 @@ mod integration_1 {
         let mut manifest_path = fixture_path.clone();
         manifest_path.push("manifest.json");
         let mut parent_path = fixture_path.clone();
-        parent_path.push("video1.mp4");
+        parent_path.push("assets/bmff/video1.mp4");
 
         let json = std::fs::read_to_string(manifest_path)?;
 

@@ -1,90 +1,90 @@
-pub const JPEGS: &[&[u8]] = &[
-    include_bytes!("../fixtures/boxhash.jpg"),
-    include_bytes!("../fixtures/C.jpg"),
-    include_bytes!("../fixtures/CA.jpg"),
-    include_bytes!("../fixtures/CIE-sig-CA.jpg"),
-    include_bytes!("../fixtures/cloud.jpg"),
-    include_bytes!("../fixtures/cloudx.jpg"),
-    include_bytes!("../fixtures/E-sig-CA.jpg"),
-    include_bytes!("../fixtures/earth_apollo17.jpg"),
-    include_bytes!("../fixtures/IMG_0003.jpg"),
-    include_bytes!("../fixtures/legacy_ingredient_hash.jpg"),
-    include_bytes!("../fixtures/no_manifest.jpg"),
-    include_bytes!("../fixtures/P1000827.jpg"),
-    include_bytes!("../fixtures/prerelease.jpg"),
-    include_bytes!("../fixtures/XCA.jpg"),
-];
+use std::{
+    fs::{self, File},
+    io::{self, Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+};
 
-pub const PNGS: &[&[u8]] = &[
-    include_bytes!("../fixtures/exp-test1.png"),
-    include_bytes!("../fixtures/libpng-test_with_url.png"),
-    include_bytes!("../fixtures/libpng-test.png"),
-    include_bytes!("../fixtures/sample1.png"),
-];
+use c2pa::{format_from_path, Result};
 
-// NOTE: writing currently isn't supported
-pub const PDFS: &[&[u8]] = &[
-    include_bytes!("../fixtures/basic-annotation.pdf"),
-    include_bytes!("../fixtures/basic-attachments.pdf"),
-    include_bytes!("../fixtures/basic-no-xmp.pdf"),
-    include_bytes!("../fixtures/basic-password.pdf"),
-    include_bytes!("../fixtures/basic-retest.pdf"),
-    include_bytes!("../fixtures/basic-signed.pdf"),
-    include_bytes!("../fixtures/basic.pdf"),
-    include_bytes!("../fixtures/express-signed.pdf"),
-    include_bytes!("../fixtures/express.pdf"),
-];
+const ASSETS_PATH: &str = "tests/fixtures/assets";
 
-pub const BMFFS: &[&[u8]] = &[
-    include_bytes!("../fixtures/legacy.mp4"),
-    include_bytes!("../fixtures/video1.mp4"),
-    include_bytes!("../fixtures/sample1.avif"),
-    include_bytes!("../fixtures/sample1.heic"),
-    include_bytes!("../fixtures/sample1.heif"),
-];
+#[derive(Debug)]
+pub struct Asset {
+    stream: File,
+    // We store the path to make it easier to debug.
+    path: PathBuf,
+    format: String,
+}
 
-pub const RIFFS: &[&[u8]] = &[
-    include_bytes!("../fixtures/mars.webp"),
-    include_bytes!("../fixtures/sample1.webp"),
-    include_bytes!("../fixtures/test_lossless.webp"),
-    include_bytes!("../fixtures/test_xmp.webp"),
-    include_bytes!("../fixtures/test.webp"),
-    include_bytes!("../fixtures/test.avi"),
-    include_bytes!("../fixtures/sample1.wav"),
-];
+impl Asset {
+    pub fn new(stream: File, path: PathBuf) -> Self {
+        Self {
+            format: format_from_path(&path).unwrap(),
+            stream,
+            path,
+        }
+    }
 
-pub const SVGS: &[&[u8]] = &[
-    include_bytes!("../fixtures/sample1.svg"),
-    include_bytes!("../fixtures/sample2.svg"),
-    include_bytes!("../fixtures/sample3.svg"),
-    include_bytes!("../fixtures/sample4.svg"),
-];
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 
-pub const MP3S: &[&[u8]] = &[
-    // TODO: uncomment, waiting for PR to merge
-    // include_bytes!("../fixtures/sample1.mp3"),
-];
+    // We clone for convenience w/ Reader.
+    pub fn format(&self) -> String {
+        self.format.clone()
+    }
 
-pub const TIFFS: &[&[u8]] = &[include_bytes!("../fixtures/TUSCANY.TIF")];
+    pub fn to_bytes(&mut self) -> io::Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.stream.read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+}
 
-pub const GIFS: &[&[u8]] = &[
-    // TODO: waiting for PR
-    // include_bytes!("../fixtures/sample1.gif")
-];
+impl Read for Asset {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buf)
+    }
+}
 
-pub const ASSETS: &[&[&[u8]]] = &[JPEGS, PNGS, PDFS, BMFFS, RIFFS, SVGS, MP3S, TIFFS, GIFS];
+impl Seek for Asset {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.stream.seek(pos)
+    }
+}
 
-// pub fn iter_assets() -> impl Iterator<Item = &'static [u8]> {
-//     ASSETS.iter().flat_map(|&asset| asset.iter()).copied()
-// }
+pub fn test_asset(kind: &str) -> Result<Asset> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(ASSETS_PATH)
+        .join(kind);
 
-// pub fn iter_num_assets(num: usize) -> impl Iterator<Item = &'static [u8]> {
-//     ASSETS
-//         .iter()
-//         .flat_map(move |&asset| asset.iter().take(num))
-//         .copied()
-// }
+    Ok(Asset::new(File::open(&path)?, path))
+}
 
-pub fn iter_assets<'a>(assets: &'a [&[&[u8]]]) -> impl Iterator<Item = &'a [u8]> {
-    assets.iter().flat_map(|&asset| asset.iter()).copied()
+pub fn test_asset_kind(kind: &str) -> Result<Vec<Asset>> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(ASSETS_PATH)
+        .join(kind);
+
+    let mut assets = Vec::new();
+    for entry in fs::read_dir(path)? {
+        let path = entry?.path();
+        assets.push(Asset::new(File::open(&path)?, path));
+    }
+
+    Ok(assets)
+}
+
+pub fn test_asset_kinds(kinds: &[&str]) -> Result<Vec<Asset>> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(ASSETS_PATH);
+
+    let mut assets = Vec::new();
+    for kind in kinds {
+        for entry in fs::read_dir(root.join(kind))? {
+            let path = entry?.path();
+            assets.push(Asset::new(File::open(&path)?, path));
+        }
+    }
+
+    Ok(assets)
 }

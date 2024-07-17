@@ -16,7 +16,7 @@ use std::io::Cursor;
 use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{fixtures_path, test_signer, unescape_json};
+use common::{assets::test_asset, fixtures_path, test_signer, unescape_json};
 use insta::assert_json_snapshot;
 
 #[test]
@@ -24,9 +24,8 @@ fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
 
-    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     let format = "image/jpeg";
-    let mut source = Cursor::new(TEST_IMAGE);
+    let mut source = test_asset("jpeg/CA.jpg")?;
 
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&test_signer(), format, &mut source, &mut dest)?;

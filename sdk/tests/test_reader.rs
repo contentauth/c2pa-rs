@@ -13,7 +13,7 @@
 
 mod common;
 use c2pa::{Error, Reader, Result};
-use common::{fixture_stream, unescape_json};
+use common::{assets::test_asset, unescape_json};
 use insta::assert_json_snapshot;
 
 #[test]
@@ -26,16 +26,16 @@ fn test_reader_not_found() -> Result<()> {
 
 #[test]
 fn test_reader_no_jumbf() -> Result<()> {
-    let (format, mut stream) = fixture_stream("sample1.png")?;
-    let result = Reader::from_stream(&format, &mut stream);
+    let asset = test_asset("png/sample1.png")?;
+    let result = Reader::from_stream(&asset.format(), asset);
     assert!(matches!(result, Err(Error::JumbfNotFound)));
     Ok(())
 }
 
 #[test]
 fn test_reader_ca_jpg() -> Result<()> {
-    let (format, mut stream) = fixture_stream("CA.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let asset = test_asset("jpeg/CA.jpg")?;
+    let reader = Reader::from_stream(&asset.format(), asset)?;
     apply_filters!();
     assert_json_snapshot!(unescape_json(&reader.json())?);
     Ok(())
@@ -43,8 +43,8 @@ fn test_reader_ca_jpg() -> Result<()> {
 
 #[test]
 fn test_reader_c_jpg() -> Result<()> {
-    let (format, mut stream) = fixture_stream("C.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let asset = test_asset("jpeg/C.jpg")?;
+    let reader = Reader::from_stream(&asset.format(), asset)?;
     apply_filters!();
     assert_json_snapshot!(unescape_json(&reader.json())?);
     Ok(())
@@ -52,8 +52,8 @@ fn test_reader_c_jpg() -> Result<()> {
 
 #[test]
 fn test_reader_xca_jpg() -> Result<()> {
-    let (format, mut stream) = fixture_stream("XCA.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let asset = test_asset("jpeg/XCA.jpg")?;
+    let reader = Reader::from_stream(&asset.format(), asset)?;
     apply_filters!();
     assert_json_snapshot!(unescape_json(&reader.json())?);
     Ok(())
