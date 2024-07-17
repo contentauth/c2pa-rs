@@ -165,7 +165,6 @@ c2pa = { path = ".", features = [
 ] } # allow integration tests to use the new API
 jumbf = "0.4.0"
 insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
-infer = "0.16.0" # TODO: temp
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"

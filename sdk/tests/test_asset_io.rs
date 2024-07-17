@@ -18,7 +18,7 @@ use c2pa::{Builder, Reader, Result};
 mod common;
 use common::{
     assets::{test_asset_kind, test_asset_kinds, Asset},
-    fixtures_path, test_signer, unescape_json,
+    test_signer, unescape_json,
 };
 use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
@@ -27,19 +27,16 @@ fn test_asset_io(assets: Vec<Asset>) -> Result<()> {
         || -> Result<()> {
             for mut asset in assets {
                 // TODO: add module holding json manifests
-                let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+                let manifest_def = std::fs::read_to_string("../tests/fixtures/simple_manifest.json")?;
 
-                // TODO: temp, c2pa-rs should infer from signature
-                let format = infer::get(&asset.to_bytes()?).unwrap().mime_type();
-
+                let format = asset.format();
                 let mut dest = Cursor::new(Vec::new());
-
                 let mut builder = Builder::from_json(&manifest_def)?;
-                builder.sign(&test_signer(), format, &mut asset, &mut dest)?;
+                builder.sign(&test_signer(), &format, &mut asset, &mut dest)?;
 
                 apply_filters!();
                 assert_json_snapshot!(unescape_json(
-                    &Reader::from_stream(format, &mut dest)?.json()
+                    &Reader::from_stream(&format, &mut dest)?.json()
                 )?, {
                    ".manifests.*.format" => "[FORMAT]",
                 });
