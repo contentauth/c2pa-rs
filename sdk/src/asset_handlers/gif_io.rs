@@ -1340,15 +1340,15 @@ mod tests {
             obj_locations.get(1),
             Some(&HashObjectPositions {
                 offset: 781,
-                length: 0,
+                length: 1,
                 htype: HashBlockObjectType::Cai,
             })
         );
         assert_eq!(
             obj_locations.get(2),
             Some(&HashObjectPositions {
-                offset: 781,
-                length: 739692,
+                offset: 782,
+                length: SAMPLE1.len() - 781,
                 htype: HashBlockObjectType::Other,
             })
         );
