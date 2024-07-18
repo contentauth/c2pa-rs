@@ -5061,7 +5061,8 @@ pub mod tests {
 
     #[actix::test]
     async fn test_jumbf_generation_stream() {
-        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let file_buffer =
+            include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
 

@@ -448,7 +448,7 @@ mod tests {
             .add_resource("cba321", Cursor::new(value))
             .expect("add_resource");
 
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
 
         let signer = temp_signer();
         // Embed a manifest using the signer.

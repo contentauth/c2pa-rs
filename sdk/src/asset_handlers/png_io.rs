@@ -875,7 +875,7 @@ pub mod tests {
 
     #[test]
     fn test_write_cai_using_stream_existing_cai_data() {
-        let source = include_bytes!("../../tests/fixtures/exp-test1.png");
+        let source = include_bytes!("../../tests/fixtures/assets/png/exp-test1.png");
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
 
@@ -901,7 +901,7 @@ pub mod tests {
 
     #[test]
     fn test_write_cai_using_stream_no_cai_data() {
-        let source = include_bytes!("../../tests/fixtures/libpng-test.png");
+        let source = include_bytes!("../../tests/fixtures/assets/png/libpng-test.png");
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
 
@@ -927,7 +927,7 @@ pub mod tests {
 
     #[test]
     fn test_write_cai_data_to_stream_wrong_format() {
-        let source = include_bytes!("../../tests/fixtures/C.jpg");
+        let source = include_bytes!("../../tests/fixtures/assets/jpeg/C.jpg");
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
 
@@ -941,7 +941,7 @@ pub mod tests {
 
     #[test]
     fn test_stream_object_locations() {
-        let source = include_bytes!("../../tests/fixtures/exp-test1.png");
+        let source = include_bytes!("../../tests/fixtures/assets/png/exp-test1.png");
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
         let cai_pos = png_io
@@ -968,7 +968,7 @@ pub mod tests {
 
     #[test]
     fn test_stream_object_locations_adds_offsets_to_file_without_claims() {
-        let source = include_bytes!("../../tests/fixtures/libpng-test.png");
+        let source = include_bytes!("../../tests/fixtures/assets/png/libpng-test.png");
         let mut stream = Cursor::new(source.to_vec());
 
         let png_io = PngIO {};
@@ -998,7 +998,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa_from_stream() {
-        let source = crate::utils::test::fixture_path("exp-test1.png");
+        let source = crate::utils::test::fixture_path("assets/png/exp-test1.png");
 
         let source_bytes = std::fs::read(source).unwrap();
         let mut source_stream = Cursor::new(source_bytes);

@@ -16,16 +16,16 @@ use std::io::Cursor;
 use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{assets::test_asset, fixtures_path, test_signer, unescape_json};
+use common::{asset::Asset, test_signer, unescape_json};
 use insta::assert_json_snapshot;
 
 #[test]
 fn test_builder_ca_jpg() -> Result<()> {
-    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let manifest_def = std::fs::read_to_string("../tests/fixtures/simple_manifest.json")?;
     let mut builder = Builder::from_json(&manifest_def)?;
 
     let format = "image/jpeg";
-    let mut source = test_asset("jpeg/CA.jpg")?;
+    let mut source = Asset::exactly("jpeg/CA.jpg")?;
 
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&test_signer(), format, &mut source, &mut dest)?;

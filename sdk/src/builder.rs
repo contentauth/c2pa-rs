@@ -855,8 +855,8 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
-    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/IMG_0003.jpg");
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]

@@ -1182,7 +1182,7 @@ pub mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_xmp_read_write_stream() {
-        let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
+        let source_bytes = include_bytes!("../../tests/fixtures/assets/jpeg/CA.jpg");
 
         let test_msg = "this some test xmp data";
         let handler = JpegIO::new("");

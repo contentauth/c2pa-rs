@@ -16,10 +16,7 @@ use std::io::Cursor;
 use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{
-    assets::{test_asset_kind, test_asset_kinds, Asset},
-    test_signer, unescape_json,
-};
+use common::{asset::Asset, test_signer, unescape_json};
 use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
 fn test_asset_io(assets: Vec<Asset>) -> Result<()> {
@@ -54,7 +51,7 @@ fn test_asset_io_data_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("data_hash");
     settings.bind(|| {
-        test_asset_io(test_asset_kinds(&[
+        test_asset_io(Asset::all(&[
             "jpeg", "png", "riff", "svg", "mp3", "tiff", "gif",
         ])?)
     })
@@ -65,7 +62,7 @@ fn test_asset_io_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
-    settings.bind(|| test_asset_io(test_asset_kind("bmff")?))
+    settings.bind(|| test_asset_io(Asset::every("bmff")?))
 }
 
 #[test]

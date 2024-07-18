@@ -1916,7 +1916,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -1958,7 +1958,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/libpng-test.png");
+        let image = include_bytes!("../tests/fixtures/assets/png/libpng-test.png");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -1994,7 +1994,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/mars.webp");
+        let image = include_bytes!("../tests/fixtures/assets/riff/mars.webp");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -2029,7 +2029,7 @@ pub(crate) mod tests {
     #[test]
     fn test_embed_stream() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut stream = std::io::Cursor::new(image.to_vec());
         // let mut image = image.to_vec();
@@ -2067,7 +2067,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_from_memory_async() {
         use crate::{assertions::User, utils::test::temp_async_signer};
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut stream = std::io::Cursor::new(image.to_vec());
         // let mut image = image.to_vec();
@@ -2325,7 +2325,7 @@ pub(crate) mod tests {
 
         println!("{manifest}");
 
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut input = std::io::Cursor::new(image.to_vec());
 
@@ -2384,7 +2384,7 @@ pub(crate) mod tests {
 
         println!("{manifest}");
 
-        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
@@ -2689,7 +2689,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_box_hash_embeddable_manifest() {
-        let asset_bytes = include_bytes!("../tests/fixtures/boxhash.jpg");
+        let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/boxhash.jpg");
         let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
         let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
 

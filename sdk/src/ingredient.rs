@@ -1495,7 +1495,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_stream_async_jpg() {
-        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
         let title = "Test Image";
         let format = "image/jpeg";
         let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1520,7 +1520,7 @@ mod tests {
     // Note this does not work from wasm32, due to validation issues
     #[cfg(not(target_arch = "wasm32"))]
     fn test_stream_jpg() {
-        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
         let title = "Test Image";
         let format = "image/jpeg";
         let mut ingredient = Ingredient::from_memory(format, image_bytes).expect("from_memory");
@@ -1537,7 +1537,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_stream_ogp() {
-        let image_bytes = include_bytes!("../tests/fixtures/XCA.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/XCA.jpg");
         let title = "XCA.jpg";
         let format = "image/jpeg";
         let mut ingredient = Ingredient::from_memory_async(format, image_bytes)
@@ -1563,7 +1563,7 @@ mod tests {
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
     #[cfg(not(target_arch = "wasm32"))]
     async fn test_jpg_cloud_from_memory() {
-        let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
@@ -1581,7 +1581,7 @@ mod tests {
     #[cfg_attr(not(any(target_arch = "wasm32", feature = "file_io")), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_jpg_cloud_from_memory_no_file_io() {
-        let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_memory_async(format, image_bytes)
             .await
@@ -1602,7 +1602,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
-        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_manifest_and_asset_bytes_async(

@@ -11,8 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub mod assets;
-mod compare_readers;
+pub mod asset;
 mod test_signer;
 
 use std::{fs, path::Path};
@@ -74,12 +73,6 @@ macro_rules! apply_sorted_output {
 
 pub fn unescape_json(str: &str) -> Result<serde_json::Value> {
     Ok(serde_json::from_str(str)?)
-}
-
-/// get a file from path without requiring file_io feature enabled in the c2pa crate
-pub fn reader_from_file<P: AsRef<Path>>(path: P) -> Result<Reader> {
-    let format = format_from_path(&path).ok_or(c2pa::Error::UnsupportedType)?;
-    Reader::from_stream(&format, &mut fs::File::open(&path)?)
 }
 
 #[allow(unused)]

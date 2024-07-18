@@ -242,7 +242,7 @@ impl ManifestStore {
     /// # use c2pa::Result;
     /// use c2pa::ManifestStore;
     /// # fn main() -> Result<()> {
-    /// let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
+    /// let manifest_store = ManifestStore::from_file("tests/fixtures/assets/jpeg/C.jpg")?;
     /// println!("{}", manifest_store);
     /// # Ok(())
     /// # }
@@ -264,7 +264,7 @@ impl ManifestStore {
     /// use c2pa::ManifestStore;
     /// # fn main() -> Result<()> {
     /// let manifest_store = ManifestStore::from_file_with_resources(
-    ///     "tests/fixtures/C.jpg",
+    ///     "tests/fixtures/assets/jpeg/C.jpg",
     ///     "../target/tmp/manifest_store",
     /// )?;
     /// println!("{}", manifest_store);
@@ -330,7 +330,7 @@ impl ManifestStore {
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
-    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
     ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(manifest_bytes, "image/jpg", asset_bytes)
@@ -369,7 +369,7 @@ impl ManifestStore {
     ///
     /// # fn main() -> Result<()> {
     /// #    async {
-    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+    ///         let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
     ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
     ///
     ///         let manifest_store = ManifestStore::from_manifest_and_asset_bytes(manifest_bytes, "image/jpg", asset_bytes)
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     fn manifest_report_image() {
-        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
 
         let manifest_store = ManifestStore::from_bytes("image/jpeg", image_bytes, true).unwrap();
 
@@ -509,7 +509,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_image_async() {
-        let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
+        let image_bytes = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
 
         let manifest_store = ManifestStore::from_bytes_async("image/jpeg", image_bytes, true)
             .await
@@ -530,7 +530,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn manifest_report_from_file() {
-        let manifest_store = ManifestStore::from_file("tests/fixtures/CA.jpg").unwrap();
+        let manifest_store = ManifestStore::from_file("tests/fixtures/assets/jpeg/CA.jpg").unwrap();
         println!("{manifest_store}");
 
         assert!(manifest_store.active_label().is_some());
@@ -547,7 +547,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
-        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
@@ -567,7 +567,7 @@ mod tests {
     #[cfg(feature = "v1_api")]
     fn manifest_report_from_file_with_resources() {
         let manifest_store = ManifestStore::from_file_with_resources(
-            "tests/fixtures/CIE-sig-CA.jpg",
+            "tests/fixtures/assets/jpeg/CIE-sig-CA.jpg",
             "../target/ms",
         )
         .expect("from_store_with_resources");
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     fn manifest_report_from_stream() {
-        let image_bytes: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+        let image_bytes: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
         let stream = std::io::Cursor::new(image_bytes);
         let manifest_store = ManifestStore::from_stream("image/jpeg", stream, true).unwrap();
         println!("{manifest_store}");
