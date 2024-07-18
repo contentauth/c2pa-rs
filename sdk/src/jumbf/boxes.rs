@@ -2712,7 +2712,7 @@ pub mod tests {
         assert_eq!(jumb_header.name, BoxType::Jumb);
 
         let jumd_header = BoxReader::read_header(&mut buf_reader).unwrap();
-        assert_eq!(jumd_header.size, 0x1E);
+        assert_eq!(jumd_header.size, 0x1e);
         assert_eq!(jumd_header.name, BoxType::Jumd);
 
         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
