@@ -2700,27 +2700,25 @@ pub mod tests {
     }
 
     // ANCHOR: DescriptionBox Reader
-    /*
-     #[test]
-     fn desc_box_reader() {
-         const JUMD_DESC: &str =
-             "000000256A756D62000000216A756D646332706100110010800000AA00389B7103633270612E763100";
-         let buffer = hex::decode(JUMD_DESC).expect("decode failed");
-         let mut buf_reader = Cursor::new(buffer);
+    #[test]
+    fn desc_box_reader() {
+        const JUMD_DESC: &str =
+            "000000226A756D620000001E6A756D646332706100110010800000AA00389B71036332706100";
+        let buffer = hex::decode(JUMD_DESC).expect("decode failed");
+        let mut buf_reader = Cursor::new(buffer);
 
-         let jumb_header = BoxReader::read_header(&mut buf_reader).unwrap();
-         assert_eq!(jumb_header.size, 0x25);
-         assert_eq!(jumb_header.name, BoxType::JumbBox);
+        let jumb_header = BoxReader::read_header(&mut buf_reader).unwrap();
+        assert_eq!(jumb_header.size, 0x22);
+        assert_eq!(jumb_header.name, BoxType::Jumb);
 
-         let jumd_header = BoxReader::read_header(&mut buf_reader).unwrap();
-         assert_eq!(jumd_header.size, 0x21);
-         assert_eq!(jumd_header.name, BoxType::JumdBox);
+        let jumd_header = BoxReader::read_header(&mut buf_reader).unwrap();
+        assert_eq!(jumd_header.size, 0x1E);
+        assert_eq!(jumd_header.name, BoxType::Jumd);
 
-         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
-         assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
-         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
-     }
-    */
+        let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
+        assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
+        assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
+    }
 
     // ANCHOR: JSON Content Box Reader
     #[test]
