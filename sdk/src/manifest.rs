@@ -1402,26 +1402,26 @@ impl std::fmt::Display for Manifest {
 pub struct SignatureInfo {
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    alg: Option<SigningAlg>,
+    pub alg: Option<SigningAlg>,
     /// human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
-    issuer: Option<String>,
+    pub issuer: Option<String>,
 
     /// The serial number of the certificate
     #[serde(skip_serializing_if = "Option::is_none")]
-    cert_serial_number: Option<String>,
+    pub cert_serial_number: Option<String>,
 
     /// the time the signature was created
     #[serde(skip_serializing_if = "Option::is_none")]
-    time: Option<String>,
+    pub time: Option<String>,
+
+    /// revocation status of the certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_status: Option<bool>,
 
     /// the cert chain for this claim
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
-
-    /// revocation status of the certificate
-    #[serde(skip_serializing_if = "Option::is_none")]
-    revocation_status: Option<bool>,
 }
 
 impl SignatureInfo {
@@ -2288,14 +2288,24 @@ pub(crate) mod tests {
             "format": "text/plain",
             "relationship": "inputTo",
             "data": {
-              "format": "text/plain",
-              "identifier": "prompt.txt",
-              "data_types": [
-                {
-                  "type": "c2pa.types.generator.prompt"
-                }
-              ]
+                "format": "text/plain",
+                "identifier": "prompt.txt",
+                "data_types": [
+                    {
+                    "type": "c2pa.types.generator.prompt"
+                    }
+                ]
             }
+        },
+        {
+            "title": "Custom AI Model",
+            "format": "application/octet-stream",
+            "relationship": "inputTo",
+            "data_types": [
+                {
+                    "type": "c2pa.types.model"
+                }
+            ]
           }
         ]
     }"#;
@@ -2347,7 +2357,8 @@ pub(crate) mod tests {
         let (format, image) = m.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
-        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients().len(), 3);
+        // Validate a prompt ingredient (with data field)
         assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
         assert!(m.ingredients()[1].data_ref().is_some());
         assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
@@ -2356,6 +2367,14 @@ pub(crate) mod tests {
             m.ingredients()[1].resources().get(id).unwrap().into_owned(),
             b"pirate with bird on shoulder"
         );
+        // Validate a custom AI model ingredient.
+        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
+        assert_eq!(
+            m.ingredients()[2].data_types().unwrap()[0].asset_type,
+            "c2pa.types.model"
+        );
+
         // println!("{manifest_store}");
     }
 
@@ -2400,7 +2419,7 @@ pub(crate) mod tests {
         let (format, image) = m.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
-        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients().len(), 3);
         assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
         assert!(m.ingredients()[1].data_ref().is_some());
         assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
@@ -2408,6 +2427,13 @@ pub(crate) mod tests {
         assert_eq!(
             m.ingredients()[1].resources().get(id).unwrap().into_owned(),
             b"pirate with bird on shoulder"
+        );
+        // Validate a custom AI model ingredient.
+        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
+        assert_eq!(
+            m.ingredients()[2].data_types().unwrap()[0].asset_type,
+            "c2pa.types.model"
         );
         // println!("{manifest_store}");
     }

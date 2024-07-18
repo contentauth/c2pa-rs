@@ -44,10 +44,11 @@ use crate::{
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    hashed_uri::HashedUri,
     jumbf::{
         self,
         boxes::*,
-        labels::{to_absolute_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
+        labels::{ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE},
     },
     jumbf_io::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
@@ -416,25 +417,14 @@ impl Store {
     /// Relative paths will use the provenance claim to resolve the DataBox.d
     pub fn get_data_box_from_uri_and_claim(
         &self,
-        uri: &str,
+        hr: &HashedUri,
         target_claim_label: &str,
     ) -> Option<&DataBox> {
-        match jumbf::labels::manifest_label_from_uri(uri) {
+        match jumbf::labels::manifest_label_from_uri(&hr.url()) {
             Some(label) => self.get_claim(&label), // use the manifest label from the thumbnail uri
             None => self.get_claim(target_claim_label), //  relative so use the target claim label
         }
-        .and_then(|claim| {
-            let uri = if target_claim_label != self.label() {
-                to_absolute_uri(target_claim_label, uri)
-            } else {
-                uri.to_owned()
-            };
-            claim
-                .databoxes()
-                .iter()
-                .find(|(h, _d)| h.url() == uri)
-                .map(|(_sh, data_box)| data_box)
-        })
+        .and_then(|claim| claim.get_databox(hr))
     }
 
     // Returns placeholder that will be searched for and replaced
@@ -1234,7 +1224,7 @@ impl Store {
 
                     let salt = db_desc_box.get_salt();
 
-                    claim.put_data_box(&label, db_cbor.cbor(), salt)?;
+                    claim.put_databox(&label, db_cbor.cbor(), salt)?;
                 }
             }
 
@@ -3439,6 +3429,7 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, Action, Actions, BoxHash, Uuid},
         claim::AssertionStoreJsonFormat,
+        hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
         status_tracker::*,
         utils::{
@@ -3943,14 +3934,15 @@ pub mod tests {
 
         for (uri, db) in claim1.databoxes() {
             // test full path
-            assert!(claim1.get_data_box(&uri.url()).is_some());
+            assert!(claim1.get_databox(uri).is_some());
 
             // test with relative path
             let rel_path = to_relative_uri(&uri.url());
-            assert!(claim1.get_data_box(&rel_path).is_some());
+            let rel_hr = HashedUri::new(rel_path, uri.alg(), &uri.hash());
+            assert!(claim1.get_databox(&rel_hr).is_some());
 
             // test values
-            assert_eq!(db, claim1.get_data_box(&uri.url()).unwrap());
+            assert_eq!(db, claim1.get_databox(uri).unwrap());
         }
     }
 
@@ -5672,7 +5664,7 @@ pub mod tests {
         // my manifest callback handler
         // set some data needed by callback to do what it needs to
         // for this example lets tell it which jumbf box we can to change
-        let my_assertion_path = to_normalized_uri(&to_absolute_uri(
+        let my_assertion_path = to_normalized_uri(&jumbf::labels::to_absolute_uri(
             &store.provenance_label().unwrap(),
             &my_assertion.url(),
         ));

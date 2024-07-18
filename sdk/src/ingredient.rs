@@ -1031,7 +1031,7 @@ impl Ingredient {
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
-                    .get_data_box_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                    .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
                             &hashed_uri.url(),
@@ -1057,7 +1057,7 @@ impl Ingredient {
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let data_box = store
-                .get_data_box_from_uri_and_claim(&data_uri.url(), claim_label)
+                .get_data_box_from_uri_and_claim(data_uri, claim_label)
                 .ok_or_else(|| {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                     Error::AssertionMissing {
@@ -1082,6 +1082,7 @@ impl Ingredient {
         ingredient.metadata = ingredient_assertion.metadata;
         ingredient.description = ingredient_assertion.description;
         ingredient.informational_uri = ingredient_assertion.informational_uri;
+        ingredient.data_types = ingredient_assertion.data_types;
         Ok(ingredient)
     }
 
@@ -1265,6 +1266,7 @@ impl Ingredient {
         ingredient_assertion
             .informational_uri
             .clone_from(&self.informational_uri);
+        ingredient_assertion.data_types.clone_from(&self.data_types);
         claim.add_assertion(&ingredient_assertion)
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "make_test_images"
-version = "0.32.4"
+version = "0.32.7"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
@@ -13,9 +13,9 @@ c2pa = { path = "../sdk", default-features = false, features = [
 	"openssl_sign",
 	"unstable_api",
 ] }
-env_logger = "0.10"
-log = "0.4.8"
-image = { version = "0.24.7", default-features = false, features = [
+env_logger = "0.11"
+log = "0.4.8" 
+image = { version = "0.25.1", default-features = false, features = [
 	"jpeg",
 	"png",
 ] }
