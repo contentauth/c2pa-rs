@@ -1082,6 +1082,7 @@ impl Ingredient {
         ingredient.metadata = ingredient_assertion.metadata;
         ingredient.description = ingredient_assertion.description;
         ingredient.informational_uri = ingredient_assertion.informational_uri;
+        ingredient.data_types = ingredient_assertion.data_types;
         Ok(ingredient)
     }
 
@@ -1265,6 +1266,7 @@ impl Ingredient {
         ingredient_assertion
             .informational_uri
             .clone_from(&self.informational_uri);
+        ingredient_assertion.data_types.clone_from(&self.data_types);
         claim.add_assertion(&ingredient_assertion)
     }
 
