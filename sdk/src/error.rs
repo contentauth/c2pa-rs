@@ -263,6 +263,12 @@ pub enum Error {
 
     // --- third-party errors ---
     #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
 
     #[error(transparent)]

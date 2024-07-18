@@ -45,6 +45,9 @@ pub struct ManifestStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     /// ValidationStatus generated when loading the ManifestStore from an asset
     validation_status: Option<Vec<ValidationStatus>>,
+    #[serde(skip)]
+    /// The internal store representing the manifest store
+    store: Store,
 }
 
 impl ManifestStore {
@@ -54,6 +57,7 @@ impl ManifestStore {
             active_manifest: None,
             manifests: HashMap::<String, Manifest>::new(),
             validation_status: None,
+            store: Store::new(),
         }
     }
 
@@ -112,7 +116,7 @@ impl ManifestStore {
     }
 
     /// creates a ManifestStore from a Store with validation
-    pub(crate) fn from_store(store: &Store, validation_log: &impl StatusTracker) -> ManifestStore {
+    pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
         Self::from_store_impl(
             store,
             validation_log,
@@ -124,7 +128,7 @@ impl ManifestStore {
     /// creates a ManifestStore from a Store writing resources to resource_path
     #[cfg(feature = "file_io")]
     pub(crate) fn from_store_with_resources(
-        store: &Store,
+        store: Store,
         validation_log: &impl StatusTracker,
         resource_path: &Path,
     ) -> ManifestStore {
@@ -133,15 +137,17 @@ impl ManifestStore {
 
     // internal implementation of from_store
     fn from_store_impl(
-        store: &Store,
+        store: Store,
         validation_log: &impl StatusTracker,
         #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> ManifestStore {
-        let mut statuses = status_for_store(store, validation_log);
+        let mut statuses = status_for_store(&store, validation_log);
 
         let mut manifest_store = ManifestStore::new();
         manifest_store.active_manifest = store.provenance_label();
+        manifest_store.store = store;
 
+        let store = &manifest_store.store;
         for claim in store.claims() {
             let manifest_label = claim.label();
             #[cfg(feature = "file_io")]
@@ -167,13 +173,17 @@ impl ManifestStore {
         manifest_store
     }
 
+    pub(crate) fn store(&self) -> &Store {
+        &self.store
+    }
+
     /// Creates a new Manifest Store from a Manifest
     #[allow(dead_code)]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         use crate::status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
         Ok(Self::from_store_impl(
-            &store,
+            store,
             &OneShotStatusTracker::new(),
             #[cfg(feature = "file_io")]
             manifest.resources().base_path(),
@@ -186,7 +196,7 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
 
         Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
-            .map(|store| Self::from_store(&store, &validation_log))
+            .map(|store| Self::from_store(store, &validation_log))
     }
 
     /// Generate a Store from a format string and stream.
@@ -221,7 +231,7 @@ impl ManifestStore {
                 .await?;
             }
         }
-        Ok(Self::from_store(&store, &validation_log))
+        Ok(Self::from_store(store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -242,7 +252,7 @@ impl ManifestStore {
         let mut validation_log = DetailedStatusTracker::new();
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
-        Ok(Self::from_store(&store, &validation_log))
+        Ok(Self::from_store(store, &validation_log))
     }
 
     #[cfg(feature = "file_io")]
@@ -270,7 +280,7 @@ impl ManifestStore {
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store_with_resources(
-            &store,
+            store,
             &validation_log,
             resource_path.as_ref(),
         ))
@@ -287,7 +297,7 @@ impl ManifestStore {
 
         Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
             .await
-            .map(|store| Self::from_store(&store, &validation_log))
+            .map(|store| Self::from_store(store, &validation_log))
     }
 
     /// Loads a ManifestStore from an init segment and fragment.  This
@@ -309,7 +319,7 @@ impl ManifestStore {
             &mut validation_log,
         )
         .await
-        .map(|store| Self::from_store(&store, &validation_log))
+        .map(|store| Self::from_store(store, &validation_log))
     }
 
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
@@ -348,7 +358,7 @@ impl ManifestStore {
         )
         .await?;
 
-        Ok(Self::from_store(&store, &validation_log))
+        Ok(Self::from_store(store, &validation_log))
     }
 
     /// Synchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
@@ -384,7 +394,7 @@ impl ManifestStore {
             &mut validation_log,
         )?;
 
-        Ok(Self::from_store(&store, &validation_log))
+        Ok(Self::from_store(store, &validation_log))
     }
 }
 
@@ -463,7 +473,7 @@ mod tests {
     fn manifest_report() {
         let store = create_test_store().expect("creating test store");
 
-        let manifest_store = ManifestStore::from_store(&store, &OneShotStatusTracker::new());
+        let manifest_store = ManifestStore::from_store(store, &OneShotStatusTracker::new());
         assert!(manifest_store.active_manifest.is_some());
         assert!(!manifest_store.manifests.is_empty());
         let manifest = manifest_store.get_active().unwrap();

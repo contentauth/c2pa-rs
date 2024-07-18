@@ -29,7 +29,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The library requires **Rust version 1.73.0** or newer.
+The library requires **Rust version 1.74.0** or newer.
 
 ### Supported platforms
 
@@ -42,23 +42,25 @@ The library has been tested on the following operating systems:
 
 ## Supported file formats
 
- | Extensions    | MIME type                                           |
- | ------------- | --------------------------------------------------- |
- | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`                 |
- | `dng`         | `image/x-adobe-dng`                                 |
- | `heic`        | `image/heic`                                        |
- | `heif`        | `image/heif`                                        |
- | `jpg`, `jpeg` | `image/jpeg`                                        |
- | `m4a`         | `audio/mp4`                                         |
- | `mp4`         | `video/mp4`, `application/mp4`                      |
- | `mov`         | `video/quicktime`                                   |
- | `png`         | `image/png`                                         |
- | `svg`         | `image/svg+xml`                                     |
- | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/wav`                                         |
- | `webp`        | `image/webp`                                        |
+ | Extensions    | MIME type                                                                     |
+ | ------------- | ----------------------------------------------------------------------------- |
+ | `avi`         | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`|
+ | `avif`        | `image/avif`                                                                  |
+ | `c2pa`        | `application/x-c2pa-manifest-store`                                           |
+ | `dng`         | `image/x-adobe-dng`                                                           |
+ | `heic`        | `image/heic`                                                                  |
+ | `heif`        | `image/heif`                                                                  |
+ | `jpg`, `jpeg` | `image/jpeg`                                                                  |
+ | `m4a`         | `audio/mp4`                                                                   |
+ | `mp4`         | `video/mp4`, `application/mp4`                                                |
+ | `mov`         | `video/quicktime`                                                             |
+ | `png`         | `image/png`                                                                   |
+ | `svg`         | `image/svg+xml`                                                               |
+ | `tif`,`tiff`  | `image/tiff`                                                                  |
+ | `wav`         | `audio/wav`                                                                   |
+ | `webp`        | `image/webp`                                                                  |
+ | `mp3`         | `audio/mpeg`                                                                  |
+ | `gif`         | `image/gif`                                                                   |
 
 ## Usage
 
@@ -66,7 +68,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.32.1"
+c2pa = "0.32.7"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.

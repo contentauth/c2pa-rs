@@ -28,7 +28,7 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
     cose_validator::{get_signing_info, verify_cose, verify_cose_async},
@@ -254,6 +254,9 @@ pub struct Claim {
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Vec<Metadata>>,
+
     #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 }
@@ -341,6 +344,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -375,6 +379,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -532,6 +537,18 @@ impl Claim {
 
     pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
         self.claim_generator_info.as_deref()
+    }
+
+    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+        match self.metadata.as_mut() {
+            Some(md_vec) => md_vec.push(md),
+            None => self.metadata = Some([md].to_vec()),
+        }
+        self
+    }
+
+    pub fn metadata(&self) -> Option<&[Metadata]> {
+        self.metadata.as_deref()
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -716,15 +733,8 @@ impl Claim {
         &self.data_boxes
     }
 
-    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
-        self.data_boxes
-            .iter()
-            .find(|(h, _d)| h.url() == uri)
-            .map(|(_sh, data_box)| data_box)
-    }
-
     /// Load known VC with optional salt
-    pub(crate) fn put_data_box(
+    pub(crate) fn put_databox(
         &mut self,
         label: &str,
         databox_cbor: &[u8],
@@ -748,16 +758,16 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+    pub fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
         // normalize uri
-        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(&hr.url()) {
             if manifest != self.label() {
                 return None;
             }
-            uri.to_owned()
+            hr.url()
         } else {
             // make a full path
-            if let Some(box_name) = box_name_from_uri(uri) {
+            if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
                 return None;
@@ -765,7 +775,7 @@ impl Claim {
         };
 
         self.data_boxes.iter().find_map(|x| {
-            if x.0.url() == normalized_uri {
+            if x.0.url() == normalized_uri && vec_compare(&x.0.hash(), &hr.hash()) {
                 Some(&x.1)
             } else {
                 None
@@ -862,7 +872,7 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    fn update_assertion<MatchFn, PatchFn>(
+    pub(crate) fn update_assertion<MatchFn, PatchFn>(
         &mut self,
         replace_with: Assertion,
         match_fn: MatchFn,
@@ -913,6 +923,10 @@ impl Claim {
 
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
+
+        // clear original since content has changed
+        self.clear_data();
+
         Ok(())
     }
 
@@ -1617,6 +1631,10 @@ impl Claim {
             Some(ref ob) => Ok(ob.clone()),
             None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
+    }
+
+    fn clear_data(&mut self) {
+        self.original_bytes = None;
     }
 
     /// Create claim from binary data (not including assertions).

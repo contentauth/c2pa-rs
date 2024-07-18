@@ -28,7 +28,13 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "unstable_api")]
 use crate::asset_io::CAIRead;
-use crate::{assertions::AssetType, claim::Claim, hashed_uri::HashedUri, Error, Result};
+use crate::{
+    assertions::{labels, AssetType},
+    claim::Claim,
+    hashed_uri::HashedUri,
+    jumbf::labels::assertion_label_from_uri,
+    Error, Result,
+};
 
 /// Function that is used by serde to determine whether or not we should serialize
 /// resources based on the `serialize_resources` flag.
@@ -68,8 +74,7 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let uri = crate::jumbf::labels::to_absolute_uri(claim.label(), &h.url());
-                let data_box = claim.find_databox(&uri).ok_or(Error::MissingDataBox)?;
+                let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
                 let resource_ref =
                     resources.add_with(&h.url(), &data_box.format, data_box.data.clone())?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
@@ -93,6 +98,8 @@ impl From<HashedUri> for UriOrResource {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// A reference to a resource to be used in JSON serialization.
+///
+/// The underlying data can be read as a stream via [`Reader::resource_to_stream`][crate::Reader::resource_to_stream].
 pub struct ResourceRef {
     /// The mime type of the referenced resource.
     pub format: String,
@@ -361,6 +368,7 @@ impl Default for ResourceStore {
 
 #[cfg(feature = "unstable_api")]
 pub trait ResourceResolver {
+    /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 
@@ -371,6 +379,20 @@ impl ResourceResolver for ResourceStore {
         let cursor = std::io::Cursor::new(data);
         Ok(Box::new(cursor))
     }
+}
+
+pub fn mime_from_uri(uri: &str) -> String {
+    if let Some(label) = assertion_label_from_uri(uri) {
+        if label.starts_with(labels::THUMBNAIL) {
+            // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
+            if let Some(ext) = label.rsplit('.').next() {
+                return format!("image/{ext}");
+            }
+        }
+    }
+
+    // Unknown binary data.
+    String::from("application/octet-stream")
 }
 
 #[cfg(test)]
@@ -420,10 +442,10 @@ mod tests {
 
         let mut builder = Builder::from_json(json).expect("from json");
         builder
-            .add_resource("abc123", &mut Cursor::new(value))
+            .add_resource("abc123", Cursor::new(value))
             .expect("add_resource");
         builder
-            .add_resource("cba321", &mut Cursor::new(value))
+            .add_resource("cba321", Cursor::new(value))
             .expect("add_resource");
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
