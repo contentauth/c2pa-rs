@@ -17,7 +17,11 @@ use std::collections::HashMap;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{assertions::labels, Assertion, AssertionBase, AssertionJson, Error, Result};
+use crate::{
+    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertions::labels,
+    Error, Result,
+};
 
 /// The EXIF assertion as defined in the C2PA spec section 17.13
 ///  See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_exif_information>
@@ -86,7 +90,7 @@ impl Exif {
                 v.push(value);
                 self
             }
-            None => self.insert(&key, &Vec::from([value]))?,
+            None => self.insert(&key, Vec::from([value]))?,
         })
     }
 

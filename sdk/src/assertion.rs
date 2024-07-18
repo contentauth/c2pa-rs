@@ -236,7 +236,7 @@ impl Assertion {
     }
 
     pub(crate) fn set_content_type(mut self, content_type: &str) -> Self {
-        self.content_type = content_type.to_owned();
+        content_type.clone_into(&mut self.content_type);
         self
     }
 
@@ -471,6 +471,7 @@ impl Assertion {
     }
 }
 
+#[allow(dead_code)] // TODO: temp, see #498
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct JsonAssertionData {
     label: String,
@@ -562,6 +563,21 @@ impl AssertionDecodeError {
             source: source.into(),
         }
     }
+
+    #[cfg(feature = "unstable_api")]
+    pub(crate) fn from_err<S: Into<AssertionDecodeErrorCause>>(
+        label: String,
+        version: Option<usize>,
+        content_type: String,
+        source: S,
+    ) -> Self {
+        Self {
+            label,
+            version,
+            content_type,
+            source: source.into(),
+        }
+    }
 }
 
 impl std::fmt::Debug for AssertionDecodeError {
@@ -595,7 +611,7 @@ pub enum AssertionDecodeErrorCause {
     #[error("the assertion version is too new: expected no later than {max}, found {found}")]
     AssertionTooNew { max: usize, found: usize },
 
-    /// Binary data could not be interepreted as UTF-8.
+    /// Binary data could not be interpreted as UTF-8.
     #[error("binary data could not be interpreted as UTF-8")]
     BinaryDataNotUtf8,
 
@@ -625,7 +641,7 @@ pub mod tests {
             "left": 0,
             "right": 2000,
             "top": 1000,
-            "botton": 4000
+            "bottom": 4000
         }"#;
         let json = AssertionData::Json(test_json.to_string());
         let json2 = AssertionData::Json(test_json.to_string());

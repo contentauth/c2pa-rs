@@ -13,41 +13,54 @@
 
 #[cfg(feature = "openssl_sign")]
 mod rsa_signer;
+#[cfg(feature = "openssl_sign")]
 pub(crate) use rsa_signer::RsaSigner;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 mod rsa_validator;
+#[cfg(feature = "openssl")]
 pub(crate) use rsa_validator::RsaValidator;
 
 #[cfg(feature = "openssl_sign")]
 mod ec_signer;
+#[cfg(feature = "openssl_sign")]
 pub(crate) use ec_signer::EcSigner;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 mod ec_validator;
+#[cfg(feature = "openssl")]
 pub(crate) use ec_validator::EcValidator;
 
 #[cfg(feature = "openssl_sign")]
 mod ed_signer;
+#[cfg(feature = "openssl_sign")]
 pub(crate) use ed_signer::EdSigner;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 mod ed_validator;
+#[cfg(feature = "openssl")]
 pub(crate) use ed_validator::EdValidator;
 
+#[cfg(feature = "openssl")]
+mod openssl_trust_handler;
 #[cfg(test)]
 pub(crate) mod temp_signer;
+
+#[cfg(feature = "openssl")]
+pub(crate) use openssl_trust_handler::verify_trust;
+#[cfg(feature = "openssl")]
+pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
 pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     {
         if certs.len() > 1 {
@@ -71,12 +84,13 @@ pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     }
 }
 
-#[cfg(not(feature = "openssl_sign"))]
+#[cfg(not(feature = "openssl"))]
 pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     true
 }
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "openssl")]
+#[allow(dead_code)]
 pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     let mut certs: Vec<X509> = Vec::new();
     for cert_der in cert_ders {
@@ -90,7 +104,7 @@ pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     check_chain_order(&certs)
 }
 
-#[cfg(not(feature = "openssl_sign"))]
+#[cfg(not(feature = "openssl"))]
 pub(crate) fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     true
 }

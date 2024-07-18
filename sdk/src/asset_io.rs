@@ -12,8 +12,8 @@
 // each license.
 
 use std::{
-    fmt,
-    io::{Read, Seek, Write},
+    fmt, fs,
+    io::{Cursor, Read, Seek, Write},
     path::Path,
 };
 
@@ -33,24 +33,22 @@ impl fmt::Display for HashBlockObjectType {
         write!(f, "{self:?}")
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct HashObjectPositions {
     pub offset: usize, // offset from beginning of file to the beginning of object
     pub length: usize, // length of object
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
-// Disable `Send` for wasm32 since we are not sending data across threads
-#[cfg(target_arch = "wasm32")]
-pub trait CAIRead: Read + Seek {}
-#[cfg(not(target_arch = "wasm32"))]
 pub trait CAIRead: Read + Seek + Send {}
 
-impl CAIRead for std::fs::File {}
-impl CAIRead for std::io::Cursor<&[u8]> {}
-impl CAIRead for std::io::Cursor<&mut [u8]> {}
-impl CAIRead for std::io::Cursor<Vec<u8>> {}
-impl CAIRead for NamedTempFile {}
+impl<T> CAIRead for T where T: Read + Seek + Send {}
+
+impl From<String> for Box<dyn CAIRead> {
+    fn from(val: String) -> Self {
+        Box::new(Cursor::new(val))
+    }
+}
 
 // Helper struct to create a concrete type for CAIRead when
 // that is required.  For example a function defined like this
@@ -75,10 +73,7 @@ impl Seek for CAIReadWrapper<'_> {
 
 pub trait CAIReadWrite: CAIRead + Write {}
 
-impl CAIReadWrite for std::fs::File {}
-impl CAIReadWrite for std::io::Cursor<&mut [u8]> {}
-impl CAIReadWrite for std::io::Cursor<Vec<u8>> {}
-impl CAIReadWrite for NamedTempFile {}
+impl<T> CAIReadWrite for T where T: CAIRead + Write {}
 
 // Helper struct to create a concrete type for CAIReadWrite when
 // that is required. For example a function defined like this
@@ -164,6 +159,7 @@ pub trait AssetIO: Sync + Send {
     }
 
     // Return entire CAI block as Vec<u8>
+    #[allow(dead_code)]
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
 
     // Write the CAI block to an asset
@@ -173,9 +169,11 @@ pub trait AssetIO: Sync + Send {
     /// If the offsets exist return the start of those locations other it should
     /// return the calculated location of when it should start.  There may still be a
     /// length if the format contains extra header information for example.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
 
     // Remove entire C2PA manifest store from asset
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
 
     // List of supported extensions and mime types
@@ -184,6 +182,7 @@ pub trait AssetIO: Sync + Send {
     /// OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
@@ -212,6 +211,7 @@ pub trait AssetPatch {
     // Patches an existing manifest store with new manifest store.
     // Only existing manifest stores of the same size may be patched
     // since any other changes will invalidate asset hashes.
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
 }
 
@@ -227,7 +227,7 @@ pub trait AssetBoxHash {
 
 // Type of remote reference to embed.  Some of the listed
 // emums are for future uses and experiments.
-#[allow(unused_variables)]
+#[allow(dead_code)]
 pub enum RemoteRefEmbedType {
     Xmp(String),
     StegoS(String),
@@ -240,6 +240,7 @@ pub enum RemoteRefEmbedType {
 // all embedding choices need be supported.
 pub trait RemoteRefEmbed {
     // Embed RemoteRefEmbedType into the asset
+    #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
     // Embed RemoteRefEmbedType into the asset stream
     fn embed_reference_to_stream(
@@ -256,4 +257,30 @@ pub trait RemoteRefEmbed {
 pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
+}
+
+/// Utility function to rename a file or, if the provided paths are on separate mounting points,
+/// move a file from a temporary location to its final location.
+///
+/// If the rename is not possible due to cross volume references, the file will be copied to the
+/// final and then the temp file we be deleted.
+pub fn rename_or_move<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    // Clear temp flag for Windows.
+    let (_, path) = temp_file
+        .keep()
+        .map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+
+    // Move the temp_file to the asset's final path.
+    fs::rename(&path, asset_path.as_ref())
+        // Attempt to copy the file instead if the file's final location is on a different volume.
+        .or_else(|_| {
+            fs::copy(&path, asset_path).map(|_| ()).and_then(|_| {
+                // Remove the temporary file.
+                fs::remove_file(path)
+            })
+        })
+        .map_err(crate::Error::IoError)
 }

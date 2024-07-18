@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::convert::TryFrom;
-
 use async_generic::async_generic;
 use bcder::decode::Constructed;
 use coset::{sig_structure_data, ProtectedHeader};
@@ -98,7 +96,7 @@ pub(crate) fn cose_sigtst_to_tstinfos(
 
 /// internal only function to work around bug in serialization of TimeStampResponse
 /// so we just return the data directly
-#[cfg(feature = "openssl_sign")]
+#[cfg(not(target_arch = "wasm32"))]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
@@ -175,22 +173,19 @@ fn time_stamp_request_http(
 /// This is a wrapper around [time_stamp_request_http] that constructs the low-level
 /// ASN.1 request object with reasonable defaults.
 
-#[cfg(feature = "openssl_sign")]
 pub(crate) fn time_stamp_message_http(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
-) -> Result<Vec<u8>> {
-    use ring::rand::SecureRandom;
+) -> Result<crate::asn1::rfc3161::TimeStampReq> {
+    use rand::{thread_rng, Rng};
 
     let mut h = digest_algorithm.digester();
     h.update(message);
     let digest = h.finish();
 
     let mut random = [0u8; 8];
-    ring::rand::SystemRandom::new()
-        .fill(&mut random)
+    thread_rng()
+        .try_fill(&mut random)
         .map_err(|_| Error::CoseTimeStampGeneration)?;
 
     let request = crate::asn1::rfc3161::TimeStampReq {
@@ -205,7 +200,7 @@ pub(crate) fn time_stamp_message_http(
         extensions: None,
     };
 
-    time_stamp_request_http(url, headers, &request)
+    Ok(request)
 }
 
 pub struct TimeStampResponse(TimeStampResp);
@@ -220,7 +215,7 @@ impl std::ops::Deref for TimeStampResponse {
 
 impl TimeStampResponse {
     /// Whether the time stamp request was successful.
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
@@ -281,30 +276,39 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
     }
 }
 
-#[allow(unused_variables)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
+    message: &[u8],
 ) -> Result<Vec<u8>> {
-    #[cfg(feature = "openssl_sign")]
-    {
-        let ts = time_stamp_message_http(
-            url,
-            headers,
-            data,
-            x509_certificate::DigestAlgorithm::Sha256,
-        )?;
+    use crate::asn1::rfc3161::TimeStampReq;
+    let request = Constructed::decode(
+        bcder::decode::SliceSource::new(data),
+        bcder::Mode::Der,
+        TimeStampReq::take_from,
+    )
+    .map_err(|_err| Error::CoseTimeStampGeneration)?;
 
-        // sanity check
-        verify_timestamp(&ts, data)?;
+    let ts = time_stamp_request_http(url, headers, &request)?;
 
-        Ok(ts)
-    }
-    #[cfg(not(feature = "openssl_sign"))]
-    {
-        Err(Error::WasmNoCrypto)
-    }
+    // sanity check
+    verify_timestamp(&ts, message)?;
+
+    Ok(ts)
+}
+
+#[allow(unused_variables)]
+pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>> {
+    use bcder::encode::Values;
+    let request = time_stamp_message_http(data, x509_certificate::DigestAlgorithm::Sha256)?;
+
+    let mut body = Vec::<u8>::new();
+    request
+        .encode_ref()
+        .write_encoded(bcder::Mode::Der, &mut body)?;
+    Ok(body)
 }
 
 pub fn gt_to_datetime(
@@ -408,16 +412,12 @@ impl Default for TstContainer {
 
 /// Wrap rfc3161 TimeStampRsp in COSE sigTst object
 pub fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
-    if cfg!(feature = "openssl_sign") {
-        let token = TstToken {
-            val: ts_data.to_vec(),
-        };
+    let token = TstToken {
+        val: ts_data.to_vec(),
+    };
 
-        let mut container = TstContainer::new();
-        container.add_token(token);
+    let mut container = TstContainer::new();
+    container.add_token(token);
 
-        container
-    } else {
-        TstContainer::new()
-    }
+    container
 }

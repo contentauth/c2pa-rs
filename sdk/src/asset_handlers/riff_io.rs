@@ -24,8 +24,9 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
+        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
+        RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
@@ -368,10 +369,7 @@ impl AssetIO for RiffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -672,6 +670,27 @@ pub mod tests {
             }
         }
         assert!(success)
+    }
+
+    #[test]
+    fn test_write_wav_stream() {
+        let more_data = "some more test data".as_bytes();
+        let mut source = File::open(fixture_path("sample1.wav")).unwrap();
+
+        let riff_io = RiffIO::new("wav");
+        if let Ok(temp_dir) = tempdir() {
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
+
+            let mut output_stream = File::create(&output).unwrap();
+
+            riff_io
+                .write_cai(&mut source, &mut output_stream, more_data)
+                .unwrap();
+
+            let mut source = File::open(output).unwrap();
+            let read_test_data = riff_io.read_cai(&mut source).unwrap();
+            assert!(vec_compare(more_data, &read_test_data));
+        }
     }
 
     #[test]

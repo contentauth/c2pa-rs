@@ -24,7 +24,7 @@ use x509_parser::der_parser::{
 
 use super::check_chain_order;
 use crate::{
-    error::{wrap_openssl_err, Error, Result},
+    error::{Error, Result},
     signer::ConfigurableSigner,
     Signer, SigningAlg,
 };
@@ -50,8 +50,8 @@ impl ConfigurableSigner for EcSigner {
         tsa_url: Option<String>,
     ) -> Result<Self> {
         let certs_size = signcert.len();
-        let pkey = EcKey::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
-        let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
+        let pkey = EcKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
+        let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
@@ -73,7 +73,7 @@ impl ConfigurableSigner for EcSigner {
 
 impl Signer for EcSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let key = PKey::from_ec_key(self.pkey.clone()).map_err(wrap_openssl_err)?;
+        let key = PKey::from_ec_key(self.pkey.clone()).map_err(Error::OpenSslError)?;
 
         let mut signer = match self.alg {
             SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
@@ -82,8 +82,8 @@ impl Signer for EcSigner {
             _ => return Err(Error::UnsupportedType),
         };
 
-        signer.update(data).map_err(wrap_openssl_err)?;
-        let der_sig = signer.sign_to_vec().map_err(wrap_openssl_err)?;
+        signer.update(data).map_err(Error::OpenSslError)?;
+        let der_sig = signer.sign_to_vec().map_err(Error::OpenSslError)?;
 
         der_to_p1363(&der_sig, self.alg)
     }
@@ -96,7 +96,7 @@ impl Signer for EcSigner {
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            let cert = c.to_der().map_err(Error::OpenSslError)?;
             certs.push(cert);
         }
 
@@ -197,7 +197,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
 
     #[test]
     fn es256_signer() {

@@ -129,6 +129,9 @@ pub enum Error {
     #[error("COSE certificate has been revoked")]
     CoseCertRevoked,
 
+    #[error("COSE certificate not trusted")]
+    CoseCertUntrusted,
+
     /// Unable to parse the time stamp from this signature.
     #[error("COSE time stamp could not be parsed")]
     CoseInvalidTimeStamp,
@@ -149,6 +152,9 @@ pub enum Error {
 
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
+
+    #[error("COSE Signer does not contain signing certificate")]
+    CoseNoCerts,
 
     #[error("WASM verifier error")]
     WasmVerifier,
@@ -210,10 +216,10 @@ pub enum Error {
     ResourceNotFound(String),
 
     #[error("XMP read error")]
-    XmpReadError,
+    XmpReadError(String),
 
     #[error("XMP write error")]
-    XmpWriteError,
+    XmpWriteError(String),
 
     #[error("XMP is not supported")]
     XmpNotSupported,
@@ -252,7 +258,16 @@ pub enum Error {
     #[error("could not generate XML")]
     XmlWriteError,
 
+    #[error("unknown algorithm")]
+    UnknownAlgorithm,
+
     // --- third-party errors ---
+    #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 
@@ -279,8 +294,3 @@ pub enum Error {
 
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(feature = "openssl_sign")]
-pub(crate) fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
-    Error::OpenSslError(err)
-}

@@ -15,21 +15,25 @@
 
 #![deny(missing_docs)]
 
+use std::io::Cursor;
+
 use async_generic::async_generic;
 use ciborium::value::Value;
 use coset::{
-    iana::{self},
+    iana::{self, EnumI64},
     CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
     TaggedCborSerializable,
 };
 
 use crate::{
     claim::Claim,
-    cose_validator::verify_cose,
+    cose_validator::{check_cert, verify_cose},
+    settings::get_settings_value,
     status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
+    trust_handler::TrustHandlerConfig,
     AsyncSigner, Error, Result, Signer, SigningAlg,
 };
 
@@ -50,27 +54,62 @@ use crate::{
 ///    will respond with an error.)
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
 ///    [`Error::CoseSignature`] if unable to validate.
+#[async_generic(async_signature(
+    claim_bytes: &[u8],
+    signer: &dyn AsyncSigner,
+    box_size: usize
+))]
 pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
-    // Generate and verify a CoseSign1 representation of the data.
-    cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
-        // Sanity check: Ensure that this signature is valid.
-        let mut cose_log = OneShotStatusTracker::new();
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size).await
+    };
 
-        match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
-            Ok(r) => {
-                if !r.validated {
-                    Err(Error::CoseSignature)
-                } else {
-                    Ok(sig)
+    match signed_bytes {
+        Ok(signed_bytes) => {
+            // Sanity check: Ensure that this signature is valid.
+            let mut cose_log = OneShotStatusTracker::new();
+            let passthrough_tb = crate::trust_handler::TrustPassThrough::new();
+
+            match verify_cose(
+                &signed_bytes,
+                claim_bytes,
+                b"",
+                true,
+                &passthrough_tb,
+                &mut cose_log,
+            ) {
+                Ok(r) => {
+                    if !r.validated {
+                        Err(Error::CoseSignature)
+                    } else {
+                        Ok(signed_bytes)
+                    }
                 }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(err),
         }
-    })
+        Err(err) => Err(err),
+    }
+}
+
+fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
+    // make sure signer certs are valid
+    let mut cose_log = OneShotStatusTracker::default();
+    let mut passthrough_tb = crate::trust_handler::TrustPassThrough::new();
+
+    // allow user EKUs through this check if configured
+    if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
+        let mut reader = Cursor::new(trust_config.as_bytes());
+        passthrough_tb.load_configuration(&mut reader)?;
+    }
+
+    check_cert(signing_cert, &passthrough_tb, &mut cose_log, None)
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
@@ -102,6 +141,14 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
            strings is used, with each certificate being in its own byte
            string.
     */
+
+    // make sure the signing cert is valid
+    let certs = signer.certs()?;
+    if let Some(signing_cert) = certs.first() {
+        signing_cert_valid(signing_cert)?;
+    } else {
+        return Err(Error::CoseNoCerts);
+    }
 
     let alg = signer.alg();
 
@@ -146,7 +193,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
 
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8], alg: SigningAlg))]
 fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
-    let protected_h = match alg {
+    let mut protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
         SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
         SigningAlg::Ps512 => HeaderBuilder::new().algorithm(iana::Algorithm::PS512),
@@ -157,7 +204,12 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
     };
 
     let certs = signer.certs()?;
-    let ocsp_val = signer.ocsp_val();
+
+    let ocsp_val = if _sync {
+        signer.ocsp_val()
+    } else {
+        signer.ocsp_val().await
+    };
 
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()), // single cert
@@ -170,14 +222,11 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
         }
     };
 
-    // enable this block of code when we want to switch to 1.3 headers
-    /*
     // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
     protected_h = protected_h.value(
         iana::HeaderParameter::X5Chain.to_i64(),
         sc_der_array_or_bytes.clone(),
     );
-    */
 
     let protected_header = protected_h.build();
     let ph2 = ProtectedHeader {
@@ -200,9 +249,6 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
     } else {
         HeaderBuilder::new()
     };
-
-    // generate old Cose header todo: remove this line when protected headers are enabled
-    unprotected_h = unprotected_h.text_value("x5chain".to_string(), sc_der_array_or_bytes);
 
     // set the ocsp responder response if available
     if let Some(ocsp) = ocsp_val {
@@ -315,6 +361,29 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
+    #[actix::test]
+    async fn test_sign_claim_async() {
+        use crate::{
+            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
+        };
+
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let signer = AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let box_size = signer.reserve_size();
+
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)
+            .await
+            .unwrap();
+
+        assert_eq!(cose_sign1.len(), box_size);
+    }
+
     struct BogusSigner {}
 
     impl BogusSigner {
@@ -342,6 +411,10 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
+
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
+        }
     }
 
     #[test]
@@ -355,8 +428,9 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
 
-        assert!(cose_sign1.is_err());
+        #[cfg(feature = "openssl")] // there is no verify on sign when openssl is disabled
+        assert!(_cose_sign1.is_err());
     }
 }

@@ -15,9 +15,9 @@ use std::{
     cmp,
     collections::{hash_map::Entry::Vacant, HashMap},
     fmt, fs,
-    io::{BufReader, Cursor, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     ops::Deref,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use mp4::*;
@@ -37,8 +37,8 @@ use crate::{
     cbor_types::UriT,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_asset_by_alg, hash_stream_by_alg, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
+            Hasher,
         },
         merkle::C2PAMerkleTree,
     },
@@ -164,12 +164,15 @@ impl MerkleMap {
         location: u32,
         proof: &Option<VecByteBuf>,
     ) -> bool {
+        if location >= self.count {
+            return false;
+        }
+
         let mut index = location;
         let mut hash = hash.to_vec();
+        let layers = C2PAMerkleTree::to_layout(self.count as usize);
 
         if let Some(hashes) = proof {
-            let layers = C2PAMerkleTree::to_layout(self.count as usize);
-
             // playback proof
             let mut proof_index = 0;
             for layer in layers {
@@ -199,6 +202,14 @@ impl MerkleMap {
                     }
                 }
 
+                index /= 2;
+            }
+        } else {
+            //empty proof playback
+            for layer in layers {
+                if layer == self.hashes.len() {
+                    break;
+                }
                 index /= 2;
             }
         }
@@ -254,9 +265,6 @@ pub struct BmffHash {
     url: Option<UriT>, // deprecated in V2 and not to be used
 
     #[serde(skip)]
-    pub path: PathBuf,
-
-    #[serde(skip)]
     bmff_version: usize,
 }
 
@@ -271,7 +279,6 @@ impl BmffHash {
             merkle: None,
             name: Some(name.to_string()),
             url,
-            path: PathBuf::new(),
             bmff_version: ASSERTION_CREATION_VERSION,
         }
     }
@@ -326,22 +333,28 @@ impl BmffHash {
     }
 
     /// Generate the hash value for the asset using the range from the BmffHash.
+    #[cfg(feature = "file_io")]
     pub fn gen_hash(&mut self, asset_path: &Path) -> crate::error::Result<()> {
-        self.hash = Some(ByteBuf::from(self.hash_from_asset(asset_path)?));
-        self.path = PathBuf::from(asset_path);
+        let mut file = std::fs::File::open(asset_path)?;
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file)?));
         Ok(())
     }
 
-    /// Generate the hash again.
-    pub fn regen_hash(&mut self) -> crate::error::Result<()> {
-        let p = self.path.clone();
-        self.hash = Some(ByteBuf::from(self.hash_from_asset(p.as_path())?));
+    /// Generate the hash value for the asset using the range from the BmffHash.
+    pub fn gen_hash_from_stream<R>(&mut self, asset_stream: &mut R) -> crate::error::Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream)?));
         Ok(())
     }
 
     /// Generate the asset hash from a file asset using the constructed
     /// start and length values.
-    fn hash_from_asset(&mut self, asset_path: &Path) -> crate::error::Result<Vec<u8>> {
+    fn hash_from_stream<R>(&mut self, asset_stream: &mut R) -> crate::error::Result<Vec<u8>>
+    where
+        R: Read + Seek + ?Sized,
+    {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
                 "asset hash is remote, not yet supported".to_owned(),
@@ -356,11 +369,10 @@ impl BmffHash {
         let bmff_exclusions = &self.exclusions;
 
         // convert BMFF exclusion map to flat exclusion list
-        let mut data = fs::File::open(asset_path)?;
         let exclusions =
-            bmff_to_jumbf_exclusions(&mut data, bmff_exclusions, self.bmff_version > 1)?;
+            bmff_to_jumbf_exclusions(asset_stream, bmff_exclusions, self.bmff_version > 1)?;
 
-        let hash = hash_asset_by_alg(&alg, asset_path, Some(exclusions))?;
+        let hash = hash_stream_by_alg(&alg, asset_stream, Some(exclusions), true)?;
 
         if hash.is_empty() {
             Err(Error::BadParam("could not generate data hash".to_string()))
@@ -411,6 +423,10 @@ impl BmffHash {
         // start from 1st moof
         if let Some(pos) = boxes.iter().position(|b| b.path == "moof") {
             let mut box_list = vec![boxes[pos].clone()];
+
+            if pos == 0 {
+                return moof_list; // this does not contain fragmented content
+            }
 
             for b in boxes[pos + 1..].iter() {
                 if b.path == "moof" {
