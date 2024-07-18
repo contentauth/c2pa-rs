@@ -6,6 +6,22 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.32.7
+_18 July 2024_
+
+* Ensure Ingredient data_types make it to the store and back. ([#514](https://github.com/contentauth/c2pa-rs/pull/514))
+* draft security md ([#508](https://github.com/contentauth/c2pa-rs/pull/508))
+* Make data_types field optional when serializing data-box-map ([#512](https://github.com/contentauth/c2pa-rs/pull/512))
+* Fix box hash placeholder len (set to 1) ([#511](https://github.com/contentauth/c2pa-rs/pull/511))
+* Set data box placeholder len to at least 1 for GIF ([#510](https://github.com/contentauth/c2pa-rs/pull/510))
+* Rewind mp3 streams when reading/writing ([#509](https://github.com/contentauth/c2pa-rs/pull/509))
+* Update README.md ([#351](https://github.com/contentauth/c2pa-rs/pull/351))
+* Add GIF support ([#489](https://github.com/contentauth/c2pa-rs/pull/489))
+* Update image requirement from 0.24.7 to 0.25.1 in /make_test_images ([#445](https://github.com/contentauth/c2pa-rs/pull/445))
+* Upgrade uuid to 1.7.0 & fix removed wasm-bindgen feature ([#450](https://github.com/contentauth/c2pa-rs/pull/450))
+* Expose `SignatureInfo` publicly ([#501](https://github.com/contentauth/c2pa-rs/pull/501))
+* Cleanup empty/unused files + lints ([#500](https://github.com/contentauth/c2pa-rs/pull/500))
+
 ## 0.32.6
 _15 July 2024_
 
