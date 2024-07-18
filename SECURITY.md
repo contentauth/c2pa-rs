@@ -19,4 +19,4 @@ Any vulnerability with a score below 6.9 will be resolved when possible.
 
 ## C2PA Vulnerabilities
 
-That this library is not meant to address any potential vulnerabilities within the C2PA specification itself. It is only an implementation of the spec as written. Any suspected vulnerabilities within the spec can be reported [here](https://github.com/c2pa-org/specifications/issues).
+This library is not meant to address any potential vulnerabilities within the C2PA specification itself. It is only an implementation of the spec as written. Any suspected vulnerabilities within the spec can be reported [here](https://github.com/c2pa-org/specifications/issues).
