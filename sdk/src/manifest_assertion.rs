@@ -141,6 +141,18 @@ impl ManifestAssertion {
         ))
     }
 
+    /// TO DO: Docs ...
+    pub fn from_cbor_assertion<S: Into<String>, T: Serialize>(label: S, data: &T) -> Result<Self> {
+        Ok(Self {
+            label: label.into(),
+            data: ManifestData::Binary(
+                serde_cbor::to_vec(data).map_err(|_err| Error::AssertionEncoding)?,
+            ),
+            instance: None,
+            kind: Some(ManifestAssertionKind::Cbor),
+        })
+    }
+
     /// Creates a ManifestAssertion from an AssertionBase object
     ///
     /// # Example: Creating a custom assertion an Action assertion
