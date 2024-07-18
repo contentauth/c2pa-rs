@@ -235,9 +235,9 @@ dependencies = [
 
 [[package]]
 name = "async-generic"
-version = "0.1.2"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86bc01d15ca67ec7653924057aa97c30de62d06a24e6834387eba6c72c8318e7"
+checksum = "58a6914896b0907b4df8f696dea38ef8a2b75b32142f80fd5985eb39bcf07778"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -644,9 +644,9 @@ checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 
 [[package]]
 name = "c2pa"
-version = "0.32.4"
+version = "0.32.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b02cf788e6db0cc891849c0f4df0c0f6aa0425ab8e172d3fa4dc3255d29191e"
+checksum = "b83f7c02b699c98e14f87087f86029823bd7d6f5d4e90a4a5f662a68a32aef8c"
 dependencies = [
  "asn1-rs",
  "async-generic",
@@ -4196,9 +4196,9 @@ checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
 
 [[package]]
 name = "uuid"
-version = "1.4.1"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
+checksum = "81dfa00651efa65069b0b6b651f4aaa31ba9e3c3ce0137aaad053604ee7e0314"
 dependencies = [
  "getrandom",
  "serde",
