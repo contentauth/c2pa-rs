@@ -125,12 +125,11 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos,
-                        // Size doesn't matter for placeholder block.
-                        length: 0,
+                        length: 1, // Need at least size 1.
                         htype: HashBlockObjectType::Cai,
                     },
                     HashObjectPositions {
-                        offset: end_preamble_pos,
+                        offset: end_preamble_pos + 1,
                         length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
                             - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
@@ -232,16 +231,16 @@ impl AssetBoxHash for GifIO {
 
         Blocks::new(input_stream)?
             .try_fold(
-                (Vec::new(), None),
-                |(mut box_maps, last_marker),
+                (Vec::new(), None, 0),
+                |(mut box_maps, last_marker, mut offset),
                  marker|
-                 -> Result<(Vec<_>, Option<BlockMarker<Block>>)> {
+                 -> Result<(Vec<_>, Option<BlockMarker<Block>>, usize)> {
                     let marker = marker?;
 
                     // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
                     // if it exists, or otherwise after the logical screen descriptor.
                     if !c2pa_block_exists {
-                        if let Some(last_marker) = last_marker {
+                        if let Some(last_marker) = last_marker.as_ref() {
                             let should_insert_placeholder = match last_marker.block {
                                 Block::GlobalColorTable(_) => true,
                                 // If the current block is a global color table, then wait til the next iteration to insert.
@@ -253,14 +252,14 @@ impl AssetBoxHash for GifIO {
                                 _ => false,
                             };
                             if should_insert_placeholder {
+                                offset += 1;
                                 box_maps.push(
                                     BlockMarker {
                                         block: Block::ApplicationExtension(
                                             ApplicationExtension::new_c2pa(&[])?,
                                         ),
                                         start: marker.start,
-                                        // Size doesn't matter for placeholder block.
-                                        len: 0,
+                                        len: 1,
                                     }
                                     .to_box_map()?,
                                 );
@@ -282,13 +281,15 @@ impl AssetBoxHash for GifIO {
                             }
                         }
                         _ => {
-                            box_maps.push(marker.to_box_map()?);
+                            let mut box_map = marker.to_box_map()?;
+                            box_map.range_start += offset;
+                            box_maps.push(box_map);
                         }
                     }
-                    Ok((box_maps, Some(marker)))
+                    Ok((box_maps, Some(marker), offset))
                 },
             )
-            .map(|(box_maps, _)| box_maps)
+            .map(|(box_maps, _, _)| box_maps)
     }
 }
 
@@ -1341,15 +1342,15 @@ mod tests {
             obj_locations.get(1),
             Some(&HashObjectPositions {
                 offset: 781,
-                length: 0,
+                length: 1,
                 htype: HashBlockObjectType::Cai,
             })
         );
         assert_eq!(
             obj_locations.get(2),
             Some(&HashObjectPositions {
-                offset: 781,
-                length: 739692,
+                offset: 782,
+                length: SAMPLE1.len() - 781,
                 htype: HashBlockObjectType::Other,
             })
         );
@@ -1381,7 +1382,7 @@ mod tests {
             obj_locations.get(2),
             Some(&HashObjectPositions {
                 offset: 801,
-                length: 739692,
+                length: SAMPLE1.len() - 781,
                 htype: HashBlockObjectType::Other,
             })
         );
@@ -1415,7 +1416,7 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 368494,
+                range_start: 368495,
                 range_len: 778
             })
         );
@@ -1426,7 +1427,7 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 740472,
+                range_start: SAMPLE1.len(),
                 range_len: 1
             })
         );
