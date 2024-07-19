@@ -2112,7 +2112,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         let ingredient =
-            Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting ingredient");
+            Ingredient::from_file(fixture_path("assets/jpeg/XCA.jpg")).expect("getting ingredient");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -2138,7 +2138,7 @@ pub(crate) mod tests {
     #[test]
     fn test_embed_sidecar_with_parent_manifest() {
         let temp_dir = tempdir().expect("temp dir");
-        let source = fixture_path("XCA.jpg");
+        let source = fixture_path("assets/jpeg/XCA.jpg");
         let output = temp_dir.path().join("XCAplus.jpg");
         let sidecar = output.with_extension("c2pa");
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -2146,7 +2146,8 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let parent = Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting parent");
+        let parent =
+            Ingredient::from_file(fixture_path("assets/jpeg/XCA.jpg")).expect("getting parent");
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
         manifest.set_remote_manifest(url.clone());
@@ -2196,7 +2197,7 @@ pub(crate) mod tests {
                 "version": "1.0",
                 "icon": {
                     "format": "image/svg+xml",
-                    "identifier": "sample1.svg"
+                    "identifier": "assets/svg/sample1.svg"
                 }
             }
         ],
@@ -2209,7 +2210,7 @@ pub(crate) mod tests {
         "format" : "image/jpeg",
         "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "IMG_0003.jpg"
+            "identifier": "assets/jpeg/IMG_0003.jpg"
         },
         "assertions": [
             {
@@ -2228,7 +2229,7 @@ pub(crate) mod tests {
                                 "version": "1.0",
                                 "icon": {
                                     "format": "image/svg+xml",
-                                    "identifier": "sample1.svg"
+                                    "identifier": "assets/svg/sample1.svg"
                                 },
                                 "something": "else"
                             },
@@ -2260,13 +2261,13 @@ pub(crate) mod tests {
                                 "version": "1.0",
                                 "icon": {
                                     "format": "image/svg+xml",
-                                    "identifier": "sample1.svg"
+                                    "identifier": "assets/svg/sample1.svg"
                                 },
                                 "something": "else"
                             },
                             "icon": {
                                 "format": "image/svg+xml",
-                                "identifier": "sample1.svg"
+                                "identifier": "assets/svg/sample1.svg"
                             }
                         }
                     ]
@@ -2280,7 +2281,7 @@ pub(crate) mod tests {
             "relationship": "parentOf",
             "thumbnail": {
                 "format": "image/png",
-                "identifier": "exp-test1.png"
+                "identifier": "assets/png/exp-test1.png"
             }
         },
         {
@@ -2310,13 +2311,13 @@ pub(crate) mod tests {
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
             .resources_mut()
-            .add("IMG_0003.jpg", *b"my value")
+            .add("assets/jpeg/IMG_0003.jpg", *b"my value")
             .unwrap()
-            .add("sample1.svg", *b"my value")
+            .add("assets/svg/sample1.svg", *b"my value")
             .expect("add resource");
         manifest.ingredients_mut()[0]
             .resources_mut()
-            .add("exp-test1.png", *b"my value")
+            .add("assets/png/exp-test1.png", *b"my value")
             .expect("add_resource");
         manifest.ingredients_mut()[1]
             .resources_mut()
@@ -2369,13 +2370,13 @@ pub(crate) mod tests {
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
             .resources_mut()
-            .add("IMG_0003.jpg", *b"my value")
+            .add("assets/jpeg/IMG_0003.jpg", *b"my value")
             .unwrap()
-            .add("sample1.svg", *b"my value")
+            .add("assets/svg/sample1.svg", *b"my value")
             .expect("add resource");
         manifest.ingredients_mut()[0]
             .resources_mut()
-            .add("exp-test1.png", *b"my value")
+            .add("assets/png/exp-test1.png", *b"my value")
             .expect("add_resource");
         manifest.ingredients_mut()[1]
             .resources_mut()
@@ -2574,7 +2575,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_data_hash_embeddable_manifest() {
-        let ap = fixture_path("cloud.jpg");
+        let ap = fixture_path("assets/jpeg/cloud.jpg");
 
         let signer = temp_signer();
 
@@ -2631,7 +2632,7 @@ pub(crate) mod tests {
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_data_hash_embeddable_manifest_remote_signed() {
-        let ap = fixture_path("cloud.jpg");
+        let ap = fixture_path("assets/jpeg/cloud.jpg");
 
         let signer = temp_remote_signer();
 

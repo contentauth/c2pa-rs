@@ -1603,7 +1603,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_jpg_cloud_from_memory_and_manifest() {
         let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
-        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+        let manifest_bytes = include_bytes!("../tests/fixtures/manifests/cloud_manifest.c2pa");
         let format = "image/jpeg";
         let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
             manifest_bytes.to_vec(),
@@ -1637,10 +1637,10 @@ mod tests_file_io {
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
-    const MANIFEST_JPEG: &str = "C.jpg";
-    const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
-    const PRERELEASE_JPEG: &str = "prerelease.jpg";
+    const NO_MANIFEST_JPEG: &str = "assets/jpeg/earth_apollo17.jpg";
+    const MANIFEST_JPEG: &str = "assets/jpeg/C.jpg";
+    const BAD_SIGNATURE_JPEG: &str = "assets/jpeg/E-sig-CA.jpg";
+    const PRERELEASE_JPEG: &str = "assets/jpeg/prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
         let thumb_size = ingredient.thumbnail_bytes().map_or(0, |i| i.len());
@@ -1758,7 +1758,7 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_png_no_claim() {
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path("assets/png/libpng-test.png");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);
 
@@ -1812,7 +1812,7 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_nested() {
-        let ap = fixture_path("CIE-sig-CA.jpg");
+        let ap = fixture_path("assets/jpeg/CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_none());
@@ -1822,7 +1822,7 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ap = fixture_path("cloudx.jpg");
+        let ap = fixture_path("assets/jpeg/cloudx.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_some());
@@ -1835,7 +1835,7 @@ mod tests_file_io {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jpg_with_path() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("assets/jpeg/CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
         let ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");

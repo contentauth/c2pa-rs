@@ -798,7 +798,7 @@ pub mod tests {
 
     #[test]
     fn test_png_xmp() {
-        let ap = test::fixture_path("libpng-test_with_url.png");
+        let ap = test::fixture_path("assets/png/libpng-test_with_url.png");
 
         let png_io = PngIO {};
         let xmp = png_io
@@ -813,7 +813,7 @@ pub mod tests {
 
     #[test]
     fn test_png_xmp_write() {
-        let ap = test::fixture_path("libpng-test.png");
+        let ap = test::fixture_path("assets/png/libpng-test.png");
         let mut source_stream = std::fs::File::open(ap).unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -850,7 +850,7 @@ pub mod tests {
 
     #[test]
     fn test_png_parse() {
-        let ap = test::fixture_path("libpng-test.png");
+        let ap = test::fixture_path("assets/png/libpng-test.png");
 
         let png_bytes = std::fs::read(&ap).unwrap();
 
@@ -981,7 +981,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = test::fixture_path("exp-test1.png");
+        let source = test::fixture_path("assets/png/exp-test1.png");
         let temp_dir = tempfile::tempdir().unwrap();
         let output = test::temp_dir_path(&temp_dir, "exp-test1_tmp.png");
         std::fs::copy(source, &output).unwrap();
@@ -1025,7 +1025,7 @@ pub mod tests {
     fn test_embeddable_manifest() {
         let png_io = PngIO {};
 
-        let source = crate::utils::test::fixture_path("exp-test1.png");
+        let source = crate::utils::test::fixture_path("assets/png/exp-test1.png");
 
         let ol = png_io.get_object_locations(&source).unwrap();
 

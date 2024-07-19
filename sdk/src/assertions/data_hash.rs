@@ -337,7 +337,7 @@ pub mod tests {
         data_hash.add_exclusion(HashRange::new(0x4000, 0x1000));
 
         // add some data to hash
-        let ap = fixture_path("earth_apollo17.jpg");
+        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
 
         // generate the hash
         data_hash.gen_hash(&ap).unwrap();

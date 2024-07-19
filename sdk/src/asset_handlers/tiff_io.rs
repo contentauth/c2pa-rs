@@ -1693,7 +1693,7 @@ pub mod tests {
     fn test_read_write_manifest() {
         let data = "some data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let source = crate::utils::test::fixture_path("assets/tiff/tuscany.tif");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -1715,7 +1715,7 @@ pub mod tests {
     fn test_write_xmp() {
         let data = "some data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let source = crate::utils::test::fixture_path("assets/tiff/tuscany.tif");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -1741,7 +1741,7 @@ pub mod tests {
     fn test_remove_manifest() {
         let data = "some data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let source = crate::utils::test::fixture_path("assets/tiff/tuscany.tiff");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -1773,7 +1773,7 @@ pub mod tests {
     fn test_get_object_location() {
         let data = "some data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let source = crate::utils::test::fixture_path("assets/tiff/tuscany.tif");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");

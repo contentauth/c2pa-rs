@@ -165,6 +165,7 @@ c2pa = { path = ".", features = [
 ] } # allow integration tests to use the new API
 jumbf = "0.4.0"
 insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
+c2pa-test = { path = "../c2pa-test" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
@@ -173,8 +174,3 @@ wasm-bindgen-test = "0.3.31"
 actix = "0.13.1"
 ed25519-dalek = "2.1.1"
 tokio = { version = "1.36.0", features = ["full"] }
-
-# https://insta.rs/docs/quickstart/
-[profile.dev.package]
-insta.opt-level = 3
-similar.opt-level = 3

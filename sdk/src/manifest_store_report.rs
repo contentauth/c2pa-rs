@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn manifest_store_report() {
-        let path = fixture_path("CIE-sig-CA.jpg");
+        let path = fixture_path("assets/jpeg/CIE-sig-CA.jpg");
         let report = ManifestStoreReport::from_file(path).expect("load_from_asset");
         println!("{report}");
     }
@@ -411,14 +411,15 @@ mod tests {
     #[test]
     #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_from_bytes() {
-        let bytes = fs::read(fixture_path("CA.jpg")).expect("missing test asset");
+        let bytes = fs::read(fixture_path("assets/jpeg/CA.jpg")).expect("missing test asset");
         assert!(ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes).is_ok())
     }
 
     #[test]
     #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_from_bytes_no_manifest_err() {
-        let bytes = fs::read(fixture_path("no_manifest.jpg")).expect("missing test asset");
+        let bytes =
+            fs::read(fixture_path("assets/jpeg/no_manifest.jpg")).expect("missing test asset");
         assert!(matches!(
             ManifestStoreReport::cert_chain_from_bytes("jpg", &bytes),
             Err(crate::Error::JumbfNotFound)
@@ -429,7 +430,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn manifest_dump_tree() {
-        let asset_name = "CA.jpg";
+        let asset_name = "assets/jpeg/CA.jpg";
         let path = fixture_path(asset_name);
 
         ManifestStoreReport::dump_tree(path).expect("dump_tree");
@@ -439,7 +440,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn manifest_dump_certchain() {
-        let asset_name = "CA.jpg";
+        let asset_name = "assets/jpeg/CA.jpg";
         let path = fixture_path(asset_name);
 
         ManifestStoreReport::dump_cert_chain(path).expect("dump certs");
@@ -449,7 +450,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn manifest_get_certchain() {
-        let asset_name = "CA.jpg";
+        let asset_name = "assest/jpeg/CA.jpg";
         let path = fixture_path(asset_name);
         assert!(ManifestStoreReport::cert_chain(path).is_ok())
     }
@@ -458,7 +459,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     fn manifest_get_certchain_no_manifest_err() {
-        let asset_name = "no_manifest.jpg";
+        let asset_name = "assets/jpeg/no_manifest.jpg";
         let path = fixture_path(asset_name);
         assert!(matches!(
             ManifestStoreReport::cert_chain(path),

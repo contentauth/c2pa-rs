@@ -16,7 +16,8 @@ use std::io::Cursor;
 use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{asset::Asset, test_signer, unescape_json};
+use c2pa_test::Asset;
+use common::{test_signer, unescape_json};
 use insta::assert_json_snapshot;
 
 #[test]

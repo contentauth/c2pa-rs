@@ -16,15 +16,15 @@ use std::io::Cursor;
 use c2pa::{Builder, Reader, Result};
 
 mod common;
-use common::{asset::Asset, test_signer, unescape_json};
+use c2pa_test::Asset;
+use common::{test_signer, unescape_json};
 use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
 fn test_asset_io(assets: Vec<Asset>) -> Result<()> {
     allow_duplicates! {
         || -> Result<()> {
             for mut asset in assets {
-                // TODO: add module holding json manifests
-                let manifest_def = std::fs::read_to_string("../tests/fixtures/simple_manifest.json")?;
+                let manifest_def = c2pa_test::exactly!("manifest/simple_manifest.json").to_string()?;
 
                 let format = asset.format();
                 let mut dest = Cursor::new(Vec::new());
@@ -51,9 +51,9 @@ fn test_asset_io_data_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("data_hash");
     settings.bind(|| {
-        test_asset_io(Asset::all(&[
+        test_asset_io(c2pa_test::all!(&[
             "jpeg", "png", "riff", "svg", "mp3", "tiff", "gif",
-        ])?)
+        ]))
     })
 }
 
@@ -62,7 +62,7 @@ fn test_asset_io_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
-    settings.bind(|| test_asset_io(Asset::every("bmff")?))
+    settings.bind(|| test_asset_io(c2pa_test::every!("bmff")))
 }
 
 #[test]

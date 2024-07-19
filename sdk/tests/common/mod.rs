@@ -11,12 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub mod asset;
 mod test_signer;
 
-use std::{fs, path::Path};
-
-use c2pa::{format_from_path, Reader, Result};
+use c2pa::{Reader, Result};
 #[allow(unused)]
 pub use test_signer::test_signer;
 

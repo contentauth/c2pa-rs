@@ -548,7 +548,7 @@ mod tests {
     #[cfg(feature = "v1_api")]
     async fn manifest_report_from_manifest_and_asset_bytes_async() {
         let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/cloud.jpg");
-        let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+        let manifest_bytes = include_bytes!("../tests/fixtures/manifests/cloud_manifest.c2pa");
 
         let manifest_store = ManifestStore::from_manifest_and_asset_bytes_async(
             manifest_bytes,

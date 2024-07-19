@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["sdk", "export_schema", "make_test_images"]
+members = ["sdk", "export_schema", "make_test_images", "c2pa-test"]
+
+# https://insta.rs/docs/quickstart/
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3

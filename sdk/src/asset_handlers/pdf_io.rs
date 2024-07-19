@@ -213,7 +213,7 @@ pub mod tests {
 
     #[test]
     fn test_cai_read_finds_no_manifest() {
-        let source = crate::utils::test::fixture_path("basic.pdf");
+        let source = crate::utils::test::fixture_path("assets/pdf/basic.pdf");
         let pdf_io = PdfIO::new("pdf");
 
         assert!(matches!(

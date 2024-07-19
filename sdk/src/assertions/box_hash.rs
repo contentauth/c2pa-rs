@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_hash_verify_jpg() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("assets/jpeg/CA.jpg");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_hash_verify_jpg_reduced() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("assets/jpeg/CA.jpg");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_hash_verify_png() {
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path("assets/png/libpng-test.png");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_hash_verify_no_pngh() {
-        let ap = fixture_path("libpng-test.png");
+        let ap = fixture_path("assets/png/libpng-test.png");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_json_round_trop() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("assets/jpeg/CA.jpg");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
@@ -431,7 +431,7 @@ mod tests {
 
     #[test]
     fn test_cbor_round_trop() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("assets/jpeg/CA.jpg");
 
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()

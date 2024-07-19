@@ -13,7 +13,8 @@
 
 mod common;
 use c2pa::{Error, Reader, Result};
-use common::{asset::Asset, unescape_json};
+use c2pa_test::Asset;
+use common::unescape_json;
 use insta::assert_json_snapshot;
 
 #[test]

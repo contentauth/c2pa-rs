@@ -157,7 +157,7 @@ pub mod tests {
 
     #[test]
     fn c2pa_io_parse() {
-        let path = fixture_path("C.jpg");
+        let path = fixture_path("assets/jpeg/C.jpg");
 
         let temp_dir = tempdir().expect("temp dir");
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
@@ -181,7 +181,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn c2pa_stream_io() {
         use std::io::{empty, Cursor};
-        let path = fixture_path("C.jpg");
+        let path = fixture_path("assets/jpeg/C.jpg");
 
         let c2pa_io = C2paIO {};
         let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("load_jumbf_from_file");

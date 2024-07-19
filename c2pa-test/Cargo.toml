@@ -1,0 +1,15 @@
+[package]
+name = "c2pa-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+c2pa = { path = "../sdk" }
+phf = "0.11.2"
+
+[build-dependencies]
+phf_codegen = "0.11.2"
+
+[features]
+default = ["include_bytes"]
+include_bytes = []
