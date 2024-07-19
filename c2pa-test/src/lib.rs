@@ -8,6 +8,9 @@ use std::{
 
 use c2pa::{format_from_path, Result};
 
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
+
+#[cfg(feature = "include_bytes")]
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
 #[cfg(feature = "include_bytes")]
@@ -29,7 +32,7 @@ pub struct Asset {
 impl Asset {
     #[cfg(feature = "include_bytes")]
     pub fn new(sub_path: &str) -> Self {
-        let path = PathBuf::from(format!("{}/{}", env!("CARGO_MANIFEST_DIR"), sub_path));
+        let path = PathBuf::from(format!("{FIXTURES}/{}", sub_path));
         Self {
             stream: Cursor::new(ASSETS.get(sub_path).unwrap()),
             format: format_from_path(&path).unwrap(),
@@ -38,13 +41,13 @@ impl Asset {
     }
 
     #[cfg(not(feature = "include_bytes"))]
-    pub fn new(path: &str) -> Self {
-        // TODO: add prefix to path
-        Ok(Self {
-            format: format_from_path(&path).unwrap(),
+    pub fn new(sub_path: &str) -> Self {
+        let path = PathBuf::from(format!("{FIXTURES}/{}", sub_path));
+        Self {
             stream: std::fs::File::open(&path).expect("TODO"),
+            format: format_from_path(&path).unwrap(),
             path,
-        })
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -81,26 +84,48 @@ impl Asset {
     }
 }
 
-// TODO: these will all be removed in favor of the macros
 impl Asset {
-    pub fn arbitrary() -> Result<Asset> {
+    pub fn arbitrary() -> Asset {
+        Asset::new("jpg/C.jpg")
+    }
+
+    pub fn exactly(kind: &str) -> Asset {
+        Asset::new(kind)
+    }
+
+    pub fn any(kind: &str) -> Asset {
+        for path in ASSETS.keys() {
+            // TODO: we can precompute lists of them in build.rs
+            if path.starts_with(kind) {
+                return Asset::new(path);
+            }
+        }
+
         todo!()
     }
 
-    pub fn exactly(kind: &str) -> Result<Asset> {
-        todo!()
+    pub fn every(kind: &str) -> Vec<Asset> {
+        let mut assets = Vec::new();
+        for path in ASSETS.keys() {
+            // TODO: same here
+            if path.starts_with(kind) {
+                assets.push(Asset::new(path));
+            }
+        }
+        assets
     }
 
-    pub fn any(kind: &str) -> Result<Asset> {
-        todo!()
-    }
-
-    pub fn every(kind: &str) -> Result<Vec<Asset>> {
-        todo!()
-    }
-
-    pub fn all(kinds: &[&str]) -> Result<Vec<Asset>> {
-        todo!()
+    pub fn all(kinds: &[&str]) -> Vec<Asset> {
+        let mut assets = Vec::new();
+        for kind in kinds {
+            for path in ASSETS.keys() {
+                // TODO: same here
+                if path.starts_with(kind) {
+                    assets.push(Asset::new(path))
+                }
+            }
+        }
+        assets
     }
 }
 
@@ -114,62 +139,4 @@ impl Seek for Asset {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.stream.seek(pos)
     }
-}
-
-#[macro_export]
-macro_rules! arbitrary {
-    () => {
-        Asset::new("jpg/C.jpg")
-    };
-}
-
-#[macro_export]
-macro_rules! exactly {
-    ($kind:expr) => {{
-        Asset::new($kind)
-    }};
-}
-
-#[macro_export]
-macro_rules! any {
-    ($kind:expr) => {
-        for path in c2pa_test::ASSETS.keys() {
-            // TODO: same here
-            if path.starts_with($kind) {
-                return Asset::new(path);
-            }
-        }
-
-        unreachable!()
-    };
-}
-
-#[macro_export]
-macro_rules! every {
-    ($kind:expr) => {{
-        let mut assets = Vec::new();
-        for path in c2pa_test::ASSETS.keys() {
-            // TODO: we can precompute lists of them in build.rs
-            if path.starts_with($kind) {
-                assets.push(Asset::new(path));
-            }
-        }
-        assets
-    }};
-}
-
-#[macro_export]
-macro_rules! all {
-    ($kinds:expr) => {{
-        let mut assets = Vec::new();
-        for kind in $kinds {
-            for path in c2pa_test::ASSETS.keys() {
-                // TODO: same here
-                if path.starts_with(kind) {
-                    assets.push(Asset::new(path))
-                }
-            }
-        }
-        assets
-    }};
 }

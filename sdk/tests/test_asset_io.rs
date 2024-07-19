@@ -24,7 +24,7 @@ fn test_asset_io(assets: Vec<Asset>) -> Result<()> {
     allow_duplicates! {
         || -> Result<()> {
             for mut asset in assets {
-                let manifest_def = c2pa_test::exactly!("manifest/simple_manifest.json").to_string()?;
+                let manifest_def = Asset::exactly("manifest/simple_manifest.json").to_string()?;
 
                 let format = asset.format();
                 let mut dest = Cursor::new(Vec::new());
@@ -51,7 +51,7 @@ fn test_asset_io_data_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("data_hash");
     settings.bind(|| {
-        test_asset_io(c2pa_test::all!(&[
+        test_asset_io(Asset::all(&[
             "jpeg", "png", "riff", "svg", "mp3", "tiff", "gif",
         ]))
     })
@@ -62,7 +62,7 @@ fn test_asset_io_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
-    settings.bind(|| test_asset_io(c2pa_test::every!("bmff")))
+    settings.bind(|| test_asset_io(Asset::every("bmff")))
 }
 
 #[test]
