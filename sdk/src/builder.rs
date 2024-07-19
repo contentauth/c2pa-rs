@@ -323,6 +323,7 @@ impl Builder {
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * If the [`Ingredient`] is not valid
+    #[async_generic()]
     pub fn add_ingredient<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
@@ -334,7 +335,11 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
-        let ingredient = ingredient.with_stream(format, stream)?;
+        let ingredient = if _sync {
+            ingredient.with_stream(format, stream)?
+        } else {
+            ingredient.with_stream_async(format, stream).await?
+        };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it

@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
+use async_generic::async_generic;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -808,6 +809,7 @@ impl Ingredient {
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
     #[cfg(feature = "unstable_api")]
+    #[async_generic()]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
@@ -841,36 +843,57 @@ impl Ingredient {
         };
 
         stream.rewind()?;
-        self.add_stream_internal(&format, stream)
+
+        if _sync {
+            self.add_stream_internal(&format, stream)
+        } else {
+            self.add_stream_internal_async(&format, stream).await
+        }
     }
 
     // Internal implementation to avoid code bloat.
+    #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
-            Ok(manifest_bytes) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf(&manifest_bytes, &mut validation_log)
-                        .and_then(|mut store| {
-                            // verify the store
-                            store.verify_from_stream(stream, format, &mut validation_log)?;
-                            Ok(store)
-                        })
-                        .map_err(|e| {
-                            // add a log entry for the error so we act like verify
-                            validation_log.log_silent(
-                                log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(&e),
-                            );
-                            e
-                        }),
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
+        let jumbf_stream = load_jumbf_from_stream(format, stream);
+
+        // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
+        let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_stream {
+            let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
+            let result = if let Ok(mut store) = jumbf_store {
+                if _sync {
+                    match store.verify_from_stream(stream, format, &mut validation_log) {
+                        Ok(_) => Ok(store),
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    match store
+                        .verify_from_stream_async(stream, format, &mut validation_log)
+                        .await
+                    {
+                        Ok(_) => Ok(store),
+                        Err(err) => Err(err),
+                    }
+                }
+            } else {
+                Err(jumbf_store.unwrap_err())
+            };
+
+            (
+                result.map_err(|e| {
+                    // add a log entry for the error so we act like verify
+                    validation_log.log_silent(
+                        log_item!("asset", "error loading file", "Ingredient::from_file")
+                            .set_error(&e),
+                    );
+                    e
+                }),
+                Some(manifest_bytes),
+            )
+        } else {
+            (Err(jumbf_stream.unwrap_err()), None)
         };
 
         // set validation status from result and log
