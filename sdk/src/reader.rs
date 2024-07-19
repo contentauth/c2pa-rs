@@ -19,6 +19,8 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "file_io")]
@@ -28,8 +30,6 @@ use crate::{
     settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
     validation_status::ValidationStatus, Manifest, ManifestStoreReport,
 };
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
 
 /// A reader for the manifest store.
 #[derive(Serialize, Deserialize)]
@@ -74,9 +74,9 @@ impl Reader {
     pub fn from_buffer(format: &str, buffer: &[u8]) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
         let reader = if _sync {
-            ManifestStore::from_bytes(format, &buffer, verify)
+            ManifestStore::from_bytes(format, buffer, verify)
         } else {
-            ManifestStore::from_bytes_async(format, &buffer, verify).await
+            ManifestStore::from_bytes_async(format, buffer, verify).await
         }?;
         Ok(Reader {
             manifest_store: reader,

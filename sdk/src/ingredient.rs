@@ -878,6 +878,8 @@ impl Ingredient {
                     }
                 }
             } else {
+                // This will always be Err in this situation
+                #[allow(clippy::unwrap_used)]
                 Err(jumbf_store.unwrap_err())
             };
 
@@ -893,6 +895,8 @@ impl Ingredient {
                 Some(manifest_bytes),
             )
         } else {
+            // This will always be Err in this situation
+            #[allow(clippy::unwrap_used)]
             (Err(jumbf_stream.unwrap_err()), None)
         };
 
