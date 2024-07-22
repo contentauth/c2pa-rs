@@ -250,7 +250,7 @@ c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
 Use the `--sidecar` / `-s` option to put the manifest in an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a `.c2pa` extension. The tool will copy the output file but the original will be untouched.
 
 ```shell
-c2patool image.jpg -s -m sample/test.json -o signed_image.jpg
+c2patool sample/image.jpg -s -m sample/test.json -o signed_image.jpg
 ```
 ### Generating a remote manifest
 
