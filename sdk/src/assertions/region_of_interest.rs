@@ -1,6 +1,7 @@
 //! A set of structs to define a region of interest within an
 //! [`Action`][crate::assertions::Action] or [`Metadata`].
 
+#[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
