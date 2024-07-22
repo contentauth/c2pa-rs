@@ -1,3 +1,6 @@
+//! A set of structs to define a region of interest within an
+//! [`Action`][crate::assertions::Action] or [`Metadata`].
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -147,13 +150,13 @@ pub struct Text {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum RangeType {
-    /// A spatial range, see [`Shape`][Shape] for more details.
+    /// A spatial range, see [`Shape`] for more details.
     Spatial,
-    /// A temporal range, see [`Time`][Time] for more details.
+    /// A temporal range, see [`Time`] for more details.
     Temporal,
-    /// A spatial range, see [`Frame`][Frame] for more details.
+    /// A spatial range, see [`Frame`] for more details.
     Frame,
-    /// A textual range, see [`Textual`][Textual] for more details.
+    /// A textual range, see [`Text`] for more details.
     Textual,
 }
 
@@ -225,7 +228,7 @@ pub struct RegionOfInterest {
     pub name: Option<String>,
     /// A free-text string representing a machine-readable, unique to this assertion, identifier for the region.
     pub identifier: Option<String>,
-    /// A value from a controlled vocabulary such as https://cv.iptc.org/newscodes/imageregiontype/ or an entity-specific
+    /// A value from a controlled vocabulary such as <https://cv.iptc.org/newscodes/imageregiontype/> or an entity-specific
     /// value (e.g., com.litware.newType) that represents the type of thing(s) depicted by a region.
     ///
     /// Note this field serializes/deserializes into the name `type`.
