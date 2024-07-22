@@ -488,7 +488,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_jpeg() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/jpeg/IMG_0003.jpg").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/IMG_0003.jpg").unwrap();
         test_jumbf("jpeg", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("jpeg", &mut reader);
@@ -496,7 +496,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_png() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/png/sample1.png").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.png").unwrap();
         test_jumbf("png", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("png", &mut reader);
@@ -504,7 +504,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_webp() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/riff/sample1.webp").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.webp").unwrap();
         test_jumbf("webp", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("webp", &mut reader);
@@ -512,7 +512,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_wav() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/riff/sample1.wav").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.wav").unwrap();
         test_jumbf("wav", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("wav", &mut reader);
@@ -520,7 +520,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_avi() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/riff/test.avi").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/test.avi").unwrap();
         test_jumbf("avi", &mut reader);
         //reader.rewind().unwrap();
         //test_remote_ref("avi", &mut reader); // not working
@@ -528,7 +528,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_tiff() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/tiff/tuscany.tiff").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/TUSCANY.TIF").unwrap();
         test_jumbf("tiff", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("tiff", &mut reader);
@@ -536,7 +536,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_svg() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/svg/sample1.svg").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.svg").unwrap();
         test_jumbf("svg", &mut reader);
         //reader.rewind().unwrap();
         //test_remote_ref("svg", &mut reader); // svg doesn't support remote refs
@@ -553,7 +553,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_avif() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/bmff/sample1.avif").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.avif").unwrap();
         test_jumbf("avif", &mut reader);
         //reader.rewind().unwrap();
         //test_remote_ref("avif", &mut reader);  // not working
@@ -561,13 +561,13 @@ pub mod tests {
 
     #[test]
     fn test_streams_heic() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/bmff/sample1.heic").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heic").unwrap();
         test_jumbf("heic", &mut reader);
     }
 
     #[test]
     fn test_streams_heif() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/bmff/sample1.heif").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.heif").unwrap();
         test_jumbf("heif", &mut reader);
         //reader.rewind().unwrap();
         //test_remote_ref("heif", &mut reader);   // not working
@@ -575,7 +575,7 @@ pub mod tests {
 
     #[test]
     fn test_streams_mp4() {
-        let mut reader = std::fs::File::open("tests/fixtures/assets/mp4/video1.mp4").unwrap();
+        let mut reader = std::fs::File::open("tests/fixtures/video1.mp4").unwrap();
         test_jumbf("mp4", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("mp4", &mut reader);

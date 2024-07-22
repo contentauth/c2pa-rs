@@ -213,7 +213,7 @@ pub mod tests {
 
     #[test]
     fn test_cai_read_finds_no_manifest() {
-        let source = crate::utils::test::fixture_path("assets/pdf/basic.pdf");
+        let source = crate::utils::test::fixture_path("basic.pdf");
         let pdf_io = PdfIO::new("pdf");
 
         assert!(matches!(
@@ -224,7 +224,7 @@ pub mod tests {
 
     #[test]
     fn test_cai_read_xmp_finds_xmp_data() {
-        let source = include_bytes!("../../tests/fixtures/assets/pdf/basic.pdf");
+        let source = include_bytes!("../../tests/fixtures/basic.pdf");
         let mut stream = Cursor::new(source.to_vec());
 
         let pdf_io = PdfIO::new("pdf");
@@ -233,7 +233,7 @@ pub mod tests {
 
     #[test]
     fn test_read_cai_express_pdf_finds_single_manifest_store() {
-        let source = include_bytes!("../../tests/fixtures/assets/pdf/express-signed.pdf");
+        let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());
         assert!(pdf_io.read_cai(&mut pdf_stream).is_ok());

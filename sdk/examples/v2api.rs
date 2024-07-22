@@ -18,7 +18,7 @@ use anyhow::Result;
 use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader, SigningAlg};
 use serde_json::json;
 
-const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
+const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/jpeg/CA.jpg");
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 

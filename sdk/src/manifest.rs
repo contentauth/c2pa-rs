@@ -1916,7 +1916,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -1958,7 +1958,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/assets/png/libpng-test.png");
+        let image = include_bytes!("../tests/fixtures/libpng-test.png");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -1994,7 +1994,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/assets/riff/mars.webp");
+        let image = include_bytes!("../tests/fixtures/mars.webp");
         // convert buffer to cursor with Read/Write/Seek capability
 
         let mut manifest = Manifest::new("my_app".to_owned());
@@ -2029,7 +2029,7 @@ pub(crate) mod tests {
     #[test]
     fn test_embed_stream() {
         use crate::assertions::User;
-        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut stream = std::io::Cursor::new(image.to_vec());
         // let mut image = image.to_vec();
@@ -2067,7 +2067,7 @@ pub(crate) mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embed_from_memory_async() {
         use crate::{assertions::User, utils::test::temp_async_signer};
-        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut stream = std::io::Cursor::new(image.to_vec());
         // let mut image = image.to_vec();
@@ -2112,7 +2112,7 @@ pub(crate) mod tests {
 
         let mut manifest = test_manifest();
         let ingredient =
-            Ingredient::from_file(fixture_path("assets/jpeg/XCA.jpg")).expect("getting ingredient");
+            Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting ingredient");
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -2138,7 +2138,7 @@ pub(crate) mod tests {
     #[test]
     fn test_embed_sidecar_with_parent_manifest() {
         let temp_dir = tempdir().expect("temp dir");
-        let source = fixture_path("assets/jpeg/XCA.jpg");
+        let source = fixture_path("XCA.jpg");
         let output = temp_dir.path().join("XCAplus.jpg");
         let sidecar = output.with_extension("c2pa");
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -2146,8 +2146,7 @@ pub(crate) mod tests {
 
         let signer = temp_signer();
 
-        let parent =
-            Ingredient::from_file(fixture_path("assets/jpeg/XCA.jpg")).expect("getting parent");
+        let parent = Ingredient::from_file(fixture_path("XCA.jpg")).expect("getting parent");
         let mut manifest = test_manifest();
         manifest.set_parent(parent).expect("setting parent");
         manifest.set_remote_manifest(url.clone());
@@ -2197,7 +2196,7 @@ pub(crate) mod tests {
                 "version": "1.0",
                 "icon": {
                     "format": "image/svg+xml",
-                    "identifier": "assets/svg/sample1.svg"
+                    "identifier": "sample1.svg"
                 }
             }
         ],
@@ -2210,7 +2209,7 @@ pub(crate) mod tests {
         "format" : "image/jpeg",
         "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "assets/jpeg/IMG_0003.jpg"
+            "identifier": "IMG_0003.jpg"
         },
         "assertions": [
             {
@@ -2229,7 +2228,7 @@ pub(crate) mod tests {
                                 "version": "1.0",
                                 "icon": {
                                     "format": "image/svg+xml",
-                                    "identifier": "assets/svg/sample1.svg"
+                                    "identifier": "sample1.svg"
                                 },
                                 "something": "else"
                             },
@@ -2261,13 +2260,13 @@ pub(crate) mod tests {
                                 "version": "1.0",
                                 "icon": {
                                     "format": "image/svg+xml",
-                                    "identifier": "assets/svg/sample1.svg"
+                                    "identifier": "sample1.svg"
                                 },
                                 "something": "else"
                             },
                             "icon": {
                                 "format": "image/svg+xml",
-                                "identifier": "assets/svg/sample1.svg"
+                                "identifier": "sample1.svg"
                             }
                         }
                     ]
@@ -2281,7 +2280,7 @@ pub(crate) mod tests {
             "relationship": "parentOf",
             "thumbnail": {
                 "format": "image/png",
-                "identifier": "assets/png/exp-test1.png"
+                "identifier": "exp-test1.png"
             }
         },
         {
@@ -2289,14 +2288,24 @@ pub(crate) mod tests {
             "format": "text/plain",
             "relationship": "inputTo",
             "data": {
-              "format": "text/plain",
-              "identifier": "prompt.txt",
-              "data_types": [
-                {
-                  "type": "c2pa.types.generator.prompt"
-                }
-              ]
+                "format": "text/plain",
+                "identifier": "prompt.txt",
+                "data_types": [
+                    {
+                    "type": "c2pa.types.generator.prompt"
+                    }
+                ]
             }
+        },
+        {
+            "title": "Custom AI Model",
+            "format": "application/octet-stream",
+            "relationship": "inputTo",
+            "data_types": [
+                {
+                    "type": "c2pa.types.model"
+                }
+            ]
           }
         ]
     }"#;
@@ -2311,13 +2320,13 @@ pub(crate) mod tests {
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
             .resources_mut()
-            .add("assets/jpeg/IMG_0003.jpg", *b"my value")
+            .add("IMG_0003.jpg", *b"my value")
             .unwrap()
-            .add("assets/svg/sample1.svg", *b"my value")
+            .add("sample1.svg", *b"my value")
             .expect("add resource");
         manifest.ingredients_mut()[0]
             .resources_mut()
-            .add("assets/png/exp-test1.png", *b"my value")
+            .add("exp-test1.png", *b"my value")
             .expect("add_resource");
         manifest.ingredients_mut()[1]
             .resources_mut()
@@ -2326,7 +2335,7 @@ pub(crate) mod tests {
 
         println!("{manifest}");
 
-        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
         // convert buffer to cursor with Read/Write/Seek capability
         let mut input = std::io::Cursor::new(image.to_vec());
 
@@ -2348,7 +2357,8 @@ pub(crate) mod tests {
         let (format, image) = m.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
-        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients().len(), 3);
+        // Validate a prompt ingredient (with data field)
         assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
         assert!(m.ingredients()[1].data_ref().is_some());
         assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
@@ -2357,6 +2367,14 @@ pub(crate) mod tests {
             m.ingredients()[1].resources().get(id).unwrap().into_owned(),
             b"pirate with bird on shoulder"
         );
+        // Validate a custom AI model ingredient.
+        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
+        assert_eq!(
+            m.ingredients()[2].data_types().unwrap()[0].asset_type,
+            "c2pa.types.model"
+        );
+
         // println!("{manifest_store}");
     }
 
@@ -2370,13 +2388,13 @@ pub(crate) mod tests {
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         manifest
             .resources_mut()
-            .add("assets/jpeg/IMG_0003.jpg", *b"my value")
+            .add("IMG_0003.jpg", *b"my value")
             .unwrap()
-            .add("assets/svg/sample1.svg", *b"my value")
+            .add("sample1.svg", *b"my value")
             .expect("add resource");
         manifest.ingredients_mut()[0]
             .resources_mut()
-            .add("assets/png/exp-test1.png", *b"my value")
+            .add("exp-test1.png", *b"my value")
             .expect("add_resource");
         manifest.ingredients_mut()[1]
             .resources_mut()
@@ -2385,7 +2403,7 @@ pub(crate) mod tests {
 
         println!("{manifest}");
 
-        let image = include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg");
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
         let signer = temp_signer();
         // Embed a manifest using the signer.
@@ -2401,7 +2419,7 @@ pub(crate) mod tests {
         let (format, image) = m.thumbnail().unwrap();
         assert_eq!(format, "image/jpeg");
         assert_eq!(image.to_vec(), b"my value");
-        assert_eq!(m.ingredients().len(), 2);
+        assert_eq!(m.ingredients().len(), 3);
         assert_eq!(m.ingredients()[1].relationship(), &Relationship::InputTo);
         assert!(m.ingredients()[1].data_ref().is_some());
         assert_eq!(m.ingredients()[1].data_ref().unwrap().format, "text/plain");
@@ -2409,6 +2427,13 @@ pub(crate) mod tests {
         assert_eq!(
             m.ingredients()[1].resources().get(id).unwrap().into_owned(),
             b"pirate with bird on shoulder"
+        );
+        // Validate a custom AI model ingredient.
+        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
+        assert_eq!(
+            m.ingredients()[2].data_types().unwrap()[0].asset_type,
+            "c2pa.types.model"
         );
         // println!("{manifest_store}");
     }
@@ -2575,7 +2600,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_data_hash_embeddable_manifest() {
-        let ap = fixture_path("assets/jpeg/cloud.jpg");
+        let ap = fixture_path("cloud.jpg");
 
         let signer = temp_signer();
 
@@ -2632,7 +2657,7 @@ pub(crate) mod tests {
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
     #[actix::test]
     async fn test_data_hash_embeddable_manifest_remote_signed() {
-        let ap = fixture_path("assets/jpeg/cloud.jpg");
+        let ap = fixture_path("cloud.jpg");
 
         let signer = temp_remote_signer();
 
@@ -2690,7 +2715,7 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_box_hash_embeddable_manifest() {
-        let asset_bytes = include_bytes!("../tests/fixtures/assets/jpeg/boxhash.jpg");
+        let asset_bytes = include_bytes!("../tests/fixtures/boxhash.jpg");
         let box_hash_data = include_bytes!("../tests/fixtures/boxhash.json");
         let box_hash: crate::assertions::BoxHash = serde_json::from_slice(box_hash_data).unwrap();
 

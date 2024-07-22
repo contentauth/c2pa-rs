@@ -502,7 +502,7 @@ pub mod tests {
     #[test]
     fn test_write_mp3() {
         let more_data = "some more test data".as_bytes();
-        let source = fixture_path("assets/mp3/sample1.mp3");
+        let source = fixture_path("sample1.mp3");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -525,7 +525,7 @@ pub mod tests {
     #[test]
     fn test_patch_write_mp3() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("assets/mp3/sample1.mp3");
+        let source = fixture_path("sample1.mp3");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -555,7 +555,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("assets/mp3/sample1.mp3");
+        let source = fixture_path("sample1.mp3");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "sample1-mp3.mp3");
@@ -576,7 +576,7 @@ pub mod tests {
     fn test_remote_ref() -> Result<()> {
         let mp3_io = Mp3IO::new("mp3");
 
-        let mut stream = File::open(fixture_path("assets/mp3/sample1.mp3"))?;
+        let mut stream = File::open(fixture_path("sample1.mp3"))?;
         assert!(mp3_io.read_xmp(&mut stream).is_none());
         stream.rewind()?;
 

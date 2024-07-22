@@ -1132,7 +1132,7 @@ mod tests {
 
     use super::*;
 
-    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/assets/gif/sample1.gif");
+    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
     #[test]
     fn test_read_blocks() -> Result<()> {

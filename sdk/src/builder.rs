@@ -855,8 +855,8 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/IMG_0003.jpg");
-    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/assets/jpeg/CA.jpg");
+    const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
-        let source = "tests/fixtures/assets/jpeg/CA.jpg";
+        let source = "tests/fixtures/CA.jpg";
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("test_file.jpg");
 
@@ -1042,18 +1042,18 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
-            "assets/jpeg/IMG_0003.jpg",
-            "assets/png/sample1.png",
-            "assets/riff/sample1.webp",
-            "assets/tiff/tuscany.tif",
-            "assets/svg/sample1.svg",
-            "assets/riff/sample1.wav",
-            "assets/riff/test.avi",
-            "assets/mp3/sample1.mp3",
-            "assets/bmff/sample1.avif",
-            "assets/bmff/sample1.heic",
-            "assets/bmff/sample1.heif",
-            "assets/bmff/video1.mp4",
+            "IMG_0003.jpg",
+            "sample1.png",
+            "sample1.webp",
+            "TUSCANY.TIF",
+            "sample1.svg",
+            "sample1.wav",
+            "test.avi",
+            "sample1.mp3",
+            "sample1.avif",
+            "sample1.heic",
+            "sample1.heif",
+            "video1.mp4",
             "cloud_manifest.c2pa",
         ];
         for file_name in TESTFILES {

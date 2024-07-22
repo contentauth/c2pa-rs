@@ -1865,7 +1865,7 @@ pub mod tests {
             store::Store,
         };
 
-        let ap = fixture_path("assets/bmff/video1.mp4");
+        let ap = fixture_path("video1.mp4");
 
         let mut log = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut log);
@@ -1881,7 +1881,7 @@ pub mod tests {
     #[test]
     fn test_xmp_write() {
         let data = "some test data";
-        let source = fixture_path("assets/bmff/video1.mp4");
+        let source = fixture_path("video1.mp4");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "video1-out.mp4");
@@ -1906,7 +1906,7 @@ pub mod tests {
     #[test]
     fn test_truncated_c2pa_write_mp4() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("assets/bmff/video1.mp4");
+        let source = fixture_path("video1.mp4");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -1930,7 +1930,7 @@ pub mod tests {
     #[test]
     fn test_expanded_c2pa_write_mp4() {
         let mut more_data = "some more test data".as_bytes().to_vec();
-        let source = fixture_path("assets/bmff/video1.mp4");
+        let source = fixture_path("video1.mp4");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -1956,7 +1956,7 @@ pub mod tests {
     #[test]
     fn test_patch_c2pa_write_mp4() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("assets/bmff/video1.mp4");
+        let source = fixture_path("video1.mp4");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -1984,7 +1984,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("assets/bmff/video1.mp4");
+        let source = fixture_path("video1.mp4");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "mp4_test.mp4");

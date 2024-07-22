@@ -652,7 +652,7 @@ pub mod tests {
     #[test]
     fn test_write_wav() {
         let more_data = "some more test data".as_bytes();
-        let source = fixture_path("assets/riff/sample1.wav");
+        let source = fixture_path("sample1.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -675,7 +675,7 @@ pub mod tests {
     #[test]
     fn test_write_wav_stream() {
         let more_data = "some more test data".as_bytes();
-        let mut source = File::open(fixture_path("assets/riff/sample1.wav")).unwrap();
+        let mut source = File::open(fixture_path("sample1.wav")).unwrap();
 
         let riff_io = RiffIO::new("wav");
         if let Ok(temp_dir) = tempdir() {
@@ -696,7 +696,7 @@ pub mod tests {
     #[test]
     fn test_patch_write_wav() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("assets/riff/sample1.wav");
+        let source = fixture_path("sample1.wav");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -726,7 +726,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("assets/riff/sample1.wav");
+        let source = fixture_path("sample1.wav");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
@@ -745,7 +745,7 @@ pub mod tests {
 
     #[test]
     fn test_read_xmp() {
-        let source = fixture_path("assets/riff/test_xmp.webp");
+        let source = fixture_path("test_xmp.webp");
         let mut reader = std::fs::File::open(source).unwrap();
 
         let riff_io = RiffIO::new("webp");
@@ -757,7 +757,7 @@ pub mod tests {
     #[test]
     fn test_write_xmp() {
         let more_data = "some more test data";
-        let source = fixture_path("assets/riff/test_xmp.webp");
+        let source = fixture_path("test_xmp.webp");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -793,7 +793,7 @@ pub mod tests {
     #[test]
     fn test_insert_xmp() {
         let more_data = "some more test data";
-        let source = fixture_path("assets/riff/test.webp");
+        let source = fixture_path("test.webp");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -829,7 +829,7 @@ pub mod tests {
     #[test]
     fn test_insert_xmp_lossless() {
         let more_data = "some more test data";
-        let source = fixture_path("assets/riff/test_lossless.webp");
+        let source = fixture_path("test_lossless.webp");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {

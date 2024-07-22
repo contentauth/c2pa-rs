@@ -5,14 +5,15 @@ edition = "2021"
 
 [dependencies]
 c2pa = { path = "../sdk" }
-phf = { version = "0.11.2", optional = true }
+phf = "0.11.2"
 
 [build-dependencies]
-phf_codegen = { version = "0.11.2", optional = true }
+phf_codegen = "0.11.2"
+walkdir = "2.5.0"
 
 [target.'cfg(target_arch = "wasm32")'.features]
 default = ["include_bytes"]
 
 [features]
-default = ["include_bytes"]            # TODO: temp
-include_bytes = ["phf", "phf_codegen"]
+default = ["include_bytes"] # TODO: temp
+include_bytes = []

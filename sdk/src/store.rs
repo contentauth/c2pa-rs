@@ -3452,7 +3452,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_jumbf_generation() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image.jpg");
 
@@ -3646,7 +3646,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-unverified.jpg");
 
@@ -3672,7 +3672,7 @@ pub mod tests {
         use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-image-expired-cert.jpg");
 
@@ -3707,7 +3707,7 @@ pub mod tests {
         assert!(!jumbf_bytes.is_empty());
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/prerelease.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
@@ -3732,7 +3732,7 @@ pub mod tests {
         let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
@@ -3786,7 +3786,7 @@ pub mod tests {
     #[actix::test]
     async fn test_jumbf_generation_remote() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test-async.jpg");
 
@@ -3814,7 +3814,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_png_jumbf_generation() {
         // test adding to actual image
-        let ap = fixture_path("assets/png/libpng-test.png");
+        let ap = fixture_path("libpng-test.png");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
@@ -4057,7 +4057,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_wav_jumbf_generation() {
-        let ap = fixture_path("assets/riff/sample1.wav");
+        let ap = fixture_path("sample1.wav");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "ssample1.wav");
 
@@ -4131,7 +4131,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_avi_jumbf_generation() {
-        let ap = fixture_path("assets/riff/test.avi");
+        let ap = fixture_path("test.avi");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "test.avi");
 
@@ -4205,7 +4205,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_webp_jumbf_generation() {
-        let ap = fixture_path("assets/riff/sample1.webp");
+        let ap = fixture_path("sample1.webp");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.webp");
 
@@ -4279,7 +4279,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_heic() {
-        let ap = fixture_path("assets/bmff/sample1.heic");
+        let ap = fixture_path("sample1.heic");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heic");
 
@@ -4323,7 +4323,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_avif() {
-        let ap = fixture_path("assets/bmff/sample1.avif");
+        let ap = fixture_path("sample1.avif");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.avif");
 
@@ -4367,7 +4367,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_heif() {
-        let ap = fixture_path("assets/bmff/sample1.heif");
+        let ap = fixture_path("sample1.heif");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "sample1.heif");
 
@@ -4418,7 +4418,7 @@ pub mod tests {
 
     #[test]
     fn test_manifest_bad_sig() {
-        let ap = fixture_path("assets/jpeg/CE-sig-CA.jpg");
+        let ap = fixture_path("CE-sig-CA.jpg");
         assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::new()).is_err());
     }
 
@@ -4437,7 +4437,7 @@ pub mod tests {
     #[test]
     fn test_bad_jumbf() {
         // test bad jumbf
-        let ap = fixture_path("assets/jpeg/prerelease.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let mut report = DetailedStatusTracker::new();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
@@ -4451,7 +4451,7 @@ pub mod tests {
     #[test]
     fn test_detect_byte_change() {
         // test bad jumbf
-        let ap = fixture_path("assets/jpeg/XCA.jpg");
+        let ap = fixture_path("XCA.jpg");
         let mut report = DetailedStatusTracker::new();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
@@ -4469,7 +4469,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_file_not_found() {
-        let ap = fixture_path("assets/jpeg/this_does_not_exist.jpg");
+        let ap = fixture_path("this_does_not_exist.jpg");
         let mut report = DetailedStatusTracker::new();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
@@ -4481,7 +4481,7 @@ pub mod tests {
 
     #[test]
     fn test_old_manifest() {
-        let ap = fixture_path("assets/jpeg/prerelease.jpg");
+        let ap = fixture_path("prerelease.jpg");
         let mut report = DetailedStatusTracker::new();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
@@ -4499,7 +4499,7 @@ pub mod tests {
         let signer = temp_signer();
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
@@ -4536,7 +4536,7 @@ pub mod tests {
         let signer = temp_signer();
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "earth_apollo17.jpg");
 
@@ -4590,7 +4590,7 @@ pub mod tests {
         let signer = temp_signer();
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/earth_apollo17.jpg");
+        let ap = fixture_path("earth_apollo17.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "update_manifest.jpg");
 
@@ -4649,7 +4649,7 @@ pub mod tests {
     #[test]
     fn test_claim_decoding() {
         // modify a required field label in the claim - causes failure to read claim from cbor
-        let report = patch_and_report("assets/jpeg/C.jpg", b"claim_generator", b"claim_generatur");
+        let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
         assert!(report.get_log()[0]
             .error_str()
@@ -4660,7 +4660,7 @@ pub mod tests {
     #[test]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
-        let mut report = patch_and_report("assets/jpeg/C.jpg", b"C.jpg", b"X.jpg");
+        let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
 
@@ -4680,11 +4680,7 @@ pub mod tests {
     #[test]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
-        let mut report = patch_and_report(
-            "assets/jpeg/CA.jpg",
-            b"brightnesscontrast",
-            b"brightnesscontraxx",
-        );
+        let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
         let errors = report_split_errors(report.get_log_mut());
 
         assert_eq!(
@@ -4701,8 +4697,7 @@ pub mod tests {
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuid:";
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
-        let mut report =
-            patch_and_report("assets/jpeg/CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
+        let mut report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
         let errors = report_split_errors(report.get_log_mut());
         assert_eq!(
             errors[0].validation_status.as_deref(),
@@ -4716,7 +4711,7 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("assets/jpeg/CA.jpg");
+        let ap = fixture_path("CA.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         let _errors = report_split_errors(report.get_log_mut());
@@ -4727,7 +4722,7 @@ pub mod tests {
     #[test]
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
-        let ap = fixture_path("assets/jpeg/legacy_ingredient_hash.jpg");
+        let ap = fixture_path("legacy_ingredient_hash.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
@@ -4736,7 +4731,7 @@ pub mod tests {
     #[test]
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
-        let ap = fixture_path("assets/bmff/legacy.mp4");
+        let ap = fixture_path("legacy.mp4");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
@@ -4939,23 +4934,23 @@ pub mod tests {
 
     #[test]
     fn test_external_manifest_embedded_png() {
-        external_manifest_test("assets/png/libpng-test.png");
+        external_manifest_test("libpng-test.png");
     }
 
     #[test]
     fn test_external_manifest_embedded_tiff() {
-        external_manifest_test("assets/tiff/tuscany.tif");
+        external_manifest_test("TUSCANY.TIF");
     }
 
     #[test]
     fn test_external_manifest_embedded_webp() {
-        external_manifest_test("assets/riff/sample1.webp");
+        external_manifest_test("sample1.webp");
     }
 
     #[test]
     fn test_user_guid_external_manifest_embedded() {
         // test adding to actual image
-        let ap = fixture_path("assets/png/libpng-test.png");
+        let ap = fixture_path("libpng-test.png");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
@@ -5007,7 +5002,7 @@ pub mod tests {
     #[test]
     fn test_external_manifest_from_memory() {
         // test adding to actual image
-        let ap = fixture_path("assets/png/libpng-test.png");
+        let ap = fixture_path("libpng-test.png");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
 
@@ -5066,8 +5061,7 @@ pub mod tests {
 
     #[actix::test]
     async fn test_jumbf_generation_stream() {
-        let file_buffer =
-            include_bytes!("../tests/fixtures/assets/jpeg/earth_apollo17.jpg").to_vec();
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
 
@@ -5105,7 +5099,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_tiff_jumbf_generation() {
         // test adding to actual image
-        let ap = fixture_path("assets/tiff/tuscany.tif");
+        let ap = fixture_path("TUSCANY.TIF");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "TUSCANY-OUTPUT.TIF");
 
@@ -5176,7 +5170,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest_async() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/boxhash.jpg");
+        let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
@@ -5258,7 +5252,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_boxhash_embeddable_manifest() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/boxhash.jpg");
+        let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
@@ -5339,7 +5333,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/cloud.jpg");
+        let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
         let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
@@ -5402,7 +5396,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/cloud.jpg");
+        let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -5469,7 +5463,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest_user_hashed() {
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/cloud.jpg");
+        let ap = fixture_path("cloud.jpg");
 
         let mut hasher = Hasher::SHA256(Sha256::new());
 
@@ -5583,7 +5577,7 @@ pub mod tests {
         let signer = temp_signer();
 
         // test adding to actual image
-        let ap = fixture_path("assets/jpeg/C.jpg");
+        let ap = fixture_path("C.jpg");
         let temp_dir = tempdir().expect("temp dir");
         let op = temp_dir_path(&temp_dir, "C-placed.jpg");
 

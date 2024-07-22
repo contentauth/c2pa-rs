@@ -608,7 +608,7 @@ pub mod tests {
     #[test]
     fn test_write_svg_no_meta() {
         let more_data = "some more test data".as_bytes();
-        let source = fixture_path("assets/svg/sample1.svg");
+        let source = fixture_path("sample1.svg");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -631,7 +631,7 @@ pub mod tests {
     #[test]
     fn test_write_svg_with_meta() {
         let more_data = "some more test data".as_bytes();
-        let source = fixture_path("assets/svg/sample2.svg");
+        let source = fixture_path("sample2.svg");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -654,7 +654,7 @@ pub mod tests {
     #[test]
     fn test_write_svg_with_manifest() {
         let more_data = "some more test data into existing manifest".as_bytes();
-        let source = fixture_path("assets/svg/sample3.svg");
+        let source = fixture_path("sample3.svg");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -677,7 +677,7 @@ pub mod tests {
     #[test]
     fn test_patch_write_svg() {
         let test_data = "some test data".as_bytes();
-        let source = fixture_path("assets/svg/sample1.svg");
+        let source = fixture_path("sample1.svg");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {
@@ -707,7 +707,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = fixture_path("assets/svg/sample4.svg");
+        let source = fixture_path("sample4.svg");
 
         let temp_dir = tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "sample4.svg");
@@ -727,7 +727,7 @@ pub mod tests {
     #[test]
     fn test_get_object_location() {
         let more_data = "some more test data into existing manifest".as_bytes();
-        let source = fixture_path("assets/svg/sample1.svg");
+        let source = fixture_path("sample1.svg");
 
         let mut success = false;
         if let Ok(temp_dir) = tempdir() {

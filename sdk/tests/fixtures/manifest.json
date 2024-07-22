@@ -19,7 +19,7 @@
     "format" : "image/jpeg",
     "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "assets/jpeg/IMG_0003.jpg"
+        "identifier": "IMG_0003.jpg"
     },
     "assertions": [
         {
@@ -38,7 +38,7 @@
                             "version": "1.0",
                             "icon": {
                                 "format": "image/svg+xml",
-                                "identifier": "assets/svg/sample1.svg"
+                                "identifier": "sample1.svg"
                             },
                             "something": "else"
                         }
@@ -52,13 +52,13 @@
                             "version": "1.0",
                             "icon": {
                                 "format": "image/svg+xml",
-                                "identifier": "assets/svg/sample1.svg"
+                                "identifier": "sample1.svg"
                             },
                             "something": "else"
                         },
                         "icon": {
                             "format": "image/svg+xml",
-                            "identifier": "assets/svg/sample1.svg"
+                            "identifier": "sample1.svg"
                         }
                     }
                 ]
@@ -77,7 +77,7 @@
         "relationship": "parentOf",
         "thumbnail": {
             "format": "image/png",
-            "identifier": "assets/png/exp-test1.png"
+            "identifier": "exp-test1.png"
         }
     },
     {

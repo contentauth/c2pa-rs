@@ -26,7 +26,7 @@ fn test_builder_ca_jpg() -> Result<()> {
     let mut builder = Builder::from_json(&manifest_def)?;
 
     let format = "image/jpeg";
-    let mut source = Asset::exactly("jpeg/CA.jpg")?;
+    let mut source = Asset::exactly("jpeg/CA.jpg");
 
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&test_signer(), format, &mut source, &mut dest)?;

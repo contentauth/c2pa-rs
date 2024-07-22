@@ -1106,7 +1106,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa() {
-        let source = crate::utils::test::fixture_path("assest/jpeg/CA.jpg");
+        let source = crate::utils::test::fixture_path("CA.jpg");
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
@@ -1125,7 +1125,7 @@ pub mod tests {
 
     #[test]
     fn test_remove_c2pa_from_stream() {
-        let source = crate::utils::test::fixture_path("assets/jpeg/CA.jpg");
+        let source = crate::utils::test::fixture_path("CA.jpg");
 
         let source_bytes = std::fs::read(source).unwrap();
         let mut source_stream = Cursor::new(source_bytes);
@@ -1150,7 +1150,7 @@ pub mod tests {
 
     #[test]
     fn test_xmp_read_write() {
-        let source = crate::utils::test::fixture_path("assets/jpeg/CA.jpg");
+        let source = crate::utils::test::fixture_path("CA.jpg");
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
@@ -1182,7 +1182,7 @@ pub mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_xmp_read_write_stream() {
-        let source_bytes = include_bytes!("../../tests/fixtures/assets/jpeg/CA.jpg");
+        let source_bytes = include_bytes!("../../tests/fixtures/CA.jpg");
 
         let test_msg = "this some test xmp data";
         let handler = JpegIO::new("");
@@ -1220,7 +1220,7 @@ pub mod tests {
     fn test_embeddable_manifest() {
         let jpeg_io = JpegIO {};
 
-        let source = crate::utils::test::fixture_path("assets/jpeg/CA.jpg");
+        let source = crate::utils::test::fixture_path("CA.jpg");
 
         let ol = jpeg_io.get_object_locations(&source).unwrap();
 

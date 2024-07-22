@@ -10,7 +10,6 @@ use c2pa::{format_from_path, Result};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
 
-#[cfg(feature = "include_bytes")]
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
 #[cfg(feature = "include_bytes")]
@@ -70,17 +69,9 @@ impl Asset {
         Ok(buffer)
     }
 
-    #[cfg(feature = "include_bytes")]
     pub fn to_string(&mut self) -> Result<String> {
         // TODO: temp unwrap
         Ok(String::from_utf8(self.to_bytes()?).unwrap())
-    }
-
-    #[cfg(not(feature = "include_bytes"))]
-    pub fn to_string(&mut self) -> Result<String> {
-        let mut string = String::new();
-        self.stream.read_to_string(&mut string)?;
-        Ok(string)
     }
 }
 
