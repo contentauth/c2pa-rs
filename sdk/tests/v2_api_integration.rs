@@ -30,7 +30,7 @@ mod integration_v2 {
     }
     "#;
 
-    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/jpeg/CA.jpg");
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
     const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 
