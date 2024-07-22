@@ -70,19 +70,6 @@ impl Reader {
         })
     }
 
-    #[async_generic()]
-    pub fn from_buffer(format: &str, buffer: &[u8]) -> Result<Reader> {
-        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
-        let reader = if _sync {
-            ManifestStore::from_bytes(format, buffer, verify)
-        } else {
-            ManifestStore::from_bytes_async(format, buffer, verify).await
-        }?;
-        Ok(Reader {
-            manifest_store: reader,
-        })
-    }
-
     #[cfg(feature = "file_io")]
     /// Create a manifest store Reader from a file.
     /// # Arguments
