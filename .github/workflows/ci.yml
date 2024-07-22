@@ -218,7 +218,7 @@ jobs:
         # documentation build on docs.rs.
         run: cargo +nightly doc --all-features --no-deps
         env:
-          RUSTDOCFLAGS: --cfg docsrs
+          RUSTDOCFLAGS: "--cfg docsrs -D warnings"
           DOCS_RS: 1
 
   cargo-deny:
