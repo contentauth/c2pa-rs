@@ -6,30 +6,8 @@ expression: unescape_json(&reader.json())?
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
-      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
-      "title": "CA.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [
-        {
-          "title": "A.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf"
-        }
-      ],
       "assertions": [
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "http://schema.org/",
             "@type": "CreativeWork",
@@ -40,10 +18,10 @@ expression: unescape_json(&reader.json())?
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -51,8 +29,8 @@ expression: unescape_json(&reader.json())?
                 "instanceId": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
                 "parameters": {
                   "ingredient": {
-                    "url": "[JUMBF_URI]",
-                    "hash": "tTBD4/E0R0AjLUdJFpsVz3lE/KJUq22Vz0UGqzhEpVs="
+                    "hash": "tTBD4/E0R0AjLUdJFpsVz3lE/KJUq22Vz0UGqzhEpVs=",
+                    "url": "[JUMBF_URI]"
                   }
                 }
               },
@@ -63,16 +41,38 @@ expression: unescape_json(&reader.json())?
                 }
               }
             ]
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
+      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "format": "image/jpeg",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "A.jpg"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "issuer": "C2PA Test Signing Cert",
         "time": "[TIMESTAMP1]"
       },
-      "label": "[MANIFEST_URN]"
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "title": "CA.jpg"
     }
   }
 }

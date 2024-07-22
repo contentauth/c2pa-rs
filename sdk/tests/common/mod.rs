@@ -29,12 +29,14 @@ macro_rules! assert_err {
 #[allow(unused_imports)]
 pub(super) use assert_err;
 
-// This macro filters unstable snapshot output values so that we can properly diff changes.
+// Filter unstable output values and order them.
 #[macro_export]
 macro_rules! apply_filters {
     {} => {
         // TODO: c2pa regex patterns can be more strict and granular
         let mut settings = insta::Settings::clone_current();
+        // Sort by default.
+        settings.set_sort_maps(true);
         // macOS temp folder
         settings.add_filter(r"/var/folders/\S+?/T/\S+", "[TEMP_FILE]");
         // Linux temp folder
@@ -54,17 +56,6 @@ macro_rules! apply_filters {
         // Timestamp2
         settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
         let _guard = settings.bind_to_scope();
-    }
-}
-
-// The order of the output in some scenarios can be arbitrary, so we sort it beforehand
-// as to not affect the diff.
-#[macro_export]
-macro_rules! apply_sorted_output {
-    {} => {
-    let mut settings = Settings::clone_current();
-    settings.set_sort_maps(true);
-    let _guard = settings.bind_to_scope();
     }
 }
 

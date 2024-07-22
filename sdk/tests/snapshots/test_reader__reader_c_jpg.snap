@@ -6,18 +6,8 @@ expression: unescape_json(&reader.json())?
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
-      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
-      "title": "C.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [],
       "assertions": [
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "http://schema.org/",
             "@type": "CreativeWork",
@@ -28,31 +18,41 @@ expression: unescape_json(&reader.json())?
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
                 "action": "c2pa.created",
-                "softwareAgent": "Make Test Images 0.24.0",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                 "parameters": {
                   "name": "gradient"
                 },
-                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+                "softwareAgent": "Make Test Images 0.24.0"
               }
             ]
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
+      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
+      "format": "image/jpeg",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "issuer": "C2PA Test Signing Cert",
         "time": "[TIMESTAMP1]"
       },
-      "label": "[MANIFEST_URN]"
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "title": "C.jpg"
     }
   }
 }
