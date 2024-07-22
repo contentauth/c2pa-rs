@@ -39,6 +39,9 @@ use crate::{
     AsyncSigner, ClaimGeneratorInfo, Signer,
 };
 
+/// Version of the Builder Archive file
+const ARCHIVE_VERSION: &str = "1";
+
 /// A Manifest Definition
 /// This is used to define a manifest and is used to build a ManifestStore
 /// A Manifest is a collection of ingredients and assertions
@@ -265,8 +268,7 @@ impl Builder {
         let mut resource = Vec::new();
         stream.read_to_end(&mut resource)?;
         // add the resource and set the resource reference
-        self.resources
-            .add(self.definition.instance_id.clone(), resource)?;
+        self.resources.add(&self.definition.instance_id, resource)?;
         self.definition.thumbnail = Some(ResourceRef::new(
             format,
             self.definition.instance_id.clone(),
@@ -382,10 +384,15 @@ impl Builder {
                 let mut zip = ZipWriter::new(stream);
                 let options =
                     FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                // write a version file
+                zip.start_file("version.txt", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
+                // write the manifest.json file
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
-                // add a folder to the zip file
+                // add resource files to a resources folder
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
@@ -393,14 +400,20 @@ impl Builder {
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
-                for (index, ingredient) in self.definition.ingredients.iter().enumerate() {
-                    zip.start_file(format!("ingredients/{}/", index), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    for (id, data) in ingredient.resources().resources() {
-                        //println!("adding ingredient {}/{}", index, id);
-                        zip.start_file(format!("ingredients/{}/{}", index, id), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
+                // Write the manifest_data files
+                // The filename is filesystem safe version of the associated manifest_label
+                // with a .c2pa extension inside a "manifests" folder.
+                zip.start_file("manifests/", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                for ingredient in self.definition.ingredients.iter() {
+                    if let Some(manifest_label) = ingredient.active_manifest() {
+                        if let Some(manifest_data) = ingredient.manifest_data() {
+                            // Convert to valid archive / file path name
+                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
+                            zip.start_file(format!("manifests/{manifest_name}"), options)
+                                .map_err(|e| Error::OtherError(Box::new(e)))?;
+                            zip.write_all(&manifest_data)?;
+                        }
                     }
                 }
                 zip.finish()
@@ -419,14 +432,16 @@ impl Builder {
     /// * If the archive cannot be read.
     pub fn from_archive(stream: impl Read + Seek) -> Result<Self> {
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest = zip
+        // First read the manifest.json file.
+        let mut manifest_file = zip
             .by_name("manifest.json")
             .map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest_json = Vec::new();
-        manifest.read_to_end(&mut manifest_json)?;
+        let mut manifest_buf = Vec::new();
+        manifest_file.read_to_end(&mut manifest_buf)?;
         let mut builder: Builder =
-            serde_json::from_slice(&manifest_json).map_err(|e| Error::OtherError(Box::new(e)))?;
-        drop(manifest);
+            serde_json::from_slice(&manifest_buf).map_err(|e| Error::OtherError(Box::new(e)))?;
+        drop(manifest_file);
+        // Load all the files in the resources folder.
         for i in 0..zip.len() {
             let mut file = zip
                 .by_index(i)
@@ -443,6 +458,29 @@ impl Builder {
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
             }
+
+            // Load the c2pa_manifests.
+            // We add the manifest data to any ingredient that has a matching active_manfiest label.
+            if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                let manifest_label = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
+                let manifest_label = manifest_label.replace(['_'], ":");
+                for ingredient in builder.definition.ingredients.iter_mut() {
+                    if let Some(active_manifest) = ingredient.active_manifest() {
+                        if manifest_label.starts_with(active_manifest) {
+                            ingredient.set_manifest_data(data.clone())?;
+                        }
+                    }
+                }
+            }
+
+            // Keep this for temporary unstable api support (un-versioned).
+            // Earlier method used numbered library folders instead of manifests.
             if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
@@ -476,7 +514,7 @@ impl Builder {
         // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
-        // build the claim_generator string since this is required
+        // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
             .iter()
             .map(|s| {
@@ -504,7 +542,7 @@ impl Builder {
             claim.add_claim_generator_info(claim_info);
         }
 
-        // add claim metadata
+        // Add claim metadata
         if let Some(metadata_vec) = metadata {
             for m in metadata_vec {
                 claim.add_claim_metadata(m);
@@ -981,6 +1019,11 @@ mod tests {
         builder
             .resources
             .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .unwrap();
+
+        builder
+            .resources
+            .add("prompt.txt", "a random prompt")
             .unwrap();
 
         builder
