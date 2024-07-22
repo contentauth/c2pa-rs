@@ -129,7 +129,7 @@ zip = { version = "0.6.6", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.24.7", default-features = false, features = [
+image = { version = "0.25.2", default-features = false, features = [
 	"jpeg",
 	"png",
 ], optional = true }
