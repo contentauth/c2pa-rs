@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use super::Metadata;
 
@@ -40,6 +41,7 @@ pub enum UnitType {
 /// A spatial range representing rectangle, circle, or a polygon.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct Shape {
     /// The type of shape.
     #[serde(rename = "type")]
@@ -79,6 +81,7 @@ pub enum TimeType {
 /// A temporal range representing a starting time to an ending time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct Time {
     /// The type of time.
     #[serde(rename = "type", default)]
@@ -108,6 +111,7 @@ pub struct Frame {
 /// This is modeled after the W3C Web Annotation selector model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct TextSelector {
     // TODO: can we provide more specific types?
     //
@@ -122,6 +126,7 @@ pub struct TextSelector {
 /// One or two [`TextSelector`][TextSelector] identifiying the range to select.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct TextSelectorRange {
     /// The start (or entire) text range.
     pub selector: TextSelector,
@@ -157,6 +162,7 @@ pub enum RangeType {
 /// A spatial, temporal, frame, or textual range describing the region of interest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct Range {
     /// The type of range of interest.
     #[serde(rename = "type")]
@@ -211,6 +217,7 @@ pub enum Role {
 /// [`Metadata::region_of_interest`][crate::assertions::Metadata::region_of_interest].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[skip_serializing_none]
 pub struct RegionOfInterest {
     /// A range describing the region of interest for the specific asset.
     pub region: Vec<Range>,
