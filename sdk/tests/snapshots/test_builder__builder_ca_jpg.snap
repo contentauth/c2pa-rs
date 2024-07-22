@@ -46,6 +46,10 @@ expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
         "alg": "Ed25519",
         "cert_serial_number": "638838410810235485828984295321338730070538954823",
         "issuer": "C2PA Test Signing Cert"
+      },
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
       }
     }
   }
