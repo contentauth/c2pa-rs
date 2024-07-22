@@ -14,7 +14,7 @@
 use std::io::{Read, Seek};
 
 use anyhow::{Error, Result};
-use image::{io::Reader, ImageFormat};
+use image::{ImageFormat, ImageReader};
 
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
@@ -29,7 +29,7 @@ pub fn make_thumbnail_from_stream<R: Read + Seek + ?Sized>(
         .or_else(|| ImageFormat::from_mime_type(format))
         .ok_or(Error::msg(format!("format not supported {format}")))?;
 
-    let reader = Reader::with_format(std::io::BufReader::new(stream), format);
+    let reader = ImageReader::with_format(std::io::BufReader::new(stream), format);
     let mut img = reader.decode()?;
 
     let longest_edge = THUMBNAIL_LONGEST_EDGE;
