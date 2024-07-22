@@ -304,6 +304,7 @@ pub struct DataBox {
     pub format: String,
     #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
 }
 
