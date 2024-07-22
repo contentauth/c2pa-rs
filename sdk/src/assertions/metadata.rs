@@ -314,12 +314,34 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::assertions::region_of_interest::{Range, RangeType, Time, TimeType};
 
     #[test]
     fn assertion_metadata() {
         let review = ReviewRating::new("foo", Some("bar".to_owned()), 3);
         let test_value = Value::from("test");
-        let mut original = Metadata::new().add_review(review);
+        let mut original =
+            Metadata::new()
+                .add_review(review)
+                .set_region_of_interest(RegionOfInterest {
+                    region: vec![Range {
+                        range_type: RangeType::Temporal,
+                        shape: None,
+                        time: Some(Time {
+                            time_type: TimeType::Npt,
+                            start: None,
+                            end: None,
+                        }),
+                        frame: None,
+                        text: None,
+                    }],
+                    name: None,
+                    identifier: None,
+                    region_type: None,
+                    role: None,
+                    description: None,
+                    metadata: None,
+                });
         original.insert("foo", test_value);
         println!("{:?}", &original);
         let assertion = original.to_assertion().expect("build_assertion");
@@ -330,6 +352,10 @@ pub mod tests {
         assert_eq!(original.date_time, result.date_time);
         assert_eq!(original.reviews, result.reviews);
         assert_eq!(original.get("foo").unwrap(), "test");
+        assert_eq!(
+            original.region_of_interest.as_ref(),
+            result.region_of_interest()
+        )
         //assert_eq!(original.reviews.unwrap().len(), 1);
     }
 }

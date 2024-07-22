@@ -321,8 +321,13 @@ impl Action {
 
     /// Adds a region of interest that changed.
     pub fn add_change(mut self, region_of_interest: RegionOfInterest) -> Self {
-        if let Some(changes) = &mut self.changes {
-            changes.push(region_of_interest);
+        match &mut self.changes {
+            Some(changes) => {
+                changes.push(region_of_interest);
+            }
+            _ => {
+                self.changes = Some(vec![region_of_interest]);
+            }
         }
         self
     }
@@ -504,7 +509,10 @@ pub mod tests {
     use super::*;
     use crate::{
         assertion::AssertionData,
-        assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+        assertions::{
+            metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+            region_of_interest::{Range, RangeType, Time, TimeType},
+        },
         hashed_uri::HashedUri,
     };
 
@@ -553,7 +561,26 @@ pub mod tests {
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200")
-                    .set_source_type("digsrctype:algorithmicMedia"),
+                    .set_source_type("digsrctype:algorithmicMedia")
+                    .add_change(RegionOfInterest {
+                        region: vec![Range {
+                            range_type: RangeType::Temporal,
+                            shape: None,
+                            time: Some(Time {
+                                time_type: TimeType::Npt,
+                                start: None,
+                                end: None,
+                            }),
+                            frame: None,
+                            text: None,
+                        }],
+                        name: None,
+                        identifier: None,
+                        region_type: None,
+                        role: None,
+                        description: None,
+                        metadata: None,
+                    }),
             )
             .add_metadata(
                 Metadata::new()
@@ -565,7 +592,7 @@ pub mod tests {
         assert_eq!(original.actions.len(), 2);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), Actions::LABEL);
+        assert_eq!(assertion.label(), format!("{}.v2", Actions::LABEL));
 
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         assert_eq!(result.actions.len(), 2);
@@ -584,6 +611,7 @@ pub mod tests {
             result.actions[1].source_type().unwrap(),
             "digsrctype:algorithmicMedia"
         );
+        assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
@@ -752,7 +780,6 @@ pub mod tests {
                             "region": [
                                 {
                                     "type": "temporal",
-                                    "time": {}
                                 }
                             ]
                         }
@@ -788,11 +815,22 @@ pub mod tests {
             &SoftwareAgent::String("TestApp".to_string())
         );
         assert_eq!(
-            result.actions[3].changes.as_deref().unwrap()[0]
-                .description
-                .as_deref()
-                .unwrap(),
-            "translated to klingon"
+            result.actions[3].changes().unwrap(),
+            &[RegionOfInterest {
+                description: Some("translated to klingon".to_owned()),
+                region: vec![Range {
+                    range_type: RangeType::Temporal,
+                    shape: None,
+                    time: None,
+                    frame: None,
+                    text: None
+                }],
+                name: None,
+                identifier: None,
+                region_type: None,
+                role: None,
+                metadata: None
+            }]
         );
     }
 }
