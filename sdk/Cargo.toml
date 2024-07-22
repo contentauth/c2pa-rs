@@ -114,7 +114,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
-serde_json = { version = "1.0.117", features = ["preserve_order"] }
+serde_json = { version = "1.0.114", features = ["preserve_order"] }
 serde_with = "3.4.0"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
@@ -129,7 +129,7 @@ zip = { version = "0.6.6", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
-image = { version = "0.25.2", default-features = false, features = [
+image = { version = "0.24.7", default-features = false, features = [
 	"jpeg",
 	"png",
 ], optional = true }
