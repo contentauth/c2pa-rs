@@ -1,52 +1,36 @@
 ---
-source: sdk/tests/test_asset_io.rs
+source: sdk/tests/hashes.rs
 expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
 ---
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
-      "claim_generator": "test/1.0 c2pa-rs/0.32.6",
-      "claim_generator_info": [
-        {
-          "name": "test",
-          "version": "1.0"
-        },
-        {
-          "name": "c2pa-rs",
-          "version": "0.32.6"
-        }
-      ],
-      "format": "[FORMAT]",
-      "instance_id": [XMP_ID]",
-      "ingredients": [],
       "assertions": [
         {
-          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
                 "action": "c2pa.opened",
-                "softwareAgent": {
-                  "name": "TestApp",
-                  "version": "1.0",
-                  "something": "else"
-                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                 "parameters": {
                   "description": "import"
                 },
-                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "something": "else",
+                  "version": "1.0"
+                }
               }
             ]
-          }
+          },
+          "label": "c2pa.actions.v2"
         },
         {
-          "label": "c2pa.hash.bmff.v2",
           "data": {
+            "alg": "sha256",
             "exclusions": [
               {
-                "xpath": "/uuid",
-                "length": null,
                 "data": [
                   {
                     "offset": 8,
@@ -70,115 +54,131 @@ expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
                     ]
                   }
                 ],
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": null,
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/uuid"
               },
               {
-                "xpath": "/ftyp",
-                "length": null,
                 "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": null,
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/ftyp"
               },
               {
-                "xpath": "/meta/iloc",
-                "length": null,
                 "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": null,
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/meta/iloc"
               },
               {
-                "xpath": "/mfra/tfra",
-                "length": null,
                 "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": null,
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/mfra/tfra"
               },
               {
-                "xpath": "/moov/trak/mdia/minf/stbl/stco",
-                "length": null,
                 "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": [
                   {
-                    "offset": 16,
-                    "length": 0
+                    "length": 0,
+                    "offset": 16
                   }
                 ],
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/moov/trak/mdia/minf/stbl/stco"
               },
               {
-                "xpath": "/moov/trak/mdia/minf/stbl/co64",
-                "length": null,
                 "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
                 "subset": [
                   {
-                    "offset": 16,
-                    "length": 0
+                    "length": 0,
+                    "offset": 16
                   }
                 ],
                 "version": null,
-                "flags": null,
-                "exact": null
+                "xpath": "/moov/trak/mdia/minf/stbl/co64"
               },
               {
-                "xpath": "/moof/traf/tfhd",
-                "length": null,
                 "data": null,
-                "subset": [
-                  {
-                    "offset": 16,
-                    "length": 8
-                  }
-                ],
-                "version": null,
+                "exact": null,
                 "flags": [
                   1,
                   0,
                   0
                 ],
-                "exact": null
-              },
-              {
-                "xpath": "/moof/traf/trun",
                 "length": null,
-                "data": null,
                 "subset": [
                   {
-                    "offset": 16,
-                    "length": 4
+                    "length": 8,
+                    "offset": 16
                   }
                 ],
                 "version": null,
+                "xpath": "/moof/traf/tfhd"
+              },
+              {
+                "data": null,
+                "exact": null,
                 "flags": [
                   1,
                   0,
                   0
                 ],
-                "exact": null
+                "length": null,
+                "subset": [
+                  {
+                    "length": 4,
+                    "offset": 16
+                  }
+                ],
+                "version": null,
+                "xpath": "/moof/traf/trun"
               }
             ],
-            "alg": "sha256",
             "hash": "[HASH]",
             "name": "jumbf manifest"
-          }
+          },
+          "label": "c2pa.hash.bmff.v2"
         }
       ],
+      "claim_generator": "test/1.0 c2pa-rs/0.32.7",
+      "claim_generator_info": [
+        {
+          "name": "test",
+          "version": "1.0"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.32.7"
+        }
+      ],
+      "format": "[FORMAT]",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ed25519",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "638838410810235485828984295321338730070538954823"
-      },
-      "label": "[MANIFEST_URN]"
+        "cert_serial_number": "638838410810235485828984295321338730070538954823",
+        "issuer": "C2PA Test Signing Cert"
+      }
     }
   }
 }

@@ -27,12 +27,16 @@ fn test_hashes(assets: &[(&str, &[u8])]) -> Result<()> {
                 let mut asset = Cursor::new(asset);
 
                 let mut dest = Cursor::new(Vec::new());
-                let mut builder = Builder::from_json(&manifest_def)?;
-                builder.sign(&test_signer(), &format, &mut asset, &mut dest)?;
+                let mut builder = Builder::from_json(manifest_def)?;
+                builder.sign(&test_signer(), format, &mut asset, &mut dest)?;
+
+                let mut settings = Settings::clone_current();
+                settings.set_snapshot_suffix(*format);
+                let _guard = settings.bind_to_scope();
 
                 apply_filters!();
                 assert_json_snapshot!(unescape_json(
-                    &Reader::from_stream(&format, &mut dest)?.json()
+                    &Reader::from_stream(format, &mut dest)?.json()
                 )?, {
                    ".manifests.*.format" => "[FORMAT]",
                 });
@@ -47,25 +51,20 @@ fn test_hashes(assets: &[(&str, &[u8])]) -> Result<()> {
 
 #[test]
 fn test_data_hash() -> Result<()> {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_suffix("data_hash");
-    settings.bind(|| {
-        test_hashes(&[
-            ("image/jpeg", include_bytes!("fixtures/C.jpg")),
-            ("image/png", include_bytes!("fixtures/sample1.png")),
-            ("image/webp", include_bytes!("fixtures/sample1.webp")),
-            ("image/svg+xml", include_bytes!("fixtures/sample1.svg")),
-            ("audio/mpeg", include_bytes!("fixtures/sample1.mp3")),
-            ("image/tiff", include_bytes!("fixtures/TUSCANY.TIF")),
-            ("image/gif", include_bytes!("fixtures/sample1.gif")),
-        ])
-    })
+    test_hashes(&[
+        ("image/jpeg", include_bytes!("fixtures/C.jpg")),
+        ("image/png", include_bytes!("fixtures/sample1.png")),
+        ("image/webp", include_bytes!("fixtures/sample1.webp")),
+        ("image/svg+xml", include_bytes!("fixtures/sample1.svg")),
+        ("audio/mpeg", include_bytes!("fixtures/sample1.mp3")),
+        ("image/tiff", include_bytes!("fixtures/TUSCANY.TIF")),
+        ("image/gif", include_bytes!("fixtures/sample1.gif")),
+    ])
 }
 
 #[test]
 fn test_bmff_hash() -> Result<()> {
     let mut settings = Settings::clone_current();
-    settings.set_snapshot_suffix("bmff_hash");
     settings.add_redaction(".manifests.*.assertions.*.data.hash", "[HASH]");
     settings.bind(|| test_hashes(&[("video/mp4", include_bytes!("fixtures/video1.mp4"))]))
 }

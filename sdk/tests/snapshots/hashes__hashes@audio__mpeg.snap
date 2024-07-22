@@ -1,6 +1,6 @@
 ---
 source: sdk/tests/hashes.rs
-expression: "unescape_json(&Reader::from_stream(&format, &mut dest)?.json())?"
+expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
 ---
 {
   "active_manifest": "[MANIFEST_URN]",
