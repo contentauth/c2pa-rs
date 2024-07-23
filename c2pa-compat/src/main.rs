@@ -64,6 +64,14 @@ fn main() -> Result<()> {
     let dir_path = format!("./sdk/tests/fixtures/compat/{}", c2pa::VERSION);
     fs::create_dir(&dir_path)?;
 
+    // TODO: to be more extensive, we can test embedding the manifest in the asset
+    //       but if we do that, we should probably do it for every type of supported asset.
+    //       we should also test embedding the manifest as a remote manifest
+    //       if assets are stored in a separate repo, we can reference the github url?
+    //
+    //       this is a big benefit of having a separate assets repo, we (for the most part)
+    //       don't care how large it gets because it doesn't flood our history
+
     fs::write(format!("{dir_path}/manifest.json"), FULL_MANIFEST)?;
     fs::write(format!("{dir_path}/manifest.c2pa"), c2pa_manifest)?;
     fs::write(
