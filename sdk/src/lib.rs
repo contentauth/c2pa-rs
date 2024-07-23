@@ -112,7 +112,7 @@ pub mod wasm;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
-pub use builder::{Builder, ManifestDefinition};
+pub use builder::{AssertionDefinition, Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use error::{Error, Result};
