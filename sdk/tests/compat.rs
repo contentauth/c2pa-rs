@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa::{create_signer, Builder, Reader, Result, SigningAlg};
+use c2pa::{Builder, Reader, Result, SigningAlg};
 use serde::Deserialize;
 
 const COMPAT_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "tests/fixtures/compat");
@@ -49,7 +49,7 @@ fn test_compat() -> Result<()> {
             Cursor::new(fs::read(version_dir_path.join("manifest.c2pa"))?);
 
         let actual_c2pa_manifest = Builder::from_json(&expected_json_manifest)?.sign(
-            &*create_signer::from_files(
+            &*c2pa::create_signer::from_files(
                 details.signcert,
                 details.pkey,
                 details.algorithm,
