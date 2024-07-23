@@ -13,8 +13,8 @@
 
 use std::{
     fs::{self, File},
-    io,
-    path::PathBuf,
+    io::Cursor,
+    path::Path,
 };
 
 use c2pa::{create_signer, Builder, Result, SigningAlg};
@@ -22,22 +22,47 @@ use serde::Serialize;
 
 const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
 
-const ASSET_PATH: &str = "C.jpg";
-const SIGNCERT_PATH: &str = "certs/ps256.pub";
-const PKEY_PATH: &str = "certs/ps256.pem";
-const ALGORITHM: SigningAlg = SigningAlg::Ps256;
-const TSA_URL: &str = "TODO";
+const DETAILS: CompatDetails = CompatDetails::new(&[
+    CompatAssetDetails::new("C.jpg", "jpeg"),
+    CompatAssetDetails::new("sample1.gif", "gif"),
+    CompatAssetDetails::new("sample1.svg", "svg"),
+    // TODO: add an asset from each parser category
+]);
 
 const BASE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
+
+#[derive(Debug, Serialize)]
+pub struct CompatAssetDetails {
+    asset: &'static str,
+    category: &'static str,
+}
+
+impl CompatAssetDetails {
+    pub const fn new(asset: &'static str, category: &'static str) -> Self {
+        Self { asset, category }
+    }
+}
 
 // Redefined in `sdk/tests/compat.rs`, can't make lib.rs without circular dependency or a separate crate.
 #[derive(Debug, Serialize)]
 pub struct CompatDetails {
-    asset: PathBuf,
-    signcert: PathBuf,
-    pkey: PathBuf,
+    assets: &'static [CompatAssetDetails],
+    sign_cert: &'static str,
+    pkey: &'static str,
     algorithm: SigningAlg,
-    tsa_url: String,
+    tsa_url: &'static str,
+}
+
+impl CompatDetails {
+    pub const fn new(assets: &'static [CompatAssetDetails]) -> Self {
+        Self {
+            assets,
+            sign_cert: "certs/ps256.pub",
+            pkey: "certs/ps256.pem",
+            algorithm: SigningAlg::Ps256,
+            tsa_url: "TODO",
+        }
+    }
 }
 
 fn fixture_path(subpath: &str) -> String {
@@ -48,47 +73,80 @@ fn fixture_path(subpath: &str) -> String {
 // TODO: also, we need to have a predefined set of hash assertions that are added on a per-asset basis,
 //       maybe the hash assertion should be specified in compat-details?
 fn main() -> Result<()> {
-    let details = CompatDetails {
-        asset: PathBuf::from(fixture_path(ASSET_PATH)),
-        signcert: PathBuf::from(fixture_path(SIGNCERT_PATH)),
-        pkey: PathBuf::from(fixture_path(PKEY_PATH)),
-        algorithm: ALGORITHM,
-        tsa_url: TSA_URL.to_owned(),
-    };
+    let compat_dir = fixture_path(&format!("compat/{}", c2pa::VERSION));
+    fs::create_dir(&compat_dir)?;
 
-    let format = c2pa::format_from_path(&details.asset).unwrap();
-
-    let c2pa_manifest = Builder::from_json(FULL_MANIFEST)?.sign(
-        &*create_signer::from_files(
-            &details.signcert,
-            &details.pkey,
-            details.algorithm,
-            Some(details.tsa_url.clone()),
-        )?,
-        &format,
-        &mut File::open(&details.asset)?,
-        &mut io::empty(),
-    )?;
-    // TODO: need to set resource base path
-
-    let dir_path = fixture_path(&format!("compat/{}", c2pa::VERSION));
-    fs::create_dir(&dir_path)?;
-
-    // TODO: To be more extensive, we should be generating embedded/remote manifests
-    //       for each type of asset/parser. For remote manifests, we can store a
-    //       URL to the repo where the asset will be uploaded.
-    //       This will ensure three things: (1) manifest parsing compatability, (2) remote
-    //       manifest parsing compatability, (3) asset embedding compatability
-    //
-    //       These changes would significantly benefit from having a separate repo to store
-    //       assets.
-
-    fs::write(format!("{dir_path}/manifest.json"), FULL_MANIFEST)?;
-    fs::write(format!("{dir_path}/manifest.c2pa"), c2pa_manifest)?;
+    fs::write(format!("{compat_dir}/manifest.json"), FULL_MANIFEST)?;
     fs::write(
-        format!("{dir_path}/compat-details.json"),
-        serde_json::to_string(&details)?,
+        format!("{compat_dir}/compat-details.json"),
+        serde_json::to_string(&DETAILS)?,
     )?;
+
+    for asset_details in DETAILS.assets {
+        let format = c2pa::format_from_path(asset_details.asset).unwrap();
+
+        let mut signed_embedded_asset = Cursor::new(Vec::new());
+        Builder::from_json(FULL_MANIFEST)?.sign(
+            &*create_signer::from_files(
+                &fixture_path(DETAILS.sign_cert),
+                &fixture_path(DETAILS.pkey),
+                DETAILS.algorithm,
+                Some(fixture_path(DETAILS.tsa_url)),
+            )?,
+            &format,
+            &mut File::open(fixture_path(asset_details.asset))?,
+            &mut signed_embedded_asset,
+        )?;
+        // TODO: need to set resource base path
+
+        // TODO: can we share the builder or does it mutate itself?
+        let mut signed_remote_asset = Cursor::new(Vec::new());
+        let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
+        // TODO: set URL to URL in github repo where PR is sent and asset will be located
+        remote_builder.remote_url =
+            Some("https://github.com/contentauth/c2pa-assets/TODO".to_owned());
+        let remote_c2pa_manifest = remote_builder.sign(
+            &*create_signer::from_files(
+                &fixture_path(DETAILS.sign_cert),
+                &fixture_path(DETAILS.pkey),
+                DETAILS.algorithm,
+                Some(fixture_path(DETAILS.tsa_url)),
+            )?,
+            &format,
+            &mut File::open(fixture_path(asset_details.asset))?,
+            &mut signed_remote_asset,
+        )?;
+        // TODO: need to set resource base path
+
+        let dir_path = format!("{compat_dir}/{}", asset_details.category);
+        fs::create_dir(&dir_path)?;
+
+        // TODO: To be more extensive, we should be generating embedded/remote manifests
+        //       for each type of asset/parser. For remote manifests, we can store a
+        //       URL to the repo where the asset will be uploaded.
+        //       This will ensure three things: (1) manifest parsing compatability, (2) remote
+        //       manifest parsing compatability, (3) asset embedding compatability
+        //
+        //       These changes would significantly benefit from having a separate repo to store
+        //       assets.
+
+        let asset_path = Path::new(asset_details.asset);
+        let asset_name = asset_path.file_name().unwrap().to_str().unwrap();
+        let extension = asset_path.extension().unwrap().to_str().unwrap();
+
+        fs::write(
+            format!("{dir_path}/{asset_name}-remote.{extension}"),
+            signed_remote_asset.into_inner(),
+        )?;
+        fs::write(
+            format!("{dir_path}/{asset_name}-remote.c2pa"),
+            remote_c2pa_manifest,
+        )?;
+        fs::write(
+            format!("{dir_path}/{asset_name}-embedded.{extension}"),
+            signed_embedded_asset.into_inner(),
+        )?;
+    }
 
     Ok(())
 }
