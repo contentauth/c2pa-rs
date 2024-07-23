@@ -4,8 +4,8 @@
   "instance_id": "TOOD",
   "claim_generator_info": [
     {
-      "name": "c2pa-rs",
-      "version": "TODO: auto-gen this? does c2pa-rs add claim gen already w/ version?",
+      "name": "My claim generator",
+      "version": "0.1.0",
       "icon": {
         "format": "image/svg+xml",
         "identifier": "sample1.svg"
@@ -16,103 +16,93 @@
     {
       "reviews": [
         {
-          "explanation": "TODO",
-          "code": "TODO",
-          "value": 9
+          "explanation": "Some explanation",
+          "code": "ingredient.notVisible",
+          "value": 2
         }
       ],
       "dateTime": "1985-04-12T23:20:50.52Z",
-      "reference": "TODO",
-      "data_source": "TODO",
+      "dataSource": {
+        "type": "humanEntry.identified",
+        "details": "Some details",
+        "actors": [
+          {
+            "identifier": "Some identifier"
+          }
+        ]
+      },
       "my_custom_metadata": "my custom metatdata value"
     }
   ],
   "thumbnail": {
     "format": "image/jpeg",
-    "identifier": "fixtures/IMG_0003.jpg",
-    "hash": "TODO",
+    "identifier": "C.jpg",
     "data_types": [
       {
-        "asset_type": "TODO",
-        "version": "TODO"
+        "type": "c2pa.types.classifier",
+        "version": "0.1.0"
       }
     ]
   },
   "assertions": [
     {
-      "label": "TODO: add every single type of assertion, v1 + v2 + vX"
+      "label": "TODO: add every single type of assertion, v1 + v2 + vX",
+      "data": {
+        "TODO": "TODO: are assertions validated? are they all treated the same, just a blob?"
+      }
     }
   ],
   "ingredients": [
     {
-      "title": "A.jpg",
+      "title": "CA.jpg",
       "format": "image/jpeg",
       "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
       "relationship": "parentOf",
-      "provenance": "TODO",
       "thumbnail": {
         "format": "image/png",
         "identifier": "fixtures/png/exp-test1.png",
-        "hash": "TODO",
         "data_types": [
           {
-            "asset_type": "TODO",
-            "version": "TODO"
+            "type": "c2pa.types.classifier",
+            "version": "0.1.0"
           }
         ]
       },
-      "hash": "TODO",
-      "active_manifest": "TODO",
       "validation_status": [
         {
-          "code": "TODO",
+          "code": "claimSignature.validated",
           "url": "TODO",
-          "explanation": "TODO"
+          "explanation": "Some explanation"
         }
       ],
-      "data": {
-        "format": "TODO",
-        "identifier": "TODO",
-        "hash": "TODO",
-        "data_types": [
-          {
-            "asset_type": "TODO",
-            "version": "TODO"
-          }
-        ]
-      },
-      "description": "TODO",
-      "informational_URI": "TODO",
+      "description": "Some description",
+      "informational_URI": "google.com",
       "metadata": {
         "reviews": [
           {
-            "explanation": "TODO",
-            "code": "TODO",
-            "value": 9
+            "explanation": "Some explanation",
+            "code": "ingredient.notVisible",
+            "value": 2
           }
         ],
         "dateTime": "1985-04-12T23:20:50.52Z",
-        "reference": "TODO",
-        "data_source": "TODO",
+        "dataSource": {
+          "type": "humanEntry.identified",
+          "details": "Some details",
+          "actors": [
+            {
+              "identifier": "Some identifier"
+            }
+          ]
+        },
         "my_custom_metadata": "my custom metatdata value"
       },
       "data_types": [
         {
-          "asset_type": "TODO",
-          "version": "TODO"
+          "type": "c2pa.types.classifier",
+          "version": "0.1.0"
         }
-      ],
-      "manifest_data": {
-        "format": "TODO",
-        "identifier": "TODO",
-        "hash": "TODO",
-        "data_types": [
-          {
-            "asset_type": "TODO",
-            "version": "TODO"
-          }
-        ]
-      }
+      ]
     },
     {
       "title": "prompt",

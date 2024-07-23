@@ -36,6 +36,7 @@ pub struct CompatDetails {
 
 // TODO: disabled for now until we have it impled
 // #[test]
+#[cfg(not(target_arch = "wasm32"))] // TODO: WASM doesn't support ed25519 yet
 fn test_compat() -> Result<()> {
     for version_dir in fs::read_dir(COMPAT_FIXTURES)? {
         let version_dir_path = version_dir?.path();
