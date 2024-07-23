@@ -20,6 +20,8 @@ use std::{
 
 use config::{Config, FileFormat};
 use lazy_static::lazy_static;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{utils::base64, Error, Result};
@@ -39,6 +41,7 @@ pub(crate) trait SettingsValidate {
 
 // Settings for trust list feature
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Trust {
     private_anchors: Option<String>,
@@ -116,6 +119,7 @@ impl SettingsValidate for Trust {
 
 // Settings for core C2PA-RS functionality
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Core {
     debug: bool,
@@ -152,6 +156,7 @@ impl SettingsValidate for Core {
 
 // Settings for verification options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Verify {
     verify_after_reading: bool,
@@ -177,6 +182,7 @@ impl SettingsValidate for Verify {}
 
 // Settings for Builder API options
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
 pub(crate) struct Builder {
     auto_thumbnail: bool,
@@ -197,8 +203,9 @@ impl SettingsValidate for Builder {}
 // file or by setting specific value via code.  There is a single configuration
 // setting for the entire C2PA-RS instance.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[allow(unused)]
-pub(crate) struct Settings {
+pub struct Settings {
     trust: Trust,
     core: Core,
     verify: Verify,

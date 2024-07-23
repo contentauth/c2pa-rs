@@ -17,6 +17,8 @@ use std::{
 };
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -46,6 +48,7 @@ const ARCHIVE_VERSION: &str = "1";
 /// It is used to define a claim that can be signed and embedded into a file
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// Optional prefix added to the generated Manifest Label
@@ -103,13 +106,16 @@ fn default_vec<T>() -> Vec<T> {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum AssertionData {
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     Cbor(serde_cbor::Value),
     Json(serde_json::Value),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
     pub label: String,
@@ -319,6 +325,7 @@ impl Builder {
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * If the [`Ingredient`] is not valid
+    #[async_generic()]
     pub fn add_ingredient<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
@@ -330,7 +337,11 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
-        let ingredient = ingredient.with_stream(format, stream)?;
+        let ingredient = if _sync {
+            ingredient.with_stream(format, stream)?
+        } else {
+            ingredient.with_stream_async(format, stream).await?
+        };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it

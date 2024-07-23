@@ -2944,17 +2944,27 @@ impl Store {
     }
 
     // verify from a buffer without file i/o
+    #[async_generic()]
     pub fn verify_from_stream(
         &mut self,
         reader: &mut dyn CAIRead,
         asset_type: &str,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
-        Store::verify_store(
-            self,
-            &mut ClaimAssetData::Stream(reader, asset_type),
-            validation_log,
-        )
+        if _sync {
+            Store::verify_store(
+                self,
+                &mut ClaimAssetData::Stream(reader, asset_type),
+                validation_log,
+            )
+        } else {
+            Store::verify_store_async(
+                self,
+                &mut ClaimAssetData::Stream(reader, asset_type),
+                validation_log,
+            )
+            .await
+        }
     }
 
     // fetch remote manifest if possible
