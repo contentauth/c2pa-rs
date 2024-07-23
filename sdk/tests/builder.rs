@@ -20,7 +20,7 @@ use common::{test_signer, unescape_json};
 use insta::assert_json_snapshot;
 
 #[test]
-fn test_builder_ca_jpg() -> Result<()> {
+fn test_builder_read() -> Result<()> {
     let manifest_def = include_str!("../tests/fixtures/simple_manifest.json");
     let mut builder = Builder::from_json(manifest_def)?;
 
@@ -34,6 +34,22 @@ fn test_builder_ca_jpg() -> Result<()> {
     assert_json_snapshot!(unescape_json(
         &Reader::from_stream(format, &mut dest)?.json()
     )?);
+
+    Ok(())
+}
+
+#[test]
+fn test_builder_archive() -> Result<()> {
+    let manifest_def = include_str!("../tests/fixtures/simple_manifest.json");
+    let mut builder = Builder::from_json(manifest_def)?;
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.to_archive(&mut dest)?;
+
+    let builder = Builder::from_archive(dest)?;
+
+    apply_filters!();
+    assert_json_snapshot!(builder);
 
     Ok(())
 }

@@ -1,0 +1,7 @@
+{
+  "asset": "sample1.jpg",
+  "signcert": "",
+  "pkey": "",
+  "algorithm": "",
+  "tsa_url": "TODO"
+}

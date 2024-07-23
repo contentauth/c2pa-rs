@@ -21,30 +21,28 @@ use insta::{allow_duplicates, assert_json_snapshot, Settings};
 
 fn test_hashes(assets: &[(&str, &[u8])]) -> Result<()> {
     allow_duplicates! {
-        || -> Result<()> {
-            for (format, asset) in assets {
-                let manifest_def = include_str!("fixtures/simple_manifest.json");
-                let mut asset = Cursor::new(asset);
+        for (format, asset) in assets {
+            let manifest_def = include_str!("fixtures/simple_manifest.json");
+            let mut asset = Cursor::new(asset);
 
-                let mut dest = Cursor::new(Vec::new());
-                let mut builder = Builder::from_json(manifest_def)?;
-                builder.sign(&test_signer(), format, &mut asset, &mut dest)?;
+            let mut dest = Cursor::new(Vec::new());
+            let mut builder = Builder::from_json(manifest_def)?;
+            builder.sign(&test_signer(), format, &mut asset, &mut dest)?;
 
-                let mut settings = Settings::clone_current();
-                settings.set_snapshot_suffix(*format);
-                let _guard = settings.bind_to_scope();
+            let mut settings = Settings::clone_current();
+            settings.set_snapshot_suffix(*format);
+            let _guard = settings.bind_to_scope();
 
-                apply_filters!();
-                assert_json_snapshot!(unescape_json(
-                    &Reader::from_stream(format, &mut dest)?.json()
-                )?, {
-                   ".manifests.*.format" => "[FORMAT]",
-                });
-            }
+            apply_filters!();
+            assert_json_snapshot!(unescape_json(
+                &Reader::from_stream(format, &mut dest)?.json()
+            )?, {
+               ".manifests.*.format" => "[FORMAT]",
+            });
+        }
 
-            Ok(())
-        }().unwrap()
-    };
+        Ok::<(), c2pa::Error>(())
+    }?;
 
     Ok(())
 }

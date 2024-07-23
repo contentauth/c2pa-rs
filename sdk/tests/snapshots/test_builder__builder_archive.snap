@@ -1,0 +1,37 @@
+---
+source: sdk/tests/test_builder.rs
+expression: builder
+---
+{
+  "assertions": [
+    {
+      "label": "c2pa.actions.v2",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.opened",
+            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+            "parameters": {
+              "description": "import"
+            },
+            "softwareAgent": {
+              "name": "TestApp",
+              "something": "else",
+              "version": "1.0"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "claim_generator_info": [
+    {
+      "name": "test",
+      "version": "1.0"
+    }
+  ],
+  "format": "image/jpeg",
+  "ingredients": [],
+  "instance_id": [XMP_ID]",
+  "no_embed": false
+}
