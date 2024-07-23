@@ -1613,13 +1613,6 @@ pub(crate) mod tests {
                                         {
                                             "type": "temporal",
                                             "time": {}
-                                        },
-                                        {
-                                            "type": "identified",
-                                            "item": {
-                                                "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
-                                                "value": "lips"
-                                            }
                                         }
                                     ]
                                 }
@@ -2238,13 +2231,6 @@ pub(crate) mod tests {
                                         {
                                             "type" : "temporal",
                                             "time" : {}
-                                        },
-                                        {
-                                            "type" : "identified",
-                                            "item" : {
-                                              "identifier" : "https://bioportal.bioontology.org/ontologies/FMA",
-                                              "value" : "lips"
-                                            }
                                         }
                                     ],
                                     "description": "lip synced area"
