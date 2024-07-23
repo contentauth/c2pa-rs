@@ -1,7 +1,7 @@
 {
   "asset": "sample1.jpg",
-  "signcert": "",
-  "pkey": "",
-  "algorithm": "",
+  "signcert": "ps256.pub",
+  "pkey": "ps256.pem",
+  "algorithm": "ps256",
   "tsa_url": "TODO"
 }
