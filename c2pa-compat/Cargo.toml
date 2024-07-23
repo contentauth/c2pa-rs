@@ -2,6 +2,8 @@
 name = "c2pa-compat"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74.0"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 c2pa = { path = "../sdk", default-features = false, features = [
