@@ -9,9 +9,11 @@ fn main() {
             "submodule",
             "update",
             "--init",
-            "--depth 1",
+            "--depth",
+            "1",
             "--recommend-shallow",
         ])
+        .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
         .output()
         .expect("Failed to fetch git submodules!");
 }
