@@ -100,9 +100,6 @@ fn main() -> Result<()> {
         )?;
         // TODO: need to set resource base path
 
-        // TODO TODO TODO: if remote manifests and sidecar manifests are both stored as XMP, then let's just test
-        //                 the sidecar manifest so we don't need to deal with URLs.
-
         // TODO: can we share the builder or does it mutate itself?
         let mut signed_sidecar_asset = Cursor::new(Vec::new());
         let mut sidecar_builder = Builder::from_json(FULL_MANIFEST)?;
@@ -124,29 +121,16 @@ fn main() -> Result<()> {
         let dir_path = format!("{compat_dir}/{}", asset_details.category);
         fs::create_dir(&dir_path)?;
 
-        // TODO: To be more extensive, we should be generating embedded/remote manifests
-        //       for each type of asset/parser. For remote manifests, we can store a
-        //       URL to the repo where the asset will be uploaded.
-        //       This will ensure three things: (1) manifest parsing compatability, (2) remote
-        //       manifest parsing compatability, (3) asset embedding compatability
-        //
-        //       These changes would significantly benefit from having a separate repo to store
-        //       assets.
-
         let asset_path = Path::new(asset_details.asset);
-        let asset_name = asset_path.file_name().unwrap().to_str().unwrap();
         let extension = asset_path.extension().unwrap().to_str().unwrap();
 
         fs::write(
-            format!("{dir_path}/{asset_name}-sidecar.{extension}"),
+            format!("{dir_path}/sidecar.{extension}"),
             signed_sidecar_asset.into_inner(),
         )?;
+        fs::write(format!("{dir_path}/sidecar.c2pa"), sidecar_c2pa_manifest)?;
         fs::write(
-            format!("{dir_path}/{asset_name}-sidecar.c2pa"),
-            sidecar_c2pa_manifest,
-        )?;
-        fs::write(
-            format!("{dir_path}/{asset_name}-embedded.{extension}"),
+            format!("{dir_path}/embedded.{extension}"),
             signed_embedded_asset.into_inner(),
         )?;
     }
