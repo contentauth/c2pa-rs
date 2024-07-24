@@ -60,7 +60,7 @@ fn test_compat() -> Result<()> {
 
             let mut expected_embedded_asset =
                 Cursor::new(fs::read(asset_dir.join(format!("embedded.{extension}")))?);
-            let expected_sidecar_asset =
+            let mut expected_sidecar_asset =
                 Cursor::new(fs::read(asset_dir.join(format!("sidecar.{extension}")))?);
             let expected_sidecar_manifest = Cursor::new(fs::read(asset_dir.join("sidecar.c2pa"))?);
 
@@ -78,9 +78,6 @@ fn test_compat() -> Result<()> {
                 &mut actual_embedded_asset,
             )?;
 
-            let actual_json_manifest =
-                Reader::from_stream(&format, &mut expected_embedded_asset)?.json();
-
             // TODO: we can preallocate here as well
             let mut actual_sidecar_asset = Cursor::new(Vec::new());
             let mut sidecar_builder = Builder::from_json(&expected_json_manifest)?;
@@ -97,7 +94,19 @@ fn test_compat() -> Result<()> {
                 &mut actual_sidecar_asset,
             )?;
 
-            assert_eq!(expected_json_manifest, actual_json_manifest);
+            let actual_json_manifest_from_embedded_asset =
+                Reader::from_stream(&format, &mut expected_embedded_asset)?.json();
+            let actual_json_manifest_from_sidecar_asset =
+                Reader::from_stream(&format, &mut expected_sidecar_asset)?.json();
+
+            assert_eq!(
+                expected_json_manifest,
+                actual_json_manifest_from_embedded_asset
+            );
+            assert_eq!(
+                expected_json_manifest,
+                actual_json_manifest_from_sidecar_asset
+            );
             assert_eq!(
                 expected_embedded_asset.into_inner(),
                 actual_embedded_asset.into_inner()
