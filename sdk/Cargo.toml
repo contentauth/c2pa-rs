@@ -179,3 +179,4 @@ c2pa = { path = ".", features = [
 	# TODO: we should be able to opt out of thumbnails in the builder API
 	"add_thumbnails",
 ] }
+tiny_http = "0.12.0"

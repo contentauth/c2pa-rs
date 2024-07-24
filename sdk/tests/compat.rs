@@ -18,10 +18,12 @@ use std::{
     fs::{self, File},
     io::Cursor,
     path::PathBuf,
+    thread,
 };
 
 use c2pa::{Builder, Reader, Result, SigningAlg};
 use serde::Deserialize;
+use tiny_http::{Response, Server};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "tests/fixtures");
 
@@ -34,16 +36,33 @@ pub struct CompatAssetDetails {
 #[derive(Debug, Deserialize)]
 pub struct CompatDetails {
     assets: Vec<CompatAssetDetails>,
-    sign_cert: PathBuf,
-    pkey: PathBuf,
+    public_key: PathBuf,
+    private_key: PathBuf,
     algorithm: SigningAlg,
     tsa_url: String,
+}
+
+fn serve_remote_manifests() -> Result<()> {
+    thread::spawn(|| {
+        let server = Server::http("localhost:8000").unwrap();
+
+        for request in server.incoming_requests() {
+            let response = Response::from_file(
+                File::open(format!("{FIXTURES}/compat/{}", request.url())).unwrap(),
+            );
+            request.respond(response).unwrap();
+        }
+    });
+
+    Ok(())
 }
 
 // TODO: disabled for now until we have it impled
 // #[test]
 #[cfg(not(target_arch = "wasm32"))] // TODO: WASM doesn't support ed25519 yet
 fn test_compat() -> Result<()> {
+    serve_remote_manifests()?;
+
     for version_dir in fs::read_dir(format!("{FIXTURES}/compat"))? {
         let version_dir = version_dir?.path();
 
@@ -60,16 +79,16 @@ fn test_compat() -> Result<()> {
 
             let mut expected_embedded_asset =
                 Cursor::new(fs::read(asset_dir.join(format!("embedded.{extension}")))?);
-            let mut expected_sidecar_asset =
-                Cursor::new(fs::read(asset_dir.join(format!("sidecar.{extension}")))?);
-            let expected_sidecar_manifest = Cursor::new(fs::read(asset_dir.join("sidecar.c2pa"))?);
+            let mut expected_remote_asset =
+                Cursor::new(fs::read(asset_dir.join(format!("remote.{extension}")))?);
+            let expected_c2pa_manifest = Cursor::new(fs::read(asset_dir.join("manifest.c2pa"))?);
 
             // TODO: we can preallocate w/ size of expected_embedded_asset
             let mut actual_embedded_asset = Cursor::new(Vec::new());
             Builder::from_json(&expected_json_manifest)?.sign(
                 &*c2pa::create_signer::from_files(
-                    &details.sign_cert,
-                    &details.pkey,
+                    &details.public_key,
+                    &details.private_key,
                     details.algorithm,
                     Some(details.tsa_url.clone()),
                 )?,
@@ -79,25 +98,28 @@ fn test_compat() -> Result<()> {
             )?;
 
             // TODO: we can preallocate here as well
-            let mut actual_sidecar_asset = Cursor::new(Vec::new());
-            let mut sidecar_builder = Builder::from_json(&expected_json_manifest)?;
-            sidecar_builder.no_embed = true;
-            let actual_sidecar_manifest = sidecar_builder.sign(
+            let mut actual_remote_asset = Cursor::new(Vec::new());
+            let mut remote_builder = Builder::from_json(&expected_json_manifest)?;
+            remote_builder.remote_url = Some(format!(
+                "localhost:8000/{}/remote-{extension}.c2pa",
+                c2pa::VERSION
+            ));
+            let actual_c2pa_manifest = remote_builder.sign(
                 &*c2pa::create_signer::from_files(
-                    &details.sign_cert,
-                    &details.pkey,
+                    &details.public_key,
+                    &details.private_key,
                     details.algorithm,
                     Some(details.tsa_url.clone()),
                 )?,
                 &format,
                 &mut File::open(&format!("{FIXTURES}/{}", file_name))?,
-                &mut actual_sidecar_asset,
+                &mut actual_remote_asset,
             )?;
 
             let actual_json_manifest_from_embedded_asset =
                 Reader::from_stream(&format, &mut expected_embedded_asset)?.json();
-            let actual_json_manifest_from_sidecar_asset =
-                Reader::from_stream(&format, &mut expected_sidecar_asset)?.json();
+            let actual_json_manifest_from_remote_asset =
+                Reader::from_stream(&format, &mut expected_remote_asset)?.json();
 
             assert_eq!(
                 expected_json_manifest,
@@ -105,20 +127,17 @@ fn test_compat() -> Result<()> {
             );
             assert_eq!(
                 expected_json_manifest,
-                actual_json_manifest_from_sidecar_asset
+                actual_json_manifest_from_remote_asset
             );
             assert_eq!(
                 expected_embedded_asset.into_inner(),
                 actual_embedded_asset.into_inner()
             );
             assert_eq!(
-                expected_sidecar_asset.into_inner(),
-                actual_sidecar_asset.into_inner()
+                expected_remote_asset.into_inner(),
+                actual_remote_asset.into_inner()
             );
-            assert_eq!(
-                expected_sidecar_manifest.into_inner(),
-                actual_sidecar_manifest
-            );
+            assert_eq!(expected_c2pa_manifest.into_inner(), actual_c2pa_manifest);
         }
     }
 
