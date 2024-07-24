@@ -1,0 +1,28 @@
+# TODO: temp a separate workflow
+name: Create compat snapshot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compat-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Create compat snapshot
+        run: cargo run -p c2pa-compat
+
+      - name: Send compat PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "Create compat snapshot for version <TODO>"
+          labels: TODO
+          commit-message: "Create manifest compat snapshot"
+          repository: ok-nick/c2pa-fixtures # TODO: temp
+          branch: "compat-snapshot-<TODO: version>"
+          path: sdk/tests/fixtures

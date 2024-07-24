@@ -4,24 +4,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  compat-snapshot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Create compat snapshot
-        run: |
-          cargo run -p c2pa-compat
-
-      - name: Create compat PR
-        uses: peter-evans/create-pull-request@v6
-        with:
-          title: "Create manifest compat snapshot for <TODO: version>"
-          commit-message: "Create manifest compat snapshot"
-          branch: compat-snapshot
-          labels: TODO
-
   publish:
     concurrency: publish-mutex
     runs-on: ubuntu-latest

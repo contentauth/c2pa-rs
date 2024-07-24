@@ -22,6 +22,7 @@ use serde::Serialize;
 
 const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
 
+// TODO: these assets should be as small as possible
 const DETAILS: CompatDetails = CompatDetails::new(&[
     CompatAssetDetails::new("C.jpg", "jpeg"),
     CompatAssetDetails::new("sample1.gif", "gif"),
@@ -99,13 +100,15 @@ fn main() -> Result<()> {
         )?;
         // TODO: need to set resource base path
 
+        // TODO TODO TODO: if remote manifests and sidecar manifests are both stored as XMP, then let's just test
+        //                 the sidecar manifest so we don't need to deal with URLs.
+
         // TODO: can we share the builder or does it mutate itself?
-        let mut signed_remote_asset = Cursor::new(Vec::new());
-        let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
-        // TODO: set URL to URL in github repo where PR is sent and asset will be located
-        remote_builder.remote_url =
-            Some("https://github.com/contentauth/c2pa-assets/TODO".to_owned());
-        let remote_c2pa_manifest = remote_builder.sign(
+        let mut signed_sidecar_asset = Cursor::new(Vec::new());
+        let mut sidecar_builder = Builder::from_json(FULL_MANIFEST)?;
+        sidecar_builder.no_embed = true;
+
+        let sidecar_c2pa_manifest = sidecar_builder.sign(
             &*create_signer::from_files(
                 &fixture_path(DETAILS.sign_cert),
                 &fixture_path(DETAILS.pkey),
@@ -114,7 +117,7 @@ fn main() -> Result<()> {
             )?,
             &format,
             &mut File::open(fixture_path(asset_details.asset))?,
-            &mut signed_remote_asset,
+            &mut signed_sidecar_asset,
         )?;
         // TODO: need to set resource base path
 
@@ -135,12 +138,12 @@ fn main() -> Result<()> {
         let extension = asset_path.extension().unwrap().to_str().unwrap();
 
         fs::write(
-            format!("{dir_path}/{asset_name}-remote.{extension}"),
-            signed_remote_asset.into_inner(),
+            format!("{dir_path}/{asset_name}-sidecar.{extension}"),
+            signed_sidecar_asset.into_inner(),
         )?;
         fs::write(
-            format!("{dir_path}/{asset_name}-remote.c2pa"),
-            remote_c2pa_manifest,
+            format!("{dir_path}/{asset_name}-sidecar.c2pa"),
+            sidecar_c2pa_manifest,
         )?;
         fs::write(
             format!("{dir_path}/{asset_name}-embedded.{extension}"),
