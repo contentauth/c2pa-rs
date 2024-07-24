@@ -166,6 +166,7 @@ c2pa = { path = ".", features = [
 ] }
 jumbf = "0.4.0"
 insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
+tiny_http = "0.12.0"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
@@ -179,4 +180,3 @@ c2pa = { path = ".", features = [
 	# TODO: we should be able to opt out of thumbnails in the builder API
 	"add_thumbnails",
 ] }
-tiny_http = "0.12.0"

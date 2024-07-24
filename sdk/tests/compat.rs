@@ -71,7 +71,7 @@ fn test_compat() -> Result<()> {
             serde_json::from_reader(File::open(version_dir.join("compat-details.json"))?)?;
 
         for asset_details in details.assets {
-            let asset_dir = version_dir.join(asset_details.category);
+            let asset_dir = version_dir.join(&asset_details.category);
 
             let format = c2pa::format_from_path(&asset_details.asset).unwrap();
             let extension = asset_details.asset.extension().unwrap().to_str().unwrap();
@@ -101,8 +101,9 @@ fn test_compat() -> Result<()> {
             let mut actual_remote_asset = Cursor::new(Vec::new());
             let mut remote_builder = Builder::from_json(&expected_json_manifest)?;
             remote_builder.remote_url = Some(format!(
-                "localhost:8000/{}/remote-{extension}.c2pa",
-                c2pa::VERSION
+                "localhost:8000/{}/{}/manifest.c2pa",
+                c2pa::VERSION,
+                &asset_details.category
             ));
             let actual_c2pa_manifest = remote_builder.sign(
                 &*c2pa::create_signer::from_files(
