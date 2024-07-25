@@ -124,7 +124,7 @@ treeline = "0.1.0"
 url = "2.2.2, <2.5.1"  # Can't use 2.5.1 or newer until new license is reviewed.
 uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.15.1"
-x509-certificate = "0.19.0"
+x509-certificate = "0.21.1"
 zip = { version = "0.6.6", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
