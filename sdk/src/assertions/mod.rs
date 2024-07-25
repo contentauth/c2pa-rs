@@ -57,3 +57,5 @@ pub(crate) use user_cbor::UserCbor;
 mod uuid_assertion;
 #[allow(unused_imports)]
 pub(crate) use uuid_assertion::Uuid;
+
+pub mod region_of_interest;
