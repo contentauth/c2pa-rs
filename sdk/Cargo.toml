@@ -37,6 +37,7 @@ json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
 v1_api = []
 unstable_api = []
+openssl_ffi_mutex = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
