@@ -1,4 +1,4 @@
-# TODO: temp a separate workflow
+# TODO: this should be added to the publish workflow
 name: Create compat snapshot
 
 on:
@@ -11,6 +11,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Get latest existing tag
+        uses: WyriHaximus/github-action-get-previous-tag@v1
+        id: get-latest-tag
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -20,9 +24,9 @@ jobs:
       - name: Send compat PR
         uses: peter-evans/create-pull-request@v6
         with:
-          title: "Create compat snapshot for version <TODO>"
-          labels: TODO
+          title: "Create compat snapshot for version ${{ steps.get-latest-tag.outputs.tag }}"
+          labels: compat-snapshot # TODO: create label
           commit-message: "Create manifest compat snapshot"
           repository: ok-nick/c2pa-fixtures # TODO: temp
-          branch: "compat-snapshot-<TODO: version>"
+          branch: "compat-snapshot-${{ steps.get-latest-tag.outputs.tag }}"
           path: sdk/tests/fixtures
