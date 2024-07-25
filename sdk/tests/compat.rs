@@ -117,19 +117,13 @@ fn test_compat() -> Result<()> {
                 &mut actual_remote_asset,
             )?;
 
-            let actual_reader_from_embedded_asset =
-                Reader::from_stream(&format, &mut expected_embedded_asset)?;
-            let actual_reader_from_remote_asset =
-                Reader::from_stream(&format, &mut expected_remote_asset)?;
+            let actual_json_from_embedded_asset =
+                Reader::from_stream(&format, &mut expected_embedded_asset)?.json();
+            let actual_json_from_remote_asset =
+                Reader::from_stream(&format, &mut expected_remote_asset)?.json();
 
-            assert_eq!(
-                expected_json_manifest,
-                actual_reader_from_embedded_asset.json()
-            );
-            assert_eq!(
-                expected_json_manifest,
-                actual_reader_from_remote_asset.json()
-            );
+            assert_eq!(expected_json_manifest, actual_json_from_embedded_asset);
+            assert_eq!(expected_json_manifest, actual_json_from_remote_asset);
             assert_eq!(
                 expected_embedded_asset.into_inner(),
                 actual_embedded_asset.into_inner()
@@ -139,32 +133,6 @@ fn test_compat() -> Result<()> {
                 actual_remote_asset.into_inner()
             );
             assert_eq!(expected_c2pa_manifest.into_inner(), actual_c2pa_manifest);
-
-            // TODO: this thing is useless, if we really want to validate our assertions we need to serialize
-            //       each one individually into its own struct and store it, but then are we really testing
-            //       anything? if we change a default in the new API, that's not wrong, but it'll still report
-            //       an error.
-
-            // By this point we know our bytes are square, now it's time to validate our "helper" structs. In other
-            // words, convert standardized assertions to our assertion structs, and everything else under the sun.
-
-            // This can be the remote or embedded or both, they are the same.
-            let expected_reader = Reader::from_json(&expected_json_manifest)?;
-            let actual_reader = actual_reader_from_embedded_asset;
-
-            for expected_manifest in expected_reader.iter_manifests() {
-                let actual_manifest = actual_reader
-                    .get_manifest(
-                        expected_manifest
-                            .label()
-                            .expect("Cannot get label for manifest"),
-                    )
-                    .expect("Cannot find equivalent manifest by label");
-
-                for assertion in expected_manifest.assertions() {
-                    // TODO: ensure actual_manifest assertions match w/ expected_manifest
-                }
-            }
         }
     }
 
