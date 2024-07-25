@@ -20,7 +20,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -70,7 +72,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -97,7 +101,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -120,7 +126,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -145,7 +153,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -164,7 +174,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -188,7 +200,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -203,7 +217,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install nightly Rust toolchain
         # Nightly is used here because the docs.rs build
@@ -237,7 +253,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Audit crate dependencies
         uses: EmbarkStudios/cargo-deny-action@v1
@@ -249,7 +267,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -266,8 +286,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
+          submodules: 'true'
           fetch-depth: 0
 
       - name: Install Rust toolchain
