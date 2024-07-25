@@ -68,7 +68,7 @@ async-generic = "1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
 base64 = "0.21.2"
-bcder = "0.7.1"
+bcder = "0.7.3"
 bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
