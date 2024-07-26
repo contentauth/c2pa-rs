@@ -23,6 +23,12 @@ use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
+#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
+use crate::cose_validator::{
+    ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
+    ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
+    SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
+};
 use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
@@ -33,13 +39,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::vec_compare,
     AsyncSigner, Signer,
-};
-
-#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
-use crate::cose_validator::{
-    ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
-    ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
-    SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
 };
 
 // Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
