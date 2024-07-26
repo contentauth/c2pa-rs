@@ -30,20 +30,20 @@ use crate::{
             CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_SIGNING_TIME,
         },
     },
-    cose_validator::{
-        ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
-        ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
-        SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
-    },
+    error::{Error, Result},
     hash_utils::vec_compare,
     AsyncSigner, Signer,
 };
-/// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
-/// using the specified Time Authority
-use crate::{
-    //cose_validator::{SHA256_OID, SHA384_OID, SHA512_OID},
-    error::{Error, Result},
+
+#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
+use crate::cose_validator::{
+    ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
+    ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
+    SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
 };
+
+// Generate TimeStamp signature according to https://datatracker.ietf.org/doc/html/rfc3161
+// using the specified Time Authority
 
 #[allow(dead_code)]
 pub(crate) fn cose_countersign_data(data: &[u8], p_header: &ProtectedHeader) -> Vec<u8> {
@@ -115,8 +115,8 @@ pub(crate) fn cose_sigtst_to_tstinfos(
     }
 }
 
-/// internal only function to work around bug in serialization of TimeStampResponse
-/// so we just return the data directly
+// internal only function to work around bug in serialization of TimeStampResponse
+// so we just return the data directly
 #[cfg(not(target_arch = "wasm32"))]
 fn time_stamp_request_http(
     url: &str,
@@ -187,10 +187,10 @@ fn time_stamp_request_http(
     }
 }
 
-/// Send a Time-Stamp request for a given message to an HTTP URL.
-///
-/// This is a wrapper around [time_stamp_request_http] that constructs the low-level
-/// ASN.1 request object with reasonable defaults.
+// Send a Time-Stamp request for a given message to an HTTP URL.
+//
+// This is a wrapper around [time_stamp_request_http] that constructs the low-level
+// ASN.1 request object with reasonable defaults.
 
 pub(crate) fn time_stamp_message_http(
     message: &[u8],
@@ -233,7 +233,7 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
-    /// Whether the time stamp request was successful.
+    // Whether the time stamp request was successful.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn is_success(&self) -> bool {
         matches!(
@@ -283,7 +283,7 @@ impl TimeStampResponse {
     }
 }
 
-/// Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
+// Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8]))]
 pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>>> {
     if _sync {
@@ -438,9 +438,9 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
     }
 }
 
-/// Returns TimeStamp token info if ts verifies against supplied data
+// Returns TimeStamp token info if ts verifies against supplied data
 #[async_generic]
-pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
+pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     let mut last_err = Error::CoseInvalidTimeStamp;
     let ts_resp = get_timestamp_response(ts)?;
 
@@ -621,8 +621,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
 
                 #[cfg(not(feature = "openssl"))]
                 {
-                    last_err = Error::UnsupportedType;
-                    continue;
+                    Ok(false)
                 }
             } else {
                 #[cfg(feature = "openssl")]
@@ -648,63 +647,64 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
 
                 #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
                 {
-                    false
+                    Ok(false)
                 }
             };
 
-            if let Ok(validated) = validated_res {
-                if validated {
-                    // make sure this signature matches the expected data
+            match validated_res {
+                Ok(validated) => {
+                    if validated {
+                        // make sure this signature matches the expected data
 
-                    // timestamp cert expiration
-                    let not_before =
-                        time_to_datetime(cert.tbs_certificate.validity.not_before.clone())
-                            .timestamp();
+                        // timestamp cert expiration
+                        let not_before =
+                            time_to_datetime(cert.tbs_certificate.validity.not_before.clone())
+                                .timestamp();
 
-                    let not_after =
-                        time_to_datetime(cert.tbs_certificate.validity.not_after.clone())
-                            .timestamp();
+                        let not_after =
+                            time_to_datetime(cert.tbs_certificate.validity.not_after.clone())
+                                .timestamp();
 
-                    if !(signing_time >= not_before && signing_time <= not_after) {
-                        last_err = Error::CoseTimeStampValidity;
-                        continue;
-                    }
+                        if !(signing_time >= not_before && signing_time <= not_after) {
+                            last_err = Error::CoseTimeStampValidity;
+                            continue;
+                        }
 
-                    // message imprint check
-                    let digest_algorithm =
-                        match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
-                            Ok(d) => d,
-                            Err(_) => {
-                                last_err = Error::UnsupportedType;
-                                continue;
-                            }
-                        };
+                        // message imprint check
+                        let digest_algorithm =
+                            match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
+                                Ok(d) => d,
+                                Err(_) => {
+                                    last_err = Error::UnsupportedType;
+                                    continue;
+                                }
+                            };
 
-                    let mut h = digest_algorithm.digester();
-                    h.update(data);
-                    let digest = h.finish();
+                        let mut h = digest_algorithm.digester();
+                        h.update(data);
+                        let digest = h.finish();
 
-                    if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
+                        if !vec_compare(digest.as_ref(), &mi.hashed_message.to_bytes()) {
+                            last_err = Error::CoseTimeStampMismatch;
+                            continue;
+                        }
+
+                        // found a good value so return
+                        return Ok(tst);
+                    } else {
                         last_err = Error::CoseTimeStampMismatch;
-                        continue;
                     }
-
-                    // found a good value so return
-                    return Ok(tst);
-                } else {
-                    last_err = Error::CoseTimeStampMismatch;
-                    continue;
                 }
-            } else {
-                last_err = Error::CoseTimeStampMismatch;
+                Err(e) => last_err = e,
             }
         }
     }
+
     Err(last_err)
 }
 
-/// Get TimeStampResponse from DER TimeStampResp bytes
-pub fn get_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse> {
+// Get TimeStampResponse from DER TimeStampResp bytes
+pub(crate) fn get_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse> {
     let ts = TimeStampResponse(
         Constructed::decode(tsresp, bcder::Mode::Der, |cons| {
             TimeStampResp::take_from(cons)
@@ -745,8 +745,8 @@ impl Default for TstContainer {
     }
 }
 
-/// Wrap rfc3161 TimeStampRsp in COSE sigTst object
-pub fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
+// Wrap rfc3161 TimeStampRsp in COSE sigTst object
+pub(crate) fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
     let token = TstToken {
         val: ts_data.to_vec(),
     };
