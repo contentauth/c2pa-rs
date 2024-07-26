@@ -17,7 +17,7 @@ use std::{
     path::Path,
 };
 
-use c2pa::{Builder, CallbackSigner, Error, Result, SigningAlg};
+use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
 use serde::Serialize;
 
 // const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
@@ -133,8 +133,16 @@ fn main() -> Result<()> {
         );
         // TODO: need to set resource base path
 
+        let signed_reader = &Reader::from_manifest_data_and_stream(
+            &c2pa_manifest,
+            &format,
+            &mut signed_embedded_asset,
+        )?;
+
         let dir_path = format!("{compat_dir}/{}", asset_details.category);
         fs::create_dir(&dir_path)?;
+
+        // TODO: we don't need to store the entire asset, only the binary diff from the original asset
 
         if xmp_supported {
             fs::write(
@@ -147,6 +155,9 @@ fn main() -> Result<()> {
             format!("{dir_path}/embedded.{extension}"),
             signed_embedded_asset.into_inner(),
         )?;
+        // Use serde_json::to_writer to avoid escaping
+        let mut json_manifest_file = File::create(format!("{dir_path}/manifest.json"))?;
+        serde_json::to_writer(&mut json_manifest_file, &signed_reader)?;
     }
 
     Ok(())
