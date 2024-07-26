@@ -359,12 +359,11 @@ fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chr
 fn get_local_validator(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
-    pk_alg: &bcder::Oid,
 ) -> Result<Box<dyn crate::validator::CoseValidator>> {
     let validator = if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || pk_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || pk_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || pk_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             Box::new(crate::openssl::RsaLegacyValidator::new("sha1"))
@@ -378,9 +377,9 @@ fn get_local_validator(
             return Err(Error::CoseTimeStampAuthority);
         }
     } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
             crate::validator::get_validator(crate::SigningAlg::Es256)
@@ -401,15 +400,11 @@ fn get_local_validator(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn get_validator_type(
-    sig_alg: &bcder::Oid,
-    hash_alg: &bcder::Oid,
-    pk_alg: &bcder::Oid,
-) -> Option<String> {
+fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<String> {
     if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || pk_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || pk_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || pk_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             Some("sha1".to_string())
@@ -423,9 +418,9 @@ fn get_validator_type(
             None
         }
     } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
-        || pk_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
             Some(crate::SigningAlg::Es256.to_string())
@@ -616,13 +611,12 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
 
             let hash_alg = &signer_info.digest_algorithm.algorithm;
             let sig_alg = &signer_info.signature_algorithm.algorithm;
-            let pk_alg = &cert.tbs_certificate.signature.algorithm;
 
             // verify signature of timestamp signature
             let validated_res: Result<bool> = if _sync {
                 #[cfg(feature = "openssl")]
                 {
-                    let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                    let validator = get_local_validator(sig_alg, hash_alg)?;
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
@@ -634,7 +628,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             } else {
                 #[cfg(feature = "openssl")]
                 {
-                    let validator = get_local_validator(sig_alg, hash_alg, pk_alg)?;
+                    let validator = get_local_validator(sig_alg, hash_alg)?;
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
@@ -642,7 +636,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 {
                     crate::wasm::verify_data(
                         signing_key_der,
-                        get_validator_type(sig_alg, hash_alg, pk_alg),
+                        get_validator_type(sig_alg, hash_alg),
                         sig_val.to_bytes().to_vec(),
                         tbs,
                     )
