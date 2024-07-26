@@ -513,13 +513,12 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                             return None;
                         }
 
-                        attr.values
-                            .get(0)
-                            .unwrap()
-                            .deref()
-                            .clone()
-                            .decode(x509_certificate::asn1time::Time::take_from)
-                            .ok()
+                        attr.values.first().and_then(|v| {
+                            v.deref()
+                                .clone()
+                                .decode(x509_certificate::asn1time::Time::take_from)
+                                .ok()
+                        })
                     })
                 {
                     let signed_signing_time = match attrib_signing_time {
@@ -625,7 +624,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     last_err = Error::UnsupportedType;
                     continue;
                 }
-            } else { 
+            } else {
                 #[cfg(feature = "openssl")]
                 {
                     let validator = get_local_validator(sig_alg, hash_alg)?;
