@@ -6,6 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.33.0
+_26 July 2024_
+
+* Update crate to fix bad certificate dump content ([#525](https://github.com/contentauth/c2pa-rs/pull/525))
+* Introduce a mutex around the FFI calls to OpenSSL ([#516](https://github.com/contentauth/c2pa-rs/pull/516))
+* Bump bcder minimum version to 0.7.3 ([#526](https://github.com/contentauth/c2pa-rs/pull/526))
+* (MINOR) Updates needed for v2 JavaScript SDK ([#521](https://github.com/contentauth/c2pa-rs/pull/521))
+* Add region of interest assertion definition ([#506](https://github.com/contentauth/c2pa-rs/pull/506))
+* Fix CI tests ([#520](https://github.com/contentauth/c2pa-rs/pull/520))
+* Builder Archive update ([#507](https://github.com/contentauth/c2pa-rs/pull/507))
+* Update range-set requirement from 0.0.9 to 0.0.11 in /sdk ([#442](https://github.com/contentauth/c2pa-rs/pull/442))
+* Make sure reading past end of JUMBF box is an error ([#518](https://github.com/contentauth/c2pa-rs/pull/518))
+* added final details ([#517](https://github.com/contentauth/c2pa-rs/pull/517))
+
 ## 0.32.7
 _18 July 2024_
 
