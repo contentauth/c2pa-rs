@@ -625,7 +625,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     last_err = Error::UnsupportedType;
                     continue;
                 }
-            } else {
+            } else { 
                 #[cfg(feature = "openssl")]
                 {
                     let validator = get_local_validator(sig_alg, hash_alg)?;
@@ -635,8 +635,7 @@ pub fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 #[cfg(target_arch = "wasm32")]
                 {
                     let mut signing_key_der = Vec::<u8>::new();
-                    cert.tbs_certificate
-                        .encode_ref()
+                    cert.encode_ref()
                         .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
 
                     crate::wasm::verify_data(
