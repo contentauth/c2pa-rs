@@ -14,9 +14,9 @@
 use std::ops::Deref;
 
 use async_generic::async_generic;
-use bcder::encode::Values;
 use bcder::{
     decode::{Constructed, SliceSource},
+    encode::Values,
     ConstOid,
 };
 use coset::{sig_structure_data, ProtectedHeader};
