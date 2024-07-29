@@ -3,6 +3,7 @@ name: Create compat snapshot
 
 on:
   workflow_dispatch:
+  pull_request: # TEMP
 
 jobs:
   compat-snapshot:
