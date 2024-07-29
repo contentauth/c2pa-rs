@@ -106,7 +106,7 @@ fn main() -> Result<()> {
         );
 
         let mut signed_embedded_asset = Cursor::new(Vec::new());
-        let c2pa_manifest = Builder::from_json(FULL_MANIFEST)?.sign(
+        let embedded_c2pa_manifest = Builder::from_json(FULL_MANIFEST)?.sign(
             &signer,
             &format,
             &mut File::open(fixture_path(asset_details.asset))?,
@@ -114,27 +114,8 @@ fn main() -> Result<()> {
         )?;
         // TODO: need to set resource base path
 
-        // TODO: can we share the builder or does it mutate itself?
-        let mut signed_remote_asset = Cursor::new(Vec::new());
-        let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
-        remote_builder.remote_url = Some(format!(
-            "localhost:8000/{}/{}/manifest.c2pa",
-            c2pa::VERSION,
-            asset_details.category
-        ));
-        let xmp_supported = !matches!(
-            remote_builder.sign(
-                &signer,
-                &format,
-                &mut File::open(fixture_path(asset_details.asset))?,
-                &mut signed_remote_asset,
-            ),
-            Err(Error::XmpNotSupported)
-        );
-        // TODO: need to set resource base path
-
-        let signed_reader = &Reader::from_manifest_data_and_stream(
-            &c2pa_manifest,
+        let embedded_reader = &Reader::from_manifest_data_and_stream(
+            &embedded_c2pa_manifest,
             &format,
             &mut signed_embedded_asset,
         )?;
@@ -142,22 +123,54 @@ fn main() -> Result<()> {
         let dir_path = format!("{compat_dir}/{}", asset_details.category);
         fs::create_dir(&dir_path)?;
 
+        // TODO: can we share the builder or does it mutate itself?
+        let mut signed_remote_asset = Cursor::new(Vec::new());
+        let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
+        remote_builder.no_embed = true;
+        remote_builder.remote_url = Some(format!(
+            "http://localhost:8000/{}/{}/remote.c2pa",
+            c2pa::VERSION,
+            asset_details.category
+        ));
+        // TODO: need to set resource base path
+        let remote_c2pa_manifest = remote_builder.sign(
+            &signer,
+            &format,
+            &mut File::open(fixture_path(asset_details.asset))?,
+            &mut signed_remote_asset,
+        );
+        match remote_c2pa_manifest {
+            Ok(remote_c2pa_manifest) => {
+                let remote_reader = &Reader::from_manifest_data_and_stream(
+                    &remote_c2pa_manifest,
+                    &format,
+                    &mut signed_remote_asset,
+                )?;
+
+                fs::write(
+                    format!("{dir_path}/remote.{extension}"),
+                    signed_remote_asset.into_inner(),
+                )?;
+                fs::write(format!("{dir_path}/remote.c2pa"), remote_c2pa_manifest)?;
+                let mut remote_json_manifest = File::create(format!("{dir_path}/remote.json"))?;
+                serde_json::to_writer(&mut remote_json_manifest, &remote_reader)?;
+            }
+            Err(Error::XmpNotSupported) => {}
+            Err(err) => return Err(err),
+        }
+
         // TODO: we don't need to store the entire asset, only the binary diff from the original asset
 
-        if xmp_supported {
-            fs::write(
-                format!("{dir_path}/remote.{extension}"),
-                signed_remote_asset.into_inner(),
-            )?;
-        }
-        fs::write(format!("{dir_path}/manifest.c2pa"), c2pa_manifest)?;
+        fs::write(format!("{dir_path}/embedded.c2pa"), embedded_c2pa_manifest)?;
         fs::write(
             format!("{dir_path}/embedded.{extension}"),
             signed_embedded_asset.into_inner(),
         )?;
+        // TODO: we store separate remote/embedded manifest because some fields (e.g. bmff hash) differ
+        //       ideally we store the hash assertions in a separate json as to not have duplicate json manifests
         // Use serde_json::to_writer to avoid escaping
-        let mut json_manifest_file = File::create(format!("{dir_path}/manifest.json"))?;
-        serde_json::to_writer(&mut json_manifest_file, &signed_reader)?;
+        let mut embedded_json_manifest = File::create(format!("{dir_path}/embedded.json"))?;
+        serde_json::to_writer(&mut embedded_json_manifest, &embedded_reader)?;
     }
 
     Ok(())

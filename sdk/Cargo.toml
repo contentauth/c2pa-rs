@@ -180,4 +180,5 @@ c2pa = { path = ".", features = [
 	# always add thumbnails for integration test consistency when --all-features is passed
 	# TODO: we should be able to opt out of thumbnails in the builder API
 	"add_thumbnails",
+	"fetch_remote_manifests",
 ] }
