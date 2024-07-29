@@ -182,3 +182,5 @@ c2pa = { path = ".", features = [
 	"add_thumbnails",
 	"fetch_remote_manifests",
 ] }
+bsdiff = "0.2.0"
+lz4_flex = "0.11.3"

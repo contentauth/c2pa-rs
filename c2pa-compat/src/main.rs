@@ -14,7 +14,7 @@
 use std::{
     fs::{self, File},
     io::Cursor,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
@@ -23,50 +23,44 @@ use serde::Serialize;
 // const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
 const FULL_MANIFEST: &str = include_str!("../../sdk/tests/fixtures/simple_manifest.json");
 
-// TODO: these assets should be as small as possible
-const DETAILS: CompatDetails = CompatDetails::new(&[
-    CompatAssetDetails::new("C.jpg", "jpeg"),
-    // CompatAssetDetails::new("sample1.gif", "gif"), // TODO: PR open to fix GIF
-    CompatAssetDetails::new("sample1.svg", "svg"),
-    CompatAssetDetails::new("video1.mp4", "bmff"),
-    // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: errors w/ no embed in RIFF
-    CompatAssetDetails::new("sample1.mp3", "mp3"),
-    CompatAssetDetails::new("libpng-test.png", "png"),
-    CompatAssetDetails::new("TUSCANY.TIF", "tiff"),
-    // TODO: add an asset from each parser category
-]);
-
-const BASE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
+const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
 
 #[derive(Debug, Serialize)]
 pub struct CompatAssetDetails {
-    asset: &'static str,
-    category: &'static str,
+    asset: PathBuf,
+    category: String,
+    uncompressed_remote_size: Option<usize>,
+    uncompressed_embedded_size: Option<usize>,
 }
 
 impl CompatAssetDetails {
-    pub const fn new(asset: &'static str, category: &'static str) -> Self {
-        Self { asset, category }
+    pub fn new(asset: impl Into<PathBuf>, category: impl Into<String>) -> Self {
+        Self {
+            asset: asset.into(),
+            category: category.into(),
+            uncompressed_remote_size: None,
+            uncompressed_embedded_size: None,
+        }
     }
 }
 
 // Redefined in `sdk/tests/compat.rs`, can't make lib.rs without circular dependency or a separate crate.
 #[derive(Debug, Serialize)]
 pub struct CompatDetails {
-    assets: &'static [CompatAssetDetails],
-    public_key: &'static str,
-    private_key: &'static str,
+    assets: Vec<CompatAssetDetails>,
+    public_key: PathBuf,
+    private_key: PathBuf,
     // TODO: allow algo to be specified
     // algorithm: SigningAlg,
     // tsa_url: &'static str,
 }
 
 impl CompatDetails {
-    pub const fn new(assets: &'static [CompatAssetDetails]) -> Self {
+    pub fn new(assets: Vec<CompatAssetDetails>) -> Self {
         Self {
             assets,
-            public_key: "certs/ed25519.pub",
-            private_key: "certs/ed25519.pem",
+            public_key: PathBuf::from("certs/ed25519.pub"),
+            private_key: PathBuf::from("certs/ed25519.pem"),
             // algorithm: SigningAlg::Ps256,
             // tsa_url: "TODO",
         }
@@ -77,26 +71,33 @@ impl CompatDetails {
 // TODO: also, we need to have a predefined set of hash assertions that are added on a per-asset basis,
 //       maybe the hash assertion should be specified in compat-details?
 fn main() -> Result<()> {
-    let compat_dir = fixture_path(&format!("compat/{}", c2pa::VERSION));
+    // TODO: these assets should be as small as possible
+    let mut details = CompatDetails::new(vec![
+        CompatAssetDetails::new("C.jpg", "jpeg"),
+        CompatAssetDetails::new("sample1.gif", "gif"),
+        CompatAssetDetails::new("sample1.svg", "svg"),
+        CompatAssetDetails::new("video1.mp4", "bmff"),
+        // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: https://github.com/contentauth/c2pa-rs/issues/530
+        CompatAssetDetails::new("sample1.mp3", "mp3"),
+        CompatAssetDetails::new("libpng-test.png", "png"),
+        CompatAssetDetails::new("TUSCANY.TIF", "tiff"),
+        // TODO: add an asset from each parser category
+    ]);
+    let fixtures_path = PathBuf::from(FIXTURES_PATH);
+
+    let compat_dir = fixtures_path.join(&format!("compat/{}", c2pa::VERSION));
     // TODO: temp
     if Path::new(&compat_dir).exists() {
         fs::remove_dir_all(&compat_dir)?;
     }
     fs::create_dir(&compat_dir)?;
 
-    fs::write(format!("{compat_dir}/manifest.json"), FULL_MANIFEST)?;
-    fs::write(
-        format!("{compat_dir}/compat-details.json"),
-        serde_json::to_string(&DETAILS)?,
-    )?;
+    let public_key = fs::read(fixtures_path.join(&details.public_key))?;
+    let private_key = fs::read(fixtures_path.join(&details.private_key))?;
 
-    let public_key = fs::read(fixture_path(DETAILS.public_key))?;
-    let private_key = fs::read(fixture_path(DETAILS.private_key))?;
-
-    for asset_details in DETAILS.assets {
-        let format = c2pa::format_from_path(asset_details.asset).unwrap();
-        let asset_path = Path::new(asset_details.asset);
-        let extension = asset_path.extension().unwrap().to_str().unwrap();
+    for asset_details in &mut details.assets {
+        let format = c2pa::format_from_path(&asset_details.asset).unwrap();
+        let original_asset = fs::read(fixtures_path.join(&asset_details.asset))?;
 
         let private_key = private_key.clone();
         let signer = CallbackSigner::new(
@@ -109,7 +110,7 @@ fn main() -> Result<()> {
         let embedded_c2pa_manifest = Builder::from_json(FULL_MANIFEST)?.sign(
             &signer,
             &format,
-            &mut File::open(fixture_path(asset_details.asset))?,
+            &mut Cursor::new(&original_asset),
             &mut signed_embedded_asset,
         )?;
         // TODO: need to set resource base path
@@ -120,7 +121,7 @@ fn main() -> Result<()> {
             &mut signed_embedded_asset,
         )?;
 
-        let dir_path = format!("{compat_dir}/{}", asset_details.category);
+        let dir_path = compat_dir.join(&asset_details.category);
         fs::create_dir(&dir_path)?;
 
         // TODO: can we share the builder or does it mutate itself?
@@ -136,7 +137,7 @@ fn main() -> Result<()> {
         let remote_c2pa_manifest = remote_builder.sign(
             &signer,
             &format,
-            &mut File::open(fixture_path(asset_details.asset))?,
+            &mut Cursor::new(&original_asset),
             &mut signed_remote_asset,
         );
         match remote_c2pa_manifest {
@@ -147,12 +148,18 @@ fn main() -> Result<()> {
                     &mut signed_remote_asset,
                 )?;
 
-                fs::write(
-                    format!("{dir_path}/remote.{extension}"),
-                    signed_remote_asset.into_inner(),
+                let mut signed_remote_asset_patch = Vec::new();
+                bsdiff::diff(
+                    &original_asset,
+                    &signed_remote_asset.into_inner(),
+                    &mut signed_remote_asset_patch,
                 )?;
-                fs::write(format!("{dir_path}/remote.c2pa"), remote_c2pa_manifest)?;
-                let mut remote_json_manifest = File::create(format!("{dir_path}/remote.json"))?;
+                asset_details.uncompressed_remote_size = Some(signed_remote_asset_patch.len());
+                let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
+
+                fs::write(dir_path.join("remote.patch"), signed_remote_asset_patch)?;
+                fs::write(dir_path.join("remote.c2pa"), remote_c2pa_manifest)?;
+                let mut remote_json_manifest = File::create(dir_path.join("remote.json"))?;
                 serde_json::to_writer(&mut remote_json_manifest, &remote_reader)?;
             }
             Err(Error::XmpNotSupported) => {}
@@ -161,23 +168,31 @@ fn main() -> Result<()> {
 
         // TODO: we don't need to store the entire asset, only the binary diff from the original asset
 
-        fs::write(format!("{dir_path}/embedded.c2pa"), embedded_c2pa_manifest)?;
-        fs::write(
-            format!("{dir_path}/embedded.{extension}"),
-            signed_embedded_asset.into_inner(),
+        let mut signed_embedded_asset_patch = Vec::new();
+        bsdiff::diff(
+            &original_asset,
+            &signed_embedded_asset.into_inner(),
+            &mut signed_embedded_asset_patch,
         )?;
+        asset_details.uncompressed_embedded_size = Some(signed_embedded_asset_patch.len());
+        let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
+
+        fs::write(dir_path.join("embedded.patch"), signed_embedded_asset_patch)?;
+        fs::write(dir_path.join("embedded.c2pa"), embedded_c2pa_manifest)?;
         // TODO: we store separate remote/embedded manifest because some fields (e.g. bmff hash) differ
         //       ideally we store the hash assertions in a separate json as to not have duplicate json manifests
         // Use serde_json::to_writer to avoid escaping
-        let mut embedded_json_manifest = File::create(format!("{dir_path}/embedded.json"))?;
+        let mut embedded_json_manifest = File::create(dir_path.join("embedded.json"))?;
         serde_json::to_writer(&mut embedded_json_manifest, &embedded_reader)?;
     }
 
-    Ok(())
-}
+    fs::write(compat_dir.join("manifest.json"), FULL_MANIFEST)?;
+    fs::write(
+        compat_dir.join("compat-details.json"),
+        serde_json::to_string(&details)?,
+    )?;
 
-fn fixture_path(subpath: &str) -> String {
-    format!("{BASE_PATH}/{subpath}")
+    Ok(())
 }
 
 // TODO: taken from v2pai example, WASM compatible?

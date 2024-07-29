@@ -12,7 +12,6 @@
 // each license.
 
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::Cursor,
     path::PathBuf,
@@ -24,12 +23,15 @@ use serde::Deserialize;
 use serde_json::Value;
 use tiny_http::{Response, Server};
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 #[derive(Debug, Deserialize)]
 pub struct CompatAssetDetails {
     asset: PathBuf,
     category: String,
+    uncompressed_remote_size: Option<usize>,
+    // This one should always be defined.
+    uncompressed_embedded_size: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,30 +48,19 @@ pub struct CompatDetails {
 
 // Stabilizes hashes/uuids, all values prone to change during signing.
 #[derive(Debug)]
-struct Stabilizer {
-    filter: HashMap<String, String>,
-}
+struct Stabilizer {}
 
 impl Stabilizer {
     pub fn new() -> Self {
-        Self {
-            filter: HashMap::new(),
-        }
+        Self {}
     }
 
     // Returns whether or not the value needs to be stabilized and the new stabilized value.
-    pub fn stabilize_value(&mut self, value: &str) -> Option<&str> {
-        if self.filter.contains_key(value) {
-            self.filter.get(value).map(|x| x.as_str())
-        } else if value.starts_with("xmp:iid:") {
-            self.filter.insert(value.to_owned(), "[XMP_ID]".to_owned());
-
-            self.filter.get(value).map(|x| x.as_str())
+    pub fn stabilize_value(&mut self, value: &str) -> Option<&'static str> {
+        if value.starts_with("xmp:iid:") {
+            Some("[XMP_ID]")
         } else if value.starts_with("urn:uuid:") {
-            self.filter
-                .insert(value.to_owned(), "[URN_UUID]".to_owned());
-
-            self.filter.get(value).map(|x| x.as_str())
+            Some("[URN_UUID]")
         } else {
             None
         }
@@ -83,6 +74,7 @@ impl Stabilizer {
         }
     }
 
+    // TODO: restructure this function so it takes into account top-level fields
     // This function does two things:
     // * Stabilizes unstable keys/values
     // * Filters new features/fields that do not exist in the original json
@@ -140,7 +132,7 @@ fn serve_remote_manifests() -> Result<()> {
 
         for request in server.incoming_requests() {
             let response = Response::from_file(
-                File::open(format!("{FIXTURES}/compat/{}", request.url())).unwrap(),
+                File::open(format!("{FIXTURES_PATH}/compat/{}", request.url())).unwrap(),
             );
             request.respond(response).unwrap();
         }
@@ -153,7 +145,8 @@ fn serve_remote_manifests() -> Result<()> {
 fn test_compat() -> Result<()> {
     serve_remote_manifests()?;
 
-    for version_dir in fs::read_dir(format!("{FIXTURES}/compat"))? {
+    let fixtures_path = PathBuf::from(FIXTURES_PATH);
+    for version_dir in fs::read_dir(fixtures_path.join("compat"))? {
         let version_dir = version_dir?.path();
 
         let details: CompatDetails =
@@ -163,14 +156,25 @@ fn test_compat() -> Result<()> {
             let asset_dir = version_dir.join(&asset_details.category);
 
             let format = c2pa::format_from_path(&asset_details.asset).unwrap();
-            let extension = asset_details.asset.extension().unwrap().to_str().unwrap();
+            let original_asset = fs::read(fixtures_path.join(&asset_details.asset))?;
 
             let mut stabilizer = Stabilizer::new();
 
             // Some versions of c2pa-rs don't support remote writing for certain assets.
-            let remote_asset_path = asset_dir.join(format!("remote.{extension}"));
+            let remote_asset_path = asset_dir.join("remote.patch");
             if remote_asset_path.exists() {
-                let mut expected_remote_asset = Cursor::new(fs::read(remote_asset_path)?);
+                let expected_remote_asset_patch = fs::read(remote_asset_path)?;
+                let expected_remote_asset_patch = lz4_flex::decompress(
+                    &expected_remote_asset_patch,
+                    asset_details.uncompressed_remote_size.unwrap(),
+                )
+                .unwrap(); // TODO: err msg
+                let mut expected_remote_asset = Vec::new();
+                bsdiff::patch(
+                    &original_asset,
+                    &mut Cursor::new(expected_remote_asset_patch),
+                    &mut expected_remote_asset,
+                )?;
 
                 let expected_remote_reader: Reader =
                     serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
@@ -179,7 +183,7 @@ fn test_compat() -> Result<()> {
 
                 let mut actual_json_from_remote_asset = serde_json::to_value(Reader::from_stream(
                     &format,
-                    &mut expected_remote_asset,
+                    Cursor::new(expected_remote_asset),
                 )?)?;
                 stabilizer.stabilize(
                     &mut expected_remote_json_manifest,
@@ -189,8 +193,18 @@ fn test_compat() -> Result<()> {
                 assert_eq!(expected_remote_json_manifest, actual_json_from_remote_asset);
             }
 
-            let mut expected_embedded_asset =
-                Cursor::new(fs::read(asset_dir.join(format!("embedded.{extension}")))?);
+            let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
+            let expected_embedded_asset_patch = lz4_flex::decompress(
+                &expected_embedded_asset_patch,
+                asset_details.uncompressed_embedded_size,
+            )
+            .unwrap(); // TODO: err msg
+            let mut expected_embedded_asset = Vec::new();
+            bsdiff::patch(
+                &original_asset,
+                &mut Cursor::new(expected_embedded_asset_patch),
+                &mut expected_embedded_asset,
+            )?;
 
             let expected_embedded_reader: Reader =
                 serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
@@ -200,8 +214,10 @@ fn test_compat() -> Result<()> {
             // We filter any new keys added when reading with the new version of c2pa-rs. This covers the case where
             // if a new field is added to a new version of c2pa-rs, it still reports as correct because the old fields
             // are still the same.
-            let mut actual_json_from_embedded_asset =
-                serde_json::to_value(Reader::from_stream(&format, &mut expected_embedded_asset)?)?;
+            let mut actual_json_from_embedded_asset = serde_json::to_value(Reader::from_stream(
+                &format,
+                Cursor::new(expected_embedded_asset),
+            )?)?;
             stabilizer.stabilize(
                 &mut expected_embedded_json_manifest,
                 &mut actual_json_from_embedded_asset,
