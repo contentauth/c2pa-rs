@@ -85,7 +85,7 @@ fn main() -> Result<()> {
     ]);
     let fixtures_path = PathBuf::from(FIXTURES_PATH);
 
-    let compat_dir = fixtures_path.join(&format!("compat/{}", c2pa::VERSION));
+    let compat_dir = fixtures_path.join("compat").join(c2pa::VERSION);
     // TODO: temp
     if Path::new(&compat_dir).exists() {
         fs::remove_dir_all(&compat_dir)?;
