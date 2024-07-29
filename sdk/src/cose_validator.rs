@@ -816,12 +816,13 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
-#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], validation_log: &mut impl StatusTracker))]
+#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], signing_time_epoc: Option<i64>, validation_log: &mut impl StatusTracker))]
 #[allow(unused)]
 fn check_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
+    signing_time_epoc: Option<i64>,
     validation_log: &mut impl StatusTracker,
 ) -> Result<()> {
     // just return is trust checks are disabled or misconfigured
@@ -846,17 +847,17 @@ fn check_trust(
 
         #[cfg(feature = "openssl")]
         {
-            verify_trust(th, chain_der, cert_der)
+            verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
     } else {
         #[cfg(target_arch = "wasm32")]
         {
-            verify_trust_async(th, chain_der, cert_der).await
+            verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
 
         #[cfg(feature = "openssl")]
         {
-            verify_trust(th, chain_der, cert_der)
+            verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
         #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
@@ -919,6 +920,16 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
 }
 
+fn tst_info_result_to_timestamp(tst_info_res: &Result<TstInfo>) -> Option<i64> {
+    match &tst_info_res {
+        Ok(tst_info) => {
+            let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
+            Some(dt.timestamp())
+        }
+        Err(_) => None,
+    }
+}
+
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
@@ -960,10 +971,12 @@ pub(crate) async fn verify_cose_async(
     // get the public key der
     let der_bytes = &certs[0];
 
+    let tst_info_res = get_timestamp_info(&sign1, &data);
+
     // verify cert matches requested algorithm
     if !signature_only {
         // verify certs
-        match get_timestamp_info(&sign1, &data) {
+        match &tst_info_res {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
             Err(e) => {
                 // log timestamp errors
@@ -1000,10 +1013,23 @@ pub(crate) async fn verify_cose_async(
 
         // is the certificate trusted
         #[cfg(target_arch = "wasm32")]
-        check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
+        check_trust_async(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )
+        .await?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        check_trust(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )?;
 
         // check certificate revocation
         check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
@@ -1137,11 +1163,11 @@ pub(crate) fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
-    let time_stamp_info = get_timestamp_info(&sign1, data);
+    let tst_info_res = get_timestamp_info(&sign1, data);
 
     if !signature_only {
         // verify certs
-        match &time_stamp_info {
+        match &tst_info_res {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
@@ -1175,7 +1201,13 @@ pub(crate) fn verify_cose(
         }
 
         // is the certificate trusted
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
+        check_trust(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )?;
 
         // check certificate revocation
         check_ocsp_status(cose_bytes, data, th, validation_log)?;
