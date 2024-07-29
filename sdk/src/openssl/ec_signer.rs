@@ -49,6 +49,8 @@ impl ConfigurableSigner for EcSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let certs_size = signcert.len();
         let pkey = EcKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
         let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
@@ -73,6 +75,8 @@ impl ConfigurableSigner for EcSigner {
 
 impl Signer for EcSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let key = PKey::from_ec_key(self.pkey.clone()).map_err(Error::OpenSslError)?;
 
         let mut signer = match self.alg {
@@ -93,6 +97,8 @@ impl Signer for EcSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
@@ -120,6 +126,10 @@ struct ECSigComps<'a> {
 }
 
 fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
+    // IMPORTANT: OpenSslMutex::acquire() should have been called by calling fn.
+    // Please don't make this pub or pub(crate) without finding a way to ensure
+    // that precondition.
+
     parse_der_sequence_defined_g(|content: &[u8], _| {
         let (rem1, r) = parse_der_integer(content)?;
         let (_rem2, s) = parse_der_integer(rem1)?;
@@ -135,6 +145,10 @@ fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
 }
 
 fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
+    // IMPORTANT: OpenSslMutex::acquire() should have been called by calling fn.
+    // Please don't make this pub or pub(crate) without finding a way to ensure
+    // that precondition.
+
     // P1363 format: r | s
 
     let (_, p) = parse_ec_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
