@@ -27,7 +27,7 @@ expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
           "label": "c2pa.actions.v2"
         }
       ],
-      "claim_generator": "test/1.0 c2pa-rs/0.32.7",
+      "claim_generator": "test/1.0 c2pa-rs/[VERSION]",
       "claim_generator_info": [
         {
           "name": "test",
@@ -35,7 +35,7 @@ expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
         },
         {
           "name": "c2pa-rs",
-          "version": "0.32.7"
+          "version": "[VERSION]"
         }
       ],
       "format": "[FORMAT]",
