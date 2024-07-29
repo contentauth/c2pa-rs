@@ -148,7 +148,11 @@ impl CAIWriter for GifIO {
             Some(block_marker) => {
                 self.remove_block(input_stream, output_stream, &block_marker.into())
             }
-            None => Err(Error::JumbfNotFound),
+            None => {
+                input_stream.rewind()?;
+                io::copy(input_stream, output_stream)?;
+                Ok(())
+            }
         }
     }
 }
