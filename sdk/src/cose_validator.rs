@@ -977,7 +977,7 @@ pub(crate) async fn verify_cose_async(
     if !signature_only {
         // verify certs
         match &tst_info_res {
-            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
+            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {

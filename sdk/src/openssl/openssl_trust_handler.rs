@@ -332,13 +332,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -370,13 +370,14 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -411,13 +412,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -452,12 +453,12 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 }
