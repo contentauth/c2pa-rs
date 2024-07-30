@@ -23,7 +23,7 @@ repository = "https://github.com/contentauth/c2patool"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.32.7", features = [
+c2pa = { version = "0.33.1", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",

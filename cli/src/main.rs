@@ -108,9 +108,11 @@ struct CliArgs {
     #[clap(long)]
     signer_path: Option<PathBuf>,
 
-    /// To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) +
-    /// the size of cert provided in the manifest definition's `sign_cert` field + the size of the
-    /// signature of the Time Stamp Authority response. For example:
+    /// To be used with the [callback_signer] argument. This value should at least: size of CoseSign1 CBOR +
+    /// the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the
+    /// signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If
+    /// the reserve size is too small an error will be returned during signing.
+    /// For example:
     ///
     /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
     /// your manifest description:
@@ -147,6 +149,7 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
         /// URL or path to file containing list of trust anchors in PEM format
         #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
