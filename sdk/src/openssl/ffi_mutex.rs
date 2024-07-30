@@ -50,7 +50,7 @@ impl<'a> OpenSslMutex<'a> {
         }
 
         #[cfg(not(feature = "openssl_ffi_mutex"))]
-        Ok(Self { guard: &"foo" })
+        Ok(Self { guard: "foo" })
     }
 }
 

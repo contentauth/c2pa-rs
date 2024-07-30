@@ -18,6 +18,7 @@ use std::{
 };
 
 use asn1_rs::Oid;
+use openssl::x509::verify::X509VerifyFlags;
 
 use crate::{
     hash_utils::hash_sha256,
@@ -239,6 +240,7 @@ pub(crate) fn verify_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
+    signing_time_epoc: Option<i64>,
 ) -> Result<bool> {
     // check the cert against the allowed list first
     let cert_sha256 = hash_sha256(cert_der);
@@ -259,6 +261,19 @@ pub(crate) fn verify_trust(
     let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
     let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
+
+    let mut verify_param =
+        openssl::x509::verify::X509VerifyParam::new().map_err(Error::OpenSslError)?;
+    if let Some(st) = signing_time_epoc {
+        verify_param.set_time(st);
+    } else {
+        verify_param
+            .set_flags(X509VerifyFlags::NO_CHECK_TIME)
+            .map_err(Error::OpenSslError)?;
+    }
+    builder
+        .set_param(&verify_param)
+        .map_err(Error::OpenSslError)?;
 
     // todo: figure out the passthrough case
     if th.get_anchors().is_empty() {
@@ -317,13 +332,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -355,13 +370,14 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -396,13 +412,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -437,12 +453,12 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 }
