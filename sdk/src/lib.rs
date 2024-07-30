@@ -19,12 +19,8 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with a variety of asset types.
 //!
-//! To read with file-based methods, you must add the `file_io` dependency to your Cargo.toml.
-//! For example:
-//!
-//! ```text
-//! c2pa = {version="0.32.0", features=["file_io"]}
-//! ```
+//! Some functionality requires you to enable specific crate features, 
+//! as noted in the documentation.
 //!
 //! The library has a new experimental Builder/Reader API that will eventually replace
 //! the existing methods of reading and writing C2PA data.
