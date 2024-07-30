@@ -26,11 +26,11 @@
 //! c2pa = {version="0.32.0", features=["file_io"]}
 //! ```
 //!
-//! We have a new experimental Builder/Reader API that will eventually replace
+//! The library has a new experimental Builder/Reader API that will eventually replace
 //! the existing methods of reading and writing C2PA data.
 //! The new API focuses on stream support and can do more with fewer methods.
 //! It will be supported in all language bindings and build environments.
-//! To try these out, you need to enable the `unstable_api` feature, for example:
+//! To use the new API, you must enable the `unstable_api` feature, for example:
 //!
 //! ```text
 //! c2pa = {version="0.32.0", features=["unstable_api"]}
