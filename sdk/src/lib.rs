@@ -19,7 +19,7 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with a variety of asset types.
 //!
-//! Some functionality requires you to enable specific crate features, 
+//! Some functionality requires you to enable specific crate features,
 //! as noted in the documentation.
 //!
 //! The library has a new experimental Builder/Reader API that will eventually replace
