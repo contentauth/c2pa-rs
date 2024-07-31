@@ -19,20 +19,22 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with a variety of asset types.
 //!
-//! We have a new experimental Builder/Reader API that will eventually replace
+//! Some functionality requires you to enable specific crate features,
+//! as noted in the documentation.
+//!
+//! The library has a new experimental Builder/Reader API that will eventually replace
 //! the existing methods of reading and writing C2PA data.
 //! The new API focuses on stream support and can do more with fewer methods.
 //! It will be supported in all language bindings and build environments.
-//! To try these out, you need to enable the `unstable_api` feature.
-//!
-//! To read with file based methods, you must add the `file_io` dependency to your Cargo.toml.
-//! For example:
+//! To use the new API, you must enable the `unstable_api` feature, for example:
 //!
 //! ```text
-//! c2pa = {version="0.32.0", features=["file_io"]}
+//! c2pa = {version="0.32.0", features=["unstable_api"]}
 //! ```
 //!
 //! # Example: Reading a ManifestStore
+//!
+//! This example requires the `unstable_api` feature to be enabled.
 //!
 //! ```
 //! # use c2pa::Result;
@@ -54,6 +56,8 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
+//!
+//! This example requires the `unstable_api` feature to be enabled.
 //!
 //! ```
 //! # use c2pa::Result;
