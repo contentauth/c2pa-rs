@@ -1,5 +1,5 @@
 [package]
-name = "metadata-parsers"
+name = "c2pa-codecs"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 thiserror = "1.0.61"
 # TODO: need?
 memchr = "2.7.1"
-# TODO: need?
+# TODO: unneeded and super unmaintained
 conv = "0.3.3"
 # TODO: remove this
 tempfile = "3.10.1"
@@ -18,12 +18,16 @@ serde_bytes = { version = "0.11.5", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 # TODO: unmaintained
 atree = "0.5.2"
+# TODO: this crate is deprecated, use quick-xml
 fast-xml = { version = "0.23.1", optional = true }
+quick-xml = { version = "0.36.1", optional = true }
 lopdf = { version = "0.31.0", optional = true }
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = { version = "=1.12.0", optional = true }
 png_pong = { version = "0.9.1", optional = true }
+# TODO: sort of unmaintained
 img-parts = { version = "0.3.0", optional = true }
+# TODO: sort of unmaintained
 riff = { version = "1.0.1", optional = true }
 
 [features]

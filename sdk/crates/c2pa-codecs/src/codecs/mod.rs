@@ -15,7 +15,7 @@
 // pub mod bmff_io;
 // pub mod c2pa_io;
 #[cfg(feature = "gif")]
-pub mod gif_io;
+pub mod gif;
 // #[cfg(feature = "jpeg")]
 // pub mod jpeg_io;
 // #[cfg(feature = "mp3")]

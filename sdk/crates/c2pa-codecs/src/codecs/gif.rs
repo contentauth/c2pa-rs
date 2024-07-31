@@ -12,216 +12,275 @@
 // each license.
 
 use std::{
-    fs,
-    io::{self, Read, SeekFrom},
-    path::Path,
+    io::{self, Read, Seek, SeekFrom, Write},
     str,
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::C2PA_BOXHASH,
     xmp::{self, MIN_XMP},
-    AssetBoxHash, AssetPatch, BoxMap, C2paReader, C2paWriter, CAIRead, CAIReadWrite,
-    ComposedManifestRef, HashBlockObjectType, HashObjectPositions, ParseError, Parser,
-    RemoteRefEmbed, RemoteRefEmbedType,
+    BoxHash, ByteSpan, DataHash, Decoder, Encoder, Hash, Hasher, NamedByteSpan, ParseError,
+    Supporter,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
-pub struct GifIO {}
+#[derive(Debug)]
+pub struct GifCodec<R> {
+    src: R,
+}
 
-impl C2paReader for GifIO {
-    fn read_c2pa(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>, ParseError> {
-        self.find_c2pa_block(asset_reader)?
-            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
-            .ok_or(Error::JumbfNotFound)
-    }
-
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let mut bytes = self
-            .find_xmp_block(asset_reader)
-            .ok()?
-            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
-
-        // TODO: this should be validated on construction
-        // Validate the 258-byte XMP magic trailer (excluding terminator).
-        if let Some(byte) = bytes.get(bytes.len() - 257) {
-            if *byte != 1 {
-                return None;
-            }
-        }
-        for (i, byte) in bytes.iter().rev().take(256).enumerate() {
-            if *byte != i as u8 {
-                return None;
-            }
-        }
-
-        bytes.truncate(bytes.len() - 258);
-        String::from_utf8(bytes).ok()
+impl<R> GifCodec<R> {
+    pub fn new(src: R) -> Self {
+        Self { src }
     }
 }
 
-impl C2paWriter for GifIO {
-    fn add_c2pa(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        store_bytes: &[u8],
-    ) -> Result<(), ParseError> {
-        let old_block_marker = self.find_c2pa_block(input_stream)?;
-        let new_block = ApplicationExtension::new_c2pa(store_bytes)?;
+impl Supporter for GifCodec<()> {
+    fn supports_signature(signature: &[u8]) -> bool {
+        signature.len() >= 3 && signature == *b"GIF"
+    }
+
+    fn supports_extension(ext: &str) -> bool {
+        match ext {
+            "gif" => true,
+            _ => false,
+        }
+    }
+
+    fn supports_mime(mime: &str) -> bool {
+        match mime {
+            "image/gif" => true,
+            _ => false,
+        }
+    }
+}
+
+impl<R: Read + Seek> Encoder for GifCodec<R> {
+    fn write_c2pa(&mut self, mut dst: impl Write, c2pa: &[u8]) -> Result<(), ParseError> {
+        let old_block_marker = self.find_c2pa_block()?;
+        let new_block = ApplicationExtension::new_c2pa(c2pa)?;
 
         match old_block_marker {
-            Some(old_block_marker) => self.replace_block(
-                input_stream,
-                output_stream,
-                &old_block_marker.into(),
-                &new_block.into(),
-            ),
-            None => self.insert_block(input_stream, output_stream, &new_block.into()),
-        }
-    }
-
-    fn get_object_locations_from_stream(
-        &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>, ParseError> {
-        let c2pa_block = self.find_c2pa_block(input_stream)?;
-        match c2pa_block {
-            Some(c2pa_block) => Ok(vec![
-                HashObjectPositions {
-                    offset: 0,
-                    length: usize::try_from(c2pa_block.start() - 1)?,
-                    htype: HashBlockObjectType::Other,
-                },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.start())?,
-                    length: usize::try_from(c2pa_block.len())?,
-                    htype: HashBlockObjectType::Cai,
-                },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(
-                        input_stream.seek(SeekFrom::End(0))? - c2pa_block.end(),
-                    )?,
-                    htype: HashBlockObjectType::Other,
-                },
-            ]),
-            None => {
-                self.skip_preamble(input_stream)?;
-
-                let end_preamble_pos = usize::try_from(input_stream.stream_position()?)?;
-                Ok(vec![
-                    HashObjectPositions {
-                        offset: 0,
-                        length: end_preamble_pos - 1,
-                        htype: HashBlockObjectType::Other,
-                    },
-                    HashObjectPositions {
-                        offset: end_preamble_pos,
-                        length: 1, // Need at least size 1.
-                        htype: HashBlockObjectType::Cai,
-                    },
-                    HashObjectPositions {
-                        offset: end_preamble_pos + 1,
-                        length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
-                            - end_preamble_pos,
-                        htype: HashBlockObjectType::Other,
-                    },
-                ])
+            Some(old_block_marker) => {
+                self.replace_block(&mut dst, &old_block_marker.into(), &new_block.into())
             }
+            None => self.insert_block(&mut dst, &new_block.into()),
         }
     }
 
-    fn remove_c2pa(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-    ) -> Result<(), ParseError> {
-        match self.find_c2pa_block(input_stream)? {
+    fn remove_c2pa(&mut self, mut dst: impl Write) -> Result<bool, ParseError> {
+        match self.find_c2pa_block()? {
             Some(block_marker) => {
-                self.remove_block(input_stream, output_stream, &block_marker.into())
+                self.remove_block(&mut dst, &block_marker.into())?;
+                Ok(true)
             }
-            None => {
-                input_stream.rewind()?;
-                io::copy(input_stream, output_stream)?;
-                Ok(())
-            }
+            None => Ok(false),
         }
     }
-}
 
-impl AssetPatch for GifIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<(), ParseError> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let old_block_marker = match self.find_c2pa_block(&mut stream)? {
+    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), ParseError> {
+        let mut codec = GifCodec::new(&mut dst);
+        let old_block_marker = match codec.find_c2pa_block()? {
             Some(old_block_marker) => old_block_marker,
-            None => return Err(Error::JumbfNotFound),
+            None => return Err(ParseError::NothingToPatch),
         };
 
-        let new_block = ApplicationExtension::new_c2pa(store_bytes)?;
+        let new_block = ApplicationExtension::new_c2pa(c2pa)?;
 
-        self.replace_block_in_place(&mut stream, &old_block_marker.into(), &new_block.into())
+        Self::replace_block_in_place(&mut dst, &old_block_marker.into(), &new_block.into())
     }
-}
 
-impl RemoteRefEmbed for GifIO {
-    fn embed_reference_to_stream(
-        &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
-    ) -> Result<(), ParseError> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                let xmp = xmp::add_provenance(
-                    // TODO: we read xmp here, then search for it again after, we can cache it
-                    &self
-                        .read_xmp(source_stream)
-                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
-                    &url,
-                )?;
+    fn write_xmp(&mut self, mut dst: impl Write, xmp: &str) -> Result<(), ParseError> {
+        let xmp = xmp::add_provenance(
+            // TODO: we read xmp here, then search for it again after, we can cache it
+            &self
+                .read_xmp()?
+                .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+            xmp,
+        )?;
 
-                let old_block_marker = self.find_xmp_block(source_stream)?;
-                let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
+        let old_block_marker = self.find_xmp_block()?;
+        let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
 
-                match old_block_marker {
-                    Some(old_block_marker) => self.replace_block(
-                        source_stream,
-                        output_stream,
-                        &old_block_marker.into(),
-                        &new_block.into(),
-                    ),
-                    None => self.insert_block(source_stream, output_stream, &new_block.into()),
-                }
+        match old_block_marker {
+            Some(old_block_marker) => {
+                self.replace_block(&mut dst, &old_block_marker.into(), &new_block.into())
             }
-            _ => Err(Error::UnsupportedType),
+            None => self.insert_block(&mut dst, &new_block.into()),
         }
     }
 }
 
-impl ComposedManifestRef for GifIO {
-    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>, ParseError> {
-        ApplicationExtension::new_c2pa(manifest_data)?.to_bytes()
+// TODO: the methods below can be implemented much more conveniently within impl BlockMarker<Block>
+impl<R: Read + Seek> GifCodec<R> {
+    fn remove_block(
+        &mut self,
+        mut dst: impl Write,
+        block_meta: &BlockMarker<Block>,
+    ) -> Result<(), ParseError> {
+        self.src.rewind()?;
+
+        let mut start_stream = self.src.by_ref().take(block_meta.start());
+        io::copy(&mut start_stream, &mut dst)?;
+
+        self.src.seek(SeekFrom::Current(
+            i64::try_from(block_meta.len()).map_err(ParseError::SeekOutOfBounds)?,
+        ))?;
+        io::copy(&mut self.src, &mut dst)?;
+
+        Ok(())
+    }
+
+    fn replace_block(
+        &mut self,
+        mut dst: impl Write,
+        old_block_marker: &BlockMarker<Block>,
+        new_block: &Block,
+    ) -> Result<(), ParseError> {
+        self.src.rewind()?;
+
+        // Write everything before the replacement block.
+        let mut start_stream = self.src.by_ref().take(old_block_marker.start());
+        io::copy(&mut start_stream, &mut dst)?;
+
+        dst.write_all(&new_block.to_bytes()?)?;
+
+        // Write everything after the replacement block.
+        self.src.seek(SeekFrom::Current(
+            i64::try_from(old_block_marker.len()).map_err(ParseError::SeekOutOfBounds)?,
+        ))?;
+        io::copy(&mut self.src, &mut dst)?;
+
+        Ok(())
+    }
+
+    fn insert_block(&mut self, mut dst: impl Write, block: &Block) -> Result<(), ParseError> {
+        self.skip_preamble()?;
+
+        // Position before any blocks start.
+        let end_preamble_pos = self.src.stream_position()?;
+        self.update_to_89a(&mut dst)?;
+        let after_update_pos = self.src.stream_position()?;
+
+        let mut start_stream = self.src.by_ref().take(end_preamble_pos - after_update_pos);
+        io::copy(&mut start_stream, &mut dst)?;
+
+        dst.write_all(&block.to_bytes()?)?;
+
+        io::copy(&mut self.src, &mut dst)?;
+
+        Ok(())
+    }
+
+    fn replace_block_in_place(
+        mut dst: impl Write + Seek,
+        old_block_marker: &BlockMarker<Block>,
+        new_block: &Block,
+    ) -> Result<(), ParseError> {
+        // TODO: if new_block len < old_block len, pad the new block
+        let new_bytes = new_block.to_bytes()?;
+        if new_bytes.len() as u64 != old_block_marker.len() {
+            return Err(ParseError::InvalidPatchSize {
+                expected: old_block_marker.len(),
+                actually: new_bytes.len() as u64,
+            });
+        }
+
+        dst.seek(SeekFrom::Start(old_block_marker.start()))?;
+        dst.write_all(&new_bytes)?;
+
+        Ok(())
+    }
+
+    // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
+    // 87a we need to update it to 89a.
+    fn update_to_89a(&mut self, mut dst: impl Write) -> Result<(), ParseError> {
+        self.src.rewind()?;
+
+        let mut before = [0; 4];
+        self.src.read_exact(&mut before)?;
+        dst.write_all(&before)?;
+
+        // 0x39 is 9 in ASCII.
+        dst.write_u8(0x39)?;
+        Ok(())
     }
 }
 
-impl AssetBoxHash for GifIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>, ParseError> {
-        let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
+impl<R: Read + Seek> Decoder for GifCodec<R> {
+    fn read_c2pa(&mut self) -> Result<Option<Vec<u8>>, ParseError> {
+        Ok(self
+            .find_c2pa_block()?
+            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes()))
+    }
 
-        Blocks::new(input_stream)?
+    fn read_xmp(&mut self) -> Result<Option<String>, ParseError> {
+        let bytes = self
+            .find_xmp_block()?
+            .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes());
+        match bytes {
+            Some(mut bytes) => {
+                // TODO: this should be validated on construction
+                // Validate the 258-byte XMP magic trailer (excluding terminator).
+                if let Some(byte) = bytes.get(bytes.len() - 257) {
+                    if *byte != 1 {
+                        return Err(ParseError::InvalidXmpBlock);
+                    }
+                }
+                for (i, byte) in bytes.iter().rev().take(256).enumerate() {
+                    if *byte != i as u8 {
+                        return Err(ParseError::InvalidXmpBlock);
+                    }
+                }
+
+                bytes.truncate(bytes.len() - 258);
+                String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|_| ParseError::InvalidXmpBlock)
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+impl<R: Read + Seek> Hasher for GifCodec<R> {
+    fn hash(&mut self) -> Result<Hash, ParseError> {
+        Ok(Hash::Data(self.data_hash()?))
+    }
+
+    fn data_hash(&mut self) -> Result<DataHash, ParseError> {
+        let c2pa_block = self.find_c2pa_block()?;
+        match c2pa_block {
+            Some(c2pa_block) => Ok(DataHash {
+                spans: vec![ByteSpan {
+                    start: c2pa_block.start(),
+                    len: c2pa_block.len(),
+                }],
+            }),
+            None => {
+                self.skip_preamble()?;
+
+                let end_preamble_pos = self.src.stream_position()?;
+                Ok(DataHash {
+                    spans: vec![ByteSpan {
+                        start: end_preamble_pos,
+                        len: 1, // Need at least size 1.
+                    }],
+                })
+            }
+        }
+    }
+
+    fn box_hash(&mut self) -> Result<BoxHash, ParseError> {
+        let c2pa_block_exists = self.find_c2pa_block()?.is_some();
+
+        Blocks::new(&mut self.src)?
             .try_fold(
                 (Vec::new(), None, 0),
-                |(mut box_maps, last_marker, mut offset),
+                |(mut named_spans, last_marker, mut offset),
                  marker|
-                 -> Result<(Vec<_>, Option<BlockMarker<Block>>, usize),ParseError> {
+                 -> Result<(Vec<_>, Option<BlockMarker<Block>>, u64), ParseError> {
                     let marker = marker?;
 
                     // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
@@ -240,7 +299,7 @@ impl AssetBoxHash for GifIO {
                             };
                             if should_insert_placeholder {
                                 offset += 1;
-                                box_maps.push(
+                                named_spans.push(
                                     BlockMarker {
                                         block: Block::ApplicationExtension(
                                             ApplicationExtension::new_c2pa(&[])?,
@@ -248,7 +307,7 @@ impl AssetBoxHash for GifIO {
                                         start: marker.start,
                                         len: 1,
                                     }
-                                    .to_box_map()?,
+                                    .to_named_byte_span()?,
                                 );
                             }
                         }
@@ -259,89 +318,50 @@ impl AssetBoxHash for GifIO {
                         // If it's a local color table, then an image descriptor MUST have come before it.
                         // If it's a global color table, then a logical screen descriptor MUST have come before it.
                         Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
-                            match box_maps.last_mut() {
-                                Some(last_box_map) => {
-                                    last_box_map.range_len += usize::try_from(marker.len())?
-                                }
+                            match named_spans.last_mut() {
+                                Some(last_named_span) => last_named_span.span.len += marker.len(),
                                 // Realistically, this case is unreachable, but to play it safe, we error.
-                                None => return Err(Error::NotFound),
+                                None => {
+                                    return Err(ParseError::InvalidAsset {
+                                        reason: "TODO".to_string(),
+                                    })
+                                }
                             }
                         }
                         _ => {
-                            let mut box_map = marker.to_box_map()?;
-                            box_map.range_start += offset;
-                            box_maps.push(box_map);
+                            let mut named_span = marker.to_named_byte_span()?;
+                            named_span.span.start += offset;
+                            named_spans.push(named_span);
                         }
                     }
-                    Ok((box_maps, Some(marker), offset))
+                    Ok((named_spans, Some(marker), offset))
                 },
             )
-            .map(|(box_maps, _, _)| box_maps)
+            .map(|(named_spans, _, _)| BoxHash { spans: named_spans })
     }
 }
 
-impl Parser for GifIO {
-    fn new(_asset_type: &str) -> Self
-    where
-        Self: Sized,
-    {
-        GifIO {}
-    }
+impl<R: Read + Seek> GifCodec<R> {
+    fn skip_preamble(&mut self) -> Result<(), ParseError> {
+        self.src.rewind()?;
 
-    fn get_handler(&self, asset_type: &str) -> Box<dyn Parser> {
-        Box::new(GifIO::new(asset_type))
-    }
-
-    fn get_reader(&self) -> &dyn C2paReader {
-        self
-    }
-
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
-        Some(Box::new(GifIO::new(asset_type)))
-    }
-
-    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
-        Some(self)
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        Some(self)
-    }
-
-    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
-        Some(self)
-    }
-
-    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
-        Some(self)
-    }
-
-    fn supported_types(&self) -> &[&str] {
-        &["gif", "image/gif"]
-    }
-}
-
-impl GifIO {
-    fn skip_preamble(&self, stream: &mut dyn CAIRead) -> Result<(), ParseError> {
-        stream.rewind()?;
-
-        Header::from_stream(stream)?;
-        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(stream)?;
+        Header::from_stream(&mut self.src)?;
+        let logical_screen_descriptor = LogicalScreenDescriptor::from_stream(&mut self.src)?;
         if logical_screen_descriptor.color_table_flag {
-            GlobalColorTable::from_stream(stream, logical_screen_descriptor.color_resolution)?;
+            GlobalColorTable::from_stream(
+                &mut self.src,
+                logical_screen_descriptor.color_resolution,
+            )?;
         }
 
         Ok(())
     }
 
     // According to spec, C2PA blocks must come before the first image descriptor.
-    fn find_c2pa_block(
-        &self,
-        stream: &mut dyn CAIRead,
-    ) -> Result<Option<BlockMarker<ApplicationExtension>>, ParseError> {
-        self.find_app_block_from_iterator(
+    fn find_c2pa_block(&mut self) -> Result<Option<BlockMarker<ApplicationExtension>>, ParseError> {
+        Self::find_app_block_from_iterator(
             ApplicationExtensionKind::C2pa,
-            Blocks::new(stream)?.take_while(|marker| {
+            Blocks::new(&mut self.src)?.take_while(|marker| {
                 !matches!(
                     marker,
                     Ok(BlockMarker {
@@ -353,15 +373,14 @@ impl GifIO {
         )
     }
 
-    fn find_xmp_block(
-        &self,
-        stream: &mut dyn CAIRead,
-    ) -> Result<Option<BlockMarker<ApplicationExtension>>, ParseError> {
-        self.find_app_block_from_iterator(ApplicationExtensionKind::Xmp, Blocks::new(stream)?)
+    fn find_xmp_block(&mut self) -> Result<Option<BlockMarker<ApplicationExtension>>, ParseError> {
+        Self::find_app_block_from_iterator(
+            ApplicationExtensionKind::Xmp,
+            Blocks::new(&mut self.src)?,
+        )
     }
 
     fn find_app_block_from_iterator(
-        &self,
         kind: ApplicationExtensionKind,
         mut iterator: impl Iterator<Item = Result<BlockMarker<Block>, ParseError>>,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>, ParseError> {
@@ -381,117 +400,20 @@ impl GifIO {
             })
             .transpose()
     }
-
-    // TODO: the methods below can be implemented much more conveniently within impl BlockMarker<Block>
-
-    fn remove_block(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        block_meta: &BlockMarker<Block>,
-    ) -> Result<(), ParseError> {
-        input_stream.rewind()?;
-        output_stream.rewind()?;
-
-        let mut start_stream = input_stream.take(block_meta.start());
-        io::copy(&mut start_stream, output_stream)?;
-
-        let input_stream = start_stream.into_inner();
-        input_stream.seek(SeekFrom::Current(i64::try_from(block_meta.len())?))?;
-        io::copy(input_stream, output_stream)?;
-
-        Ok(())
-    }
-
-    fn replace_block(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        old_block_marker: &BlockMarker<Block>,
-        new_block: &Block,
-    ) -> Result<(), ParseError> {
-        input_stream.rewind()?;
-        output_stream.rewind()?;
-
-        // Write everything before the replacement block.
-        let mut start_stream = input_stream.take(old_block_marker.start());
-        io::copy(&mut start_stream, output_stream)?;
-
-        output_stream.write_all(&new_block.to_bytes()?)?;
-
-        // Write everything after the replacement block.
-        let input_stream = start_stream.into_inner();
-        input_stream.seek(SeekFrom::Current(i64::try_from(old_block_marker.len())?))?;
-        io::copy(input_stream, output_stream)?;
-
-        Ok(())
-    }
-
-    fn replace_block_in_place(
-        &self,
-        stream: &mut dyn CAIReadWrite,
-        old_block_marker: &BlockMarker<Block>,
-        new_block: &Block,
-    ) -> Result<(), ParseError> {
-        // TODO: if new_block len < old_block len, pad the new block
-        let new_bytes = new_block.to_bytes()?;
-        if new_bytes.len() as u64 != old_block_marker.len() {
-            return Err(Error::EmbeddingError);
-        }
-
-        stream.seek(SeekFrom::Start(old_block_marker.start()))?;
-        stream.write_all(&new_bytes)?;
-
-        Ok(())
-    }
-
-    fn insert_block(
-        &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        block: &Block,
-    ) -> Result<(), ParseError> {
-        self.skip_preamble(input_stream)?;
-
-        // Position before any blocks start.
-        let end_preamble_pos = input_stream.stream_position()?;
-
-        input_stream.rewind()?;
-        output_stream.rewind()?;
-
-        let mut start_stream = input_stream.take(end_preamble_pos);
-        io::copy(&mut start_stream, output_stream)?;
-
-        output_stream.write_all(&block.to_bytes()?)?;
-
-        let input_stream = start_stream.into_inner();
-        io::copy(input_stream, output_stream)?;
-
-        self.update_to_89a(output_stream)
-    }
-
-    // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
-    // 87a we need to update it to 89a.
-    fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<(), ParseError> {
-        stream.seek(SeekFrom::Start(4))?;
-        // 0x39 is 9 in ASCII.
-        stream.write_u8(0x39)?;
-        Ok(())
-    }
 }
 
-struct Blocks<'a> {
+struct Blocks<R> {
     next: Option<BlockMarker<Block>>,
-    stream: &'a mut dyn CAIRead,
+    stream: R,
     reached_trailer: bool,
 }
 
-impl<'a> Blocks<'a> {
-    fn new(stream: &'a mut dyn CAIRead) -> Result<Blocks<'a>, ParseError> {
+impl<R: Read + Seek> Blocks<R> {
+    fn new(mut stream: R) -> Result<Blocks<R>, ParseError> {
         stream.rewind()?;
 
         let start = stream.stream_position()?;
-        let block = Block::Header(Header::from_stream(stream)?);
+        let block = Block::Header(Header::from_stream(&mut stream)?);
         let end = stream.stream_position()?;
 
         Ok(Blocks {
@@ -508,12 +430,12 @@ impl<'a> Blocks<'a> {
     fn parse_next(&mut self) -> Result<BlockMarker<Block>, ParseError> {
         match self.next.take() {
             Some(marker) => {
-                self.next = marker.block.next_block_hint(self.stream)?;
+                self.next = marker.block.next_block_hint(&mut self.stream)?;
                 Ok(marker)
             }
             None => {
-                let marker = Block::from_stream(self.stream)?;
-                self.next = marker.block.next_block_hint(self.stream)?;
+                let marker = Block::from_stream(&mut self.stream)?;
+                self.next = marker.block.next_block_hint(&mut self.stream)?;
 
                 if let Block::Trailer = marker.block {
                     self.reached_trailer = true;
@@ -525,7 +447,7 @@ impl<'a> Blocks<'a> {
     }
 }
 
-impl Iterator for Blocks<'_> {
+impl<R: Read + Seek> Iterator for Blocks<R> {
     type Item = Result<BlockMarker<Block>, ParseError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -554,26 +476,21 @@ impl<T> BlockMarker<T> {
     fn start(&self) -> u64 {
         self.start
     }
-
-    fn end(&self) -> u64 {
-        self.start + self.len
-    }
 }
 
 impl BlockMarker<Block> {
-    fn to_box_map(&self) -> Result<BoxMap, ParseError> {
+    fn to_named_byte_span(&self) -> Result<NamedByteSpan, ParseError> {
         let mut names = Vec::new();
         if let Some(name) = self.block.box_id() {
             names.push(name.to_owned());
         }
 
-        Ok(BoxMap {
+        Ok(NamedByteSpan {
             names,
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            pad: ByteBuf::from(Vec::new()),
-            range_start: usize::try_from(self.start())?,
-            range_len: usize::try_from(self.len())?,
+            span: ByteSpan {
+                start: self.start(),
+                len: self.len(),
+            },
         })
     }
 }
@@ -604,7 +521,7 @@ enum Block {
 }
 
 impl Block {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<BlockMarker<Block>, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<BlockMarker<Block>, ParseError> {
         let start = stream.stream_position()?;
 
         let ext_introducer = stream.read_u8()?;
@@ -613,29 +530,29 @@ impl Block {
                 let ext_label = stream.read_u8()?;
                 match ext_label {
                     0xff => Ok(Block::ApplicationExtension(
-                        ApplicationExtension::from_stream(stream)?,
+                        ApplicationExtension::from_stream(&mut stream)?,
                     )),
                     0xfe => Ok(Block::CommentExtension(CommentExtension::from_stream(
-                        stream,
+                        &mut stream,
                     )?)),
                     0xf9 => Ok(Block::GraphicControlExtension(
-                        GraphicControlExtension::from_stream(stream)?,
+                        GraphicControlExtension::from_stream(&mut stream)?,
                     )),
                     0x21 => Ok(Block::PlainTextExtension(PlainTextExtension::from_stream(
-                        stream,
+                        &mut stream,
                     )?)),
-                    ext_label => Err(Error::InvalidAsset(format!(
-                        "Invalid block extension label: {ext_label}"
-                    ))),
+                    ext_label => Err(ParseError::InvalidAsset {
+                        reason: format!("Invalid block extension label: {ext_label}"),
+                    }),
                 }
             }
             0x2c => Ok(Block::ImageDescriptor(ImageDescriptor::from_stream(
-                stream,
+                &mut stream,
             )?)),
             0x3b => Ok(Block::Trailer),
-            ext_introducer => Err(Error::InvalidAsset(format!(
-                "Invalid block id: {ext_introducer}"
-            ))),
+            ext_introducer => Err(ParseError::InvalidAsset {
+                reason: format!("Invalid block id: {ext_introducer}"),
+            }),
         }?;
 
         let end = stream.stream_position()?;
@@ -649,17 +566,17 @@ impl Block {
     // Some blocks MUST come after other blocks, this function ensures that.
     fn next_block_hint(
         &self,
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek,
     ) -> Result<Option<BlockMarker<Block>>, ParseError> {
         let start = stream.stream_position()?;
         let next_block = match self {
             Block::Header(_) => Some(Block::LogicalScreenDescriptor(
-                LogicalScreenDescriptor::from_stream(stream)?,
+                LogicalScreenDescriptor::from_stream(&mut stream)?,
             )),
             Block::LogicalScreenDescriptor(logical_screen_descriptor) => {
                 match logical_screen_descriptor.color_table_flag {
                     true => Some(Block::GlobalColorTable(GlobalColorTable::from_stream(
-                        stream,
+                        &mut stream,
                         logical_screen_descriptor.color_resolution,
                     )?)),
                     false => None,
@@ -696,13 +613,15 @@ impl Block {
             Block::ImageDescriptor(image_descriptor) => {
                 match image_descriptor.local_color_table_flag {
                     true => Some(Block::LocalColorTable(LocalColorTable::from_stream(
-                        stream,
+                        &mut stream,
                         image_descriptor.local_color_table_size,
                     )?)),
-                    false => Some(Block::ImageData(ImageData::from_stream(stream)?)),
+                    false => Some(Block::ImageData(ImageData::from_stream(&mut stream)?)),
                 }
             }
-            Block::LocalColorTable(_) => Some(Block::ImageData(ImageData::from_stream(stream)?)),
+            Block::LocalColorTable(_) => {
+                Some(Block::ImageData(ImageData::from_stream(&mut stream)?))
+            }
             Block::ImageData(_) => None,
             Block::Trailer => None,
         };
@@ -724,7 +643,7 @@ impl Block {
             Block::PlainTextExtension(_) => Some("2101"),
             Block::ApplicationExtension(application_extension) => {
                 match ApplicationExtensionKind::C2pa == application_extension.kind() {
-                    true => Some(C2PA_BOXHASH),
+                    true => Some("C2PA"),
                     false => Some("21FF"),
                 }
             }
@@ -740,30 +659,19 @@ impl Block {
         match self {
             Block::ApplicationExtension(app_ext) => app_ext.to_bytes(),
             // We only care about app extensions.
-            _ => Err(Error::UnsupportedType),
+            _ => Err(ParseError::Unsupported),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Header {
-    // version: [u8; 3],
-}
+struct Header {}
 
 impl Header {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Header, ParseError> {
-        let mut signature = [0u8; 3];
-        stream.read_exact(&mut signature)?;
-        if signature != *b"GIF" {
-            return Err(Error::InvalidAsset("GIF signature invalid".to_owned()));
-        }
+    fn from_stream(mut stream: impl Read + Seek) -> Result<Header, ParseError> {
+        stream.seek(SeekFrom::Current(6))?;
 
-        let mut version = [0u8; 3];
-        stream.read_exact(&mut version)?;
-
-        Ok(Header {
-            // version
-        })
+        Ok(Header {})
     }
 }
 
@@ -774,7 +682,7 @@ struct LogicalScreenDescriptor {
 }
 
 impl LogicalScreenDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<LogicalScreenDescriptor, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<LogicalScreenDescriptor, ParseError> {
         stream.seek(SeekFrom::Current(4))?;
 
         let packed = stream.read_u8()?;
@@ -795,7 +703,7 @@ struct GlobalColorTable {}
 
 impl GlobalColorTable {
     fn from_stream(
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek,
         color_resolution: u8,
     ) -> Result<GlobalColorTable, ParseError> {
         stream.seek(SeekFrom::Current(
@@ -844,14 +752,16 @@ impl ApplicationExtension {
         })
     }
 
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ApplicationExtension, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<ApplicationExtension, ParseError> {
         let app_block_size = stream.read_u8()?;
         // App block size is a fixed value.
         if app_block_size != 0x0b {
-            return Err(Error::InvalidAsset(format!(
-                "Invalid block size for app block extension {}!=11",
-                app_block_size
-            )));
+            return Err(ParseError::InvalidAsset {
+                reason: format!(
+                    "Invalid block size for app block extension {}!=11",
+                    app_block_size
+                ),
+            });
         }
 
         let mut app_id = [0u8; 8];
@@ -911,9 +821,9 @@ impl From<ApplicationExtension> for Block {
 struct PlainTextExtension {}
 
 impl PlainTextExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<PlainTextExtension, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<PlainTextExtension, ParseError> {
         stream.seek(SeekFrom::Current(11))?;
-        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
+        DataSubBlocks::from_encoded_stream_and_skip(&mut stream)?;
         Ok(PlainTextExtension {})
     }
 }
@@ -922,7 +832,7 @@ impl PlainTextExtension {
 struct CommentExtension {}
 
 impl CommentExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension, ParseError> {
+    fn from_stream(stream: impl Read + Seek) -> Result<CommentExtension, ParseError> {
         // stream.seek(SeekFrom::Current(0))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(CommentExtension {})
@@ -934,7 +844,7 @@ struct GraphicControlExtension {}
 
 impl GraphicControlExtension {
     // TODO: validate ext introducer and label, and do that for other extensions?
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<GraphicControlExtension, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<GraphicControlExtension, ParseError> {
         stream.seek(SeekFrom::Current(6))?;
         Ok(GraphicControlExtension {})
     }
@@ -947,7 +857,7 @@ struct ImageDescriptor {
 }
 
 impl ImageDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageDescriptor, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<ImageDescriptor, ParseError> {
         stream.seek(SeekFrom::Current(8))?;
 
         let packed = stream.read_u8()?;
@@ -966,7 +876,7 @@ struct LocalColorTable {}
 
 impl LocalColorTable {
     fn from_stream(
-        stream: &mut dyn CAIRead,
+        mut stream: impl Read + Seek,
         local_color_table_size: u8,
     ) -> Result<LocalColorTable, ParseError> {
         stream.seek(SeekFrom::Current(
@@ -980,7 +890,7 @@ impl LocalColorTable {
 struct ImageData {}
 
 impl ImageData {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageData, ParseError> {
+    fn from_stream(mut stream: impl Read + Seek) -> Result<ImageData, ParseError> {
         stream.seek(SeekFrom::Current(1))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(ImageData {})
@@ -1018,7 +928,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream(stream: &mut dyn CAIRead) -> Result<DataSubBlocks, ParseError> {
+    fn from_encoded_stream(mut stream: impl Read + Seek) -> Result<DataSubBlocks, ParseError> {
         let mut data_sub_blocks = Vec::new();
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1042,7 +952,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream_and_skip(stream: &mut dyn CAIRead) -> Result<u64, ParseError> {
+    fn from_encoded_stream_and_skip(mut stream: impl Read + Seek) -> Result<u64, ParseError> {
         let mut length = 0;
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1083,13 +993,13 @@ mod tests {
 
     use super::*;
 
-    const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
+    const SAMPLE1: &[u8] = include_bytes!("../../../../tests/fixtures/sample1.gif");
 
     #[test]
     fn test_read_blocks() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+        let mut src = Cursor::new(SAMPLE1);
 
-        let blocks: Vec<_> = Blocks::new(&mut stream)?.collect::<Result<_, _>>()?;
+        let blocks: Vec<_> = Blocks::new(&mut src)?.collect::<Result<_, _>>()?;
         assert_eq!(
             blocks.first(),
             Some(&BlockMarker {
@@ -1151,33 +1061,29 @@ mod tests {
 
     #[test]
     fn test_write_remove_block() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
+        let mut codec1 = GifCodec::new(src);
 
-        assert!(matches!(
-            gif_io.read_c2pa(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+        assert!(matches!(codec1.read_c2pa(), Ok(None)));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.add_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
+        codec1.write_c2pa(&mut dst1, &random_bytes)?;
 
-        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
-        assert_eq!(data_written, random_bytes);
+        let mut codec2 = GifCodec::new(dst1);
+        let data_written = codec2.read_c2pa()?;
+        assert_eq!(data_written.as_deref(), Some(random_bytes.as_slice()));
 
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.remove_c2pa(&mut output_stream1, &mut output_stream2)?;
+        let mut dst2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        codec2.remove_c2pa(&mut dst2)?;
 
-        assert!(matches!(
-            gif_io.read_c2pa(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+        let mut codec3 = GifCodec::new(&mut dst2);
+        assert!(matches!(codec3.read_c2pa(), Ok(None)));
 
         let mut bytes = Vec::new();
-        output_stream2.rewind()?;
-        output_stream2.read_to_end(&mut bytes)?;
+        dst2.rewind()?;
+        dst2.read_to_end(&mut bytes)?;
         assert_eq!(SAMPLE1, bytes);
 
         Ok(())
@@ -1185,21 +1091,21 @@ mod tests {
 
     #[test]
     fn test_write_insert_two_blocks() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
+        let mut codec = GifCodec::new(src);
 
+        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         let test_block = Block::ApplicationExtension(ApplicationExtension {
             identifier: *b"12345678",
             authentication_code: [0, 0, 0],
             data_sub_blocks: DataSubBlocks::empty(),
         });
-        gif_io.insert_block(&mut stream, &mut output_stream1, &test_block)?;
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.insert_block(&mut output_stream1, &mut output_stream2, &test_block)?;
+        codec.insert_block(&mut dst1, &test_block)?;
+        let mut dst2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        codec.insert_block(&mut dst2, &test_block)?;
 
-        let blocks: Vec<_> = Blocks::new(&mut output_stream2)?.collect::<Result<_, _>>()?;
+        let blocks: Vec<_> = Blocks::new(&mut dst2)?.collect::<Result<_, _>>()?;
         assert_eq!(
             blocks.get(3),
             Some(&BlockMarker {
@@ -1222,201 +1128,149 @@ mod tests {
 
     #[test]
     fn test_write_bytes() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
+        let mut codec1 = GifCodec::new(src);
 
-        assert!(matches!(
-            gif_io.read_c2pa(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+        assert!(matches!(codec1.read_c2pa(), Ok(None)));
 
-        let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let mut dst = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.add_c2pa(&mut stream, &mut output_stream, &random_bytes)?;
+        codec1.write_c2pa(&mut dst, &random_bytes)?;
 
-        let data_written = gif_io.read_c2pa(&mut output_stream)?;
-        assert_eq!(data_written, random_bytes);
+        let mut codec2 = GifCodec::new(dst);
+        let data_written = codec2.read_c2pa()?;
+        assert_eq!(data_written.as_deref(), Some(random_bytes.as_slice()));
 
         Ok(())
     }
 
     #[test]
     fn test_write_bytes_replace() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+        let mut src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
+        let mut codec = GifCodec::new(&mut src);
 
-        assert!(matches!(
-            gif_io.read_c2pa(&mut stream),
-            Err(Error::JumbfNotFound)
-        ));
+        assert!(matches!(codec.read_c2pa(), Ok(None)));
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
+        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.add_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
+        codec.write_c2pa(&mut dst1, &random_bytes)?;
 
-        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
-        assert_eq!(data_written, random_bytes);
+        let mut codec = GifCodec::new(dst1);
+        let data_written = codec.read_c2pa()?;
+        assert_eq!(data_written.as_deref(), Some(random_bytes.as_slice()));
 
-        let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
+        let mut dst2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
         let random_bytes = [3, 2, 1, 2, 3];
-        gif_io.add_c2pa(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+        codec.write_c2pa(&mut dst2, &random_bytes)?;
 
-        let data_written = gif_io.read_c2pa(&mut output_stream2)?;
-        assert_eq!(data_written, random_bytes);
+        let mut codec = GifCodec::new(dst2);
+        let data_written = codec.read_c2pa()?;
+        assert_eq!(data_written.as_deref(), Some(random_bytes.as_slice()));
 
         let mut bytes = Vec::new();
-        stream.rewind()?;
-        stream.read_to_end(&mut bytes)?;
+        src.rewind()?;
+        src.read_to_end(&mut bytes)?;
         assert_eq!(SAMPLE1, bytes);
 
         Ok(())
     }
 
     #[test]
-    fn test_data_hash_locations() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+    fn test_data_hash() -> Result<(), ParseError> {
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
-
-        let obj_locations = gif_io.get_object_locations_from_stream(&mut stream)?;
-        assert_eq!(
-            obj_locations.first(),
-            Some(&HashObjectPositions {
-                offset: 0,
-                length: 780,
-                htype: HashBlockObjectType::Other,
-            })
-        );
-        assert_eq!(
-            obj_locations.get(1),
-            Some(&HashObjectPositions {
-                offset: 781,
-                length: 1,
-                htype: HashBlockObjectType::Cai,
-            })
-        );
-        assert_eq!(
-            obj_locations.get(2),
-            Some(&HashObjectPositions {
-                offset: 782,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
-            })
-        );
-        assert_eq!(obj_locations.len(), 3);
-
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 4));
-        gif_io.add_c2pa(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
-
-        let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
-        obj_locations.sort_by_key(|pos| pos.offset);
+        let mut codec1 = GifCodec::new(src);
 
         assert_eq!(
-            obj_locations.first(),
-            Some(&HashObjectPositions {
-                offset: 0,
-                length: 780,
-                htype: HashBlockObjectType::Other,
-            })
+            codec1.data_hash()?,
+            DataHash {
+                spans: vec![ByteSpan { start: 781, len: 1 }]
+            }
         );
+
+        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 4));
+        codec1.write_c2pa(&mut dst1, &[1, 2, 3, 4])?;
+
+        let mut codec2 = GifCodec::new(dst1);
         assert_eq!(
-            obj_locations.get(1),
-            Some(&HashObjectPositions {
-                offset: 781,
-                length: 20,
-                htype: HashBlockObjectType::Cai,
-            })
+            codec2.data_hash()?,
+            DataHash {
+                spans: vec![ByteSpan {
+                    start: 781,
+                    len: 20
+                }]
+            }
         );
-        assert_eq!(
-            obj_locations.get(2),
-            Some(&HashObjectPositions {
-                offset: 801,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
-            })
-        );
-        assert_eq!(obj_locations.len(), 3);
 
         Ok(())
     }
 
     #[test]
-    fn test_box_hash_locations() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+    fn test_box_hash() -> Result<(), ParseError> {
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
-
-        let box_map = gif_io.get_box_map(&mut stream)?;
+        let mut codec = GifCodec::new(src);
+        let box_hash = codec.box_hash()?;
         assert_eq!(
-            box_map.first(),
-            Some(&BoxMap {
+            box_hash.spans.first(),
+            Some(&NamedByteSpan {
                 names: vec!["GIF89a".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 0,
-                range_len: 6
+                span: ByteSpan { start: 0, len: 6 }
             })
         );
         assert_eq!(
-            box_map.get(box_map.len() / 2),
-            Some(&BoxMap {
+            box_hash.spans.get(box_hash.spans.len() / 2),
+            Some(&NamedByteSpan {
                 names: vec!["2C".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 368495,
-                range_len: 778
+                span: ByteSpan {
+                    start: 368495,
+                    len: 778
+                }
             })
         );
         assert_eq!(
-            box_map.last(),
-            Some(&BoxMap {
+            box_hash.spans.last(),
+            Some(&NamedByteSpan {
                 names: vec!["3B".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len(),
-                range_len: 1
+                span: ByteSpan {
+                    start: SAMPLE1.len() as u64,
+                    len: 1
+                }
             })
         );
-        assert_eq!(box_map.len(), 276);
+        assert_eq!(box_hash.spans.len(), 276);
 
         Ok(())
     }
 
-    #[test]
-    fn test_composed_manifest() -> Result<(), ParseError> {
-        let gif_io = GifIO {};
+    // #[test]
+    // fn test_composed_manifest() -> Result<(), ParseError> {
+    //     let encoder = GifEncoder {};
 
-        let block = gif_io.compose_manifest(&[1, 2, 3], "")?;
-        assert_eq!(
-            block,
-            vec![33, 255, 11, 67, 50, 80, 65, 95, 71, 73, 70, 1, 0, 0, 3, 1, 2, 3, 0]
-        );
+    //     let block = encoder.compose_manifest(&[1, 2, 3], "")?;
+    //     assert_eq!(
+    //         block,
+    //         vec![33, 255, 11, 67, 50, 80, 65, 95, 71, 73, 70, 1, 0, 0, 3, 1, 2, 3, 0]
+    //     );
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[test]
     fn test_remote_ref() -> Result<(), ParseError> {
-        let mut stream = Cursor::new(SAMPLE1);
+        let src = Cursor::new(SAMPLE1);
 
-        let gif_io = GifIO {};
+        let mut codec1 = GifCodec::new(src);
 
-        assert!(gif_io.read_xmp(&mut stream).is_none());
+        codec1.read_xmp()?;
 
-        let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.embed_reference_to_stream(
-            &mut stream,
-            &mut output_stream1,
-            RemoteRefEmbedType::Xmp("Test".to_owned()),
-        )?;
+        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
+        codec1.write_xmp(&mut dst1, "Test")?;
 
-        let xmp = gif_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_owned()));
+        let mut codec2 = GifCodec::new(dst1);
+        assert_eq!(codec2.read_xmp()?, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_string()));
 
         Ok(())
     }

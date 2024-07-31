@@ -1,3 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["sdk", "export_schema", "make_test_images", "sdk/crates/*"]
+members = [
+  "sdk",
+  "export_schema",
+  "make_test_images",
+  "sdk/crates/*",
+  # TODO: add wildcard
+  "sdk/crates/c2pa-codecs/fuzz",
+]
