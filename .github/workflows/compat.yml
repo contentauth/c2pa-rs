@@ -30,6 +30,5 @@ jobs:
           title: "Create compat snapshot for version ${{ steps.get-latest-tag.outputs.tag }}"
           labels: compat-snapshot # TODO: create label
           commit-message: "Create manifest compat snapshot"
-          repository: contentauth/c2pa-fixtures
           branch: "compat-snapshot-${{ steps.get-latest-tag.outputs.tag }}"
           path: sdk/tests/fixtures
