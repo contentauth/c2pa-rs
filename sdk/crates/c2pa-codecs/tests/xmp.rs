@@ -1,21 +1,74 @@
 use std::io::Cursor;
 
-use c2pa_codecs::{Codec, Decoder, ParseError};
+use c2pa_codecs::{Codec, Decoder, Encoder, ParseError};
+use common::ASSETS;
 
-// TODO: this would run over 1 of each file type
-const SAMPLE: &[u8] = include_bytes!("../../../tests/fixtures/sample1.gif");
+mod common;
 
 #[test]
 fn test_xmp_read() -> Result<(), ParseError> {
-    let mut src = Cursor::new(SAMPLE);
+    for asset in ASSETS {
+        let mut src = Cursor::new(asset.bytes);
 
-    let mut codec = Codec::from_stream(&mut src)?;
-    assert!(matches!(codec.read_xmp(), Ok(None)));
+        let mut codec = Codec::from_stream(&mut src)?;
+        assert!(matches!(codec.read_xmp(), Ok(None)));
+    }
 
     Ok(())
 }
 
 #[test]
 fn test_xmp_write() -> Result<(), ParseError> {
+    for asset in ASSETS {
+        let mut src = Cursor::new(asset.bytes);
+
+        let mut codec = Codec::from_stream(&mut src)?;
+        assert!(matches!(codec.read_xmp(), Ok(None)));
+
+        let mut dst = Cursor::new(Vec::new());
+        assert!(matches!(codec.write_xmp(&mut dst, "test"), Ok(())));
+
+        let mut codec = Codec::from_stream(&mut dst)?;
+        assert_eq!(codec.read_xmp()?, Some("test".to_string()));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_xmp_write_provenance() -> Result<(), ParseError> {
+    for asset in ASSETS {
+        let mut src = Cursor::new(asset.bytes);
+
+        let mut codec = Codec::from_stream(&mut src)?;
+        assert!(matches!(codec.read_xmp(), Ok(None)));
+
+        let mut dst = Cursor::new(Vec::new());
+        assert!(matches!(
+            codec.write_xmp_provenance(&mut dst, "test"),
+            Ok(())
+        ));
+
+        let mut codec = Codec::from_stream(&mut dst)?;
+        assert_eq!(codec.read_xmp_provenance()?, Some("test".to_string()));
+        assert_eq!(codec.read_xmp()?, Some("TODO".to_string()));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_xmp_remove() -> Result<(), ParseError> {
+    for asset in ASSETS {
+        // TODO
+    }
+    Ok(())
+}
+
+#[test]
+fn test_xmp_remove_provenance() -> Result<(), ParseError> {
+    for asset in ASSETS {
+        // TODO
+    }
     Ok(())
 }

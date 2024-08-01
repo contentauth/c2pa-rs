@@ -13,7 +13,7 @@
 
 // #[cfg(feature = "bmff")]
 // pub mod bmff_io;
-// pub mod c2pa_io;
+pub mod c2pa_io;
 #[cfg(feature = "gif")]
 pub mod gif;
 // #[cfg(feature = "jpeg")]

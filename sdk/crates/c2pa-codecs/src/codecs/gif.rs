@@ -37,6 +37,8 @@ impl<R> GifCodec<R> {
 }
 
 impl Supporter for GifCodec<()> {
+    const MAX_SIGNATURE_LEN: usize = 3;
+
     fn supports_signature(signature: &[u8]) -> bool {
         signature.len() >= 3 && signature == *b"GIF"
     }
