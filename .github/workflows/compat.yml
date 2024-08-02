@@ -22,12 +22,17 @@ jobs:
       - name: Create compat snapshot
         run: cargo run -p c2pa-compat
 
+      - name: Get the latest tag
+        run: |
+          LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+          echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
+
       - name: Send compat PR
         uses: peter-evans/create-pull-request@v6
         with:
-          title: "Create compat snapshot for ${{ steps.get-latest-tag.outputs.tag }}"
+          title: "Create compat snapshot for ${{ env.LATEST_TAG }}"
           labels: compat-snapshot
-          commit-message: "Create compat snapshot for ${{ steps.get-latest-tag.outputs.tag }}"
-          branch: "compat-snapshot-${{ steps.get-latest-tag.outputs.tag }}"
+          commit-message: "Create compat snapshot for ${{ env.LATEST_TAG }}"
+          branch: "compat-snapshot-${{ env.LATEST_TAG }}"
           add-paths: sdk/tests/fixtures
           base: ${{ github.head_ref }}
