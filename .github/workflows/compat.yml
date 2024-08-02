@@ -29,3 +29,5 @@ jobs:
           labels: compat-snapshot
           commit-message: "Create compat snapshot for ${{ steps.get-latest-tag.outputs.tag }}"
           branch: "compat-snapshot-${{ steps.get-latest-tag.outputs.tag }}"
+          add-paths: sdk/tests/fixtures
+          base: ${{ github.head_ref }}
