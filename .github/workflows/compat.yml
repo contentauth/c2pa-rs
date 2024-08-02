@@ -3,7 +3,6 @@ name: Create compat snapshot
 
 on:
   workflow_dispatch:
-  pull_request: # TEMP
 
 jobs:
   compat-snapshot:
@@ -11,8 +10,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: 'true'
 
       - name: Get latest existing tag
         uses: WyriHaximus/github-action-get-previous-tag@v1
@@ -27,8 +24,7 @@ jobs:
       - name: Send compat PR
         uses: peter-evans/create-pull-request@v6
         with:
-          title: "Create compat snapshot for version ${{ steps.get-latest-tag.outputs.tag }}"
-          labels: compat-snapshot # TODO: create label
-          commit-message: "Create manifest compat snapshot"
+          title: "Create compat snapshot for ${{ steps.get-latest-tag.outputs.tag }}"
+          labels: compat-snapshot
+          commit-message: "Create compat snapshot for ${{ steps.get-latest-tag.outputs.tag }}"
           branch: "compat-snapshot-${{ steps.get-latest-tag.outputs.tag }}"
-          path: sdk/tests/fixtures

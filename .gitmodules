@@ -1,3 +1,0 @@
-[submodule "sdk/tests/fixtures"]
-	path = sdk/tests/fixtures
-	url = https://github.com/contentauth/c2pa-fixtures.git
