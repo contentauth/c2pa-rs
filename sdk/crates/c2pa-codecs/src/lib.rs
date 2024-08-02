@@ -198,12 +198,22 @@ impl<R: Read + Seek> Decode for Codec<R, ()> {
 }
 
 impl<R: Read + Seek, E: Embed> Embed for Codec<R, E> {
-    fn embeddable(&mut self, bytes: &[u8]) -> Embeddable {
+    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
         match self {
             Codec::Gif(codec) => codec.embeddable(bytes),
             Codec::C2pa(codec) => todo!(),
             Codec::Svg(codec) => codec.embeddable(bytes),
             Codec::External(codec) => codec.embeddable(bytes),
+        }
+    }
+
+    fn read_embeddable(&mut self) -> Embeddable {
+        match self {
+            Codec::Gif(codec) => codec.read_embeddable(),
+            Codec::C2pa(codec) => todo!(),
+            Codec::Svg(codec) => codec.read_embeddable(),
+            // TODO: same here
+            Codec::External(codec) => codec.read_embeddable(),
         }
     }
 
@@ -222,12 +232,22 @@ impl<R: Read + Seek, E: Embed> Embed for Codec<R, E> {
 }
 
 impl<R: Read + Seek> Embed for Codec<R, ()> {
-    fn embeddable(&mut self, bytes: &[u8]) -> Embeddable {
+    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
         match self {
             Codec::Gif(codec) => codec.embeddable(bytes),
             Codec::C2pa(codec) => todo!(),
             Codec::Svg(codec) => codec.embeddable(bytes),
             // TODO: this case should be unreachable, it shouldn't be possible to call from_external(()), maybe panic
+            Codec::External(_) => todo!(),
+        }
+    }
+
+    fn read_embeddable(&mut self) -> Embeddable {
+        match self {
+            Codec::Gif(codec) => codec.read_embeddable(),
+            Codec::C2pa(codec) => todo!(),
+            Codec::Svg(codec) => codec.read_embeddable(),
+            // TODO: same here
             Codec::External(_) => todo!(),
         }
     }

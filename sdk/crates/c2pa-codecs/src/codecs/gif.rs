@@ -59,10 +59,14 @@ impl Support for GifCodec<()> {
 }
 
 impl<R: Read + Seek> Embed for GifCodec<R> {
-    fn embeddable(&mut self, bytes: &[u8]) -> Embeddable {
+    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
         Embeddable {
             bytes: ApplicationExtension::new_c2pa(bytes).to_bytes(),
         }
+    }
+
+    fn read_embeddable(&mut self) -> Embeddable {
+        todo!()
     }
 
     fn write_embeddable(

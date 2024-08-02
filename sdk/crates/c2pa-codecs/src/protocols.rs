@@ -70,17 +70,15 @@ pub trait Decode {
 }
 
 pub trait Embed {
-    fn embeddable(&mut self, bytes: &[u8]) -> Embeddable;
+    fn embeddable(&self, bytes: &[u8]) -> Embeddable;
+
+    fn read_embeddable(&mut self) -> Embeddable;
 
     fn write_embeddable(
         &mut self,
         embeddable: Embeddable,
         dst: impl Write,
-    ) -> Result<(), CodecError> {
-        let _ = embeddable;
-        let _ = dst;
-        Err(CodecError::Unimplemented)
-    }
+    ) -> Result<(), CodecError>;
 }
 
 pub trait Span {

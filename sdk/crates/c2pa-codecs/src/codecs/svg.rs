@@ -60,7 +60,11 @@ impl Support for SvgCodec<()> {
 }
 
 impl<R: Read + Seek> Embed for SvgCodec<R> {
-    fn embeddable(&mut self, bytes: &[u8]) -> crate::Embeddable {
+    fn embeddable(&self, bytes: &[u8]) -> crate::Embeddable {
+        todo!()
+    }
+
+    fn read_embeddable(&mut self) -> Embeddable {
         todo!()
     }
 
