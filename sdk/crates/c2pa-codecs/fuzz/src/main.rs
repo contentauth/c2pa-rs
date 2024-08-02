@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use c2pa_codecs::{codecs::gif::GifCodec, Decoder};
+use c2pa_codecs::{codecs::gif::GifCodec, Decode};
 
 // TODO: add all codecs and add way to choose what to fuzz, reading/writing/c2pa/xmp/etc.
 fn main() {

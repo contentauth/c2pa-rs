@@ -1,4 +1,4 @@
-use c2pa_codecs::ParseError;
+use c2pa_codecs::CodecError;
 use common::ASSETS;
 
 mod common;
@@ -6,7 +6,7 @@ mod common;
 // TODO: we are only testing that these things exist, not the exact property. Those must be tested within each codec itself.
 
 #[test]
-fn test_data_hash() -> Result<(), ParseError> {
+fn test_data_hash() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -14,7 +14,7 @@ fn test_data_hash() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_data_hash_placeholder() -> Result<(), ParseError> {
+fn test_data_hash_placeholder() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -22,7 +22,7 @@ fn test_data_hash_placeholder() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_box_hash() -> Result<(), ParseError> {
+fn test_box_hash() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -30,7 +30,7 @@ fn test_box_hash() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_box_hash_placeholder() -> Result<(), ParseError> {
+fn test_box_hash_placeholder() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -38,7 +38,7 @@ fn test_box_hash_placeholder() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_bmff_hash() -> Result<(), ParseError> {
+fn test_bmff_hash() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -46,7 +46,7 @@ fn test_bmff_hash() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_collection_hash() -> Result<(), ParseError> {
+fn test_collection_hash() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }

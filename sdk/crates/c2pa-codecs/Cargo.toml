@@ -29,6 +29,8 @@ png_pong = { version = "0.9.1", optional = true }
 img-parts = { version = "0.3.0", optional = true }
 # TODO: sort of unmaintained
 riff = { version = "1.0.1", optional = true }
+# TODO: needed?
+base64 = { version = "0.21.2", optional = true }
 
 [features]
 default = [
@@ -51,5 +53,5 @@ mp3 = ["id3"]
 pdf = ["lopdf"]
 png = ["png_pong", "img-parts"] # TODO: remove img-parts feature here
 riff = ["dep:riff"]
-svg = ["fast-xml"]
+svg = ["fast-xml", "base64"]
 tiff = []

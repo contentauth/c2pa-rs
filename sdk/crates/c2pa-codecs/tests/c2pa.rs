@@ -1,10 +1,10 @@
-use c2pa_codecs::ParseError;
+use c2pa_codecs::CodecError;
 use common::ASSETS;
 
 mod common;
 
 #[test]
-fn test_c2pa_read() -> Result<(), ParseError> {
+fn test_c2pa_read() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -12,7 +12,7 @@ fn test_c2pa_read() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_c2pa_write() -> Result<(), ParseError> {
+fn test_c2pa_write() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -20,7 +20,7 @@ fn test_c2pa_write() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_c2pa_remove() -> Result<(), ParseError> {
+fn test_c2pa_remove() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -28,7 +28,7 @@ fn test_c2pa_remove() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_c2pa_patch() -> Result<(), ParseError> {
+fn test_c2pa_patch() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }

@@ -1,12 +1,12 @@
 use std::io::Cursor;
 
-use c2pa_codecs::{Codec, Decoder, Encoder, ParseError};
+use c2pa_codecs::{Codec, Decode, Encode, CodecError};
 use common::ASSETS;
 
 mod common;
 
 #[test]
-fn test_xmp_read() -> Result<(), ParseError> {
+fn test_xmp_read() -> Result<(), CodecError> {
     for asset in ASSETS {
         let mut src = Cursor::new(asset.bytes);
 
@@ -18,7 +18,7 @@ fn test_xmp_read() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_xmp_write() -> Result<(), ParseError> {
+fn test_xmp_write() -> Result<(), CodecError> {
     for asset in ASSETS {
         let mut src = Cursor::new(asset.bytes);
 
@@ -36,7 +36,7 @@ fn test_xmp_write() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_xmp_write_provenance() -> Result<(), ParseError> {
+fn test_xmp_write_provenance() -> Result<(), CodecError> {
     for asset in ASSETS {
         let mut src = Cursor::new(asset.bytes);
 
@@ -58,7 +58,7 @@ fn test_xmp_write_provenance() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_xmp_remove() -> Result<(), ParseError> {
+fn test_xmp_remove() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }
@@ -66,7 +66,7 @@ fn test_xmp_remove() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_xmp_remove_provenance() -> Result<(), ParseError> {
+fn test_xmp_remove_provenance() -> Result<(), CodecError> {
     for asset in ASSETS {
         // TODO
     }

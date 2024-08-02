@@ -13,7 +13,7 @@
 
 use std::io::{Read, Seek, Write};
 
-use crate::{ByteSpan, DataHash, Decoder, Encoder, Hash, Hasher, ParseError, Supporter};
+use crate::{ByteSpan, CodecError, DataHash, Decode, Encode, Hash, Span, Support};
 
 /// Supports working with ".c2pa" files containing only manifest store data
 #[derive(Debug)]
@@ -27,7 +27,7 @@ impl<R> C2paCodec<R> {
     }
 }
 
-impl Supporter for C2paCodec<()> {
+impl Support for C2paCodec<()> {
     const MAX_SIGNATURE_LEN: usize = 0;
 
     fn supports_signature(_signature: &[u8]) -> bool {
@@ -43,8 +43,8 @@ impl Supporter for C2paCodec<()> {
     }
 }
 
-impl<R: Read + Seek> Decoder for C2paCodec<R> {
-    fn read_c2pa(&mut self) -> Result<Option<Vec<u8>>, ParseError> {
+impl<R: Read + Seek> Decode for C2paCodec<R> {
+    fn read_c2pa(&mut self) -> Result<Option<Vec<u8>>, CodecError> {
         let mut cai_data = Vec::new();
         // read the whole file
         self.src.read_to_end(&mut cai_data)?;
@@ -52,30 +52,30 @@ impl<R: Read + Seek> Decoder for C2paCodec<R> {
     }
 }
 
-impl<R: Read + Seek> Encoder for C2paCodec<R> {
-    fn write_c2pa(&mut self, mut dst: impl Write, c2pa: &[u8]) -> Result<(), ParseError> {
+impl<R: Read + Seek> Encode for C2paCodec<R> {
+    fn write_c2pa(&mut self, mut dst: impl Write, c2pa: &[u8]) -> Result<(), CodecError> {
         // just write the store bytes and ingore the input stream
         dst.write_all(c2pa)?;
         Ok(())
     }
 
-    fn remove_c2pa(&mut self, _dst: impl Write) -> Result<bool, ParseError> {
+    fn remove_c2pa(&mut self, _dst: impl Write) -> Result<bool, CodecError> {
         // TODO: true or false?
         Ok(false)
     }
 
-    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), ParseError> {
+    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
         dst.write_all(c2pa)?;
         Ok(())
     }
 }
 
-impl<R: Read + Seek> Hasher for C2paCodec<R> {
-    fn hash(&mut self) -> Result<Hash, ParseError> {
+impl<R: Read + Seek> Span for C2paCodec<R> {
+    fn hash(&mut self) -> Result<Hash, CodecError> {
         todo!()
     }
 
-    fn data_hash(&mut self) -> Result<DataHash, ParseError> {
+    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
         Ok(DataHash {
             spans: vec![ByteSpan { start: 0, len: 0 }],
         })

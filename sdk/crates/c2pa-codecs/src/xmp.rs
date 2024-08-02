@@ -18,7 +18,7 @@ use fast_xml::{
     Reader, Writer,
 };
 
-use crate::{Codec, Decoder, ParseError};
+use crate::{Codec, Decode, CodecError};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 
@@ -33,7 +33,7 @@ pub struct XmpInfo {
 
 impl XmpInfo {
     /// search xmp data for provenance, documentID and instanceID
-    pub fn from_source(src: impl Read + Seek) -> Result<Option<Self>, ParseError> {
+    pub fn from_source(src: impl Read + Seek) -> Result<Option<Self>, CodecError> {
         match Codec::from_stream(src)?.read_xmp()? {
             Some(xmp) => {
                 Ok(Some(Self {
@@ -89,7 +89,7 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
 
 // writes the event to the writer)
 /// Add a value to XMP using a key, replaces the value if the key exists
-fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> {
+fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, CodecError> {
     let mut reader = Reader::from_str(xmp);
     reader.trim_text(true);
     let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
@@ -98,7 +98,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> 
     loop {
         let event = reader
             .read_event(&mut buf)
-            .map_err(ParseError::XmpParseError)?;
+            .map_err(CodecError::XmpParseError)?;
         // println!("{:?}", event);
         match event {
             Event::Start(ref e) if e.name() == RDF_DESCRIPTION => {
@@ -118,7 +118,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> 
                             }
                         }
                         Err(e) => {
-                            return Err(ParseError::XmpParseError(fast_xml::Error::InvalidAttr(e)));
+                            return Err(CodecError::XmpParseError(fast_xml::Error::InvalidAttr(e)));
                         }
                     }
                 }
@@ -129,7 +129,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> 
                 // writes the event to the writer
                 writer
                     .write_event(Event::Start(elem))
-                    .map_err(ParseError::XmpParseError)?;
+                    .map_err(CodecError::XmpParseError)?;
             }
             Event::Empty(ref e) if e.name() == RDF_DESCRIPTION => {
                 // creates a new element
@@ -147,7 +147,7 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> 
                             }
                         }
                         Err(e) => {
-                            return Err(ParseError::XmpParseError(fast_xml::Error::InvalidAttr(e)));
+                            return Err(CodecError::XmpParseError(fast_xml::Error::InvalidAttr(e)));
                         }
                     }
                 }
@@ -158,17 +158,17 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String, ParseError> 
                 // writes the event to the writer
                 writer
                     .write_event(Event::Empty(elem))
-                    .map_err(ParseError::XmpParseError)?;
+                    .map_err(CodecError::XmpParseError)?;
             }
             Event::Eof => break,
             e => {
-                writer.write_event(e).map_err(ParseError::XmpParseError)?;
+                writer.write_event(e).map_err(CodecError::XmpParseError)?;
             }
         }
     }
     buf.clear();
     let result = writer.into_inner().into_inner();
-    String::from_utf8(result).map_err(|_| ParseError::InvalidXmpBlock)
+    String::from_utf8(result).map_err(|_| CodecError::InvalidXmpBlock)
 }
 
 /// extract the dc:provenance value from xmp
@@ -187,7 +187,7 @@ fn extract_document_id(xmp: &str) -> Option<String> {
 }
 
 /// add or replace a dc:provenance value to xmp, including dc:terms if needed
-pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String, ParseError> {
+pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String, CodecError> {
     let xmp = add_xmp_key(xmp, "xmlns:dcterms", "http://purl.org/dc/terms/")?;
     add_xmp_key(&xmp, "dcterms:provenance", provenance)
 }
