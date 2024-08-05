@@ -168,12 +168,14 @@ fn test_compat() -> Result<()> {
                     &expected_remote_asset_patch,
                     asset_details.uncompressed_remote_size.unwrap(),
                 )
-                .expect("TODO3"); // TODO: err msg
+                .expect("TODO"); // TODO: err msg
                 let mut expected_remote_asset = Vec::new(); // TODO: prealloc
-                Bspatch::new(&expected_remote_asset_patch)
-                    .expect("TODO2")
-                    .apply(&original_asset, &mut expected_remote_asset)
-                    .expect("TODO1");
+                bsdiff::patch(
+                    &original_asset,
+                    &mut Cursor::new(expected_remote_asset_patch),
+                    &mut expected_remote_asset,
+                )
+                .expect("TODO");
 
                 let expected_remote_reader: Reader =
                     serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
@@ -197,12 +199,14 @@ fn test_compat() -> Result<()> {
                 &expected_embedded_asset_patch,
                 asset_details.uncompressed_embedded_size,
             )
-            .expect("TODO4"); // TODO: err msg
+            .expect("TODO"); // TODO: err msg
             let mut expected_embedded_asset = Vec::new(); // TODO: prealloc
-            Bspatch::new(&expected_embedded_asset_patch)
-                .expect("TODO5")
-                .apply(&original_asset, &mut expected_embedded_asset)
-                .expect("TODO6");
+            bsdiff::patch(
+                &original_asset,
+                &mut Cursor::new(expected_embedded_asset_patch),
+                &mut expected_embedded_asset,
+            )
+            .expect("TODO");
 
             let expected_embedded_reader: Reader =
                 serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
