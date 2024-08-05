@@ -27,12 +27,17 @@ jobs:
           LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
           echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
 
-      - name: Send compat PR
-        uses: peter-evans/create-pull-request@v6
+      # - name: Send compat PR
+      #   uses: peter-evans/create-pull-request@v6
+      #   with:
+      #     title: "Create compat snapshot for ${{ env.LATEST_TAG }}"
+      #     labels: compat-snapshot
+      #     commit-message: "Create compat snapshot for ${{ env.LATEST_TAG }}"
+      #     branch: "compat-snapshot-${{ env.LATEST_TAG }}"
+      #     add-paths: sdk/tests/fixtures
+      #     base: ${{ github.head_ref }}
+
+      - name: TEMP---upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          title: "Create compat snapshot for ${{ env.LATEST_TAG }}"
-          labels: compat-snapshot
-          commit-message: "Create compat snapshot for ${{ env.LATEST_TAG }}"
-          branch: "compat-snapshot-${{ env.LATEST_TAG }}"
-          add-paths: sdk/tests/fixtures
-          base: ${{ github.head_ref }}
+          path: sdk/tests/fixtures/compat/0.33.0
