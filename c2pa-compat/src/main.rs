@@ -155,7 +155,7 @@ fn main() -> Result<()> {
                     &mut signed_remote_asset_patch,
                 )?;
                 asset_details.uncompressed_remote_size = Some(signed_remote_asset_patch.len());
-                let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
+                // let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
 
                 fs::write(dir_path.join("remote.patch"), signed_remote_asset_patch)?;
                 fs::write(dir_path.join("remote.c2pa"), remote_c2pa_manifest)?;
@@ -175,7 +175,7 @@ fn main() -> Result<()> {
             &mut signed_embedded_asset_patch,
         )?;
         asset_details.uncompressed_embedded_size = Some(signed_embedded_asset_patch.len());
-        let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
+        // let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
 
         fs::write(dir_path.join("embedded.patch"), signed_embedded_asset_patch)?;
         fs::write(dir_path.join("embedded.c2pa"), embedded_c2pa_manifest)?;

@@ -164,11 +164,11 @@ fn test_compat() -> Result<()> {
             let remote_asset_path = asset_dir.join("remote.patch");
             if remote_asset_path.exists() {
                 let expected_remote_asset_patch = fs::read(remote_asset_path)?;
-                let expected_remote_asset_patch = lz4_flex::decompress(
-                    &expected_remote_asset_patch,
-                    asset_details.uncompressed_remote_size.unwrap(),
-                )
-                .unwrap(); // TODO: err msg
+                // let expected_remote_asset_patch = lz4_flex::decompress(
+                //     &expected_remote_asset_patch,
+                //     asset_details.uncompressed_remote_size.unwrap(),
+                // )
+                // .unwrap(); // TODO: err msg
                 let mut expected_remote_asset = Vec::new();
                 bsdiff::patch(
                     &original_asset,
@@ -194,11 +194,11 @@ fn test_compat() -> Result<()> {
             }
 
             let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
-            let expected_embedded_asset_patch = lz4_flex::decompress(
-                &expected_embedded_asset_patch,
-                asset_details.uncompressed_embedded_size,
-            )
-            .unwrap(); // TODO: err msg
+            // let expected_embedded_asset_patch = lz4_flex::decompress(
+            //     &expected_embedded_asset_patch,
+            //     asset_details.uncompressed_embedded_size,
+            // )
+            // .unwrap(); // TODO: err msg
             let mut expected_embedded_asset = Vec::new();
             bsdiff::patch(
                 &original_asset,
