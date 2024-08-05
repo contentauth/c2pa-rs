@@ -26,6 +26,7 @@ jobs:
 
       - name: Get the latest tag
         run: |
+          git fetch --tags origin
           LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
           echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
 
