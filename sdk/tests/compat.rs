@@ -164,16 +164,17 @@ fn test_compat() -> Result<()> {
             let remote_asset_path = asset_dir.join("remote.patch");
             if remote_asset_path.exists() {
                 let expected_remote_asset_patch = fs::read(remote_asset_path)?;
-                let expected_remote_asset_patch = lz4_flex::decompress(
-                    &expected_remote_asset_patch,
-                    asset_details.uncompressed_remote_size.unwrap(),
-                )
-                .expect("TODO"); // TODO: err msg
-                let expected_remote_asset = diffy::apply_bytes(
-                    &original_asset,
-                    &diffy::Patch::from_bytes(&expected_remote_asset_patch).expect("TODO"),
-                )
-                .expect("TODO");
+                let expected_remote_asset = expected_remote_asset_patch;
+                // let expected_remote_asset_patch = lz4_flex::decompress(
+                //     &expected_remote_asset_patch,
+                //     asset_details.uncompressed_remote_size.unwrap(),
+                // )
+                // .expect("TODO"); // TODO: err msg
+                // let expected_remote_asset = diffy::apply_bytes(
+                //     &original_asset,
+                //     &diffy::Patch::from_bytes(&expected_remote_asset_patch).expect("TODO"),
+                // )
+                // .expect("TODO");
 
                 let expected_remote_reader: Reader =
                     serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
@@ -193,16 +194,17 @@ fn test_compat() -> Result<()> {
             }
 
             let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
-            let expected_embedded_asset_patch = lz4_flex::decompress(
-                &expected_embedded_asset_patch,
-                asset_details.uncompressed_embedded_size,
-            )
-            .expect("TODO"); // TODO: err msg
-            let expected_embedded_asset = diffy::apply_bytes(
-                &original_asset,
-                &diffy::Patch::from_bytes(&expected_embedded_asset_patch).expect("TODO"),
-            )
-            .expect("TODO");
+            let expected_embedded_asset = expected_embedded_asset_patch;
+            // let expected_embedded_asset_patch = lz4_flex::decompress(
+            //     &expected_embedded_asset_patch,
+            //     asset_details.uncompressed_embedded_size,
+            // )
+            // .expect("TODO"); // TODO: err msg
+            // let expected_embedded_asset = diffy::apply_bytes(
+            //     &original_asset,
+            //     &diffy::Patch::from_bytes(&expected_embedded_asset_patch).expect("TODO"),
+            // )
+            // .expect("TODO");
 
             let expected_embedded_reader: Reader =
                 serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
