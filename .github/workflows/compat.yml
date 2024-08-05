@@ -18,10 +18,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get latest existing tag
-        uses: WyriHaximus/github-action-get-previous-tag@v1
-        id: get-latest-tag
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -30,7 +26,7 @@ jobs:
 
       - name: Get the latest tag
         run: |
-          LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
+          LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
           echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
 
       # - name: Send compat PR
