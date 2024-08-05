@@ -19,7 +19,6 @@ use std::{
 };
 
 use c2pa::{Reader, Result};
-use qbsdiff::Bspatch;
 use serde::Deserialize;
 use serde_json::Value;
 use tiny_http::{Response, Server};
@@ -154,7 +153,6 @@ fn test_compat() -> Result<()> {
             serde_json::from_reader(File::open(version_dir.join("compat-details.json"))?)?;
 
         for asset_details in details.assets {
-            println!("{:?}", asset_details.asset);
             let asset_dir = version_dir.join(&asset_details.category);
 
             let format = c2pa::format_from_path(&asset_details.asset).unwrap();
@@ -166,11 +164,11 @@ fn test_compat() -> Result<()> {
             let remote_asset_path = asset_dir.join("remote.patch");
             if remote_asset_path.exists() {
                 let expected_remote_asset_patch = fs::read(remote_asset_path)?;
-                // let expected_remote_asset_patch = lz4_flex::decompress(
-                //     &expected_remote_asset_patch,
-                //     asset_details.uncompressed_remote_size.unwrap(),
-                // )
-                // .expect("TODO3"); // TODO: err msg
+                let expected_remote_asset_patch = lz4_flex::decompress(
+                    &expected_remote_asset_patch,
+                    asset_details.uncompressed_remote_size.unwrap(),
+                )
+                .expect("TODO3"); // TODO: err msg
                 let mut expected_remote_asset = Vec::new(); // TODO: prealloc
                 Bspatch::new(&expected_remote_asset_patch)
                     .expect("TODO2")
@@ -195,11 +193,11 @@ fn test_compat() -> Result<()> {
             }
 
             let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
-            // let expected_embedded_asset_patch = lz4_flex::decompress(
-            //     &expected_embedded_asset_patch,
-            //     asset_details.uncompressed_embedded_size,
-            // )
-            // .expect("TODO4"); // TODO: err msg
+            let expected_embedded_asset_patch = lz4_flex::decompress(
+                &expected_embedded_asset_patch,
+                asset_details.uncompressed_embedded_size,
+            )
+            .expect("TODO4"); // TODO: err msg
             let mut expected_embedded_asset = Vec::new(); // TODO: prealloc
             Bspatch::new(&expected_embedded_asset_patch)
                 .expect("TODO5")

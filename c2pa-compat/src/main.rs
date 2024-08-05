@@ -18,7 +18,6 @@ use std::{
 };
 
 use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
-use qbsdiff::{Bsdiff, Bspatch};
 use serde::Serialize;
 
 // const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
@@ -76,7 +75,7 @@ fn main() -> Result<()> {
     let mut details = CompatDetails::new(vec![
         CompatAssetDetails::new("C.jpg", "jpeg"),
         CompatAssetDetails::new("sample1.gif", "gif"),
-        CompatAssetDetails::new("sample1.svg", "svg"),
+        // CompatAssetDetails::new("sample1.svg", "svg"),
         CompatAssetDetails::new("video1.mp4", "bmff"),
         // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: https://github.com/contentauth/c2pa-rs/issues/530
         CompatAssetDetails::new("sample1.mp3", "mp3"),
@@ -150,11 +149,14 @@ fn main() -> Result<()> {
                 )?;
 
                 let mut signed_remote_asset_patch = Vec::new();
-                Bsdiff::new(&original_asset, &signed_remote_asset.into_inner())
-                    .compare(&mut signed_remote_asset_patch)
-                    .expect("TODO");
+                bsdiff::diff(
+                    &original_asset,
+                    &signed_remote_asset.into_inner(),
+                    &mut signed_remote_asset_patch,
+                )
+                .expect("TODO");
                 asset_details.uncompressed_remote_size = Some(signed_remote_asset_patch.len());
-                // let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
+                let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
 
                 fs::write(dir_path.join("remote.patch"), signed_remote_asset_patch)?;
                 fs::write(dir_path.join("remote.c2pa"), remote_c2pa_manifest)?;
@@ -165,14 +167,26 @@ fn main() -> Result<()> {
             Err(err) => return Err(err),
         }
 
-        let t = signed_embedded_asset.into_inner();
-
         let mut signed_embedded_asset_patch = Vec::new();
-        Bsdiff::new(&original_asset, &t)
-            .compare(&mut signed_embedded_asset_patch)
-            .expect("TODO");
+        bsdiff::diff(
+            &original_asset,
+            &signed_embedded_asset.into_inner(),
+            &mut signed_embedded_asset_patch,
+        )
+        .expect("TODO");
+
+        // TODO: temporary for testing
+        let mut original = Vec::new();
+        bsdiff::patch(
+            &original_asset,
+            &mut Cursor::new(&mut signed_embedded_asset_patch),
+            &mut original,
+        )
+        .unwrap();
+        fs::write(dir_path.join("embedded.original"), original)?;
+
         asset_details.uncompressed_embedded_size = Some(signed_embedded_asset_patch.len());
-        // let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
+        let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
 
         fs::write(dir_path.join("embedded.patch"), signed_embedded_asset_patch)?;
         fs::write(dir_path.join("embedded.c2pa"), embedded_c2pa_manifest)?;

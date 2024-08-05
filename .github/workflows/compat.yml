@@ -24,11 +24,11 @@ jobs:
       - name: Create compat snapshot
         run: cargo run -p c2pa-compat
 
-      - name: Get the latest tag
-        run: |
-          git fetch --tags origin
-          LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-          echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
+      # - name: Get the latest tag
+      #   run: |
+      #     git fetch --tags origin
+      #     LATEST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+      #     echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_ENV
 
       # - name: Send compat PR
       #   uses: peter-evans/create-pull-request@v6
