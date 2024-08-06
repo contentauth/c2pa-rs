@@ -18,7 +18,7 @@ use std::{
     thread,
 };
 
-use c2pa::{Reader, Result};
+use c2pa::{Reader, Result, SigningAlg};
 use serde::Deserialize;
 use serde_json::Value;
 use tiny_http::{Response, Server};
@@ -43,11 +43,11 @@ pub struct CompatAssetDetails {
 pub struct CompatDetails {
     assets: Vec<CompatAssetDetails>,
     #[allow(dead_code)]
-    public_key: PathBuf,
+    certificate: PathBuf,
     #[allow(dead_code)]
     private_key: PathBuf,
-    // TODO: temp
-    // algorithm: SigningAlg,
+    #[allow(dead_code)]
+    algorithm: SigningAlg,
     // tsa_url: String,
 }
 

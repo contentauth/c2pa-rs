@@ -54,10 +54,9 @@ impl CompatAssetDetails {
 #[derive(Debug, Serialize)]
 pub struct CompatDetails {
     assets: Vec<CompatAssetDetails>,
-    public_key: PathBuf,
+    certificate: PathBuf,
     private_key: PathBuf,
-    // TODO: allow algo to be specified?
-    // algorithm: SigningAlg,
+    algorithm: SigningAlg,
     // tsa_url: String,
 }
 
@@ -65,9 +64,9 @@ impl CompatDetails {
     pub fn new(assets: Vec<CompatAssetDetails>) -> Self {
         Self {
             assets,
-            public_key: PathBuf::from("certs/ed25519.pub"),
+            certificate: PathBuf::from("certs/ed25519.pub"),
             private_key: PathBuf::from("certs/ed25519.pem"),
-            // algorithm: SigningAlg::Ps256,
+            algorithm: SigningAlg::Ed25519,
             // tsa_url: "TODO",
         }
     }
@@ -84,18 +83,16 @@ fn main() -> Result<()> {
         CompatAssetDetails::new("sample1.mp3", "mp3"),
         CompatAssetDetails::new("libpng-test.png", "png"),
         CompatAssetDetails::new("TUSCANY.TIF", "tiff"),
-        // TODO: add an asset from each parser category
     ]);
     let fixtures_path = PathBuf::from(FIXTURES_PATH);
 
     let compat_dir = fixtures_path.join("compat").join(c2pa::VERSION);
-    // TODO: temp
     if Path::new(&compat_dir).exists() {
         fs::remove_dir_all(&compat_dir)?;
     }
     fs::create_dir(&compat_dir)?;
 
-    let public_key = fs::read(fixtures_path.join(&details.public_key))?;
+    let public_key = fs::read(fixtures_path.join(&details.certificate))?;
     let private_key = fs::read(fixtures_path.join(&details.private_key))?;
 
     for asset_details in &mut details.assets {
@@ -116,8 +113,9 @@ fn main() -> Result<()> {
             &mut Cursor::new(&original_asset),
             &mut signed_embedded_asset,
         )?;
-        let embedded_size = signed_embedded_asset.get_ref().len();
         // TODO: need to set resource base path
+
+        let embedded_size = signed_embedded_asset.get_ref().len();
 
         let embedded_reader = &Reader::from_manifest_data_and_stream(
             &embedded_c2pa_manifest,
@@ -128,7 +126,6 @@ fn main() -> Result<()> {
         let dir_path = compat_dir.join(&asset_details.category);
         fs::create_dir(&dir_path)?;
 
-        // TODO: can we share the builder or does it mutate itself?
         let mut signed_remote_asset = Cursor::new(Vec::new());
         let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
         remote_builder.no_embed = true;
@@ -138,6 +135,7 @@ fn main() -> Result<()> {
             asset_details.category
         ));
         // TODO: need to set resource base path
+
         let remote_c2pa_manifest = remote_builder.sign(
             &signer,
             &format,
@@ -209,7 +207,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// TODO: taken from v2pai example, WASM compatible?
 fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
     use ed25519_dalek::{Signature, Signer, SigningKey};
     use pem::parse;

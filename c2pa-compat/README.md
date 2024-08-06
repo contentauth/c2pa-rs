@@ -1,4 +1,6 @@
 # `c2pa-compat`
-TODO
+A tool for generating a compatibility snapshot of all asset types with remote and embedded manifests.
 
-`src/full-manifest.json` MUST always contain every possible manifest parameter for every release.
+These snapshots are typically created every release and saved to `sdk/tests/fixtures/compat/<VERSION>` for each c2pa-rs version. They are used in the compatibility tests found in `sdk/tests/compat.rs`.
+
+`src/full-manifest.json` should always contain every possible manifest feature for every release.
