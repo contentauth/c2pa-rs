@@ -96,9 +96,9 @@ impl CoseValidator for RsaLegacyValidator {
 
         let mut verifier = match self.alg.as_ref() {
             "sha1" => openssl::sign::Verifier::new(MessageDigest::sha1(), &pkey)?,
-            "rs256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?,
-            "rs384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?,
-            "rs512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?,
+            "rsa256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?,
+            "rsa384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?,
+            "rsa512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?,
             _ => return Err(Error::UnsupportedType),
         };
 

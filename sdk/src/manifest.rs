@@ -516,6 +516,7 @@ impl Manifest {
     }
 
     // Generates a Manifest given a store and a manifest label
+    #[async_generic]
     pub(crate) fn from_store(
         store: &Store,
         manifest_label: &str,
@@ -698,7 +699,14 @@ impl Manifest {
             }
         }
 
-        manifest.signature_info = match claim.signature_info() {
+        // get verified signing info
+        let si = if _sync {
+            claim.signature_info()
+        } else {
+            claim.signature_info_async().await
+        };
+
+        manifest.signature_info = match si {
             Some(signature_info) => Some(SignatureInfo {
                 alg: signature_info.alg,
                 issuer: signature_info.issuer_org,

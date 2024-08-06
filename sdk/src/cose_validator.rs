@@ -786,13 +786,20 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
+#[async_generic]
 fn get_signing_time(
     sign1: &coset::CoseSign1,
     data: &[u8],
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
-    if let Ok(tst_info) = get_timestamp_info(sign1, data) {
+    let time_stamp_info = if _sync {
+        get_timestamp_info(sign1, data)
+    } else {
+        get_timestamp_info_async(sign1, data).await
+    };
+
+    if let Ok(tst_info) = time_stamp_info {
         Some(gt_to_datetime(tst_info.gen_time))
     } else {
         None
@@ -986,7 +993,7 @@ pub(crate) async fn verify_cose_async(
     // get the public key der
     let der_bytes = &certs[0];
 
-    let tst_info_res = get_timestamp_info(&sign1, &data);
+    let tst_info_res = get_timestamp_info_async(&sign1, &data).await;
 
     // verify cert matches requested algorithm
     if cert_check {
@@ -1074,7 +1081,7 @@ pub(crate) async fn verify_cose_async(
         result.alg = Some(alg);
 
         // parse the temp time for now util we have TA
-        result.date = get_signing_time(&sign1, &data);
+        result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
         // return cert chain
         result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
@@ -1084,6 +1091,7 @@ pub(crate) async fn verify_cose_async(
 }
 
 #[allow(unused_variables)]
+#[async_generic]
 pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1094,23 +1102,31 @@ pub(crate) fn get_signing_info(
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
-        // get the public key der
-        let der_bytes = get_sign_cert(&sign1)?;
+    let sign1 = match get_cose_sign1(cose_bytes, data, validation_log) {
+        Ok(sign1) => {
+            // get the public key der
+            match get_sign_cert(&sign1) {
+                Ok(der_bytes) => {
+                    if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
+                        date = if _sync {
+                            get_signing_time(&sign1, data)
+                        } else {
+                            get_signing_time_async(&sign1, data).await
+                        };
+                        issuer_org = extract_subject_from_cert(&signcert).ok();
+                        cert_serial_number = Some(extract_serial_from_cert(&signcert));
+                        if let Ok(a) = get_signing_alg(&sign1) {
+                            alg = Some(a);
+                        }
+                    };
 
-        let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
-            date = get_signing_time(&sign1, data);
-            issuer_org = extract_subject_from_cert(&signcert).ok();
-            cert_serial_number = Some(extract_serial_from_cert(&signcert));
-            if let Ok(a) = get_signing_alg(&sign1) {
-                alg = Some(a);
+                    Ok(sign1)
+                }
+                Err(e) => Err(e),
             }
-
-            (_rem, signcert)
-        });
-
-        Ok(sign1)
-    });
+        }
+        Err(e) => Err(e),
+    };
 
     let certs = match sign1 {
         Ok(s) => match get_sign_certs(&s) {
@@ -1244,7 +1260,7 @@ pub(crate) fn verify_cose(
             result.alg = Some(alg);
 
             // parse the temp time for now util we have TA
-            result.date = get_signing_time(&sign1, data);
+            result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
             // return cert chain
             result.cert_chain = dump_cert_chain(&certs)?;

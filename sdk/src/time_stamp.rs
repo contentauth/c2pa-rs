@@ -295,6 +295,7 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[async_generic]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
@@ -312,7 +313,11 @@ pub fn default_rfc3161_request(
     let ts = time_stamp_request_http(url, headers, &request)?;
 
     // sanity check
-    verify_timestamp(&ts, message)?;
+    if _sync {
+        verify_timestamp(&ts, message)?;
+    } else {
+        verify_timestamp_async(&ts, message).await?;
+    }
 
     Ok(ts)
 }
@@ -367,11 +372,11 @@ fn get_local_validator(
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             Box::new(crate::openssl::RsaLegacyValidator::new("sha1"))
         } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rs256"))
+            Box::new(crate::openssl::RsaLegacyValidator::new("rsa256"))
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rs384"))
+            Box::new(crate::openssl::RsaLegacyValidator::new("rsa384"))
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rs512"))
+            Box::new(crate::openssl::RsaLegacyValidator::new("rsa512"))
         } else {
             return Err(Error::CoseTimeStampAuthority);
         }
@@ -408,11 +413,11 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {
             Some("sha1".to_string())
         } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Some("rs256".to_string())
+            Some("rsa256".to_string())
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Some("rs384".to_string())
+            Some("rsa384".to_string())
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Some("rs512".to_string())
+            Some("rsa512".to_string())
         } else {
             None
         }
@@ -438,6 +443,7 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
 }
 
 // Returns TimeStamp token info if ts verifies against supplied data
+#[allow(unused_variables)]
 #[async_generic]
 pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     let mut last_err = Error::CoseInvalidTimeStamp;

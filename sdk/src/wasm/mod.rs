@@ -14,6 +14,11 @@
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod context;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod rsa_wasm_signer;
+#[cfg(target_arch = "wasm32")]
+#[allow(unused)]
+pub(crate) use rsa_wasm_signer::RsaWasmSignerAsync;
+#[cfg(target_arch = "wasm32")]
 pub(crate) mod util;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod webcrypto_validator;

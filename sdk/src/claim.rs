@@ -15,6 +15,7 @@
 use std::path::Path;
 use std::{collections::HashMap, fmt};
 
+use async_generic::async_generic;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -31,7 +32,10 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
-    cose_validator::{check_ocsp_status, get_signing_info, verify_cose, verify_cose_async},
+    cose_validator::{
+        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
+        verify_cose, verify_cose_async,
+    },
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -1023,12 +1027,17 @@ impl Claim {
     }
 
     /// Return information about the signature
+    #[async_generic]
     pub fn signature_info(&self) -> Option<ValidationInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
         let mut validation_log = OneShotStatusTracker::new();
 
-        Some(get_signing_info(sig, &data, &mut validation_log))
+        if _sync {
+            Some(get_signing_info(sig, &data, &mut validation_log))
+        } else {
+            Some(get_signing_info_async(sig, &data, &mut validation_log).await)
+        }
     }
 
     /// Verify claim signature, assertion store and asset hashes
@@ -1069,7 +1078,7 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status(&sig, &data, th, validation_log)?;
+        check_ocsp_status_async(&sig, &data, th, validation_log).await?;
 
         let verified =
             verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
