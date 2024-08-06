@@ -23,6 +23,21 @@ The library supports several common C2PA [assertions](https://c2pa.org/specifica
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
+### New API
+
+The library has a new API in development that will eventually replace the existing methods of reading and writing C2PA data. Ultimately, it will support all language bindings and build environments.  To use this API, enable the `unstable_api` feature; for example:
+
+```
+c2pa = {version="0.33.1", features=["unstable_api"]}
+```
+
+The new API focuses on streaming I/O and supports the following structs:
+- [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html)
+- [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
+- [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
+
+For some informal development and ussage notes, see [2024_API_NOTES.md](https://github.com/contentauth/c2pa-rs/blob/main/2024_API_NOTES.md).
+
 ### Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-js/blob/main/CONTRIBUTING.md).
@@ -68,7 +83,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.33.0"
+c2pa = "0.33.1"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
