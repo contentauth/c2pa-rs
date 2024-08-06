@@ -339,15 +339,20 @@ pub fn gt_to_datetime(
     gt.into()
 }
 pub fn timestamp_to_gt(dt: i64) -> Option<x509_certificate::asn1time::GeneralizedTime> {
-    let time = chrono::DateTime::<chrono::Utc>::from_timestamp(dt, 0)?;
-    let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
+    use chrono::{TimeZone, Utc};
+    match Utc.timestamp_opt(dt, 0) {
+        chrono::offset::LocalResult::Single(time) => {
+            let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
 
-    x509_certificate::asn1time::GeneralizedTime::parse(
-        SliceSource::new(formatted_time.as_bytes()),
-        false,
-        x509_certificate::asn1time::GeneralizedTimeAllowedTimezone::Z,
-    )
-    .ok()
+            x509_certificate::asn1time::GeneralizedTime::parse(
+                SliceSource::new(formatted_time.as_bytes()),
+                false,
+                x509_certificate::asn1time::GeneralizedTimeAllowedTimezone::Z,
+            )
+            .ok()
+        }
+        _ => None,
+    }
 }
 
 fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chrono::Utc> {
