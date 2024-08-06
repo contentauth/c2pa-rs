@@ -1052,6 +1052,18 @@ mod tests {
         .to_string()
     }
 
+    fn simple_manifest() -> String {
+        json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ]
+        })
+        .to_string()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1336,11 +1348,10 @@ mod tests {
         dest.rewind().unwrap();
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
-        println!("{}", manifest_store);
-        //#[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
-
+        //println!("{}", manifest_store);
+        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
         assert_eq!(manifest_store.validation_status(), None);
-        assert!(manifest_store.validation_status().is_none());
+
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
@@ -1383,17 +1394,12 @@ mod tests {
 
     #[test]
     fn test_builder_data_hashed_embeddable() {
-        // test adding to actual image
-        //let ap = fixture_path("cloud.jpg");
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
 
         let signer = temp_signer();
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
-        builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
-            .unwrap();
+        let mut builder = Builder::from_json(&simple_manifest()).unwrap();
 
         // get a placeholder the manifest
         let placeholder = builder
@@ -1401,6 +1407,7 @@ mod tests {
             .unwrap();
 
         let mut output_stream = Cursor::new(Vec::new());
+
         // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
         let offset = write_jpeg_placeholder_stream(
             &placeholder,
@@ -1411,6 +1418,7 @@ mod tests {
         )
         .unwrap();
 
+        println!("offset: {}, size {}", offset, output_stream.get_ref().len());
         // create an hash exclusion for the manifest
         let exclusion = crate::HashRange::new(offset, placeholder.len());
         let exclusions = vec![exclusion];
@@ -1420,7 +1428,7 @@ mod tests {
 
         // get the embeddable manifest, letting API do the hashing
         output_stream.rewind().unwrap();
-        let cm = builder
+        let signed_manifest: Vec<u8> = builder
             .sign_data_hashed_embeddable(
                 signer.as_ref(),
                 &dh,
@@ -1429,24 +1437,22 @@ mod tests {
             )
             .unwrap();
 
-        // path in new composed manifest
-        output_stream
-            .seek(std::io::SeekFrom::Start(offset as u64))
-            .unwrap();
-        output_stream.write_all(&cm).unwrap();
+        use std::io::{Seek, SeekFrom, Write};
+
+        output_stream.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_stream.write_all(&signed_manifest).unwrap();
         output_stream.flush().unwrap();
 
         output_stream.rewind().unwrap();
 
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
-        //assert!(reader.validation_status().is_none());
+        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
+        assert!(reader.validation_status().is_none());
     }
 
-    //#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    //#[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
-    #[cfg_attr(feature = "openssl_sign", actix::test)]
-    //#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
@@ -1502,10 +1508,11 @@ mod tests {
 
         out_stream.rewind().unwrap();
 
-        let reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
+        let _reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
             .await
             .unwrap();
         //println!("{reader}");
-        assert!(reader.validation_status().is_none());
+        #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
+        assert_eq!(_reader.validation_status(), None);
     }
 }
