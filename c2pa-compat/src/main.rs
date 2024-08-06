@@ -26,11 +26,17 @@ const FULL_MANIFEST: &str = include_str!("../../sdk/tests/fixtures/simple_manife
 const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
 
 #[derive(Debug, Serialize)]
+pub struct BinarySize {
+    uncompressed_patch_size: usize,
+    applied_size: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CompatAssetDetails {
     asset: PathBuf,
     category: String,
-    uncompressed_remote_size: Option<usize>,
-    uncompressed_embedded_size: Option<usize>,
+    remote_size: Option<BinarySize>,
+    embedded_size: Option<BinarySize>,
 }
 
 impl CompatAssetDetails {
@@ -38,8 +44,8 @@ impl CompatAssetDetails {
         Self {
             asset: asset.into(),
             category: category.into(),
-            uncompressed_remote_size: None,
-            uncompressed_embedded_size: None,
+            remote_size: None,
+            embedded_size: None,
         }
     }
 }
@@ -50,9 +56,9 @@ pub struct CompatDetails {
     assets: Vec<CompatAssetDetails>,
     public_key: PathBuf,
     private_key: PathBuf,
-    // TODO: allow algo to be specified
+    // TODO: allow algo to be specified?
     // algorithm: SigningAlg,
-    // tsa_url: &'static str,
+    // tsa_url: String,
 }
 
 impl CompatDetails {
@@ -67,15 +73,12 @@ impl CompatDetails {
     }
 }
 
-// TODO: ideally this tool will run from CI on publish (if tests fail, cancel)
-// TODO: also, we need to have a predefined set of hash assertions that are added on a per-asset basis,
-//       maybe the hash assertion should be specified in compat-details?
 fn main() -> Result<()> {
     // TODO: these assets should be as small as possible
     let mut details = CompatDetails::new(vec![
         CompatAssetDetails::new("C.jpg", "jpeg"),
         CompatAssetDetails::new("sample1.gif", "gif"),
-        // CompatAssetDetails::new("sample1.svg", "svg"),
+        // CompatAssetDetails::new("sample1.svg", "svg"), // TODO: svg doesn't work when combining binary diffing + Windows
         CompatAssetDetails::new("video1.mp4", "bmff"),
         // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: https://github.com/contentauth/c2pa-rs/issues/530
         CompatAssetDetails::new("sample1.mp3", "mp3"),
@@ -113,6 +116,7 @@ fn main() -> Result<()> {
             &mut Cursor::new(&original_asset),
             &mut signed_embedded_asset,
         )?;
+        let embedded_size = signed_embedded_asset.get_ref().len();
         // TODO: need to set resource base path
 
         let embedded_reader = &Reader::from_manifest_data_and_stream(
@@ -142,6 +146,8 @@ fn main() -> Result<()> {
         );
         match remote_c2pa_manifest {
             Ok(remote_c2pa_manifest) => {
+                let remote_size = signed_remote_asset.get_ref().len();
+
                 let remote_reader = &Reader::from_manifest_data_and_stream(
                     &remote_c2pa_manifest,
                     &format,
@@ -154,8 +160,13 @@ fn main() -> Result<()> {
                     &signed_remote_asset.into_inner(),
                     &mut signed_remote_asset_patch,
                 )
-                .expect("TODO");
-                asset_details.uncompressed_remote_size = Some(signed_remote_asset_patch.len());
+                .expect("Failed to make remote diff.");
+
+                asset_details.remote_size = Some(BinarySize {
+                    uncompressed_patch_size: signed_remote_asset_patch.len(),
+                    applied_size: remote_size,
+                });
+
                 let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
 
                 fs::write(dir_path.join("remote.patch"), signed_remote_asset_patch)?;
@@ -173,25 +184,17 @@ fn main() -> Result<()> {
             &signed_embedded_asset.into_inner(),
             &mut signed_embedded_asset_patch,
         )
-        .expect("TODO");
+        .expect("Failed to make embedded diff.");
 
-        // TODO: temporary for testing
-        let mut original = Vec::new();
-        bsdiff::patch(
-            &original_asset,
-            &mut Cursor::new(&mut signed_embedded_asset_patch),
-            &mut original,
-        )
-        .unwrap();
-        fs::write(dir_path.join("embedded.original"), original)?;
+        asset_details.embedded_size = Some(BinarySize {
+            uncompressed_patch_size: signed_embedded_asset_patch.len(),
+            applied_size: embedded_size,
+        });
 
-        asset_details.uncompressed_embedded_size = Some(signed_embedded_asset_patch.len());
         let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
 
         fs::write(dir_path.join("embedded.patch"), signed_embedded_asset_patch)?;
         fs::write(dir_path.join("embedded.c2pa"), embedded_c2pa_manifest)?;
-        // TODO: we store separate remote/embedded manifest because some fields (e.g. bmff hash) differ
-        //       ideally we store the hash assertions in a separate json as to not have duplicate json manifests
         // Use serde_json::to_writer to avoid escaping
         let mut embedded_json_manifest = File::create(dir_path.join("embedded.json"))?;
         serde_json::to_writer(&mut embedded_json_manifest, &embedded_reader)?;

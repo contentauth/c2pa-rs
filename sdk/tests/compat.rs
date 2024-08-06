@@ -26,12 +26,17 @@ use tiny_http::{Response, Server};
 const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
 #[derive(Debug, Deserialize)]
+pub struct BinarySize {
+    uncompressed_patch_size: usize,
+    applied_size: usize,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CompatAssetDetails {
     asset: PathBuf,
     category: String,
-    uncompressed_remote_size: Option<usize>,
-    // This one should always be defined.
-    uncompressed_embedded_size: usize,
+    remote_size: Option<BinarySize>,
+    embedded_size: BinarySize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,21 +166,20 @@ fn test_compat() -> Result<()> {
             let mut stabilizer = Stabilizer::new();
 
             // Some versions of c2pa-rs don't support remote writing for certain assets.
-            let remote_asset_path = asset_dir.join("remote.patch");
-            if remote_asset_path.exists() {
-                let expected_remote_asset_patch = fs::read(remote_asset_path)?;
+            if let Some(remote_size) = asset_details.remote_size {
+                let expected_remote_asset_patch = fs::read(asset_dir.join("remote.patch"))?;
                 let expected_remote_asset_patch = lz4_flex::decompress(
                     &expected_remote_asset_patch,
-                    asset_details.uncompressed_remote_size.unwrap(),
+                    remote_size.uncompressed_patch_size,
                 )
-                .expect("TODO"); // TODO: err msg
-                let mut expected_remote_asset = Vec::new(); // TODO: prealloc
+                .expect("Failed to decompress remote patch.");
+                let mut expected_remote_asset = Vec::with_capacity(remote_size.applied_size);
                 bsdiff::patch(
                     &original_asset,
                     &mut Cursor::new(expected_remote_asset_patch),
                     &mut expected_remote_asset,
                 )
-                .expect("TODO");
+                .expect("Failed to apply remote patch.");
 
                 let expected_remote_reader: Reader =
                     serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
@@ -194,19 +198,21 @@ fn test_compat() -> Result<()> {
                 assert_eq!(expected_remote_json_manifest, actual_json_from_remote_asset);
             }
 
+            let embedded_size = asset_details.embedded_size;
+
             let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
             let expected_embedded_asset_patch = lz4_flex::decompress(
                 &expected_embedded_asset_patch,
-                asset_details.uncompressed_embedded_size,
+                embedded_size.uncompressed_patch_size,
             )
-            .expect("TODO"); // TODO: err msg
-            let mut expected_embedded_asset = Vec::new(); // TODO: prealloc
+            .expect("Failed to decompress embedded patch.");
+            let mut expected_embedded_asset = Vec::with_capacity(embedded_size.applied_size);
             bsdiff::patch(
                 &original_asset,
                 &mut Cursor::new(expected_embedded_asset_patch),
                 &mut expected_embedded_asset,
             )
-            .expect("TODO");
+            .expect("Failed to apply embedded patch.");
 
             let expected_embedded_reader: Reader =
                 serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
