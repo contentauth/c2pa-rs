@@ -339,9 +339,7 @@ pub fn gt_to_datetime(
     gt.into()
 }
 pub fn timestamp_to_gt(dt: i64) -> Option<x509_certificate::asn1time::GeneralizedTime> {
-    use chrono::{DateTime, Utc};
-
-    let time: DateTime<Utc> = DateTime::<Utc>::from_timestamp(dt, 0)?;
+    let time = chrono::DateTime::<chrono::Utc>::from_timestamp(dt, 0)?;
     let formatted_time = time.format("%Y%m%d%H%M%SZ").to_string();
 
     x509_certificate::asn1time::GeneralizedTime::parse(
@@ -637,12 +635,12 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
 
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let mut signing_key_der = Vec::<u8>::new();
+                    let mut certificate_der = Vec::<u8>::new();
                     cert.encode_ref()
-                        .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
+                        .write_encoded(bcder::Mode::Der, &mut certificate_der)?;
 
                     crate::wasm::verify_data(
-                        signing_key_der,
+                        certificate_der,
                         get_validator_type(sig_alg, hash_alg),
                         sig_val.to_bytes().to_vec(),
                         tbs,

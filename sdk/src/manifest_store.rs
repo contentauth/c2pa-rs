@@ -242,11 +242,26 @@ impl ManifestStore {
 
     /// Generate a Store from a format string and bytes.
     #[cfg(feature = "v1_api")]
+    #[async_generic]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
-            .map(|store| Self::from_store(store, &validation_log))
+        let result = if _sync {
+            Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
+        } else {
+            Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log).await
+        };
+
+        match result {
+            Ok(store) => {
+                if _sync {
+                    Ok(Self::from_store(store, &validation_log))
+                } else {
+                    Ok(Self::from_store_async(store, &validation_log).await)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Generate a Store from a format string and stream.
@@ -334,22 +349,6 @@ impl ManifestStore {
             &validation_log,
             resource_path.as_ref(),
         ))
-    }
-
-    /// Loads a ManifestStore from a file
-    #[allow(dead_code)]
-    pub async fn from_bytes_async(
-        format: &str,
-        image_bytes: &[u8],
-        verify: bool,
-    ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
-
-        match Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log).await
-        {
-            Ok(store) => Ok(Self::from_store_async(store, &validation_log).await),
-            Err(e) => Err(e),
-        }
     }
 
     /// Loads a ManifestStore from an init segment and fragment.  This

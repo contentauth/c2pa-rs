@@ -1454,10 +1454,13 @@ pub(crate) mod tests {
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+    #[allow(unused_imports)]
     use crate::{
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
         reader::Reader,
+        status_tracker::{DetailedStatusTracker, StatusTracker},
+        store::Store,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
         Manifest, Result,
     };
@@ -1467,8 +1470,6 @@ pub(crate) mod tests {
         error::Error,
         hash_utils::HashRange,
         resource_store::ResourceRef,
-        status_tracker::{DetailedStatusTracker, StatusTracker},
-        store::Store,
         utils::test::{
             fixture_path, temp_dir_path, temp_fixture_path, write_jpeg_placeholder_file,
             TEST_SMALL_JPEG,
@@ -1839,7 +1840,7 @@ pub(crate) mod tests {
             .embed_async_signed(&output, &output, &async_signer)
             .await
             .expect("embed");
-        let reader = Reader::from_file(&output).expect("from_file");
+        let reader = Reader::from_file_async(&output).await.expect("from_file");
         assert_eq!(
             reader.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
@@ -1859,7 +1860,7 @@ pub(crate) mod tests {
             .embed_remote_signed(&output, &output, remote_signer.as_ref())
             .await
             .expect("embed");
-        let manifest_store = Reader::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file_async(&output).await.expect("from_file");
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
             TEST_SMALL_JPEG
@@ -1939,19 +1940,20 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, _out_manifest) = manifest
+        let (out_vec, out_manifest) = manifest
             .embed_from_memory_remote_signed("jpeg", image, signer.as_ref())
             .await
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_stream("image/jpeg", Cursor::new(out_vec)).unwrap();
+        let manifest_store = Reader::from_stream_async("image/jpeg", Cursor::new(out_vec))
+            .await
+            .unwrap();
 
-        /* to be enabled later
-                // try to load the manifest
-                let mut validation_log = DetailedStatusTracker::new();
-                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
-        */
+        // try to load the manifest
+        let mut validation_log = DetailedStatusTracker::new();
+        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
+
         println!("It worked: {manifest_store}\n");
     }
 
@@ -1974,19 +1976,19 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, _out_manifest) = manifest
+        let (out_vec, out_manifest) = manifest
             .embed_from_memory_remote_signed("png", image, signer.as_ref())
             .await
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_stream("image/png", Cursor::new(out_vec)).unwrap();
+        let manifest_store = Reader::from_stream_async("image/png", Cursor::new(out_vec))
+            .await
+            .unwrap();
 
-        /* to be enabled later
-                // try to load the manifest
-                let mut validation_log = DetailedStatusTracker::new();
-                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
-        */
+        // try to load the manifest
+        let mut validation_log = DetailedStatusTracker::new();
+        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
@@ -2010,19 +2012,19 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, _out_manifest) = manifest
+        let (out_vec, out_manifest) = manifest
             .embed_from_memory_remote_signed("image/webp", image, signer.as_ref())
             .await
             .expect("embed_stream");
 
         // try to load the image
-        let manifest_store = Reader::from_stream("image/webp", Cursor::new(out_vec)).unwrap();
+        let manifest_store = Reader::from_stream_async("image/webp", Cursor::new(out_vec))
+            .await
+            .unwrap();
 
-        /* to be enabled later
-                // try to load the manifest
-                let mut validation_log = DetailedStatusTracker::new();
-                Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
-        */
+        // try to load the manifest
+        let mut validation_log = DetailedStatusTracker::new();
+        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
@@ -2091,8 +2093,10 @@ pub(crate) mod tests {
             .await
             .expect("embed_stream");
 
-        let manifest_store = crate::ManifestStore::from_bytes("jpeg", &output.into_inner(), true)
-            .expect("from_bytes");
+        let manifest_store =
+            crate::ManifestStore::from_bytes_async("jpeg", &output.into_inner(), true)
+                .await
+                .expect("from_bytes");
         assert_eq!(
             manifest_store.get_active().unwrap().title().unwrap(),
             "EmbedStream"
@@ -2123,7 +2127,7 @@ pub(crate) mod tests {
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let manifest_store = Reader::from_file(&output).expect("from_file");
+        let manifest_store = Reader::from_file_async(&output).await.expect("from_file");
         println!("{manifest_store}");
         let manifest = manifest_store.active_manifest().unwrap();
         let ingredient_status = manifest.ingredients()[0].validation_status();
