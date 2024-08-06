@@ -119,7 +119,7 @@ serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.4.0"
 serde-transcode = "1.1.1"
-sha2 = "0.10.2"
+sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
