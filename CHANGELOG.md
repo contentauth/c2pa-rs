@@ -6,6 +6,77 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.33.1
+_30 July 2024_
+
+* Use timestamp with OpenSSL validation to prevent check chain check erâ€¦ ([#531](https://github.com/contentauth/c2pa-rs/pull/531))
+* Fix GIF `remove_cai_store_from_stream` behavior ([#524](https://github.com/contentauth/c2pa-rs/pull/524))
+
+## 0.33.0
+_26 July 2024_
+
+* Update crate to fix bad certificate dump content ([#525](https://github.com/contentauth/c2pa-rs/pull/525))
+* Introduce a mutex around the FFI calls to OpenSSL ([#516](https://github.com/contentauth/c2pa-rs/pull/516))
+* Bump bcder minimum version to 0.7.3 ([#526](https://github.com/contentauth/c2pa-rs/pull/526))
+* (MINOR) Updates needed for v2 JavaScript SDK ([#521](https://github.com/contentauth/c2pa-rs/pull/521))
+* Add region of interest assertion definition ([#506](https://github.com/contentauth/c2pa-rs/pull/506))
+* Fix CI tests ([#520](https://github.com/contentauth/c2pa-rs/pull/520))
+* Builder Archive update ([#507](https://github.com/contentauth/c2pa-rs/pull/507))
+* Update range-set requirement from 0.0.9 to 0.0.11 in /sdk ([#442](https://github.com/contentauth/c2pa-rs/pull/442))
+* Make sure reading past end of JUMBF box is an error ([#518](https://github.com/contentauth/c2pa-rs/pull/518))
+* added final details ([#517](https://github.com/contentauth/c2pa-rs/pull/517))
+
+## 0.32.7
+_18 July 2024_
+
+* Ensure Ingredient data_types make it to the store and back. ([#514](https://github.com/contentauth/c2pa-rs/pull/514))
+* draft security md ([#508](https://github.com/contentauth/c2pa-rs/pull/508))
+* Make data_types field optional when serializing data-box-map ([#512](https://github.com/contentauth/c2pa-rs/pull/512))
+* Fix box hash placeholder len (set to 1) ([#511](https://github.com/contentauth/c2pa-rs/pull/511))
+* Set data box placeholder len to at least 1 for GIF ([#510](https://github.com/contentauth/c2pa-rs/pull/510))
+* Rewind mp3 streams when reading/writing ([#509](https://github.com/contentauth/c2pa-rs/pull/509))
+* Update README.md ([#351](https://github.com/contentauth/c2pa-rs/pull/351))
+* Add GIF support ([#489](https://github.com/contentauth/c2pa-rs/pull/489))
+* Update image requirement from 0.24.7 to 0.25.1 in /make_test_images ([#445](https://github.com/contentauth/c2pa-rs/pull/445))
+* Upgrade uuid to 1.7.0 & fix removed wasm-bindgen feature ([#450](https://github.com/contentauth/c2pa-rs/pull/450))
+* Expose `SignatureInfo` publicly ([#501](https://github.com/contentauth/c2pa-rs/pull/501))
+* Cleanup empty/unused files + lints ([#500](https://github.com/contentauth/c2pa-rs/pull/500))
+
+## 0.32.6
+_15 July 2024_
+
+* Fetching of databoxes must always use HashedURI to enforce hash checks. ([#505](https://github.com/contentauth/c2pa-rs/pull/505))
+* Temporarily allow unused `JsonAssertionData` to fix unused error in CI ([#498](https://github.com/contentauth/c2pa-rs/pull/498))
+* Add remote manifest support to MP3 ([#496](https://github.com/contentauth/c2pa-rs/pull/496))
+
+## 0.32.5
+_28 June 2024_
+
+* (PATCH) ensures temp files are removed ([#494](https://github.com/contentauth/c2pa-rs/pull/494))
+* Update async_generic to 1.1 ([#493](https://github.com/contentauth/c2pa-rs/pull/493))
+
+## 0.32.4
+_25 June 2024_
+
+* Add data_type (future) to Ingredient_V2 ([#490](https://github.com/contentauth/c2pa-rs/pull/490))
+* Let's not assume that third-party assertions are using serde_cbor ([#491](https://github.com/contentauth/c2pa-rs/pull/491))
+
+## 0.32.3
+_24 June 2024_
+
+* External placed manifest ([#472](https://github.com/contentauth/c2pa-rs/pull/472))
+* Support metadata field in claims. ([#488](https://github.com/contentauth/c2pa-rs/pull/488))
+
+## 0.32.2
+_19 June 2024_
+
+* Add iterators over manifests and resources in unstable API ([#482](https://github.com/contentauth/c2pa-rs/pull/482))
+* OCSP certificate should be valid at signing time ([#481](https://github.com/contentauth/c2pa-rs/pull/481))
+* url crate version 2.5.1 introduces new license "Unicode-3.0" ([#483](https://github.com/contentauth/c2pa-rs/pull/483))
+* Implement `Debug` w/ detailed manifest for `Reader` ([#473](https://github.com/contentauth/c2pa-rs/pull/473))
+* Bump MSRV to 1.74 ([#478](https://github.com/contentauth/c2pa-rs/pull/478))
+* Allow empty Merkle proof for last leaf node. ([#470](https://github.com/contentauth/c2pa-rs/pull/470))
+
 ## 0.32.1
 _10 May 2024_
 

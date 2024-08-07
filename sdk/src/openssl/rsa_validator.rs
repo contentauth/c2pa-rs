@@ -27,6 +27,8 @@ impl RsaValidator {
 
 impl CoseValidator for RsaValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let rsa = Rsa::public_key_from_der(pkey)?;
 
         // rebuild RSA keys to eliminate incompatible values

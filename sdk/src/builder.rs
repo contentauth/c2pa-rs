@@ -18,6 +18,8 @@ use std::{
 };
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -25,7 +27,9 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionBase,
-    assertions::{labels, Actions, CreativeWork, Exif, SoftwareAgent, Thumbnail, User, UserCbor},
+    assertions::{
+        labels, Actions, CreativeWork, Exif, Metadata, SoftwareAgent, Thumbnail, User, UserCbor,
+    },
     claim::Claim,
     error::{Error, Result},
     ingredient::Ingredient,
@@ -36,12 +40,16 @@ use crate::{
     AsyncSigner, ClaimGeneratorInfo, Signer,
 };
 
+/// Version of the Builder Archive file
+const ARCHIVE_VERSION: &str = "1";
+
 /// A Manifest Definition
 /// This is used to define a manifest and is used to build a ManifestStore
 /// A Manifest is a collection of ingredients and assertions
 /// It is used to define a claim that can be signed and embedded into a file
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// Optional prefix added to the generated Manifest Label
@@ -51,6 +59,9 @@ pub struct ManifestDefinition {
     /// Clam Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
+
+    /// Optional manifest metadata
+    pub metadata: Option<Vec<Metadata>>,
 
     /// A human-readable title, generally source filename.
     pub title: Option<String>,
@@ -96,13 +107,16 @@ fn default_vec<T>() -> Vec<T> {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum AssertionData {
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     Cbor(serde_cbor::Value),
     Json(serde_json::Value),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
     pub label: String,
@@ -259,8 +273,7 @@ impl Builder {
         let mut resource = Vec::new();
         stream.read_to_end(&mut resource)?;
         // add the resource and set the resource reference
-        self.resources
-            .add(&self.definition.instance_id.clone(), resource)?;
+        self.resources.add(&self.definition.instance_id, resource)?;
         self.definition.thumbnail = Some(ResourceRef::new(
             format,
             self.definition.instance_id.clone(),
@@ -317,6 +330,7 @@ impl Builder {
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * If the [`Ingredient`] is not valid
+    #[async_generic()]
     pub fn add_ingredient<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
@@ -328,7 +342,11 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
-        let ingredient = ingredient.with_stream(format, stream)?;
+        let ingredient = if _sync {
+            ingredient.with_stream(format, stream)?
+        } else {
+            ingredient.with_stream_async(format, stream).await?
+        };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
@@ -371,10 +389,15 @@ impl Builder {
                 let mut zip = ZipWriter::new(stream);
                 let options =
                     FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                // write a version file
+                zip.start_file("version.txt", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
+                // write the manifest.json file
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
-                // add a folder to the zip file
+                // add resource files to a resources folder
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
@@ -382,14 +405,20 @@ impl Builder {
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
-                for (index, ingredient) in self.definition.ingredients.iter().enumerate() {
-                    zip.start_file(format!("ingredients/{}/", index), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    for (id, data) in ingredient.resources().resources() {
-                        //println!("adding ingredient {}/{}", index, id);
-                        zip.start_file(format!("ingredients/{}/{}", index, id), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
+                // Write the manifest_data files
+                // The filename is filesystem safe version of the associated manifest_label
+                // with a .c2pa extension inside a "manifests" folder.
+                zip.start_file("manifests/", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                for ingredient in self.definition.ingredients.iter() {
+                    if let Some(manifest_label) = ingredient.active_manifest() {
+                        if let Some(manifest_data) = ingredient.manifest_data() {
+                            // Convert to valid archive / file path name
+                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
+                            zip.start_file(format!("manifests/{manifest_name}"), options)
+                                .map_err(|e| Error::OtherError(Box::new(e)))?;
+                            zip.write_all(&manifest_data)?;
+                        }
                     }
                 }
                 zip.finish()
@@ -408,14 +437,16 @@ impl Builder {
     /// * If the archive cannot be read.
     pub fn from_archive(stream: impl Read + Seek) -> Result<Self> {
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest = zip
+        // First read the manifest.json file.
+        let mut manifest_file = zip
             .by_name("manifest.json")
             .map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest_json = Vec::new();
-        manifest.read_to_end(&mut manifest_json)?;
+        let mut manifest_buf = Vec::new();
+        manifest_file.read_to_end(&mut manifest_buf)?;
         let mut builder: Builder =
-            serde_json::from_slice(&manifest_json).map_err(|e| Error::OtherError(Box::new(e)))?;
-        drop(manifest);
+            serde_json::from_slice(&manifest_buf).map_err(|e| Error::OtherError(Box::new(e)))?;
+        drop(manifest_file);
+        // Load all the files in the resources folder.
         for i in 0..zip.len() {
             let mut file = zip
                 .by_index(i)
@@ -432,6 +463,29 @@ impl Builder {
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
             }
+
+            // Load the c2pa_manifests.
+            // We add the manifest data to any ingredient that has a matching active_manfiest label.
+            if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                let manifest_label = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
+                let manifest_label = manifest_label.replace(['_'], ":");
+                for ingredient in builder.definition.ingredients.iter_mut() {
+                    if let Some(active_manifest) = ingredient.active_manifest() {
+                        if manifest_label.starts_with(active_manifest) {
+                            ingredient.set_manifest_data(data.clone())?;
+                        }
+                    }
+                }
+            }
+
+            // Keep this for temporary unstable api support (un-versioned).
+            // Earlier method used numbered library folders instead of manifests.
             if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
@@ -461,10 +515,11 @@ impl Builder {
     fn to_claim(&self) -> Result<Claim> {
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
+        let metadata = definition.metadata.clone();
         // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
-        // build the claim_generator string since this is required
+        // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
             .iter()
             .map(|s| {
@@ -490,6 +545,13 @@ impl Builder {
                 claim_info.icon = Some(icon.to_hashed_uri(&self.resources, &mut claim)?);
             }
             claim.add_claim_generator_info(claim_info);
+        }
+
+        // Add claim metadata
+        if let Some(metadata_vec) = metadata {
+            for m in metadata_vec {
+                claim.add_claim_metadata(m);
+            }
         }
 
         if let Some(remote_url) = &self.remote_url {
@@ -678,7 +740,7 @@ impl Builder {
             {
                 stream.rewind()?;
                 self.resources
-                    .add(&self.definition.instance_id.clone(), image)?;
+                    .add(self.definition.instance_id.clone(), image)?;
                 self.definition.thumbnail = Some(ResourceRef::new(
                     format,
                     self.definition.instance_id.clone(),
@@ -820,6 +882,12 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
+            "metadata": [
+                {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
+            ],
             "title": "Test_Manifest",
             "format": "image/tiff",
             "instance_id": "1234",
@@ -929,6 +997,16 @@ mod tests {
             "org.test.assertion".to_string()
         );
 
+        assert_eq!(
+            definition.metadata.as_ref().unwrap()[0]
+                .other()
+                .get("my_custom_metadata")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "mycustommetatdatavalue"
+        );
+
         // convert back to json and compare to original
         let builder_json = serde_json::to_string(&builder.definition).unwrap();
         assert_eq!(builder_json, stripped_json);
@@ -952,6 +1030,11 @@ mod tests {
         builder
             .resources
             .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        builder
+            .resources
+            .add("prompt.txt", "a random prompt")
             .unwrap();
 
         builder
@@ -1096,7 +1179,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(&parent_json(), format, &mut source)
+            .add_ingredient(parent_json(), format, &mut source)
             .unwrap();
 
         builder

@@ -11,10 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{collections::HashMap, io::Cursor};
+use std::{
+    collections::HashMap,
+    io::{Cursor, Read, Seek},
+};
 #[cfg(feature = "file_io")]
 use std::{
-    fs::{self, File},
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -24,8 +27,8 @@ use lazy_static::lazy_static;
 use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, jpeg_io::JpegIO, mp3_io::Mp3IO, png_io::PngIO,
-        riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO,
+        png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -45,6 +48,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(GifIO::new("")),
         ];
 
         let mut handler_map = HashMap::new();
@@ -73,6 +77,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(GifIO::new("")),
         ];
         let mut handler_map = HashMap::new();
 
@@ -263,11 +268,8 @@ pub(crate) fn update_file_jumbf(
 pub fn load_jumbf_from_file(in_path: &Path) -> Result<Vec<u8>> {
     let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
 
-    match get_cailoader_handler(&ext) {
-        Some(asset_handler) => {
-            let mut f = File::open(in_path)?;
-            asset_handler.read_cai(&mut f)
-        }
+    match get_assetio_handler(&ext) {
+        Some(asset_handler) => asset_handler.read_cai_store(in_path),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -282,12 +284,39 @@ pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions
     }
 }
 
-pub(crate) fn object_locations_from_stream(
+struct CAIReadAdapter<R> {
+    pub reader: R,
+}
+
+impl<R> Read for CAIReadAdapter<R>
+where
+    R: Read + Seek,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.reader.read(buf)
+    }
+}
+
+impl<R> Seek for CAIReadAdapter<R>
+where
+    R: Read + Seek,
+{
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.reader.seek(pos)
+    }
+}
+
+pub(crate) fn object_locations_from_stream<R>(
     format: &str,
-    stream: &mut dyn CAIRead,
-) -> Result<Vec<HashObjectPositions>> {
+    stream: &mut R,
+) -> Result<Vec<HashObjectPositions>>
+where
+    R: Read + Seek + Send + ?Sized,
+{
+    let mut reader = CAIReadAdapter { reader: stream };
+
     match get_caiwriter_handler(format) {
-        Some(handler) => handler.get_object_locations_from_stream(stream),
+        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -299,6 +328,7 @@ pub(crate) fn object_locations_from_stream(
 ///
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
+#[allow(dead_code)]
 pub fn remove_jumbf_from_file(path: &Path) -> Result<()> {
     let ext = get_file_extension(path).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
@@ -379,6 +409,7 @@ pub mod tests {
             Box::new(Mp3IO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
+            Box::new(GifIO::new("")),
         ];
 
         // build handler map

@@ -90,7 +90,7 @@ impl Exif {
                 v.push(value);
                 self
             }
-            None => self.insert(&key, &Vec::from([value]))?,
+            None => self.insert(&key, Vec::from([value]))?,
         })
     }
 
