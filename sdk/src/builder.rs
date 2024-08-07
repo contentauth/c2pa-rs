@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
@@ -212,6 +214,10 @@ pub struct Builder {
 
     // If true, the manifest store will not be embedded in the asset on sign
     pub no_embed: bool,
+
+    /// Base path to search for resources.
+    #[cfg(feature = "file_io")]
+    pub base_path: Option<PathBuf>,
 
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
@@ -778,6 +784,11 @@ impl Builder {
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = &self.base_path {
+            self.resources.set_base_path(base_path);
+        }
+
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
@@ -883,7 +894,7 @@ mod tests {
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
-                "identifier": "thumbnail1.jpg"
+                "identifier": "thumbnail.jpg"
             },
             "ingredients": [
                 {
@@ -906,6 +917,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
@@ -978,7 +990,7 @@ mod tests {
         assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(
             definition.thumbnail.clone().unwrap().identifier.as_str(),
-            "thumbnail1.jpg"
+            "thumbnail.jpg"
         );
         assert_eq!(definition.ingredients[0].title(), "Test".to_string());
         assert_eq!(
@@ -1018,7 +1030,7 @@ mod tests {
 
         builder
             .resources
-            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
             .unwrap();
 
         builder
@@ -1074,7 +1086,7 @@ mod tests {
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
         // sign and write to the output stream
@@ -1125,7 +1137,7 @@ mod tests {
                 .unwrap();
 
             builder
-                .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+                .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
                 .unwrap();
 
             // sign and write to the output stream
@@ -1173,7 +1185,7 @@ mod tests {
 
         builder
             .resources
-            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
@@ -1207,7 +1219,7 @@ mod tests {
         builder.no_embed = true;
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
@@ -1228,5 +1240,45 @@ mod tests {
 
         println!("{}", reader.json());
         assert!(reader.validation_status().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_builder_base_path() {
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder.base_path = Some(std::path::PathBuf::from("tests/fixtures"));
+
+        // Ensure that we can zip and unzip, saving the base path
+        let mut zipped = Cursor::new(Vec::new());
+        builder.to_archive(&mut zipped).unwrap();
+
+        // unzip the manifest builder from the zipped stream
+        zipped.rewind().unwrap();
+        let mut builder = Builder::from_archive(&mut zipped).unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
+        let signer = temp_signer();
+        let _manifest_data = builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // read and validate the signed manifest store
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
+
+        //println!("{}", reader);
+        assert!(reader.validation_status().is_none());
+        assert_eq!(
+            reader
+                .active_manifest()
+                .unwrap()
+                .thumbnail_ref()
+                .unwrap()
+                .format,
+            "image/jpeg",
+        );
     }
 }
