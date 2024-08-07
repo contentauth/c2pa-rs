@@ -1,0 +1,56 @@
+---
+source: sdk/tests/builder.rs
+expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
+---
+{
+  "active_manifest": "[MANIFEST_URN]",
+  "manifests": {
+    "[MANIFEST_URN]": {
+      "assertions": [
+        {
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                "parameters": {
+                  "description": "import"
+                },
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "something": "else",
+                  "version": "1.0"
+                }
+              }
+            ]
+          },
+          "label": "c2pa.actions.v2"
+        }
+      ],
+      "claim_generator": "test/1.0 c2pa-rs/[VERSION]",
+      "claim_generator_info": [
+        {
+          "name": "test",
+          "version": "1.0"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "[VERSION]"
+        }
+      ],
+      "format": "image/jpeg",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
+      "signature_info": {
+        "alg": "Ed25519",
+        "cert_serial_number": "638838410810235485828984295321338730070538954823",
+        "issuer": "C2PA Test Signing Cert"
+      },
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      }
+    }
+  }
+}
