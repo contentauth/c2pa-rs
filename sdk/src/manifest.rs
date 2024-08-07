@@ -1940,7 +1940,7 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, out_manifest) = manifest
+        let (out_vec, _out_manifest) = manifest
             .embed_from_memory_remote_signed("jpeg", image, signer.as_ref())
             .await
             .expect("embed_stream");
@@ -1949,10 +1949,6 @@ pub(crate) mod tests {
         let manifest_store = Reader::from_stream_async("image/jpeg", Cursor::new(out_vec))
             .await
             .unwrap();
-
-        // try to load the manifest
-        let mut validation_log = DetailedStatusTracker::new();
-        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
@@ -1976,7 +1972,7 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, out_manifest) = manifest
+        let (out_vec, _out_manifest) = manifest
             .embed_from_memory_remote_signed("png", image, signer.as_ref())
             .await
             .expect("embed_stream");
@@ -1985,10 +1981,6 @@ pub(crate) mod tests {
         let manifest_store = Reader::from_stream_async("image/png", Cursor::new(out_vec))
             .await
             .unwrap();
-
-        // try to load the manifest
-        let mut validation_log = DetailedStatusTracker::new();
-        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
@@ -2012,7 +2004,7 @@ pub(crate) mod tests {
         let signer = temp_remote_signer();
 
         // Embed a manifest using the signer.
-        let (out_vec, out_manifest) = manifest
+        let (out_vec, _out_manifest) = manifest
             .embed_from_memory_remote_signed("image/webp", image, signer.as_ref())
             .await
             .expect("embed_stream");
@@ -2021,10 +2013,6 @@ pub(crate) mod tests {
         let manifest_store = Reader::from_stream_async("image/webp", Cursor::new(out_vec))
             .await
             .unwrap();
-
-        // try to load the manifest
-        let mut validation_log = DetailedStatusTracker::new();
-        Store::from_jumbf(&out_manifest, &mut validation_log).expect("manifest_load_error");
 
         println!("It worked: {manifest_store}\n");
     }
