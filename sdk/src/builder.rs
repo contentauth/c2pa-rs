@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
-    path::PathBuf,
 };
 
 use async_generic::async_generic;
