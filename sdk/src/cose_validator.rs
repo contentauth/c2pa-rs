@@ -1080,7 +1080,6 @@ pub(crate) async fn verify_cose_async(
         result.validated = true;
         result.alg = Some(alg);
 
-        // parse the temp time for now util we have TA
         result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
         // return cert chain
@@ -1259,7 +1258,6 @@ pub(crate) fn verify_cose(
             result.validated = true;
             result.alg = Some(alg);
 
-            // parse the temp time for now util we have TA
             result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
             // return cert chain

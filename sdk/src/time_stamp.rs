@@ -507,7 +507,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             let mi = &tst.message_imprint;
 
             // timestamp cert expiration
-            let signing_time = gt_to_datetime(tst.gen_time.clone()).timestamp();
+            let mut signing_time = gt_to_datetime(tst.gen_time.clone()).timestamp();
 
             // check the signer info signed attributes
             if let Some(attributes) = &signer_info.signed_attributes {
@@ -541,6 +541,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     let _time_diff = (signing_time - signed_signing_time).abs();
 
                     if let Some(gt) = timestamp_to_gt(signed_signing_time) {
+                        signing_time = gt_to_datetime(gt.clone()).timestamp(); // use actual signed time
                         tst.gen_time = gt;
                     };
                 }
