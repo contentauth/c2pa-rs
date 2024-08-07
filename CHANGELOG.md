@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.33.1
+_30 July 2024_
+
+* Use timestamp with OpenSSL validation to prevent check chain check erâ€¦ ([#531](https://github.com/contentauth/c2pa-rs/pull/531))
+* Fix GIF `remove_cai_store_from_stream` behavior ([#524](https://github.com/contentauth/c2pa-rs/pull/524))
+
 ## 0.33.0
 _26 July 2024_
 
