@@ -116,13 +116,24 @@ impl ManifestStore {
     }
 
     /// creates a ManifestStore from a Store with validation
+    #[async_generic]
     pub(crate) fn from_store(store: Store, validation_log: &impl StatusTracker) -> ManifestStore {
-        Self::from_store_impl(
-            store,
-            validation_log,
-            #[cfg(feature = "file_io")]
-            None,
-        )
+        if _sync {
+            Self::from_store_impl(
+                store,
+                validation_log,
+                #[cfg(feature = "file_io")]
+                None,
+            )
+        } else {
+            Self::from_store_impl_async(
+                store,
+                validation_log,
+                #[cfg(feature = "file_io")]
+                None,
+            )
+            .await
+        }
     }
 
     /// creates a ManifestStore from a Store writing resources to resource_path
@@ -132,7 +143,7 @@ impl ManifestStore {
         validation_log: &impl StatusTracker,
         resource_path: &Path,
     ) -> ManifestStore {
-        Self::from_store_impl(store, validation_log, Some(resource_path))
+        ManifestStore::from_store_impl(store, validation_log, Some(resource_path))
     }
 
     // internal implementation of from_store
@@ -154,6 +165,45 @@ impl ManifestStore {
             let result = Manifest::from_store(store, manifest_label, resource_path);
             #[cfg(not(feature = "file_io"))]
             let result = Manifest::from_store(store, manifest_label);
+
+            match result {
+                Ok(manifest) => {
+                    manifest_store
+                        .manifests
+                        .insert(manifest_label.to_owned(), manifest);
+                }
+                Err(e) => {
+                    statuses.push(ValidationStatus::from_error(&e));
+                }
+            };
+        }
+
+        if !statuses.is_empty() {
+            manifest_store.validation_status = Some(statuses);
+        }
+
+        manifest_store
+    }
+
+    async fn from_store_impl_async(
+        store: Store,
+        validation_log: &impl StatusTracker,
+        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
+    ) -> ManifestStore {
+        let mut statuses = status_for_store(&store, validation_log);
+
+        let mut manifest_store = ManifestStore::new();
+        manifest_store.active_manifest = store.provenance_label();
+        manifest_store.store = store;
+
+        let store = &manifest_store.store;
+        for claim in store.claims() {
+            let manifest_label = claim.label();
+            #[cfg(feature = "file_io")]
+            let result = Manifest::from_store_async(store, manifest_label, resource_path).await;
+            #[cfg(not(feature = "file_io"))]
+            let result = Manifest::from_store_async(store, manifest_label).await;
+
             match result {
                 Ok(manifest) => {
                     manifest_store
@@ -192,11 +242,26 @@ impl ManifestStore {
 
     /// Generate a Store from a format string and bytes.
     #[cfg(feature = "v1_api")]
+    #[async_generic]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
-            .map(|store| Self::from_store(store, &validation_log))
+        let result = if _sync {
+            Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
+        } else {
+            Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log).await
+        };
+
+        match result {
+            Ok(store) => {
+                if _sync {
+                    Ok(Self::from_store(store, &validation_log))
+                } else {
+                    Ok(Self::from_store_async(store, &validation_log).await)
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Generate a Store from a format string and stream.
@@ -286,23 +351,10 @@ impl ManifestStore {
         ))
     }
 
-    /// Loads a ManifestStore from a file
-    #[allow(dead_code)]
-    pub async fn from_bytes_async(
-        format: &str,
-        image_bytes: &[u8],
-        verify: bool,
-    ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
-
-        Store::load_from_memory_async(format, image_bytes, verify, &mut validation_log)
-            .await
-            .map(|store| Self::from_store(store, &validation_log))
-    }
-
     /// Loads a ManifestStore from an init segment and fragment.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate assets.
+    #[allow(dead_code)]
     pub async fn from_fragment_bytes_async(
         format: &str,
         init_bytes: &[u8],
@@ -311,7 +363,7 @@ impl ManifestStore {
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        Store::load_fragment_from_memory_async(
+        match Store::load_fragment_from_memory_async(
             format,
             init_bytes,
             fragment_bytes,
@@ -319,7 +371,10 @@ impl ManifestStore {
             &mut validation_log,
         )
         .await
-        .map(|store| Self::from_store(store, &validation_log))
+        {
+            Ok(store) => Ok(Self::from_store_async(store, &validation_log).await),
+            Err(e) => Err(e),
+        }
     }
 
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
@@ -343,6 +398,7 @@ impl ManifestStore {
     /// #    Ok(())
     /// }
     /// ```
+    #[allow(dead_code)]
     pub async fn from_manifest_and_asset_bytes_async(
         manifest_bytes: &[u8],
         format: &str,
@@ -358,7 +414,7 @@ impl ManifestStore {
         )
         .await?;
 
-        Ok(Self::from_store(store, &validation_log))
+        Ok(Self::from_store_async(store, &validation_log).await)
     }
 
     /// Synchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
@@ -380,6 +436,7 @@ impl ManifestStore {
     /// #
     /// #    Ok(())
     /// }
+    #[allow(dead_code)]
     pub fn from_manifest_and_asset_bytes(
         manifest_bytes: &[u8],
         format: &str,
