@@ -206,6 +206,8 @@ pub fn hash_asset_by_alg_with_inclusions(
     to_be_hashed: [IIIIIXXXXXMIIIIIMXXXXXMXXXXIII...III]
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
+
+    // TODO: describe collection hash
 */
 pub fn hash_stream_by_alg<R>(
     alg: &str,
