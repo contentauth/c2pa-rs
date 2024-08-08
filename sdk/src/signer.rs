@@ -169,9 +169,10 @@ pub trait AsyncSigner: Sync {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(crate::time_stamp::default_rfc3161_request(
-                    &url, headers, &body, message,
-                ));
+                return Some(
+                    crate::time_stamp::default_rfc3161_request_async(&url, headers, &body, message)
+                        .await,
+                );
             }
         }
         None

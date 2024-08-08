@@ -290,7 +290,7 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-async fn verify_data(
+pub(crate) async fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -302,13 +302,10 @@ async fn verify_data(
         X509Certificate::from_der(cert_der.as_bytes()).map_err(|_e| Error::CoseCertUntrusted)?;
 
     let certificate_public_key = cert.public_key();
+
     if let Some(cert_alg_string) = sig_alg {
         let (algo, hash, salt_len) = match cert_alg_string.as_str() {
-            "rsa256" => (
-                "RSASSA-PKCS1-v1_5".to_string(),
-                "SHA-256".to_string().to_string(),
-                0,
-            ),
+            "rsa256" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-256".to_string(), 0),
             "rsa384" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-384".to_string(), 0),
             "rsa512" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-512".to_string(), 0),
             "es256" => ("ECDSA".to_string(), "SHA-256".to_string().to_string(), 0),

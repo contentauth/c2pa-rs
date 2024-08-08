@@ -140,6 +140,7 @@ pub trait CAIWriter: Sync + Send {
     ) -> Result<()>;
 }
 
+#[allow(dead_code)]
 pub trait AssetIO: Sync + Send {
     // Create instance of AssetIO handler.  The extension type is passed in so
     // that format specific customizations can be used during manifest embedding

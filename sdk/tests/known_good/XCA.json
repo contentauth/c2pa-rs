@@ -1,11 +1,21 @@
 {
-  "active_manifest": "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921",
+  "active_manifest": "contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf",
   "manifests": {
-    "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921": {
-      "claim_generator": "make_test_images/0.24.0 c2pa-rs/0.24.0",
+    "contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf": {
+      "claim_generator": "make_test_images/0.33.1 c2pa-rs/0.33.1",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.33.1"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.33.1"
+        }
+      ],
       "title": "CA.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:68c08d77-0713-4127-9fea-1f6a6a8635ba",
+      "instance_id": "xmp:iid:ba572347-db0e-4619-b6eb-d38e487da238",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
@@ -31,8 +41,8 @@
             "@type": "CreativeWork",
             "author": [
               {
-                "@type": "Person",
-                "name": "Adobe make_test"
+                "name": "John Doe",
+                "@type": "Person"
               }
             ]
           },
@@ -48,7 +58,7 @@
                 "parameters": {
                   "ingredient": {
                     "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                    "hash": "tTBD4/E0R0AjLUdJFpsVz3lE/KJUq22Vz0UGqzhEpVs="
+                    "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
                   }
                 }
               },
@@ -66,15 +76,15 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2023-07-13T18:58:32+00:00"
+        "time": "2024-08-06T21:53:37+00:00"
       },
-      "label": "contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921"
+      "label": "contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf"
     }
   },
   "validation_status": [
     {
       "code": "assertion.dataHash.mismatch",
-      "url": "self#jumbf=/c2pa/contentauth:urn:uuid:5b639b8e-edc1-4e41-9c8e-c87fb1e36921/c2pa.assertions/c2pa.hash.data",
+      "url": "self#jumbf=/c2pa/contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf/c2pa.assertions/c2pa.hash.data",
       "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )"
     }
   ]

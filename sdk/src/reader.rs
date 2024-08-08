@@ -87,11 +87,16 @@ impl Reader {
     /// # Note
     /// If the file does not have a manifest store, the function will check for a sidecar manifest
     /// with the same name and a .c2pa extension.
+    #[async_generic()]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
-        let result = Self::from_stream(&format, &mut file);
+        let result = if _sync {
+            Self::from_stream(&format, &mut file)
+        } else {
+            Self::from_stream_async(&format, &mut file).await
+        };
         if let Err(Error::JumbfNotFound) = result {
             // if not embedded or cloud, check for sidecar first and load if it exists
             let potential_sidecar_path = path.with_extension("c2pa");

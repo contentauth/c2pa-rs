@@ -9,7 +9,8 @@ rust-version = "1.74.0"
 [dependencies]
 anyhow = "1.0.40"
 c2pa = { path = "../sdk", default-features = false, features = [
-	"openssl",
+	"file_io",
+	"openssl_sign",
 	"unstable_api",
 	"file_io",
 ] }

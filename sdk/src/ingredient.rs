@@ -1815,7 +1815,7 @@ mod tests_file_io {
             .validation_status()
             .unwrap()
             .iter()
-            .any(|s| s.code() == validation_status::CLAIM_SIGNATURE_MISMATCH));
+            .any(|s| s.code() == validation_status::TIMESTAMP_MISMATCH));
     }
 
     #[test]
@@ -1843,7 +1843,7 @@ mod tests_file_io {
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
-        println!("ingredient = {ingredient}");
+        // println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_none());
         assert!(ingredient.manifest_data().is_some());
     }
