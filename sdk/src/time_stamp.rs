@@ -17,7 +17,7 @@ use async_generic::async_generic;
 use bcder::{
     decode::{Constructed, SliceSource},
     encode::Values,
-    ConstOid,
+    ConstOid, OctetString,
 };
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,8 @@ use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{
-            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_SIGNING_TIME,
+            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_MESSAGE_DIGEST,
+            OID_SIGNING_TIME,
         },
     },
     error::{Error, Result},
@@ -547,7 +548,6 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 }
 
                 // check the mandatory signed message digest is self consistent
-                /*
                 match attributes
                     .iter()
                     .find(|attr| attr.typ == OID_MESSAGE_DIGEST)
@@ -562,26 +562,32 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                         // get signed message digest
                         let signed_message_digest = message_digest
                             .values
-                            .get(0)
-                            .unwrap()
+                            .first()
+                            .ok_or(Error::CoseTimeStampMismatch)?
                             .deref()
                             .clone()
                             .decode(OctetString::take_from)
                             .map_err(|_| Error::CoseTimeStampMismatch)?
-                            .to_bytes()
-                            .to_vec();
+                            .to_bytes();
 
-                        let mut tst_digest = Vec::new();
-                        let av = x509_certificate::rfc5652::AttributeValue::new(
-                            bcder::Captured::from_values(
-                                bcder::Mode::Der,
-                                <bcder::OctetString as Clone>::clone(mi.hashed_message.as_ref())
-                                    .encode(),
-                            ),
-                        );
-                        av.write_encoded(bcder::Mode::Der, &mut tst_digest).unwrap();
+                        // get message digest hash alg
+                        let digest_algorithm =
+                            match DigestAlgorithm::try_from(&signer_info.digest_algorithm) {
+                                Ok(d) => d,
+                                Err(_) => {
+                                    last_err = Error::UnsupportedType;
+                                    continue;
+                                }
+                            };
 
-                        if vec_compare(&signed_message_digest, &tst_digest) {
+                        let mut h = digest_algorithm.digester();
+                        if let Some(content) = &sd.content_info.content {
+                            h.update(&content.to_bytes());
+                        }
+
+                        let digest = h.finish();
+
+                        if !vec_compare(&signed_message_digest, digest.as_ref()) {
                             last_err = Error::CoseTimeStampMismatch;
                             continue;
                         }
@@ -591,7 +597,6 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                         continue;
                     }
                 }
-                */
             }
 
             // build CMS structure to verify
@@ -609,6 +614,9 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 }
             };
 
+            let hash_alg = &signer_info.digest_algorithm.algorithm;
+            let sig_alg = &signer_info.signature_algorithm.algorithm;
+
             // grab signing certificate
             let sig_val = &signer_info.signature;
             let mut signing_key_der = Vec::<u8>::new();
@@ -616,9 +624,6 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 .subject_public_key_info
                 .encode_ref()
                 .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
-
-            let hash_alg = &signer_info.digest_algorithm.algorithm;
-            let sig_alg = &signer_info.signature_algorithm.algorithm;
 
             // verify signature of timestamp signature
             let validated_res: Result<bool> = if _sync {
