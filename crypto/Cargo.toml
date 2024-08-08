@@ -1,0 +1,107 @@
+[package]
+name = "c2pa-crypto"
+version = "0.0.1"
+description = "(INTERNAL) Cryptography implementation for c2pa-rs crate"
+authors = [
+	"Maurice Fisher <mfisher@adobe.com>",
+	"Gavin Peacock <gpeacock@adobe.com>",
+	"Eric Scouten <scouten@adobe.com>",
+	"Leonard Rosenthol <lrosenth@adobe.com>",
+	"Dave Kozma <dkozma@adobe.com>",
+]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/c2pa-crypto"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-crypto"
+readme = "../README.md"
+edition = "2021"
+rust-version = "1.74.0"
+exclude = ["tests/fixtures"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+openssl = ["dep:openssl"]
+openssl_ffi_mutex = []
+psxxx_ocsp_stapling_experimental = []
+
+# The diagnostics feature is unsupported and might be removed.
+# It enables some low-overhead timing features used in our development cycle.
+diagnostics = []
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+asn1-rs = "0.5.2"
+async-generic = "1.1"
+async-trait = { version = "0.1.77" }
+base64 = "0.21.2"
+bcder = "0.7.3"
+bytes = "1.4.0"
+chrono = { version = "0.4.28", default-features = false, features = [
+	"serde",
+	"wasmbind",
+] }
+ciborium = "0.2.0"
+conv = "0.3.3"
+coset = "0.3.1"
+extfmt = "0.1.1"
+hex = "0.4.3"
+log = "0.4.8"
+lazy_static = "1.4.0"
+memchr = "2.7.1"
+multihash = "0.11.4"
+pem = "3.0.2"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+rasn-ocsp = "0.12.5"
+rasn-pkix = "0.12.5"
+rasn = "0.12.5"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_bytes = "0.11.5"
+serde_cbor = "0.11.1"
+serde_derive = "1.0.197"
+sha2 = "0.10.6"
+thiserror = "1.0.61"
+url = "2.2.2, <2.5.1"  # Can't use 2.5.1 or newer until new license is reviewed.
+x509-parser = "0.15.1"
+x509-certificate = "0.19.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = "2.4.0"
+instant = "0.1.12"
+openssl = { version = "0.10.61", features = ["vendored"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log = { version = "1.0.0", features = ["color"] }
+ed25519-dalek = "2.1.1"
+getrandom = { version = "0.2.7", features = ["js"] }
+# We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
+# to handle certificate timestamp checking correctly.
+instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
+js-sys = "0.3.58"
+rand_core = "0.9.0-alpha.2"
+rsa = { version = "0.9.6", features = ["sha2"] }
+serde-wasm-bindgen = "0.5.0"
+spki = "0.6.0"
+wasm-bindgen = "0.2.83"
+wasm-bindgen-futures = "0.4.31"
+web-sys = { version = "0.3.58", features = [
+	"Crypto",
+	"SubtleCrypto",
+	"CryptoKey",
+	"Window",
+	"WorkerGlobalScope",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.31"
+
+[package.metadata.cargo-udeps.ignore]
+normal = [
+	"sha2" # cargo-udeps fails to detect usage in WASM builds
+]
