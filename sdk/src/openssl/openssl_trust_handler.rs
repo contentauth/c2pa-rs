@@ -18,6 +18,7 @@ use std::{
 };
 
 use asn1_rs::Oid;
+use openssl::x509::verify::X509VerifyFlags;
 
 use crate::{
     hash_utils::hash_sha256,
@@ -27,6 +28,10 @@ use crate::{
 };
 
 fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
+    // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
+    // don't make this pub or pub(crate) without finding a way to ensure that
+    // precondition.
+
     let mut certs: Vec<openssl::x509::X509> = Vec::new();
 
     for d in ders {
@@ -38,6 +43,7 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
 }
 
 fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
+    let _openssl = super::OpenSslMutex::acquire()?;
     openssl::x509::X509::stack_from_pem(trust_data).map_err(Error::OpenSslError)
 }
 
@@ -69,6 +75,8 @@ impl OpenSSLTrustHandlerConfig {
     }
 
     fn update_store(&mut self) -> Result<()> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let mut builder =
             openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
 
@@ -134,13 +142,16 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         let mut buffer = Vec::new();
         allowed_list.read_to_end(&mut buffer)?;
 
-        if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
-            for cert in &cert_list {
-                let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
-                let cert_sha256 = hash_sha256(&cert_der);
-                let cert_hash_base64 = base64::encode(&cert_sha256);
+        {
+            let _openssl = super::OpenSslMutex::acquire()?;
+            if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
+                for cert in &cert_list {
+                    let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
+                    let cert_sha256 = hash_sha256(&cert_der);
+                    let cert_hash_base64 = base64::encode(&cert_sha256);
 
-                self.allowed_cert_set.insert(cert_hash_base64);
+                    self.allowed_cert_set.insert(cert_hash_base64);
+                }
             }
         }
 
@@ -229,6 +240,7 @@ pub(crate) fn verify_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
+    signing_time_epoc: Option<i64>,
 ) -> Result<bool> {
     // check the cert against the allowed list first
     let cert_sha256 = hash_sha256(cert_der);
@@ -236,6 +248,8 @@ pub(crate) fn verify_trust(
     if th.get_allowed_list().contains(&cert_hash_base64) {
         return Ok(true);
     }
+
+    let _openssl = super::OpenSslMutex::acquire()?;
 
     let mut cert_chain = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
     let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(Error::OpenSslError)?;
@@ -247,6 +261,19 @@ pub(crate) fn verify_trust(
     let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
     let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
+
+    let mut verify_param =
+        openssl::x509::verify::X509VerifyParam::new().map_err(Error::OpenSslError)?;
+    if let Some(st) = signing_time_epoc {
+        verify_param.set_time(st);
+    } else {
+        verify_param
+            .set_flags(X509VerifyFlags::NO_CHECK_TIME)
+            .map_err(Error::OpenSslError)?;
+    }
+    builder
+        .set_param(&verify_param)
+        .map_err(Error::OpenSslError)?;
 
     // todo: figure out the passthrough case
     if th.get_anchors().is_empty() {
@@ -266,6 +293,7 @@ pub(crate) fn verify_trust(
         Err(_) => Ok(false),
     }
 }
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -304,13 +332,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -342,13 +370,14 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0]).unwrap());
-        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0]).unwrap());
+        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0], None).unwrap());
+        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -383,13 +412,13 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
@@ -424,12 +453,12 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0]).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0]).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0]).unwrap());
+        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 }

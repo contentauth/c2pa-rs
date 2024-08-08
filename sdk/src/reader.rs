@@ -19,6 +19,9 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;
@@ -29,6 +32,8 @@ use crate::{
 };
 
 /// A reader for the manifest store.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
 }

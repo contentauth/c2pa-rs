@@ -1,6 +1,6 @@
 [package]
 name = "export_schema"
-version = "0.32.5"
+version = "0.33.1"
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
@@ -8,6 +8,6 @@ rust-version = "1.74.0"
 
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", features = ["file_io", "json_schema"] }
-schemars = "0.8.13"
-serde_json = "1.0.114"
+c2pa = { path = "../sdk", features = ["json_schema"] }
+schemars = "0.8.21"
+serde_json = "1.0.117"

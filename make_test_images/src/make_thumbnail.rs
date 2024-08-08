@@ -14,11 +14,10 @@
 use std::io::{Read, Seek};
 
 use anyhow::{Error, Result};
-use image::{io::Reader, ImageFormat};
+use image::{ImageFormat, ImageReader};
 
 // max edge size allowed in pixels for thumbnail creation
 const THUMBNAIL_LONGEST_EDGE: u32 = 1024;
-const THUMBNAIL_JPEG_QUALITY: u8 = 80;
 
 ///  utility to generate a thumbnail from a stream
 /// returns Result (format, image_bits) if successful, otherwise Error
@@ -30,7 +29,7 @@ pub fn make_thumbnail_from_stream<R: Read + Seek + ?Sized>(
         .or_else(|| ImageFormat::from_mime_type(format))
         .ok_or(Error::msg(format!("format not supported {format}")))?;
 
-    let reader = Reader::with_format(std::io::BufReader::new(stream), format);
+    let reader = ImageReader::with_format(std::io::BufReader::new(stream), format);
     let mut img = reader.decode()?;
 
     let longest_edge = THUMBNAIL_LONGEST_EDGE;
@@ -43,11 +42,8 @@ pub fn make_thumbnail_from_stream<R: Read + Seek + ?Sized>(
     // for png files, use png thumbnails for transparency
     // for other supported types try a jpeg thumbnail
     let (output_format, format) = match format {
-        ImageFormat::Png => (image::ImageOutputFormat::Png, "image/png"),
-        _ => (
-            image::ImageOutputFormat::Jpeg(THUMBNAIL_JPEG_QUALITY),
-            "image/jpeg",
-        ),
+        ImageFormat::Png => (ImageFormat::Png, "image/png"),
+        _ => (ImageFormat::Jpeg, "image/jpeg"),
     };
     let thumbnail_bits = Vec::new();
     let mut cursor = std::io::Cursor::new(thumbnail_bits);

@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.32.5"
+version = "0.33.1"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -37,6 +37,7 @@ json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
 v1_api = []
 unstable_api = []
+openssl_ffi_mutex = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -68,7 +69,7 @@ async-generic = "1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
 base64 = "0.21.2"
-bcder = "0.7.1"
+bcder = "0.7.3"
 bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
@@ -104,28 +105,28 @@ pem = "3.0.2"
 png_pong = "0.9.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-range-set = "0.0.9"
+range-set = "0.0.11"
 rasn-ocsp = "0.12.5"
 rasn-pkix = "0.12.5"
 rasn = "0.12.5"
 riff = "1.0.1"
-schemars = { version = "0.8.13", optional = true }
+schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
-serde_json = { version = "1.0.114", features = ["preserve_order"] }
+serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.4.0"
 serde-transcode = "1.1.1"
 sha2 = "0.10.2"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
-url = "2.2.2, <2.5.1"                                                    # Can't use 2.5.1 or newer until new license is reviewed.
-uuid = { version = "1.3.1", features = ["serde", "v4", "wasm-bindgen"] }
+url = "2.2.2, <2.5.1"                                               # Can't use 2.5.1 or newer until new license is reviewed.
+uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.15.1"
-x509-certificate = "0.19.0"
-zip = { version = "2.1.3", default-features = false }
+x509-certificate = "0.21.0"
+zip = { version = "0.6.6", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"

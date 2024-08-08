@@ -11,12 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
 };
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
@@ -37,12 +41,16 @@ use crate::{
     AsyncSigner, ClaimGeneratorInfo, Signer,
 };
 
+/// Version of the Builder Archive file
+const ARCHIVE_VERSION: &str = "1";
+
 /// A Manifest Definition
 /// This is used to define a manifest and is used to build a ManifestStore
 /// A Manifest is a collection of ingredients and assertions
 /// It is used to define a claim that can be signed and embedded into a file
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct ManifestDefinition {
     /// Optional prefix added to the generated Manifest Label
@@ -100,13 +108,16 @@ fn default_vec<T>() -> Vec<T> {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum AssertionData {
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
     Cbor(serde_cbor::Value),
     Json(serde_json::Value),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[non_exhaustive]
 pub struct AssertionDefinition {
     pub label: String,
@@ -204,6 +215,10 @@ pub struct Builder {
     // If true, the manifest store will not be embedded in the asset on sign
     pub no_embed: bool,
 
+    /// Base path to search for resources.
+    #[cfg(feature = "file_io")]
+    pub base_path: Option<PathBuf>,
+
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
     resources: ResourceStore,
@@ -259,8 +274,7 @@ impl Builder {
         let mut resource = Vec::new();
         stream.read_to_end(&mut resource)?;
         // add the resource and set the resource reference
-        self.resources
-            .add(&self.definition.instance_id.clone(), resource)?;
+        self.resources.add(&self.definition.instance_id, resource)?;
         self.definition.thumbnail = Some(ResourceRef::new(
             format,
             self.definition.instance_id.clone(),
@@ -317,6 +331,7 @@ impl Builder {
     /// * A mutable reference to the [`Ingredient`].
     /// # Errors
     /// * If the [`Ingredient`] is not valid
+    #[async_generic()]
     pub fn add_ingredient<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
@@ -328,7 +343,11 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
-        let ingredient = ingredient.with_stream(format, stream)?;
+        let ingredient = if _sync {
+            ingredient.with_stream(format, stream)?
+        } else {
+            ingredient.with_stream_async(format, stream).await?
+        };
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
@@ -371,10 +390,16 @@ impl Builder {
                 let mut zip = ZipWriter::new(stream);
                 let options =
                     SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                // write a version file
+                zip.start_file("version.txt", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
+                // write the manifest.json file
+
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
-                // add a folder to the zip file
+                // add resource files to a resources folder
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
@@ -382,14 +407,20 @@ impl Builder {
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
-                for (index, ingredient) in self.definition.ingredients.iter().enumerate() {
-                    zip.start_file(format!("ingredients/{}/", index), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    for (id, data) in ingredient.resources().resources() {
-                        //println!("adding ingredient {}/{}", index, id);
-                        zip.start_file(format!("ingredients/{}/{}", index, id), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
+                // Write the manifest_data files
+                // The filename is filesystem safe version of the associated manifest_label
+                // with a .c2pa extension inside a "manifests" folder.
+                zip.start_file("manifests/", options)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?;
+                for ingredient in self.definition.ingredients.iter() {
+                    if let Some(manifest_label) = ingredient.active_manifest() {
+                        if let Some(manifest_data) = ingredient.manifest_data() {
+                            // Convert to valid archive / file path name
+                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
+                            zip.start_file(format!("manifests/{manifest_name}"), options)
+                                .map_err(|e| Error::OtherError(Box::new(e)))?;
+                            zip.write_all(&manifest_data)?;
+                        }
                     }
                 }
                 zip.finish()
@@ -408,14 +439,16 @@ impl Builder {
     /// * If the archive cannot be read.
     pub fn from_archive(stream: impl Read + Seek) -> Result<Self> {
         let mut zip = ZipArchive::new(stream).map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest = zip
+        // First read the manifest.json file.
+        let mut manifest_file = zip
             .by_name("manifest.json")
             .map_err(|e| Error::OtherError(Box::new(e)))?;
-        let mut manifest_json = Vec::new();
-        manifest.read_to_end(&mut manifest_json)?;
+        let mut manifest_buf = Vec::new();
+        manifest_file.read_to_end(&mut manifest_buf)?;
         let mut builder: Builder =
-            serde_json::from_slice(&manifest_json).map_err(|e| Error::OtherError(Box::new(e)))?;
-        drop(manifest);
+            serde_json::from_slice(&manifest_buf).map_err(|e| Error::OtherError(Box::new(e)))?;
+        drop(manifest_file);
+        // Load all the files in the resources folder.
         for i in 0..zip.len() {
             let mut file = zip
                 .by_index(i)
@@ -432,6 +465,29 @@ impl Builder {
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
             }
+
+            // Load the c2pa_manifests.
+            // We add the manifest data to any ingredient that has a matching active_manfiest label.
+            if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                let manifest_label = file
+                    .name()
+                    .split('/')
+                    .nth(1)
+                    .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
+                let manifest_label = manifest_label.replace(['_'], ":");
+                for ingredient in builder.definition.ingredients.iter_mut() {
+                    if let Some(active_manifest) = ingredient.active_manifest() {
+                        if manifest_label.starts_with(active_manifest) {
+                            ingredient.set_manifest_data(data.clone())?;
+                        }
+                    }
+                }
+            }
+
+            // Keep this for temporary unstable api support (un-versioned).
+            // Earlier method used numbered library folders instead of manifests.
             if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
@@ -465,7 +521,7 @@ impl Builder {
         // add the default claim generator info for this library
         claim_generator_info.push(ClaimGeneratorInfo::default());
 
-        // build the claim_generator string since this is required
+        // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
             .iter()
             .map(|s| {
@@ -493,7 +549,7 @@ impl Builder {
             claim.add_claim_generator_info(claim_info);
         }
 
-        // add claim metadata
+        // Add claim metadata
         if let Some(metadata_vec) = metadata {
             for m in metadata_vec {
                 claim.add_claim_metadata(m);
@@ -686,7 +742,7 @@ impl Builder {
             {
                 stream.rewind()?;
                 self.resources
-                    .add(&self.definition.instance_id.clone(), image)?;
+                    .add(self.definition.instance_id.clone(), image)?;
                 self.definition.thumbnail = Some(ResourceRef::new(
                     format,
                     self.definition.instance_id.clone(),
@@ -728,6 +784,11 @@ impl Builder {
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+
+        #[cfg(feature = "file_io")]
+        if let Some(base_path) = &self.base_path {
+            self.resources.set_base_path(base_path);
+        }
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
@@ -834,7 +895,7 @@ mod tests {
             "instance_id": "1234",
             "thumbnail": {
                 "format": "image/jpeg",
-                "identifier": "thumbnail1.jpg"
+                "identifier": "thumbnail.jpg"
             },
             "ingredients": [
                 {
@@ -857,6 +918,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
 
     #[test]
     /// example of creating a builder directly with a [`ManifestDefinition`]
@@ -929,7 +991,7 @@ mod tests {
         assert_eq!(definition.instance_id, "1234".to_string());
         assert_eq!(
             definition.thumbnail.clone().unwrap().identifier.as_str(),
-            "thumbnail1.jpg"
+            "thumbnail.jpg"
         );
         assert_eq!(definition.ingredients[0].title(), "Test".to_string());
         assert_eq!(
@@ -969,7 +1031,12 @@ mod tests {
 
         builder
             .resources
-            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        builder
+            .resources
+            .add("prompt.txt", "a random prompt")
             .unwrap();
 
         builder
@@ -1020,7 +1087,7 @@ mod tests {
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
         // sign and write to the output stream
@@ -1071,7 +1138,7 @@ mod tests {
                 .unwrap();
 
             builder
-                .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+                .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
                 .unwrap();
 
             // sign and write to the output stream
@@ -1114,12 +1181,12 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(&parent_json(), format, &mut source)
+            .add_ingredient(parent_json(), format, &mut source)
             .unwrap();
 
         builder
             .resources
-            .add("thumbnail1.jpg", TEST_IMAGE.to_vec())
+            .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
@@ -1153,7 +1220,7 @@ mod tests {
         builder.no_embed = true;
 
         builder
-            .add_resource("thumbnail1.jpg", Cursor::new(TEST_IMAGE))
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
@@ -1174,5 +1241,45 @@ mod tests {
 
         println!("{}", reader.json());
         assert!(reader.validation_status().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_builder_base_path() {
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        builder.base_path = Some(std::path::PathBuf::from("tests/fixtures"));
+
+        // Ensure that we can zip and unzip, saving the base path
+        let mut zipped = Cursor::new(Vec::new());
+        builder.to_archive(&mut zipped).unwrap();
+
+        // unzip the manifest builder from the zipped stream
+        zipped.rewind().unwrap();
+        let mut builder = Builder::from_archive(&mut zipped).unwrap();
+
+        // sign the ManifestStoreBuilder and write it to the output stream
+        let signer = temp_signer();
+        let _manifest_data = builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // read and validate the signed manifest store
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
+
+        //println!("{}", reader);
+        assert!(reader.validation_status().is_none());
+        assert_eq!(
+            reader
+                .active_manifest()
+                .unwrap()
+                .thumbnail_ref()
+                .unwrap()
+                .format,
+            "image/jpeg",
+        );
     }
 }
