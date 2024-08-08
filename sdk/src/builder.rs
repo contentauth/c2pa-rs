@@ -251,8 +251,8 @@ impl Builder {
     /// * `format` - The format of the asset associated with this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    pub fn set_format(&mut self, format: &str) -> &mut Self {
-        self.definition.format = format.to_string();
+    pub fn set_format<S:Into<String>>(&mut self, format: S) -> &mut Self {
+        self.definition.format = format.into();
         self
     }
 
@@ -263,8 +263,8 @@ impl Builder {
     /// * `url` - The URL where the manifest will be available.
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    pub fn set_remote_url(&mut self, url: &str) -> &mut Self {
-        self.remote_url = Some(url.to_string());
+    pub fn set_remote_url<S:Into<String>>(&mut self, url: S) -> &mut Self {
+        self.remote_url = Some(url.into());
         self
     }
 
@@ -293,8 +293,9 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     /// # Errors
     /// * If the thumbnail is not valid.
-    pub fn set_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    pub fn set_thumbnail<S,R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
     where
+        S: Into<String>,
         R: Read + Seek + ?Sized,
     {
         // just read into a buffer until resource store handles reading streams
