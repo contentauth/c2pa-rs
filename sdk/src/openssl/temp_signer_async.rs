@@ -70,9 +70,9 @@ impl AsyncSignerAdapter {
 #[cfg(feature = "openssl_sign")]
 #[async_trait::async_trait]
 impl crate::AsyncSigner for AsyncSignerAdapter {
-    async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+    async fn sign(&self, data: &[u8]) -> crate::error::Result<Vec<u8>> {
         let signer = get_local_signer(self.alg);
-        signer.sign(&data)
+        signer.sign(data)
     }
 
     fn alg(&self) -> SigningAlg {
