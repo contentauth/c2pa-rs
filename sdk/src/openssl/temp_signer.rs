@@ -66,7 +66,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     tsa_url: Option<String>,
 ) -> (EcSigner, PathBuf) {
     match alg {
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => (),
+        SigningAlg::Es256 | SigningAlg::Es256k | SigningAlg::Es384 | SigningAlg::Es512 => (),
         _ => {
             panic!("Unknown EC signer alg {alg:#?}");
         }

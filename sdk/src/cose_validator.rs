@@ -67,6 +67,7 @@ pub(crate) const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
 pub(crate) const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+pub(crate) const SECP256K1_OID: Oid<'static> = oid!(1.3.132 .0 .10);
 
 /********************** Supported Validators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -76,6 +77,7 @@ pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
     PS384	RSASSA-PSS using SHA-384 and MGF1 with SHA-384
     PS512	RSASSA-PSS using SHA-512 and MGF1 with SHA-512
     ES256	ECDSA using P-256 and SHA-256
+    ES256K	ECDSA using K-256 and SHA-256
     ES384	ECDSA using P-384 and SHA-384
     ES512	ECDSA using P-521 and SHA-512
     ED25519 Edwards Curve 25519
@@ -300,7 +302,8 @@ pub(crate) fn check_cert(
             // must be one of these named curves
             if !(named_curve_oid == PRIME256V1_OID
                 || named_curve_oid == SECP384R1_OID
-                || named_curve_oid == SECP521R1_OID)
+                || named_curve_oid == SECP521R1_OID
+                || named_curve_oid == SECP256K1_OID)
             {
                 let log_item = log_item!(
                     "Cose_Sign1",
@@ -525,6 +528,7 @@ pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     match cs1.protected.header.alg {
         Some(ref alg) => match alg {
             coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
+                -47 => Ok(SigningAlg::Es256k),
                 -39 => Ok(SigningAlg::Ps512),
                 -38 => Ok(SigningAlg::Ps384),
                 -37 => Ok(SigningAlg::Ps256),
@@ -541,6 +545,7 @@ pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
                 coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
                 coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
                 coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
+                coset::iana::Algorithm::ES256K => Ok(SigningAlg::Es256k),
                 coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
                 _ => Err(Error::CoseSignatureAlgorithmNotSupported),
             },

@@ -81,6 +81,7 @@ impl Signer for EcSigner {
 
         let mut signer = match self.alg {
             SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
+            SigningAlg::Es256k => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
             SigningAlg::Es384 => openssl::sign::Signer::new(MessageDigest::sha384(), &key)?,
             SigningAlg::Es512 => openssl::sign::Signer::new(MessageDigest::sha512(), &key)?,
             _ => return Err(Error::UnsupportedType),
@@ -158,6 +159,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
 
     let sig_len: usize = match alg {
         SigningAlg::Es256 => 64,
+        SigningAlg::Es256k => 64,
         SigningAlg::Es384 => 96,
         SigningAlg::Es512 => 132,
         _ => return Err(Error::UnsupportedType),
@@ -218,6 +220,21 @@ mod tests {
         let cert_dir = fixture_path("certs");
 
         let (signer, _) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256, None);
+
+        let data = b"some sample content to sign";
+        println!("data len = {}", data.len());
+
+        let signature = signer.sign(data).unwrap();
+        println!("signature.len = {}", signature.len());
+        assert!(signature.len() >= 64);
+        assert!(signature.len() <= signer.reserve_size());
+    }
+
+    #[test]
+    fn es256k_signer() {
+        let cert_dir = fixture_path("certs");
+
+        let (signer, _) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256k, None);
 
         let data = b"some sample content to sign";
         println!("data len = {}", data.len());

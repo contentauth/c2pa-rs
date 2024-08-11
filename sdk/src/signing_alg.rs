@@ -32,6 +32,9 @@ pub enum SigningAlg {
     /// ECDSA with SHA-256
     Es256,
 
+    /// ECDSA with SHA-256
+    Es256k,
+
     /// ECDSA with SHA-384
     Es384,
 
@@ -57,6 +60,7 @@ impl FromStr for SigningAlg {
     fn from_str(alg: &str) -> Result<Self, Self::Err> {
         match alg {
             "es256" => Ok(Self::Es256),
+            "es256k" => Ok(Self::Es256k),
             "es384" => Ok(Self::Es384),
             "es512" => Ok(Self::Es512),
             "ps256" => Ok(Self::Ps256),
@@ -75,6 +79,7 @@ impl fmt::Display for SigningAlg {
             "{}",
             match self {
                 Self::Es256 => "es256",
+                Self::Es256k => "es256k",
                 Self::Es384 => "es384",
                 Self::Es512 => "es512",
                 Self::Ps256 => "ps256",
@@ -90,8 +95,8 @@ impl fmt::Display for SigningAlg {
 /// This error is thrown when converting from a string to [`SigningAlg`]
 /// if the algorithm string is unrecognized.
 ///
-/// The string must be one of "es256", "es384", "es512", "ps256", "ps384",
-/// "ps512", or "ed25519".
+/// The string must be one of "es256", "es256k" "es384", "es512", "ps256",
+/// "ps384", "ps512", or "ed25519".
 pub struct UnknownAlgorithmError(String);
 
 impl fmt::Display for UnknownAlgorithmError {
@@ -112,6 +117,7 @@ mod tests {
     #[test]
     fn alg_from_str() {
         assert_eq!("es256".parse(), Ok(SigningAlg::Es256));
+        assert_eq!("es256k".parse(), Ok(SigningAlg::Es256k));
         assert_eq!("es384".parse(), Ok(SigningAlg::Es384));
         assert_eq!("es512".parse(), Ok(SigningAlg::Es512));
         assert_eq!("ps256".parse(), Ok(SigningAlg::Ps256));
@@ -126,6 +132,7 @@ mod tests {
     #[test]
     fn signing_alg_impl_display() {
         assert_eq!(format!("{}", SigningAlg::Es256), "es256");
+        assert_eq!(format!("{}", SigningAlg::Es256k), "es256k");
         assert_eq!(format!("{}", SigningAlg::Es384), "es384");
         assert_eq!(format!("{}", SigningAlg::Es512), "es512");
         assert_eq!(format!("{}", SigningAlg::Ps256), "ps256");

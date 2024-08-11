@@ -60,7 +60,7 @@ impl CoseValidator for DummyValidator {
 #[cfg(feature = "openssl")]
 pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     match alg {
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+        SigningAlg::Es256 | SigningAlg::Es256k | SigningAlg::Es384 | SigningAlg::Es512 => {
             Box::new(EcValidator::new(alg))
         }
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {

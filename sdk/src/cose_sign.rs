@@ -198,6 +198,7 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
         SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
         SigningAlg::Ps512 => HeaderBuilder::new().algorithm(iana::Algorithm::PS512),
         SigningAlg::Es256 => HeaderBuilder::new().algorithm(iana::Algorithm::ES256),
+        SigningAlg::Es256k => HeaderBuilder::new().algorithm(iana::Algorithm::ES256K),
         SigningAlg::Es384 => HeaderBuilder::new().algorithm(iana::Algorithm::ES384),
         SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
         SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),

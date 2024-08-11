@@ -34,6 +34,7 @@ impl CoseValidator for EcValidator {
 
         let mut verifier = match self.alg {
             SigningAlg::Es256 => openssl::sign::Verifier::new(MessageDigest::sha256(), &key)?,
+            SigningAlg::Es256k => openssl::sign::Verifier::new(MessageDigest::sha256(), &key)?,
             SigningAlg::Es384 => openssl::sign::Verifier::new(MessageDigest::sha384(), &key)?,
             SigningAlg::Es512 => openssl::sign::Verifier::new(MessageDigest::sha512(), &key)?,
             _ => return Err(Error::UnsupportedType),
@@ -44,6 +45,7 @@ impl CoseValidator for EcValidator {
             if sig.len()
                 != match self.alg {
                     SigningAlg::Es256 => 64,
+                    SigningAlg::Es256k => 64,
                     SigningAlg::Es384 => 96,
                     SigningAlg::Es512 => 132,
                     _ => return Err(Error::UnsupportedType),
@@ -105,6 +107,29 @@ mod tests {
         let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
 
         let validator = EcValidator::new(SigningAlg::Es256);
+        assert!(validator.validate(&signature, data, &pub_key).unwrap());
+    }
+
+    #[test]
+    fn sign_and_validate_es256k() {
+        let cert_dir = fixture_path("certs");
+
+        let (signer, cert_path) = temp_signer::get_ec_signer(cert_dir, SigningAlg::Es256k, None);
+
+        let data = b"some sample content to sign";
+        println!("data len = {}", data.len());
+
+        let signature = signer.sign(data).unwrap();
+        println!("signature.len = {}", signature.len());
+        assert!(signature.len() >= 64);
+        assert!(signature.len() <= signer.reserve_size());
+
+        let cert_bytes = std::fs::read(cert_path).unwrap();
+
+        let signcert = openssl::x509::X509::from_pem(&cert_bytes).unwrap();
+        let pub_key = signcert.public_key().unwrap().public_key_to_der().unwrap();
+
+        let validator = EcValidator::new(SigningAlg::Es256k);
         assert!(validator.validate(&signature, data, &pub_key).unwrap());
     }
 
