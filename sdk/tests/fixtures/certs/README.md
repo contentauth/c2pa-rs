@@ -7,6 +7,8 @@ The certificates are organized by supported C2PA signing algorithm.  For each su
 * {alg}.pub - certificate chain from signing certificate to the last certificate before the root CA, as a concatenated list of certficates
 * {alg}_root.pub_key - public key of the root CA used to verify the last certificate in the certificate chain.
 
+These certificates can be regenerated with the provided `generate.sh` script.
+
 ## More info
 
 For more information on digital signatures and the C2PA trust model see  [https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_digital_signatures] and [https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_types]
