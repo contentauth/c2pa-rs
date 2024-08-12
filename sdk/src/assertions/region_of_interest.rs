@@ -52,7 +52,7 @@ pub struct Shape {
     pub shape_type: ShapeType,
     /// The type of unit for the shape range.
     pub unit: UnitType,
-    /// THe origin of the coordinate in the shape.
+    /// The origin of the coordinate in the shape.
     pub origin: Coordinate,
     /// The width for rectangles or diameter for circles.
     ///
@@ -72,28 +72,38 @@ pub struct Shape {
     pub vertices: Option<Vec<Coordinate>>,
 }
 
-/// The type of time.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[serde(rename_all = "camelCase")]
-pub enum TimeType {
-    /// Times are described using Normal Play Time (npt) as described in RFC 2326.
-    #[default]
-    Npt,
-}
-
 /// A temporal range representing a starting time to an ending time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[skip_serializing_none]
-pub struct Time {
-    /// The type of time.
-    #[serde(rename = "type", default)]
-    pub time_type: TimeType,
-    /// The start time or the start of the asset if not present.
-    pub start: Option<String>,
-    /// The end time or the end of the asset if not present.
-    pub end: Option<String>,
+pub enum Time {
+    /// Times are described using Normal Play Time (npt) as described in RFC 2326.
+    Npt {
+        /// The type of time.
+        ///
+        /// Defaults to `npt`.
+        #[serde(rename = "type", default = "default_npt_type")]
+        time_type: String,
+        /// The start time or the start of the asset if not present.
+        start: Option<String>,
+        /// The end time or the end of the asset if not present.
+        end: Option<String>,
+    },
+    WallClock {
+        /// The type of time.
+        ///
+        /// Must be `wall-clock`.
+        #[serde(rename = "type")]
+        time_type: String,
+        /// The start time or the start of the asset if not present.
+        start: Option<String>,
+        /// The end time or the end of the asset if not present.
+        end: Option<String>,
+    },
+}
+
+fn default_npt_type() -> String {
+    "npt".to_string()
 }
 
 /// A frame range representing starting and ending frames or pages.
@@ -146,6 +156,16 @@ pub struct Text {
     pub selectors: Vec<TextSelectorRange>,
 }
 
+/// A identified range representing a specific subset of content in the asset's file container.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub struct Item {
+    /// The container-specific term used to identify items, such as "track_id" for MP4 or "item_ID" for HEIF.
+    pub identifier: String,
+    /// The value of the identifier, e.g. a value of "2" for an identifier of "track_id" would imply track 2 of the asset.
+    pub value: String,
+}
+
 /// The type of range for the region of interest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -159,6 +179,8 @@ pub enum RangeType {
     Frame,
     /// A textual range, see [`Text`] for more details.
     Textual,
+    /// A identified range, see [`Item`] for more details.
+    Identified,
 }
 
 // TODO: this can be much more idiomatic with an enum, but then it wouldn't line up with spec
@@ -179,6 +201,8 @@ pub struct Range {
     pub frame: Option<Frame>,
     /// A textual range.
     pub text: Option<Text>,
+    /// A identified range.
+    pub item: Option<Item>,
 }
 
 /// A role describing the region.
