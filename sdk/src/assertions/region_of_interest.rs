@@ -72,38 +72,41 @@ pub struct Shape {
     pub vertices: Option<Vec<Coordinate>>,
 }
 
+/// Normal Play Time (npt) as described in RFC 2326.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(tag = "type", rename = "npt")]
+#[skip_serializing_none]
+pub struct Npt {
+    /// The start time or the start of the asset if not present.
+    pub start: Option<String>,
+    /// The end time or the end of the asset if not present.
+    pub end: Option<String>,
+}
+
+/// "Wall Clock Time" using the Internet profile of ISO 8601 as described in RFC 3339.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(tag = "type", rename = "wall-clock")]
+#[skip_serializing_none]
+pub struct WallClock {
+    /// The start time or the start of the asset if not present.
+    pub start: Option<String>,
+    /// The end time or the end of the asset if not present.
+    pub end: Option<String>,
+}
+
 /// A temporal range representing a starting time to an ending time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// TODO: workaround for https://github.com/serde-rs/serde/issues/2231
+#[serde(untagged)]
 #[skip_serializing_none]
 pub enum Time {
-    /// Times are described using Normal Play Time (npt) as described in RFC 2326.
-    Npt {
-        /// The type of time.
-        ///
-        /// Defaults to `npt`.
-        #[serde(rename = "type", default = "default_npt_type")]
-        time_type: String,
-        /// The start time or the start of the asset if not present.
-        start: Option<String>,
-        /// The end time or the end of the asset if not present.
-        end: Option<String>,
-    },
-    WallClock {
-        /// The type of time.
-        ///
-        /// Must be `wall-clock`.
-        #[serde(rename = "type")]
-        time_type: String,
-        /// The start time or the start of the asset if not present.
-        start: Option<String>,
-        /// The end time or the end of the asset if not present.
-        end: Option<String>,
-    },
-}
-
-fn default_npt_type() -> String {
-    "npt".to_string()
+    /// Normal Play Time (npt) as described in RFC 2326.
+    Npt(Npt),
+    /// "Wall Clock Time" using the Internet profile of ISO 8601 as described in RFC 3339.
+    WallClock(WallClock),
 }
 
 /// A frame range representing starting and ending frames or pages.

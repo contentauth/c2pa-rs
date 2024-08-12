@@ -314,7 +314,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::region_of_interest::{Range, RangeType, Time, TimeType};
+    use crate::assertions::region_of_interest::{Npt, Range, RangeType, Time};
 
     #[test]
     fn assertion_metadata() {
@@ -327,13 +327,13 @@ pub mod tests {
                     region: vec![Range {
                         range_type: RangeType::Temporal,
                         shape: None,
-                        time: Some(Time {
-                            time_type: TimeType::Npt,
+                        time: Some(Time::Npt(Npt {
                             start: None,
                             end: None,
-                        }),
+                        })),
                         frame: None,
                         text: None,
+                        item: None,
                     }],
                     name: None,
                     identifier: None,

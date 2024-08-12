@@ -511,7 +511,7 @@ pub mod tests {
         assertion::AssertionData,
         assertions::{
             metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
-            region_of_interest::{Range, RangeType, Time, TimeType},
+            region_of_interest::{Npt, Range, RangeType, Time},
         },
         hashed_uri::HashedUri,
     };
@@ -566,13 +566,13 @@ pub mod tests {
                         region: vec![Range {
                             range_type: RangeType::Temporal,
                             shape: None,
-                            time: Some(Time {
-                                time_type: TimeType::Npt,
+                            time: Some(Time::Npt(Npt {
                                 start: None,
                                 end: None,
-                            }),
+                            })),
                             frame: None,
                             text: None,
+                            item: None,
                         }],
                         name: None,
                         identifier: None,
@@ -823,7 +823,8 @@ pub mod tests {
                     shape: None,
                     time: None,
                     frame: None,
-                    text: None
+                    text: None,
+                    item: None,
                 }],
                 name: None,
                 identifier: None,
