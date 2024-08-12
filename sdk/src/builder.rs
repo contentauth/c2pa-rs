@@ -231,6 +231,13 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
+    pub fn from_manifest_def(manifest_def: ManifestDefinition) -> Self {
+        Self {
+            definition: manifest_def,
+            ..Default::default()
+        }
+    }
+
     /// Creates a new builder from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments
@@ -974,6 +981,22 @@ mod tests {
                 .into_owned(),
             b"12345"
         );
+    }
+
+    #[test]
+    fn test_from_manifest_def() {
+        let manifest_def = ManifestDefinition {
+            vendor: Some("test".to_string()),
+            title: Some("Test_Manifest".to_string()),
+            format: "image/tiff".to_string(),
+            instance_id: "1234".to_string(),
+            ..Default::default()
+        };
+        let builder = Builder::from_manifest_def(manifest_def);
+        assert_eq!(builder.definition.vendor, Some("test".to_string()));
+        assert_eq!(builder.definition.title, Some("Test_Manifest".to_string()));
+        assert_eq!(builder.definition.format, "image/tiff".to_string());
+        assert_eq!(builder.definition.instance_id, "1234".to_string());
     }
 
     #[test]
