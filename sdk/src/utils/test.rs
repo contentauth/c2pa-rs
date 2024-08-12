@@ -405,7 +405,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             use std::io::{Seek, Write};
 
@@ -416,6 +416,12 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
 
             // fake sig
             Ok(sign_bytes.into_inner())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let signer = crate::wasm::RsaWasmSignerAsync::new();
+
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
     }
 
@@ -551,7 +557,13 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
         }
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(target_arch = "wasm32")]
+        {
+            let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+        }
+
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             use std::io::{Seek, Write};
 
