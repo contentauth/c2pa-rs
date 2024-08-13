@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::io::{self, Cursor};
 
 use c2pa::{Builder, Result};
 
@@ -38,4 +38,18 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     dest.set_position(0);
     compare_stream_to_known_good(&mut dest, format, "CA_test.json")
+}
+
+// Source: https://github.com/contentauth/c2pa-rs/issues/530
+#[test]
+fn test_builder_riff() -> Result<()> {
+    let manifest_def = include_str!("../tests/fixtures/simple_manifest.json");
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
+    let format = "audio/wav";
+
+    let mut builder = Builder::from_json(manifest_def)?;
+    builder.no_embed = true;
+    builder.sign(&test_signer(), format, &mut source, &mut io::empty())?;
+
+    Ok(())
 }
