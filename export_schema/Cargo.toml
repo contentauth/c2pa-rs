@@ -8,6 +8,6 @@ rust-version = "1.74.0"
 
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", features = ["json_schema"] }
+c2pa = { path = "../sdk", features = ["json_schema", "unstable_api"] }
 schemars = "0.8.21"
 serde_json = "1.0.117"
