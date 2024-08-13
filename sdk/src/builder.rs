@@ -251,28 +251,27 @@ impl Builder {
     /// * `format` - The format of the asset associated with this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    pub fn set_format<S:Into<String>>(&mut self, format: S) -> &mut Self {
+    pub fn set_format<S: Into<String>>(&mut self, format: S) -> &mut Self {
         self.definition.format = format.into();
         self
     }
 
     /// Sets the remote_url for this [`Builder`].
     /// The url will be injected into the destination asset when signing.
-    /// It is used to a remote location where the manifest can be retrieved.
+    /// The signed manifest should be made accessible at that URL for retrieval.
+    /// For remote manifests, the no_embed flag should be set to true.
     /// # Arguments
     /// * `url` - The URL where the manifest will be available.
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    pub fn set_remote_url<S:Into<String>>(&mut self, url: S) -> &mut Self {
+    pub fn set_remote_url<S: Into<String>>(&mut self, url: S) -> &mut Self {
         self.remote_url = Some(url.into());
         self
     }
 
     /// Sets the no_embed flag for this [`Builder`].
     /// If true, the manifest store will not be embedded in the destination asset on sign.
-    /// This is useful for cloud only and sidecar manifests.
-    /// Note that if a remote URL is set, the sign output will be modified to reference the remote URL.
-    /// If no remote URL is set, the destination asset will be a copy of the source.
+    /// This is useful for sidecar and remote manifests.
     /// # Arguments
     /// * `no_embed` - A boolean flag to set the no_embed flag.
     /// # Returns
@@ -293,7 +292,7 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     /// # Errors
     /// * If the thumbnail is not valid.
-    pub fn set_thumbnail<S,R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
+    pub fn set_thumbnail<S, R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
     where
         S: Into<String>,
         R: Read + Seek + ?Sized,
