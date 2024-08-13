@@ -36,6 +36,8 @@ jobs:
     concurrency: publish-mutex
     runs-on: ubuntu-latest
     steps:
+    - name: Disable core.autocrlf
+      run: git config --global core.autocrlf false
 
     - name: Checkout
       uses: actions/checkout@v4

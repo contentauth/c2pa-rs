@@ -77,7 +77,7 @@ fn main() -> Result<()> {
     let mut details = CompatDetails::new(vec![
         CompatAssetDetails::new("C.jpg", "jpeg"),
         CompatAssetDetails::new("sample1.gif", "gif"),
-        // CompatAssetDetails::new("sample1.svg", "svg"), // TODO: svg doesn't work when combining binary diffing + Windows
+        CompatAssetDetails::new("sample1.svg", "svg"), // TODO: svg doesn't work when combining binary diffing + Windows
         CompatAssetDetails::new("video1.mp4", "bmff"),
         // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: https://github.com/contentauth/c2pa-rs/issues/530
         CompatAssetDetails::new("sample1.mp3", "mp3"),
