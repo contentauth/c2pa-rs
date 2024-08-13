@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
+use std::io::{self, Cursor};
 
 use c2pa::{Builder, Reader, Result};
 
@@ -50,6 +50,21 @@ fn test_builder_archive() -> Result<()> {
 
     apply_filters!();
     assert_json_snapshot!(builder);
+
+    Ok(())
+}
+
+// Source: https://github.com/contentauth/c2pa-rs/issues/528
+#[test]
+fn test_builder_read_empty_stream() -> Result<()> {
+    let manifest_def = include_str!("../tests/fixtures/simple_manifest.json");
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.svg"));
+    let format = "image/svg+xml";
+
+    let mut builder = Builder::from_json(manifest_def)?;
+    let manifest_bytes = builder.sign(&test_signer(), format, &mut source, &mut io::empty())?;
+
+    Reader::from_manifest_data_and_stream(&manifest_bytes, format, Cursor::new(vec![]))?;
 
     Ok(())
 }
