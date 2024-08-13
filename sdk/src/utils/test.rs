@@ -13,26 +13,26 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::path::PathBuf;
 #[cfg(feature = "file_io")]
+use std::path::Path;
 use std::{
     io::{Cursor, Read, Write},
-    path::Path,
+    path::PathBuf,
 };
 
 use tempfile::TempDir;
 
+#[cfg(feature = "file_io")]
+use crate::create_signer;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
+    asset_io::CAIReadWrite,
     claim::Claim,
+    hash_utils::Hasher,
+    jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
     RemoteSigner, Result, Signer, SigningAlg,
-};
-#[cfg(feature = "file_io")]
-use crate::{
-    asset_io::CAIReadWrite, create_signer, hash_utils::Hasher,
-    jumbf_io::get_assetio_handler_from_path,
 };
 #[cfg(feature = "openssl_sign")]
 use crate::{
@@ -225,29 +225,41 @@ pub fn temp_signer_file() -> RsaSigner {
         .expect("get_temp_signer")
 }
 
-/// Utility to create a test file with a placeholder for a manifest
 #[cfg(feature = "file_io")]
 pub fn write_jpeg_placeholder_file(
     placeholder: &[u8],
     input: &Path,
     output_file: &mut dyn CAIReadWrite,
-    mut hasher: Option<&mut Hasher>,
+    hasher: Option<&mut Hasher>,
 ) -> Result<usize> {
-    // get where we will put the data
     let mut f = std::fs::File::open(input).unwrap();
-    let jpeg_io = get_assetio_handler_from_path(input).unwrap();
+    write_jpeg_placeholder_stream(placeholder, "jpeg", &mut f, output_file, hasher)
+}
+
+/// Utility to create a test file with a placeholder for a manifest
+pub fn write_jpeg_placeholder_stream<R>(
+    placeholder: &[u8],
+    format: &str,
+    input: &mut R,
+    output_file: &mut dyn CAIReadWrite,
+    mut hasher: Option<&mut Hasher>,
+) -> Result<usize>
+where
+    R: Read + std::io::Seek + Send,
+{
+    let jpeg_io = get_assetio_handler(format).unwrap();
     let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
-    let boxes = box_mapper.get_box_map(&mut f).unwrap();
+    let boxes = box_mapper.get_box_map(input).unwrap();
     let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
 
     // build new asset with hole for new manifest
     let outbuf = Vec::new();
     let mut out_stream = Cursor::new(outbuf);
-    let mut input_file = std::fs::File::open(input).unwrap();
+    input.rewind().unwrap();
 
     // write before
     let mut before = vec![0u8; sof.range_start];
-    input_file.read_exact(before.as_mut_slice()).unwrap();
+    input.read_exact(before.as_mut_slice()).unwrap();
     if let Some(hasher) = hasher.as_deref_mut() {
         hasher.update(&before);
     }
@@ -258,7 +270,7 @@ pub fn write_jpeg_placeholder_file(
 
     // write bytes after
     let mut after_buf = Vec::new();
-    input_file.read_to_end(&mut after_buf).unwrap();
+    input.read_to_end(&mut after_buf).unwrap();
     if let Some(hasher) = hasher {
         hasher.update(&after_buf);
     }
