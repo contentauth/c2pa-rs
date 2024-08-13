@@ -68,3 +68,17 @@ fn test_builder_read_empty_stream() -> Result<()> {
 
     Ok(())
 }
+
+// Source: https://github.com/contentauth/c2pa-rs/issues/530
+#[test]
+fn test_builder_riff() -> Result<()> {
+    let manifest_def = include_str!("../tests/fixtures/simple_manifest.json");
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
+    let format = "audio/wav";
+
+    let mut builder = Builder::from_json(manifest_def)?;
+    builder.no_embed = true;
+    builder.sign(&test_signer(), format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
