@@ -61,6 +61,7 @@ macro_rules! apply_filters {
     }
 }
 
+#[allow(unused)]
 pub fn unescape_json(str: &str) -> Result<serde_json::Value> {
     Ok(serde_json::from_str(str)?)
 }
