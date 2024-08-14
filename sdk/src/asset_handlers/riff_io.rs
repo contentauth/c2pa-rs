@@ -541,90 +541,85 @@ impl RemoteRefEmbed for RiffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                match self.riff_format.as_ref() {
-                    "avi" | "wav" | "webp" => {
-                        if let Some(curr_xmp) = self.read_xmp(input_stream) {
-                            let mut new_xmp = add_provenance(&curr_xmp, &manifest_uri)?;
-                            if new_xmp.len() % 2 == 1 {
-                                // pad if needed to even length
-                                new_xmp.push(' ');
-                            }
-
-                            let top_level_chunks = {
-                                let mut reader = CAIReadWrapper {
-                                    reader: input_stream,
-                                };
-                                Chunk::read(&mut reader, 0)?
-                            };
-
-                            if top_level_chunks.id() != RIFF_ID {
-                                return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-                            }
-
-                            let mut reader = CAIReadWrapper {
-                                reader: input_stream,
-                            };
-
-                            // replace/add manifest in memory
-                            let new_contents = inject_c2pa(
-                                &top_level_chunks,
-                                &mut reader,
-                                &[],
-                                Some(new_xmp.as_bytes()),
-                                &self.riff_format,
-                            )?;
-
-                            // save contents
-                            let mut writer = CAIReadWriteWrapper {
-                                reader_writer: output_stream,
-                            };
-                            new_contents
-                                .write(&mut writer)
-                                .map_err(|_e| Error::EmbeddingError)?;
-                            Ok(())
-                        } else {
-                            let mut new_xmp = add_provenance(MIN_XMP, &manifest_uri)?;
-
-                            if new_xmp.len() % 2 == 1 {
-                                // pad if needed to even length
-                                new_xmp.push(' ');
-                            }
-
-                            let top_level_chunks = {
-                                let mut reader = CAIReadWrapper {
-                                    reader: input_stream,
-                                };
-                                Chunk::read(&mut reader, 0)?
-                            };
-
-                            if top_level_chunks.id() != RIFF_ID {
-                                return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-                            }
-
-                            let mut reader = CAIReadWrapper {
-                                reader: input_stream,
-                            };
-
-                            // replace/add manifest in memory
-                            let new_contents = inject_c2pa(
-                                &top_level_chunks,
-                                &mut reader,
-                                &[],
-                                Some(new_xmp.as_bytes()),
-                                &self.riff_format,
-                            )?;
-
-                            // save contents
-                            let mut writer = CAIReadWriteWrapper {
-                                reader_writer: output_stream,
-                            };
-                            new_contents
-                                .write(&mut writer)
-                                .map_err(|_e| Error::EmbeddingError)?;
-                            Ok(())
-                        }
+                if let Some(curr_xmp) = self.read_xmp(input_stream) {
+                    let mut new_xmp = add_provenance(&curr_xmp, &manifest_uri)?;
+                    if new_xmp.len() % 2 == 1 {
+                        // pad if needed to even length
+                        new_xmp.push(' ');
                     }
-                    _ => Err(Error::UnsupportedType),
+
+                    let top_level_chunks = {
+                        let mut reader = CAIReadWrapper {
+                            reader: input_stream,
+                        };
+                        Chunk::read(&mut reader, 0)?
+                    };
+
+                    if top_level_chunks.id() != RIFF_ID {
+                        return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+                    }
+
+                    let mut reader = CAIReadWrapper {
+                        reader: input_stream,
+                    };
+
+                    // replace/add manifest in memory
+                    let new_contents = inject_c2pa(
+                        &top_level_chunks,
+                        &mut reader,
+                        &[],
+                        Some(new_xmp.as_bytes()),
+                        &self.riff_format,
+                    )?;
+
+                    // save contents
+                    let mut writer = CAIReadWriteWrapper {
+                        reader_writer: output_stream,
+                    };
+                    new_contents
+                        .write(&mut writer)
+                        .map_err(|_e| Error::EmbeddingError)?;
+                    Ok(())
+                } else {
+                    let mut new_xmp = add_provenance(MIN_XMP, &manifest_uri)?;
+
+                    if new_xmp.len() % 2 == 1 {
+                        // pad if needed to even length
+                        new_xmp.push(' ');
+                    }
+
+                    let top_level_chunks = {
+                        let mut reader = CAIReadWrapper {
+                            reader: input_stream,
+                        };
+                        Chunk::read(&mut reader, 0)?
+                    };
+
+                    if top_level_chunks.id() != RIFF_ID {
+                        return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+                    }
+
+                    let mut reader = CAIReadWrapper {
+                        reader: input_stream,
+                    };
+
+                    // replace/add manifest in memory
+                    let new_contents = inject_c2pa(
+                        &top_level_chunks,
+                        &mut reader,
+                        &[],
+                        Some(new_xmp.as_bytes()),
+                        &self.riff_format,
+                    )?;
+
+                    // save contents
+                    let mut writer = CAIReadWriteWrapper {
+                        reader_writer: output_stream,
+                    };
+                    new_contents
+                        .write(&mut writer)
+                        .map_err(|_e| Error::EmbeddingError)?;
+                    Ok(())
                 }
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
