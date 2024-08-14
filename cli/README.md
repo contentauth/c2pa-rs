@@ -15,6 +15,7 @@ For a simple example of calling c2patool from a Node.js server application, see 
 **Contents**:
 - [Installation](#installation)
 - [Supported file formats](#supported-file-formats)
+- [Commands](#commands)
 - [Usage](#usage)
 - [Configuring trust support](#configuring-trust-support)
 
@@ -43,7 +44,7 @@ The quickest way to install the tool is to use the binary executable builds.  If
 
 Confirm that you can run the tool by entering a command such as:
 ```
-c2patool -h
+c2patool --help
 ```
 
 NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2patool.git`.
@@ -72,7 +73,7 @@ To install by using Binstall:
 To ensure you have the latest version, enter this command:
 
 ```
-c2patool -V
+c2patool --version
 ```
 
 The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page](https://github.com/contentauth/c2patool/releases). 
@@ -97,61 +98,532 @@ rustup update
 
 ## Supported file formats
 
- | Extensions    | MIME type                                           |
- | ------------- | --------------------------------------------------- |
- | `avi`         | `video/msvideo`, `video/avi`, `application-msvideo` |
- | `avif`        | `image/avif`                                        |
- | `c2pa`        | `application/x-c2pa-manifest-store`                 |
- | `dng`         | `image/x-adobe-dng`                                 |
- | `heic`        | `image/heic`                                        |
- | `heif`        | `image/heif`                                        |
- | `jpg`, `jpeg` | `image/jpeg`                                        |
- | `m4a`         | `audio/mp4`                                         |
- | `mp3`         | `"audio/mpeg"`                                      |
- | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>         |
- | `mov`         | `video/quicktime`                                   |
- | `pdf`         | `application/pdf` <sup>**</sup>                     |
- | `png`         | `image/png`                                         |
- | `svg`         | `image/svg+xml`                                     |
- | `tif`,`tiff`  | `image/tiff`                                        |
- | `wav`         | `audio/x-wav`                                       |
- | `webp`        | `image/webp`                                        |
+ | Extensions    | MIME type                                                                     |
+ | ------------- | ----------------------------------------------------------------------------- |
+ | `avi`         | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`|
+ | `avif`        | `image/avif`                                                                  |
+ | `c2pa`        | `application/x-c2pa-manifest-store`                                           |
+ | `dng`         | `image/x-adobe-dng`                                                           |
+ | `heic`        | `image/heic`                                                                  |
+ | `heif`        | `image/heif`                                                                  |
+ | `jpg`, `jpeg` | `image/jpeg`                                                                  |
+ | `m4a`         | `audio/mp4`                                                                   |
+ | `mp4`         | `video/mp4`, `application/mp4`                                                |
+ | `mov`         | `video/quicktime`                                                             |
+ | `png`         | `image/png`                                                                   |
+ | `svg`         | `image/svg+xml`                                                               |
+ | `tif`,`tiff`  | `image/tiff`                                                                  |
+ | `wav`         | `audio/wav`                                                                   |
+ | `webp`        | `image/webp`                                                                  |
+ | `mp3`         | `audio/mpeg`                                                                  |
+ | `gif`         | `image/gif`                                                                   |
 
-<sup>*</sup> Fragmented MP4 is not yet supported.
+## Commands
 
-<sup>**</sup> Read-only
+### `c2patool sign`
+Sign an asset with a manifest.
+
+#### Examples
+```console
+$ # Basic signing of an image
+$ c2patool sign \
+    tests/fixtures/earth_apollo17.jpg \
+    --manifest tests/fixtures/ingredient_test.json \
+    --output earth_apollo17_signed.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool sign --help
+Sign an asset with a manifest
+
+Usage: c2patool sign [OPTIONS] --output <OUTPUT> <--manifest <MANIFEST>|--manifest-url <MANIFEST_URL>> [PATHS]...
+
+Arguments:
+  [PATHS]...
+          Input path(s) to asset(s)
+
+Options:
+  -o, --output <OUTPUT>
+          Path to output file or folder (if >1 path specified)
+
+  -m, --manifest <MANIFEST>
+          Path to manifest .json
+
+      --manifest-url <MANIFEST_URL>
+          URL to manifest .json
+
+  -s, --sidecar
+          Generate a .c2pa manifest file next to the output without embedding
+
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+
+      --no-embed
+          Do not embed manifest into input
+
+  -f, --force
+          Force overwrite output file(s) if they already exists
+
+  -p, --parent <PARENT>
+          Path to the parent ingredient .json
+
+      --signer-path <SIGNER_PATH>
+          Path to an executable that will sign the claim bytes, defaults to built-in signer
+
+      --no-verify
+          Do not perform validation of signature after signing
+
+      --reserve-size <RESERVE_SIZE>
+          To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) + the size of cert provided in the manifest definition's `sign_cert` field + the size of the signature of the Time Stamp Authority response. For example:
+
+          The reserve-size can be calculated like this if you aren't including a `tsa_url` key in your manifest description:
+
+          1024 + sign_cert.len()
+
+          Or, if you are including a `tsa_url` in your manifest definition, you will calculate the reserve size like this:
+
+          1024 + sign_cert.len() + tsa_signature_response.len()
+
+          Note: We'll default the `reserve-size` to a value of 20_000, if no value is provided. This will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
+
+          [default: 20000]
+
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format
+
+          [env: C2PATOOL_TRUST_ANCHORS=]
+
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format
+
+          [env: C2PATOOL_TRUST_ANCHORS_URL=]
+
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format
+
+          [env: C2PATOOL_ALLOWED_LIST=]
+
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format
+
+          [env: C2PATOOL_ALLOWED_LIST_URL=]
+
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation
+
+          [env: C2PATOOL_TRUST_CONFIG=]
+
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation
+
+          [env: C2PATOOL_TRUST_CONFIG_URL=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+</details>
+
+### `c2patool view`
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view --help
+View information about a manifest in an asset
+
+Usage: c2patool view [OPTIONS] <COMMAND>
+
+Commands:
+  manifest    View manifest in .json format
+  ingredient  View ingredient in .json format
+  info        View various info about the manifest (e.g. file size)
+  tree        View a tree diagram of the manifest store
+  certs       View the active manifest certificate chain
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...  Use verbose output (-vv very verbose output)
+  -h, --help        Print help
+```
+</details>
+
+#### `c2patool view manifest`
+View manifest in .json format.
+
+#### Examples
+```console
+$ # View a basic .json manifest
+$ c2patool view manifest tests/fixtures/earth_apollo17.jpg
+$ # View a detailed .json manifest
+$ c2patool view manifest tests/fixtures/earth_apollo17.jpg --detailed
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view manifest --help
+View manifest in .json format
+
+Usage: c2patool view manifest [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+  -d, --detailed
+          Display detailed information about the manifest
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool view ingredient`
+View ingredient in .json format.
+
+#### Examples
+```console
+$ c2patool view ingredient tests/fixtures/earth_apollo17.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view ingredient --help
+View ingredient in .json format
+
+Usage: c2patool view ingredient [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool view info`
+View various info about the manifest (e.g. file size).
+
+#### Examples
+```console
+$ c2patool view info tests/fixtures/earth_apollo17.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view info --help
+View various info about the manifest (e.g. file size)
+
+Usage: c2patool view info [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool view tree`
+View a tree diagram of the manifest store.
+
+#### Examples
+```console
+$ c2patool view tree tests/fixtures/earth_apollo17.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view tree --help
+View a tree diagram of the manifest store
+
+Usage: c2patool view tree [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool view certs`
+View the active manifest certificate chain.
+
+#### Examples
+```console
+$ c2patool view certs tests/fixtures/earth_apollo17.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool view certs --help
+View the active manifest certificate chain
+
+Usage: c2patool view certs [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+### `c2patool extract`
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool extract --help
+Extract manifest data from an asset
+
+Usage: c2patool extract [OPTIONS] <COMMAND>
+
+Commands:
+  manifest    Extract the .json or .c2pa manifest
+  ingredient  Extract the .json ingredient
+  resources   Extract known resources from a manifest (e.g. thumbnails)
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...  Use verbose output (-vv very verbose output)
+  -h, --help        Print help
+```
+</details>
+
+#### `c2patool extract manifest`
+Extract the .json or .c2pa manifest.
+
+#### Examples
+```console
+$ # Extract a .json manifest
+$ c2patool extract manifest tests/fixtures/earth_apollo17.jpg
+$ # Extract a .c2pa manifest
+$ c2patool extract manifest tests/fixtures/earth_apollo17.jpg --binary
+$ # Extract an invalid .c2pa manifest
+$ c2patool extract manifest tests/fixtures/earth_apollo17.jpg --binary --no-verify
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool extract manifest --help
+Extract the .json or .c2pa manifest
+
+Usage: c2patool extract manifest [OPTIONS] --output <OUTPUT> <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+  -o, --output <OUTPUT>
+          Path to output file
+  -b, --binary
+          Extract binary .c2pa manifest
+  -n, --no-verify
+          Do not perform validation of manifest during extraction (only applicable when `--binary` is specified)
+  -f, --force
+          Force overwrite output if it already exists
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool extract ingredient`
+Extract the .json ingredient.
+
+#### Examples
+```console
+$ c2patool extract ingredient tests/fixtures/earth_apollo17.jpg
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool extract ingredient --help
+Extract the .json ingredient
+
+Usage: c2patool extract ingredient [OPTIONS] --output <OUTPUT> <PATH>
+
+Arguments:
+  <PATH>  Input path to asset
+
+Options:
+  -o, --output <OUTPUT>
+          Path to output ingredient .json
+  -f, --force
+          Force overwrite output if it already exists
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
+
+#### `c2patool extract resources`
+Extract known resources from a manifest (e.g. thumbnails).
+
+#### Examples
+```console
+$ # Extract known resources
+$ c2patool extract resources tests/fixtures/earth_apollo17.jpg
+$ # Extract all known and unknown resources
+$ c2patool extract resources tests/fixtures/earth_apollo17.jpg --unknown
+```
+
+<details>
+<summary><strong>Usage</strong></summary>
+
+```console
+$ c2patool extract resources --help
+Extract known resources from a manifest (e.g. thumbnails)
+
+Usage: c2patool extract resources [OPTIONS] --output <OUTPUT> [PATHS]...
+
+Arguments:
+  [PATHS]...  Input path(s) to asset(s)
+
+Options:
+  -o, --output <OUTPUT>
+          Path to output folder
+  -f, --force
+          Force overwrite output and clear children if it already exists
+  -u, --unknown
+          Also extract resources that are unknown into binary files (unlike known resources, such as thumbnails)
+      --trust-anchors <TRUST_ANCHORS>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS=]
+  -v, --verbose...
+          Use verbose output (-vv very verbose output)
+      --trust-anchors-url <TRUST_ANCHORS_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_TRUST_ANCHORS_URL=]
+      --allowed-list <ALLOWED_LIST>
+          Path to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST=]
+      --allowed-list-url <ALLOWED_LIST_URL>
+          URL to file containing list of trust anchors in PEM format [env: C2PATOOL_ALLOWED_LIST_URL=]
+      --trust-config <TRUST_CONFIG>
+          Path to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG=]
+      --trust-config-url <TRUST_CONFIG_URL>
+          URL to file containing configured EKUs in Oid dot notation [env: C2PATOOL_TRUST_CONFIG_URL=]
+  -h, --help
+          Print help
+```
+</details>
 
 ## Usage
-
-The tool's command-line syntax is:
-
-```
-c2patool [trust] [PATH] [OPTIONS]
-```
-
-Where `PATH` is the (relative or absolute) file path to the asset to read or embed a manifest into.
-
-The following table describes the command-line options.
-
-| CLI&nbsp;option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Short version | Argument | Description |
-|-----|----|----|----|
-| `--certs` | | N/A | Extract a certificate chain to stdout. |
-| `--config` | `-c` | `<config>` | Specifies a manifest definition as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
-| `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#detailed-manifest-report). |
-| `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
-| `--help` | `-h` | N/A | Display CLI help information. |
-| `--info` |  | N/A | Display brief information about the file. |
-| `--ingredient` | `-i` | N/A | Creates an Ingredient definition in --output folder. |
-| `--output` | `-o` | `<output_file>` | Specifies path to output folder or file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file). |
-| `--manifest` | `-m` | `<manifest_file>` | Specifies a manifest file to add to an asset file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file).
-| `--no_signing_verify` | None | N/A |  Does not validate the signature after signing an asset, which speeds up signing. See [Speeding up signing](#speeding-up-signing) |
-| `--parent` | `-p` | `<parent_file>` | Specifies path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
-| `--remote` | `-r` | `<manifest_url>` | Specify URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)| N/A? |
-| `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
-| `--tree` | | N/A | Create a tree diagram of the manifest store. |
-| `--version` | `-V` | N/A | Display version information. |
-
-Use the optional `trust` sub-command to enable and configure trust support.  When you use this sub-command, several other options are available; see [Configuring trust support](#configuring-trust-support) for details.
 
 ### Displaying manifest data
 
