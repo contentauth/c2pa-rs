@@ -20,6 +20,7 @@ use std::{
 use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
 use serde::Serialize;
 
+// TODO: finish up full-manifest
 // const FULL_MANIFEST: &str = include_str!("./full-manifest.json");
 const FULL_MANIFEST: &str = include_str!("../../sdk/tests/fixtures/simple_manifest.json");
 
@@ -73,13 +74,13 @@ impl CompatDetails {
 }
 
 fn main() -> Result<()> {
-    // TODO: these assets should be as small as possible
+    // TODO: these assets should ideally be as small as possible (however, they are diffed anyways)
     let mut details = CompatDetails::new(vec![
         CompatAssetDetails::new("C.jpg", "jpeg"),
         CompatAssetDetails::new("sample1.gif", "gif"),
-        CompatAssetDetails::new("sample1.svg", "svg"), // TODO: svg doesn't work when combining binary diffing + Windows
+        CompatAssetDetails::new("sample1.svg", "svg"),
         CompatAssetDetails::new("video1.mp4", "bmff"),
-        // CompatAssetDetails::new("sample1.wav", "riff"), // TODO: https://github.com/contentauth/c2pa-rs/issues/530
+        CompatAssetDetails::new("sample1.wav", "riff"),
         CompatAssetDetails::new("sample1.mp3", "mp3"),
         CompatAssetDetails::new("libpng-test.png", "png"),
         CompatAssetDetails::new("TUSCANY.TIF", "tiff"),
@@ -106,14 +107,16 @@ fn main() -> Result<()> {
             public_key.clone(),
         );
 
+        let mut embedded_builder = Builder::from_json(FULL_MANIFEST)?;
+        embedded_builder.base_path = Some(PathBuf::from(FIXTURES_PATH));
+
         let mut signed_embedded_asset = Cursor::new(Vec::new());
-        let embedded_c2pa_manifest = Builder::from_json(FULL_MANIFEST)?.sign(
+        let embedded_c2pa_manifest = embedded_builder.sign(
             &signer,
             &format,
             &mut Cursor::new(&original_asset),
             &mut signed_embedded_asset,
         )?;
-        // TODO: need to set resource base path
 
         let embedded_size = signed_embedded_asset.get_ref().len();
 
@@ -126,16 +129,16 @@ fn main() -> Result<()> {
         let dir_path = compat_dir.join(&asset_details.category);
         fs::create_dir(&dir_path)?;
 
-        let mut signed_remote_asset = Cursor::new(Vec::new());
         let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
+        remote_builder.base_path = Some(PathBuf::from(FIXTURES_PATH));
         remote_builder.no_embed = true;
         remote_builder.remote_url = Some(format!(
             "http://localhost:8000/{}/{}/remote.c2pa",
             c2pa::VERSION,
             asset_details.category
         ));
-        // TODO: need to set resource base path
 
+        let mut signed_remote_asset = Cursor::new(Vec::new());
         let remote_c2pa_manifest = remote_builder.sign(
             &signer,
             &format,
