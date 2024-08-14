@@ -1,71 +1,25 @@
 ---
 source: tests/test_sign.rs
-expression: "ManifestStore::from_file(output_path)?"
+expression: "unescape_json(&Reader::from_file(output_path)?.json())?"
 ---
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
-      "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
-      "title": "landscape.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [
-        {
-          "title": "AdobeStock_282070651.png",
-          "format": "image/png",
-          "document_id": [XMP_ID]",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf",
-          "metadata": {
-            "dateTime": "2022-05-06T18:07:52.676Z"
-          }
-        }
-      ],
-      "credentials": [
-        {
-          "@context": [
-            "https://www.w3.org/2018/credentials/v1"
-          ],
-          "credentialSubject": {
-            "id": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
-            "name": "Pia Blumenthal"
-          },
-          "proof": {
-            "created": "2022-05-06T17:33:59.428935861Z",
-            "jws": "f119a2c5f74685624e5a0c805cae584263e1d5d2ef25b62f631aca23c512894d0d0dbec591140016adbd0ca86b388318f47e6dd8fce7cb59ea33742295a38fe06",
-            "proofPurpose": "assertionMethod",
-            "type": "Ed25519Signature2018",
-            "verificationMethod": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54"
-          },
-          "type": [
-            "VerifiableCredential"
-          ]
-        }
-      ],
       "assertions": [
         {
-          "label": "adobe.beta",
           "data": {
             "version": "0.12.5"
-          }
+          },
+          "label": "adobe.beta"
         },
         {
-          "label": "adobe.dictionary",
           "data": {
             "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
-          }
+          },
+          "label": "adobe.dictionary"
         },
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -75,40 +29,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -121,40 +42,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -167,40 +55,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -213,40 +68,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -255,10 +77,10 @@ expression: "ManifestStore::from_file(output_path)?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -278,57 +100,11 @@ expression: "ManifestStore::from_file(output_path)?"
               "dateTime": "2022-05-06T18:07:52.649Z",
               "reviewRatings": []
             }
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "Adobe Inc.",
-        "cert_serial_number": "117468664790937121336398959340346743515",
-        "time": "[TIMESTAMP1]"
-      },
-      "label": "[MANIFEST_URN]"
-    },
-    "[MANIFEST_URN]": {
       "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
-      "title": "sunset.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [
-        {
-          "title": "landscape.jpg",
-          "format": "image/jpeg",
-          "document_id": [XMP_ID]",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf",
-          "active_manifest": "[MANIFEST_URN]",
-          "metadata": {
-            "dateTime": "2022-05-06T18:10:49.227Z"
-          }
-        },
-        {
-          "title": "5a680667-6da9-d84c-a5a4-bc27a6bb7e2e.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
-          "instance_id": "xmp.iid:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf",
-          "metadata": {
-            "dateTime": "2022-05-06T18:12:13.802Z"
-          }
-        }
-      ],
       "credentials": [
         {
           "@context": [
@@ -350,21 +126,50 @@ expression: "ManifestStore::from_file(output_path)?"
           ]
         }
       ],
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "document_id": [XMP_ID]",
+          "format": "image/png",
+          "instance_id": [XMP_ID]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:07:52.676Z"
+          },
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "AdobeStock_282070651.png"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
+      "signature_info": {
+        "alg": "Ps256",
+        "cert_serial_number": "117468664790937121336398959340346743515",
+        "issuer": "Adobe Inc.",
+        "time": "[TIMESTAMP1]"
+      },
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
-          "label": "adobe.beta",
           "data": {
             "version": "0.12.5"
-          }
+          },
+          "label": "adobe.beta"
         },
         {
-          "label": "adobe.dictionary",
           "data": {
             "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
-          }
+          },
+          "label": "adobe.dictionary"
         },
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -374,40 +179,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -420,40 +192,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -466,40 +205,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -512,40 +218,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -554,10 +227,10 @@ expression: "ManifestStore::from_file(output_path)?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -577,57 +250,11 @@ expression: "ManifestStore::from_file(output_path)?"
               "dateTime": "2022-05-06T18:10:49.194Z",
               "reviewRatings": []
             }
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "Adobe Inc.",
-        "cert_serial_number": "117468664790937121336398959340346743515",
-        "time": "[TIMESTAMP1]"
-      },
-      "label": "[MANIFEST_URN]"
-    },
-    "[MANIFEST_URN]": {
       "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
-      "title": "moonrise.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [
-        {
-          "title": "sunset.jpg",
-          "format": "image/jpeg",
-          "document_id": [XMP_ID]",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf",
-          "active_manifest": "[MANIFEST_URN]",
-          "metadata": {
-            "dateTime": "2022-05-06T18:13:13.237Z"
-          }
-        },
-        {
-          "title": "AdobeStock_95590044.png",
-          "format": "image/png",
-          "document_id": [XMP_ID]",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf",
-          "metadata": {
-            "dateTime": "2022-05-06T18:13:51.119Z"
-          }
-        }
-      ],
       "credentials": [
         {
           "@context": [
@@ -649,21 +276,65 @@ expression: "ManifestStore::from_file(output_path)?"
           ]
         }
       ],
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "document_id": [XMP_ID]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:10:49.227Z"
+          },
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "landscape.jpg"
+        },
+        {
+          "document_id": "xmp.did:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
+          "format": "image/jpeg",
+          "instance_id": "xmp.iid:a0ca6da8-6bc2-4d37-b4e1-a5867a933899",
+          "metadata": {
+            "dateTime": "2022-05-06T18:12:13.802Z"
+          },
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "5a680667-6da9-d84c-a5a4-bc27a6bb7e2e.jpg"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
+      "signature_info": {
+        "alg": "Ps256",
+        "cert_serial_number": "117468664790937121336398959340346743515",
+        "issuer": "Adobe Inc.",
+        "time": "[TIMESTAMP1]"
+      },
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      },
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
-          "label": "adobe.beta",
           "data": {
             "version": "0.12.5"
-          }
+          },
+          "label": "adobe.beta"
         },
         {
-          "label": "adobe.dictionary",
           "data": {
             "url": "https://cai-assertions.adobe.com/photoshop/dictionary.json"
-          }
+          },
+          "label": "adobe.dictionary"
         },
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -673,40 +344,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -719,40 +357,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -765,40 +370,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -811,40 +383,7 @@ expression: "ManifestStore::from_file(output_path)?"
                 "credential": [
                   {
                     "alg": "sha256",
-                    "hash": [
-                      203,
-                      120,
-                      131,
-                      22,
-                      117,
-                      46,
-                      127,
-                      210,
-                      39,
-                      76,
-                      145,
-                      131,
-                      37,
-                      153,
-                      227,
-                      127,
-                      64,
-                      153,
-                      152,
-                      132,
-                      20,
-                      227,
-                      17,
-                      46,
-                      224,
-                      26,
-                      227,
-                      217,
-                      253,
-                      19,
-                      49,
-                      10
-                    ],
+                    "hash": "y3iDFnUuf9InTJGDJZnjf0CZmIQU4xEu4Brj2f0TMQo=",
                     "url": "[JUMBF_URI]"
                   }
                 ],
@@ -853,10 +392,10 @@ expression: "ManifestStore::from_file(output_path)?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -942,30 +481,79 @@ expression: "ManifestStore::from_file(output_path)?"
               "dateTime": "2022-05-06T18:13:13.214Z",
               "reviewRatings": []
             }
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
+      "claim_generator": "Adobe Photoshop 23.3.1 (build 20220419.r.426 4d24a4c; mac; ContentCredentials 37f01a3)",
+      "credentials": [
+        {
+          "@context": [
+            "https://www.w3.org/2018/credentials/v1"
+          ],
+          "credentialSubject": {
+            "id": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54",
+            "name": "Pia Blumenthal"
+          },
+          "proof": {
+            "created": "2022-05-06T17:33:59.428935861Z",
+            "jws": "f119a2c5f74685624e5a0c805cae584263e1d5d2ef25b62f631aca23c512894d0d0dbec591140016adbd0ca86b388318f47e6dd8fce7cb59ea33742295a38fe06",
+            "proofPurpose": "assertionMethod",
+            "type": "Ed25519Signature2018",
+            "verificationMethod": "did:adobe:f68e498f51ffd0a70dff98fec87cfd834107424ae0c13775bc17e60bd15e66f54"
+          },
+          "type": [
+            "VerifiableCredential"
+          ]
+        }
+      ],
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "document_id": [XMP_ID]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:13:13.237Z"
+          },
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "sunset.jpg"
+        },
+        {
+          "document_id": [XMP_ID]",
+          "format": "image/png",
+          "instance_id": [XMP_ID]",
+          "metadata": {
+            "dateTime": "2022-05-06T18:13:51.119Z"
+          },
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "AdobeStock_95590044.png"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "issuer": "Adobe Inc.",
         "cert_serial_number": "117468664790937121336398959340346743515",
+        "issuer": "Adobe Inc.",
         "time": "[TIMESTAMP1]"
       },
-      "label": "[MANIFEST_URN]"
-    },
-    "[MANIFEST_URN]": {
-      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
-      "title": "C.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "ingredients": [],
+      "title": "[MANIFEST_URN]": {
       "assertions": [
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "http://schema.org/",
             "@type": "CreativeWork",
@@ -976,10 +564,10 @@ expression: "ManifestStore::from_file(output_path)?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -992,83 +580,29 @@ expression: "ManifestStore::from_file(output_path)?"
                 }
               }
             ]
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "format": "image/jpeg",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "issuer": "C2PA Test Signing Cert"
       },
-      "label": "[MANIFEST_URN]"
-    },
-    "[MANIFEST_URN]": {
-      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
-      "claim_generator_info": [
-        {
-          "icon": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "name": "Test App",
-          "version": "0.0.1"
-        }
-      ],
-      "title": "C.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "ingredients": [
-        {
-          "title": "verify.jpeg",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf",
-          "active_manifest": "[MANIFEST_URN]"
-        },
-        {
-          "title": "earth_apollo17.jpg",
-          "format": "image/jpeg",
-          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
-          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf"
-        },
-        {
-          "title": "C.jpg",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "[MANIFEST_URN]"
-        },
-        {
-          "title": "test ingredient",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf"
-        }
-      ],
+      "title": "C.jpg"
+    },
+    "[MANIFEST_URN]": {
       "assertions": [
         {
-          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
@@ -1088,7 +622,9 @@ expression: "ManifestStore::from_file(output_path)?"
                     "description": "lip synced area",
                     "region": [
                       {
-                        "time": {},
+                        "time": {
+                          "type": "npt"
+                        },
                         "type": "temporal"
                       },
                       {
@@ -1134,10 +670,10 @@ expression: "ManifestStore::from_file(output_path)?"
                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
               }
             ]
-          }
+          },
+          "label": "c2pa.actions.v2"
         },
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -1148,10 +684,10 @@ expression: "ManifestStore::from_file(output_path)?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "cawg.training-mining",
           "data": {
             "entries": {
               "c2pa.ai_generative_training": {
@@ -1161,16 +697,105 @@ expression: "ManifestStore::from_file(output_path)?"
                 "use": "allowed"
               }
             }
-          }
+          },
+          "label": "cawg.training-mining"
         }
       ],
+      "claim_generator": "test_app/0.0.1 c2patool/0.9.3 c2pa-rs/0.33.1",
+      "claim_generator_info": [
+        {
+          "icon": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "name": "Test App",
+          "version": "0.0.1"
+        },
+        {
+          "name": "c2patool",
+          "version": "0.9.3"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.33.1"
+        }
+      ],
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+          "format": "image/jpeg",
+          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "earth_apollo17.jpg"
+        },
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "C.jpg"
+        },
+        {
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "test ingredient"
+        },
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "verify.jpeg"
+        },
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "C.jpg"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Es256",
-        "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "640229841392226413189608867977836244731148734950",
+        "issuer": "C2PA Test Signing Cert",
         "time": "[TIMESTAMP1]"
       },
-      "label": "[MANIFEST_URN]"
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      }
     }
-  }
+  },
+  "validation_status": [
+    {
+      "code": "manifest.multipleParents",
+      "explanation": "too many ingredient parents",
+      "url": "[JUMBF_URI]"
+    }
+  ]
 }

@@ -13,8 +13,8 @@
 mod common;
 
 use anyhow::Result;
-use c2pa::ManifestStore;
-use common::{cli, fixture_path, test_img_path, TEST_IMAGE_WITH_MANIFEST};
+use c2pa::Reader;
+use common::{cli, fixture_path, test_img_path, unescape_json, TEST_IMAGE_WITH_MANIFEST};
 use insta::{assert_json_snapshot, Settings};
 use insta_cmd::assert_cmd_snapshot;
 
@@ -35,7 +35,7 @@ fn test_sign() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(ManifestStore::from_file(output_path)?);
+    assert_json_snapshot!(unescape_json(&Reader::from_file(output_path)?.json())?);
 
     Ok(())
 }
@@ -62,8 +62,12 @@ fn test_sign_multiple() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(ManifestStore::from_file(output_path.join(input1_name))?);
-    assert_json_snapshot!(ManifestStore::from_file(output_path.join(input2_name))?);
+    assert_json_snapshot!(unescape_json(
+        &Reader::from_file(output_path.join(input1_name))?.json()
+    )?);
+    assert_json_snapshot!(unescape_json(
+        &Reader::from_file(output_path.join(input2_name))?.json()
+    )?);
 
     Ok(())
 }
@@ -87,7 +91,7 @@ fn test_sign_parent() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(ManifestStore::from_file(output_path)?);
+    assert_json_snapshot!(unescape_json(&Reader::from_file(output_path)?.json())?);
 
     Ok(())
 }
@@ -110,8 +114,12 @@ fn test_sign_sidecar() -> Result<()> {
 
     apply_sorted_output!();
 
-    assert_json_snapshot!(&ManifestStore::from_file(output_path.join("C.jpg"))?);
-    assert_json_snapshot!(&ManifestStore::from_file(output_path.join("C.c2pa"))?);
+    assert_json_snapshot!(unescape_json(
+        &Reader::from_file(output_path.join("C.jpg"))?.json()
+    )?);
+    assert_json_snapshot!(unescape_json(
+        &Reader::from_file(output_path.join("C.c2pa"))?.json()
+    )?);
 
     Ok(())
 }

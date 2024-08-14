@@ -1,23 +1,13 @@
 ---
 source: tests/test_sign.rs
-expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
+expression: "unescape_json(&Reader::from_file(output_path.join(\"C.c2pa\"))?.json())?"
 ---
 {
   "active_manifest": "[MANIFEST_URN]",
   "manifests": {
     "[MANIFEST_URN]": {
-      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
-      "title": "C.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "[JUMBF_URI]"
-      },
-      "ingredients": [],
       "assertions": [
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "http://schema.org/",
             "@type": "CreativeWork",
@@ -28,10 +18,10 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "c2pa.actions",
           "data": {
             "actions": [
               {
@@ -44,83 +34,29 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
                 }
               }
             ]
-          }
+          },
+          "label": "c2pa.actions"
         }
       ],
+      "claim_generator": "make_test_images/0.6.1 c2pa-rs/0.6.1",
+      "format": "image/jpeg",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153"
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "issuer": "C2PA Test Signing Cert"
       },
-      "label": "[MANIFEST_URN]"
-    },
-    "[MANIFEST_URN]": {
-      "claim_generator": "TestApp c2patool/0.9.3 c2pa-rs/0.32.0",
-      "claim_generator_info": [
-        {
-          "icon": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "name": "Test App",
-          "version": "0.0.1"
-        }
-      ],
-      "title": "C.jpg",
-      "format": "image/jpeg",
-      "instance_id": [XMP_ID]",
       "thumbnail": {
         "format": "image/jpeg",
         "identifier": "[JUMBF_URI]"
       },
-      "ingredients": [
-        {
-          "title": "C.jpg",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "parentOf",
-          "active_manifest": "[MANIFEST_URN]"
-        },
-        {
-          "title": "earth_apollo17.jpg",
-          "format": "image/jpeg",
-          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
-          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf"
-        },
-        {
-          "title": "C.jpg",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "[MANIFEST_URN]"
-        },
-        {
-          "title": "test ingredient",
-          "format": "image/jpeg",
-          "instance_id": [XMP_ID]",
-          "thumbnail": {
-            "format": "image/png",
-            "identifier": "[JUMBF_URI]"
-          },
-          "relationship": "componentOf"
-        }
-      ],
+      "title": "C.jpg"
+    },
+    "[MANIFEST_URN]": {
       "assertions": [
         {
-          "label": "c2pa.actions.v2",
           "data": {
             "actions": [
               {
@@ -140,7 +76,9 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
                     "description": "lip synced area",
                     "region": [
                       {
-                        "time": {},
+                        "time": {
+                          "type": "npt"
+                        },
                         "type": "temporal"
                       },
                       {
@@ -186,10 +124,10 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
               }
             ]
-          }
+          },
+          "label": "c2pa.actions.v2"
         },
         {
-          "label": "stds.schema-org.CreativeWork",
           "data": {
             "@context": "https://schema.org",
             "@type": "CreativeWork",
@@ -200,10 +138,10 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
               }
             ]
           },
-          "kind": "Json"
+          "kind": "Json",
+          "label": "stds.schema-org.CreativeWork"
         },
         {
-          "label": "cawg.training-mining",
           "data": {
             "entries": {
               "c2pa.ai_generative_training": {
@@ -213,23 +151,94 @@ expression: "&ManifestStore::from_file(output_path.join(\"C.c2pa\"))?"
                 "use": "allowed"
               }
             }
-          }
+          },
+          "label": "cawg.training-mining"
         }
       ],
+      "claim_generator": "test_app/0.0.1 c2patool/0.9.3 c2pa-rs/0.33.1",
+      "claim_generator_info": [
+        {
+          "icon": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "name": "Test App",
+          "version": "0.0.1"
+        },
+        {
+          "name": "c2patool",
+          "version": "0.9.3"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.33.1"
+        }
+      ],
+      "format": "image/jpeg",
+      "ingredients": [
+        {
+          "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+          "format": "image/jpeg",
+          "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "earth_apollo17.jpg"
+        },
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "C.jpg"
+        },
+        {
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "componentOf",
+          "thumbnail": {
+            "format": "image/png",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "test ingredient"
+        },
+        {
+          "active_manifest": "[MANIFEST_URN]",
+          "format": "image/jpeg",
+          "instance_id": [XMP_ID]",
+          "relationship": "parentOf",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "[JUMBF_URI]"
+          },
+          "title": "C.jpg"
+        }
+      ],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
       "signature_info": {
         "alg": "Es256",
-        "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "640229841392226413189608867977836244731148734950",
+        "issuer": "C2PA Test Signing Cert",
         "time": "[TIMESTAMP1]"
       },
-      "label": "[MANIFEST_URN]"
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "[JUMBF_URI]"
+      }
     }
   },
   "validation_status": [
     {
       "code": "assertion.dataHash.mismatch",
-      "url": "[JUMBF_URI]",
-      "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )"
+      "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )",
+      "url": "[JUMBF_URI]"
     }
   ]
 }

@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     if let Some(path) = args.path {
         return View::Manifest {
             path,
-            debug: false,
+            detailed: false,
             // To specify trust, use the explicit command `c2patool view manifest`
             trust: Trust::default(),
         }

@@ -14,12 +14,12 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io::BufReader,
+    io::{BufReader, Cursor},
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
-use c2pa::{Ingredient, Manifest};
+use c2pa::{Builder, ClaimGeneratorInfo, Ingredient, ManifestDefinition};
 use clap::{Args, Parser};
 use log::{error, warn};
 use reqwest::Url;
@@ -46,6 +46,10 @@ pub struct Sign {
     /// Generate a .c2pa manifest file next to the output without embedding.
     #[clap(short, long)]
     pub sidecar: bool,
+
+    /// Do not embed manifest into input.
+    #[clap(long)]
+    pub no_embed: bool,
 
     /// Force overwrite output file(s) if they already exists.
     #[clap(short, long)]
@@ -100,9 +104,9 @@ pub struct ManifestSource {
 }
 
 #[derive(Debug, Deserialize)]
-struct ExtendedManifest {
+struct ManifestDefinitionExt {
     #[serde(flatten)]
-    manifest: Manifest,
+    definition: ManifestDefinition,
     // Allows ingredients to be specified as a path or inline.
     ingredients: Option<Vec<IngredientSource>>,
 }
@@ -168,16 +172,14 @@ impl Sign {
         let mut sign_config = SignConfig::from_json(&json)?;
 
         // read the manifest information
-        let ext_manifest: ExtendedManifest = serde_json::from_str(&json)?;
-        let mut manifest = ext_manifest.manifest;
+        let mut definition_ext: ManifestDefinitionExt = serde_json::from_str(&json)?;
 
-        // add claim_tool generator so we know this was created using this tool
-        let tool_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        manifest.claim_generator = if manifest.claim_generator.starts_with("c2pa/") {
-            tool_generator // just replace the default generator
-        } else {
-            format!("{} {}", manifest.claim_generator, tool_generator)
-        };
+        let mut claim_gen_info = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+        claim_gen_info.set_version(env!("CARGO_PKG_VERSION"));
+        definition_ext
+            .definition
+            .claim_generator_info
+            .push(claim_gen_info);
 
         let base_path = if let Some(ref manifest_path) = self.manifest_source.manifest {
             fs::canonicalize(manifest_path)?
@@ -188,16 +190,31 @@ impl Sign {
             env::current_dir()?
         };
 
-        // set manifest base path before ingredients so ingredients can override it
-        manifest.with_base_path(&base_path)?;
-        sign_config.set_base_path(&base_path);
+        // TODO: https://github.com/contentauth/c2pa-rs/pull/544
+        let mut builder = Builder::from_json(&serde_json::to_string(&definition_ext.definition)?)?;
+        builder.no_embed = self.no_embed;
+        if let Some(url) = &self.manifest_source.manifest_url {
+            builder.remote_url = Some(url.to_string());
+        }
 
-        if let Some(ingredients) = ext_manifest.ingredients {
+        if let Some(ingredients) = definition_ext.ingredients {
             for ingredient_source in ingredients {
                 match ingredient_source {
-                    IngredientSource::Ingredient(mut ingredient) => {
-                        ingredient.with_base_path(&base_path)?;
-                        manifest.add_ingredient(ingredient);
+                    IngredientSource::Ingredient(ingredient) => {
+                        // TODO: not a beautiful sight
+                        let data = ingredient
+                            .data_ref()
+                            .map(|data_ref| ingredient.resources().get(&data_ref.identifier))
+                            .transpose()?;
+                        let data = data.as_deref().map(|data| data.as_slice()).unwrap_or(&[]);
+
+                        // TODO: shouldn't have to serialize
+                        let ingredient_json = serde_json::to_string(&ingredient)?;
+                        builder.add_ingredient(
+                            ingredient_json,
+                            ingredient.format(),
+                            &mut Cursor::new(data),
+                        )?;
                     }
                     IngredientSource::Path(mut path) => {
                         // ingredient paths are relative to the manifest path
@@ -205,40 +222,70 @@ impl Sign {
                             path = base_path.join(&path);
                         }
 
-                        manifest.add_ingredient(load_ingredient(&path)?);
+                        let ingredient = load_ingredient(&path)?;
+                        let ingredient = builder.add_ingredient(
+                            // TODO: shouldn't have to reserialize
+                            serde_json::to_string(&ingredient)?,
+                            ingredient.format(),
+                            // TODO: shouldn't have to read from file again
+                            &mut File::open(&path)?,
+                        )?;
+
+                        // TODO: shouldn't have to set this again
+                        if let Some(base) = path.parent() {
+                            ingredient.with_base_path(base)?;
+                        }
                     }
                 }
             }
         }
 
         if let Some(parent_path) = &self.parent {
-            manifest.set_parent(load_ingredient(parent_path)?)?;
+            let mut ingredient = load_ingredient(parent_path)?;
+            ingredient.set_is_parent();
+            let ingredient = builder.add_ingredient(
+                // TODO: shouldn't have to reserialize
+                serde_json::to_string(&ingredient)?,
+                ingredient.format(),
+                // TODO: shouldn't have to read from file again
+                &mut File::open(parent_path)?,
+            )?;
+
+            // TODO: shouldn't have to set this again
+            if let Some(base) = parent_path.parent() {
+                ingredient.with_base_path(base)?;
+            }
         }
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
         // note: This could be treated as an update manifest eventually since the image is the same
-        if manifest.parent().is_none() {
-            let source_ingredient = Ingredient::from_file(src)?;
+        let parent_exists = definition_ext
+            .definition
+            .ingredients
+            .iter()
+            .any(|ingredient| ingredient.is_parent());
+        if !parent_exists {
+            let mut source_ingredient = Ingredient::from_file(src)?;
             if source_ingredient.manifest_data().is_some() {
-                manifest.set_parent(source_ingredient)?;
+                source_ingredient.set_is_parent();
+
+                let ingredient = builder.add_ingredient(
+                    // TODO: we shouldn't have to reserialize this
+                    serde_json::to_string(&source_ingredient)?,
+                    source_ingredient.format(),
+                    // TODO: shouldn't have to read from file again
+                    &mut File::open(src)?,
+                )?;
+
+                // TODO: shouldn't have to set this again
+                if let Some(base) = src.parent() {
+                    ingredient.with_base_path(base)?;
+                }
             }
         }
 
-        match &input_source {
-            InputSource::Path(_) => {
-                if self.sidecar {
-                    manifest.set_sidecar_manifest();
-                }
-            }
-            InputSource::Url(url) => match self.sidecar {
-                true => {
-                    manifest.set_remote_manifest(url.to_string());
-                }
-                false => {
-                    manifest.set_embedded_manifest_with_remote_ref(url.to_string());
-                }
-            },
-        }
+        sign_config.set_base_path(&base_path);
+        builder.base_path = Some(base_path);
 
         let signer = match &self.signer_path {
             Some(signer_process_name) => {
@@ -255,9 +302,14 @@ impl Sign {
             None => sign_config.signer()?,
         };
 
-        manifest
-            .embed(src, dst, signer.as_ref())
-            .context("embedding manifest")?;
+        let binary_manifest = builder.sign_file(signer.as_ref(), src, dst)?;
+
+        // TODO: Take sidecar as output path similar to self.output, fixes #134
+        if self.sidecar {
+            let mut dst = dst.to_owned();
+            dst.set_extension("c2pa");
+            fs::write(dst, binary_manifest)?;
+        }
 
         Ok(())
     }
@@ -386,7 +438,7 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
         let mut ingredient: Ingredient = serde_json::from_reader(reader)?;
 
         if let Some(base) = path.parent() {
-            ingredient.resources_mut().set_base_path(base);
+            ingredient.with_base_path(base)?;
         }
 
         Ok(ingredient)

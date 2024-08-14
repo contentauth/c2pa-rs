@@ -5,10 +5,10 @@ info:
   args:
     - view
     - manifest
-    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/C.jpg
   env:
-    C2PATOOL_TRUST_ANCHORS: "http://127.0.0.1:61761/trust/anchors.pem"
-    C2PATOOL_TRUST_CONFIG: "http://127.0.0.1:61761/trust/store.cfg"
+    C2PATOOL_TRUST_ANCHORS_URL: "http://127.0.0.1:60600/trust/anchors.pem"
+    C2PATOOL_TRUST_CONFIG_URL: "http://127.0.0.1:60600/trust/store.cfg"
 ---
 success: true
 exit_code: 0
@@ -73,9 +73,9 @@ exit_code: 0
       "explanation": "signing certificate untrusted"
     },
     {
-      "code": "claimSignature.mismatch",
+      "code": "general.error",
       "url": "self#jumbf=/c2pa/contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc/c2pa.signature",
-      "explanation": "claim signature is not valid"
+      "explanation": "claim signature is not valid: CoseCertUntrusted"
     }
   ]
 }

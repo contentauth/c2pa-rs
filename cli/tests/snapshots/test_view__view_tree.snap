@@ -5,13 +5,13 @@ info:
   args:
     - view
     - tree
-    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/C.jpg
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Tree View:
- Asset:C.jpg, Manifest:contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc
+Asset:C.jpg
+├── Manifest:contentauth:urn:uuid:a621a5d8-147d-499b-95d7-2eaff1009efc
 ├── Assertion:c2pa.thumbnail.claim.jpeg
 ├── Assertion:stds.schema-org.CreativeWork
 ├── Assertion:c2pa.actions

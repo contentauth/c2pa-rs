@@ -10,11 +10,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::{Path, PathBuf};
+use std::{
+    io::Cursor,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{anyhow, bail, Result};
-use c2pa::{Error, Ingredient, IngredientOptions, ManifestStore, ManifestStoreReport};
-use clap::Subcommand;
+use anyhow::{bail, Result};
+use c2pa::{Ingredient, IngredientOptions, Manifest, Reader};
+use clap::{Parser, Subcommand};
 
 use crate::commands::{load_trust_settings, Trust};
 
@@ -25,9 +28,9 @@ pub enum View {
         /// Input path to asset.
         path: PathBuf,
 
-        /// Display debug information about the manifest.
+        /// Display detailed information about the manifest.
         #[clap(short, long)]
-        debug: bool,
+        detailed: bool,
 
         #[clap(flatten)]
         trust: Trust,
@@ -49,46 +52,54 @@ pub enum View {
         trust: Trust,
     },
     /// View a tree diagram of the manifest store.
-    Tree {
-        /// Input path to asset.
-        path: PathBuf,
-
-        #[clap(flatten)]
-        trust: Trust,
-    },
-    /// View the manifest certificate chain.
+    Tree(Tree),
+    /// View the active manifest certificate chain.
     Certs {
         /// Input path to asset.
         path: PathBuf,
 
         #[clap(flatten)]
         trust: Trust,
+        //
+        // TODO: expose args to extract certificates from specific manifest
     },
+}
+
+#[derive(Debug, Parser)]
+pub struct Tree {
+    /// Input path to asset.
+    path: PathBuf,
+
+    // TODO: Ideally this would provide full URIs to assertions/manifests, but we need a reliable way to
+    //       get them or manipulate them
+    // /// Display detailed information about the manifest.
+    // #[clap(short, long)]
+    // detailed: bool,
+    //
+    #[clap(flatten)]
+    trust: Trust,
 }
 
 impl View {
     pub fn execute(&self) -> Result<()> {
         match self {
-            View::Manifest { path, debug, trust } => {
+            View::Manifest {
+                path,
+                detailed,
+                trust,
+            } => {
                 if !path.is_file() {
                     bail!("Input path must be a file");
                 }
 
                 load_trust_settings(trust)?;
 
-                let report = match debug {
-                    true => ManifestStoreReport::from_file(path).map(|r| r.to_string()),
-                    false => ManifestStore::from_file(path).map(|r| r.to_string()),
+                let reader = Reader::from_file(path)?;
+                match detailed {
+                    // TODO: c2pa-rs shouldn't output pretty by default unless if # is included
+                    true => println!("{:#?}", reader),
+                    false => println!("{}", reader),
                 };
-
-                let report = match report {
-                    Ok(report) => Ok(report),
-                    Err(Error::JumbfNotFound) => Err(anyhow!("No claim found")),
-                    Err(Error::PrereleaseError) => Err(anyhow!("Prerelease claim found")),
-                    Err(err) => Err(err.into()),
-                }?;
-
-                println!("{report}");
             }
             View::Ingredient { path, trust } => {
                 if !path.is_file() {
@@ -150,8 +161,9 @@ impl View {
                     } else {
                         println!("Validated");
                     }
-                    let manifest_store = ManifestStore::from_bytes("c2pa", &manifest_data, false)?;
-                    match manifest_store.manifests().len() {
+                    let manifest_store =
+                        Reader::from_stream("c2pa", Cursor::new(manifest_data.as_ref()))?;
+                    match manifest_store.iter_manifests().count() {
                         0 => println!("No manifests"),
                         1 => println!("One manifest"),
                         n => println!("{n} manifests"),
@@ -162,15 +174,7 @@ impl View {
                     println!("No C2PA Manifests. (file size = {file_size})");
                 }
             }
-            View::Tree { path, trust } => {
-                if !path.is_file() {
-                    bail!("Input path must be a file");
-                }
-
-                load_trust_settings(trust)?;
-
-                ManifestStoreReport::dump_tree(path)?;
-            }
+            View::Tree(tree) => tree.execute()?,
             View::Certs { path, trust } => {
                 if !path.is_file() {
                     bail!("Input path must be a file");
@@ -178,7 +182,90 @@ impl View {
 
                 load_trust_settings(trust)?;
 
-                ManifestStoreReport::dump_cert_chain(path)?;
+                let reader = Reader::from_file(path)?;
+                match reader.active_manifest() {
+                    Some(active_manifest) => match active_manifest.signature_info() {
+                        Some(signature_info) => println!("{}", signature_info.cert_chain()),
+                        None => bail!("Unable to get signature info from active manifest"),
+                    },
+                    None => bail!("Unable to find active manifest"),
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Tree {
+    pub fn execute(&self) -> Result<()> {
+        if !self.path.is_file() {
+            bail!("Input path must be a file");
+        }
+
+        load_trust_settings(&self.trust)?;
+
+        let reader = Reader::from_file(&self.path)?;
+        match reader.active_manifest() {
+            Some(active_manifest) => {
+                let mut tree = self.tree_from_title(active_manifest.title().unwrap_or(""));
+
+                self.recurse_tree_from_manifest(&reader, active_manifest, &mut tree)?;
+                println!("{}", tree);
+            }
+
+            None => bail!("Unable to find active manifest"),
+        }
+
+        Ok(())
+    }
+
+    fn tree_from_title(&self, title: &str) -> termtree::Tree<String> {
+        termtree::Tree::new(format!("Asset:{}", title))
+    }
+
+    fn recurse_tree_from_manifest(
+        &self,
+        reader: &Reader,
+        manifest: &Manifest,
+        tree: &mut termtree::Tree<String>,
+    ) -> Result<()> {
+        // if self.detailed {
+        if let Some(manifest_label) = manifest.label() {
+            tree.push(format!("Manifest:{}", manifest_label));
+        }
+        // }
+
+        for assertion_ref in manifest.assertion_references() {
+            let url = assertion_ref.url();
+            // let label = if self.detailed {
+            //     &url
+            // } else {
+            //     url.split('/').last().unwrap_or(&url)
+            // };
+            let label = url.split('/').last().unwrap_or(&url);
+
+            tree.push(format!("Assertion:{}", label));
+        }
+
+        for ingredient in manifest.ingredients() {
+            let mut sub_tree = self.tree_from_title(ingredient.title());
+            self.recurse_tree(reader, ingredient, &mut sub_tree)?;
+            tree.push(sub_tree);
+        }
+
+        Ok(())
+    }
+
+    fn recurse_tree(
+        &self,
+        reader: &Reader,
+        ingredient: &Ingredient,
+        tree: &mut termtree::Tree<String>,
+    ) -> Result<()> {
+        if let Some(manifest_label) = ingredient.active_manifest() {
+            if let Some(manifest) = reader.get_manifest(manifest_label) {
+                self.recurse_tree_from_manifest(reader, manifest, tree)?;
             }
         }
 

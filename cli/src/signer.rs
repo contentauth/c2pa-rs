@@ -117,7 +117,7 @@ pub mod tests {
 
     use std::fs;
 
-    use c2pa::{Manifest, ManifestStore};
+    use c2pa::{Manifest, Reader};
 
     use super::*;
 
@@ -183,7 +183,7 @@ pub mod tests {
             .embed(SOURCE_PATH, OUTPUT_PATH, signer.as_ref())
             .expect("embed");
 
-        let ms = ManifestStore::from_file(OUTPUT_PATH)
+        let ms = Reader::from_file(OUTPUT_PATH)
             .expect("from_file")
             .to_string();
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");

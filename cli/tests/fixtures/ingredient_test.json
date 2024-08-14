@@ -1,6 +1,6 @@
 {
     "ta_url": "http://timestamp.digicert.com",
-    
+
     "claim_generator": "TestApp",
     "claim_generator_info": [{
         "name": "Test App",

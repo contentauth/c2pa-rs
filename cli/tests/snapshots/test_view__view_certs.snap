@@ -5,7 +5,7 @@ info:
   args:
     - view
     - certs
-    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/C.jpg
+    - /Users/nicky/Documents/repos/c2patool/tests/fixtures/signed-images/C.jpg
 ---
 success: true
 exit_code: 0
@@ -124,8 +124,5 @@ zR6jFN/gUe42P1lIOfcjLZAM1GHixtjP5gLAp6sJS8X05O8xQRBtnOsEwNLj5w0y
 MAdtwAzT/Vfv7b08qfx4FfQPFmtjvdu4s82gNatxSA==
 -----END CERTIFICATE-----
 
-
-
-Certificate Status: Good, next update: "[TIMESTAMP2]"
 
 ----- stderr -----

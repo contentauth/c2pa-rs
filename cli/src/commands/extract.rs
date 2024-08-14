@@ -10,10 +10,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+};
 
-use anyhow::{bail, Result};
-use c2pa::{jumbf_io, Ingredient, ManifestStore};
+use anyhow::{bail, Context, Result};
+use c2pa::{jumbf_io, Ingredient, Reader};
 use clap::Parser;
 use log::error;
 
@@ -62,24 +65,28 @@ pub enum Extract {
         trust: Trust,
     },
     /// Extract known resources from a manifest (e.g. thumbnails).
-    Resources {
-        /// Input path(s) to asset(s).
-        paths: Vec<PathBuf>,
+    Resources(Resources),
+}
 
-        /// Path to output folder.
-        #[clap(short, long)]
-        output: PathBuf,
+#[derive(Debug, Parser)]
+pub struct Resources {
+    /// Input path(s) to asset(s).
+    paths: Vec<PathBuf>,
 
-        /// Force overwrite output and clear children if it already exists.
-        #[clap(short, long)]
-        force: bool,
+    /// Path to output folder.
+    #[clap(short, long)]
+    output: PathBuf,
 
-        #[clap(flatten)]
-        trust: Trust,
-        //
-        // TODO: add flag for additionally exporting unknown ingredients (ingredients that
-        // do not have a standardized label) as a binary file
-    },
+    /// Force overwrite output and clear children if it already exists.
+    #[clap(short, long)]
+    force: bool,
+
+    /// Also extract resources that are unknown into binary files (unlike known resources, such as thumbnails).
+    #[clap(short, long)]
+    unknown: bool,
+
+    #[clap(flatten)]
+    trust: Trust,
 }
 
 impl Extract {
@@ -116,10 +123,10 @@ impl Extract {
                             // Validates the jumbf refers to a valid manifest.
                             match c2pa::format_from_path(path) {
                                 Some(format) => {
-                                    ManifestStore::from_manifest_and_asset_bytes(
+                                    Reader::from_manifest_data_and_stream(
                                         &manifest,
                                         &format,
-                                        &fs::read(path)?,
+                                        &File::open(path)?,
                                     )?;
                                 }
                                 None => {
@@ -130,8 +137,8 @@ impl Extract {
                         fs::write(output, manifest)?;
                     }
                     false => {
-                        let manifest = ManifestStore::from_file(path)?;
-                        fs::write(output, manifest.to_string())?;
+                        let reader = Reader::from_file(path)?;
+                        fs::write(output, reader.to_string())?;
                     }
                 }
             }
@@ -160,53 +167,93 @@ impl Extract {
                 let ingredient = Ingredient::from_file(path)?;
                 fs::write(output, ingredient.to_string())?;
             }
-            Extract::Resources {
-                paths,
-                output,
-                force,
-                trust,
-            } => {
-                if paths.is_empty() {
-                    bail!("Input path does not exist")
-                }
-
-                if !output.exists() {
-                    fs::create_dir_all(output)?;
-                } else if !output.is_dir() {
-                    bail!("Output path must be a folder");
-                } else if !force {
-                    bail!(
-                        "Output path already exists use `--force` to overwrite and clear children"
-                    );
-                }
-
-                load_trust_settings(trust)?;
-
-                let mut errs = Vec::new();
-                for path in paths {
-                    if path.is_dir() {
-                        bail!("Input path cannot be a folder when extracting resources");
-                    }
-
-                    if let Err(err) = ManifestStore::from_file_with_resources(path, output) {
-                        error!(
-                            "Failed to extract resources from asset at path `{}`, {}",
-                            path.display(),
-                            err.to_string()
-                        );
-                        errs.push(err);
-                    }
-                }
-
-                if !errs.is_empty() {
-                    bail!(
-                        "Failed to extract resources from {}/{} assets",
-                        errs.len(),
-                        paths.len()
-                    );
-                }
-            }
+            Extract::Resources(resources) => resources.execute()?,
         }
         Ok(())
+    }
+}
+
+impl Resources {
+    pub fn execute(&self) -> Result<()> {
+        if self.paths.is_empty() {
+            bail!("Input path does not exist")
+        }
+
+        if !self.output.exists() {
+            fs::create_dir_all(&self.output)?;
+        } else if !self.output.is_dir() {
+            bail!("Output path must be a folder");
+        } else if !self.force {
+            // TODO: if self.force is specified, shuld we clear the folder?
+            bail!("Output path already exists use `--force` to overwrite and clear children");
+        }
+
+        load_trust_settings(&self.trust)?;
+
+        let mut errs = Vec::new();
+        for path in &self.paths {
+            if path.is_dir() {
+                bail!("Input path cannot be a folder when extracting resources");
+            }
+
+            if let Err(err) = self.extract_resources(path) {
+                error!(
+                    "Failed to extract resources from asset at path `{}`, {}",
+                    path.display(),
+                    err.to_string()
+                );
+                errs.push(err);
+            }
+        }
+
+        if !errs.is_empty() {
+            bail!(
+                "Failed to extract resources from {}/{} assets",
+                errs.len(),
+                self.paths.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    fn extract_resources(&self, path: &Path) -> Result<()> {
+        let reader = Reader::from_file(path)?;
+        for manifest in reader.iter_manifests() {
+            let manifest_path = self.output.join(
+                manifest
+                    .label()
+                    .context("Failed to get manifest label")?
+                    .replace(':', "_"),
+            );
+            for resource_ref in manifest.iter_resources() {
+                if !self.unknown && resource_ref.format == "application/octet-stream" {
+                    continue;
+                }
+
+                let uri = self.normalize_uri(&resource_ref.identifier);
+                let resource_path = manifest_path.join(&uri);
+                fs::create_dir_all(
+                    resource_path
+                        .parent()
+                        .context("Failed to find resource parent path from label")?,
+                )?;
+                reader
+                    .resource_to_stream(&resource_ref.identifier, File::create(&resource_path)?)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // TODO: this functionality should be exposed from c2pa-rs
+    //       taken from https://github.com/contentauth/c2pa-rs/blob/2aeafd3888a6b96d00543d29a58c9783f6785f31/sdk/src/resource_store.rs#L225-L263
+    fn normalize_uri(&self, uri: &str) -> String {
+        let mut uri = uri.replace("self#jumbf=", "");
+        if uri.starts_with("/c2pa/") {
+            uri = uri.replacen("/c2pa/", "", 1);
+        }
+        uri = uri.replace([':'], "_");
+        uri
     }
 }
