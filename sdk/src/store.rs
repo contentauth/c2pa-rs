@@ -4835,13 +4835,12 @@ pub mod tests {
 
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
-   
+
         let errors = report_split_errors(report.get_log_mut());
 
         assert!(errors.is_empty());
 
         println!("store = {new_store}");
- 
     }
 
     #[test]
