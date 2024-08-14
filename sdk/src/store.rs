@@ -2849,7 +2849,7 @@ impl Store {
             // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
-            save_jumbf_to_file(&data, &output_path, Some(&dest_path))?;
+            save_jumbf_to_file(&data, &output_path, Some(dest_path))?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
