@@ -5,7 +5,7 @@ default-run = "c2patool"
 # Please do not manually edit `version`. Version updates will be generated
 # automatically when c2patool is published. Remember to use (MINOR) or (MAJOR)
 # tags in the PR title to trigger non-patch updates as needed.
-version = "0.9.3"
+version = "0.9.6"
 
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
@@ -24,6 +24,7 @@ repository = "https://github.com/contentauth/c2patool"
 [dependencies]
 anyhow = "1.0"
 # TODO: temp use ok-nick/roi branch since our fixtures are signed using features from 2.1 spec
+# c2pa = { version = "0.33.1", features = [
 c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "ok-nick/roi", features = [
 	"fetch_remote_manifests",
 	"file_io",
@@ -31,8 +32,8 @@ c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "ok-nick/r
 	"pdf",
 	"unstable_api",
 ] }
-clap = { version = "4.5.2", features = ["derive", "env"] }
-env_logger = "0.9"
+clap = { version = "4.5.10", features = ["derive", "env"] }
+env_logger = "0.11.4"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
@@ -46,7 +47,7 @@ termtree = "0.5.1"
 [dev-dependencies]
 tempfile = "3.3"
 httpmock = "0.7.0"
-mockall = "0.12.1"
+mockall = "0.13.0"
 insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
 insta-cmd = "0.6.0"
 

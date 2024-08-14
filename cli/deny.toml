@@ -3,6 +3,7 @@
 # For further details on all configuration options see:
 # https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 
+[graph]
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "x86_64-apple-darwin" },
@@ -13,14 +14,11 @@ targets = [
 
 # Deny all advisories unless explicitly ignored.
 [advisories]
-vulnerability = "allow" # "deny" # TODO: Re-enable when possible.
-unmaintained = "allow" # "deny" # TODO: Re-enable when possible.
-yanked = "allow" # "deny" # TODO: Re-enable when possible.
-notice = "allow" # "deny" # TODO: Re-enable when possible.
+yanked = "deny"
 ignore = [
-  "RUSTSEC-2021-0127" # serde_cbor
+  "RUSTSEC-2021-0127", # serde_cbor
+  "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
 ]
-
 # Deny multiple versions unless explicitly skipped.
 [bans]
 multiple-versions = "allow" # "deny" # TODO: Re-enable when possible.
@@ -40,8 +38,6 @@ allow = [
   "Unicode-DFS-2016",
   "Zlib",
 ]
-copyleft = "deny"
-unlicensed = "deny"
 confidence-threshold = 0.8
 
 [[licenses.clarify]]

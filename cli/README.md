@@ -177,7 +177,7 @@ Options:
           Do not perform validation of signature after signing
 
       --reserve-size <RESERVE_SIZE>
-          To be used with the [callback_signer] argument. This value should equal: 1024 (CoseSign1) + the size of cert provided in the manifest definition's `sign_cert` field + the size of the signature of the Time Stamp Authority response. For example:
+          To be used with the [callback_signer] argument. This value should at least: size of CoseSign1 CBOR + the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If the reserve size is too small an error will be returned during signing. For example:
 
           The reserve-size can be calculated like this if you aren't including a `tsa_url` key in your manifest description:
 
@@ -635,7 +635,7 @@ c2patool sample/C.jpg
 
 The tool displays the manifest JSON to standard output (stdout).
 
-You may include an `--output` argument to write the contents of the manifest, including the manifest's assertion and ingredient thumbnails, to the provided `output` directory.
+Use the `--output` argument to write the contents of the manifest, (including the manifest's assertion and ingredient thumbnails) to the specified directory.
 
 ```shell
 c2patool sample/C.jpg --output ./report
@@ -643,13 +643,13 @@ c2patool sample/C.jpg --output ./report
 
 #### Detailed manifest report
 
-To display a detailed report describing the internal C2PA format of manifests contained in the asset, use the `-d` option; for example, using one of the example images in the `sample` directory:
+Use the `-d` option to display a detailed report describing the internal C2PA format of manifests contained in the asset; for example, using one of the example images in the `sample` directory:
 
 ```shell
 c2patool sample/C.jpg -d
 ```
 
-The tool displays the detailed report to standard output (stdout) or will add a detailed.json if an output folder is supplied.
+By default, the tool displays the detailed report to standard output (stdout). If you specify an output folder, the tool saves it to a file named `detailed.json` in that folder.
 
 #### Displaying an information report
 
@@ -668,7 +668,8 @@ The tool displays the report to standard output (stdout).
 
 ### Creating an ingredient from a file
 
-The `--ingredient` option will create an ingredient report.  When used with the `--output` folder, it will extract or create a thumbnail image and a binary .c2pa manifest store containing the c2pa data from the file. The JSON ingredient this produces can be added to a manifest definition to carry the full history and validation record of that asset into a newly created manifest.
+The `--ingredient` option creates an ingredient report.  When used with the `--output` folder, it extracts or creates a thumbnail image and a binary `.c2pa` manifest store containing the C2PA data from the file. The JSON ingredient this produces can be added to a manifest definition to carry the full history and validation record of that asset into a newly-created manifest.
+
 Provide the path to the file as the argument; for example:
 
 ```shell
@@ -677,7 +678,7 @@ c2patool sample/C.jpg --ingredient --output ./ingredient
 
 ### Adding a manifest to an asset file
 
-To add C2PA manifest data to a file, use the `--manifest` / `-m` option with a manifest JSON file as the option argument and the path to the asset file to be signed. Specify the output file as the argument to the `--output` / `-o` option. The output extension type must match the source. The tool will not convert between file types. For example:
+Use the `--manifest` / `-m` option to add the C2PA manifest definition file specified in the argument to the asset file to be signed. Specify the output file as the argument to the `--output` / `-o` option. The output extension type must match the source. The tool will not convert between file types. For example:
 
 ```shell
 c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
@@ -686,6 +687,8 @@ c2patool sample/image.jpg -m sample/test.json -o signed_image.jpg
 The tool generates a new manifest using the values given in the file and displays the manifest store to standard output (stdout).
 
 CAUTION: If the output file is the same as the source file, the tool will overwrite the source file.
+
+If the manifest definition file has `private_key` and `sign_cert` fields, then the tool signs the manifest using the private key and certificate they specify, respectively.  Otherwise, the tool uses the built-in test certificate and key, which is suitable for development and testing.  You can also specify the private key and certificate using environment variables; for more information, see [Creating and using an X.509 certificate](x_509.md). 
 
 #### Specifying a parent file
 
@@ -697,7 +700,7 @@ Specify a parent file as the argument to the `--parent` / `-p` option; for examp
 c2patool sample/image.jpg -m sample/test.json -p sample/c.jpg -o signed_image.jpg
 ```
 
-You can pass an ingredient generated with the --ingredient option by giving the folder or ingredient.json file.
+You can pass an ingredient generated with the `--ingredient` option by giving the folder or ingredient JSON file.
 
 ```shell
 c2patool sample/C.jpg --ingredient --output ./ingredient
@@ -718,7 +721,7 @@ c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
 Use the `--sidecar` / `-s` option to put the manifest in an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a `.c2pa` extension. The tool will copy the output file but the original will be untouched.
 
 ```shell
-c2patool image.jpg -s -m sample/test.json -o signed_image.jpg
+c2patool sample/image.jpg -s -m sample/test.json -o signed_image.jpg
 ```
 ### Generating a remote manifest
 
@@ -734,7 +737,10 @@ If you use both the `-s` and `-r` options, the tool embeds a manifest in the out
 
 ### Signing claim bytes with your own signer
 
-You may be unable to provide `c2patool` with a private key when generating a manifest because the private key is not accessible on the system on which you are executing `c2patool`. We provide the `--signer-path` argument for this case. `--signer-path` takes a path to a command-line executable. This executable will receive the claim bytes (the bytes to be signed) via `stdin`, along with a few CLI arguments, and should output, via `stdout` the signature bytes. For example, the following command will use an external signer to sign the asset's claim bytes:
+When generating a manifest, if the private key is not accessible on the system on which you are running the tool, use the `--signer-path` argument to specify the path to an executable that performs signing. 
+This executable receives the claim bytes (the bytes to be signed) from standard input (`stdin`) and outputs the signature bytes to standard output (`stdout`). 
+ 
+ For example, the following command signs the asset's claim bytes by using an executable named `custom-signer`:
 
 ```shell
 c2patool sample/image.jpg            \
@@ -745,9 +751,7 @@ c2patool sample/image.jpg            \
     -f
 ```
 
-You can see an example external signer here: [signer-path-success.rs](./src/bin/signer-path-success.rs).
-
-Please see `c2patool --help` for how to calculate the `--reserve-size` argument.
+For information on calculating the value of the `--reserve-size` argument, see `c2patool --help`.
 
 ### Providing a manifest definition on the command line
 
@@ -774,13 +778,17 @@ Enable trust support by using the `trust` subcommand, as follows:
 c2patool [path] trust [OPTIONS]
 ```
 
-The following additional CLI options are available with the `trust` sub-command:
+Several additional CLI options are available with the `trust` sub-command to specify the location of files containing the trust anchors list or known certificate list, as described in the following table. You can also use environment variables to specify these values.
 
-| Option | Environment variable | Description | Example |
-| ------ | --------------- | ----------- | ------- |
-| `--trust_anchors` | `C2PATOOL_TRUST_ANCHORS` | Specifies a list of trust anchors (in PEM format) used to validate the manifest certificate chain. To be valid, the manifest certificate chain must lead to a certificate on the trust list. All certificates in the trust anchor list must have the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) and the CA attribute of this extension must be `True`. | `sample/trust_anchors.pem` `https://server.com/anchors.pem` |
-| `--allowed_list` | `C2PATOOL_ALLOWED_LIST` | Supersedes the `trust_anchors` check and specifies a list of end-entity certificates (in PEM format) to trust. These certificates are used to sign the manifest. The allowed list must NOT contain certificates with the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) with the CA attribute `True`. | `sample/allowed_list.pem` `https://server.com/allowed.pem` |
-| `--trust_config` | `C2PATOOL_TRUST_CONFIG` | Specifies a set of custom certificate extended key usages (EKUs) to allow. Format is a list with object identifiers in [OID dot notation](http://www.oid-info.com/#oid) format. | `sample/store.cfg` `https://server.com/store.cfg` |
+<div class="trust-table" markdown="1">
+
+| Option | Environment variable | Description |
+| ------ | -------------------- | ----------- | 
+| `--trust_anchors` | `C2PATOOL_TRUST_ANCHORS` | URL or relative path to a file containing a list of trust anchors (in PEM format) used to validate the manifest certificate chain. To be valid, the manifest certificate chain must lead to a certificate on the trust list. All certificates in the trust anchor list must have the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) and the CA attribute of this extension must be `True`.  |
+| `--allowed_list` | `C2PATOOL_ALLOWED_LIST` | URL or relative path to a file containing a list of end-entity certificates (in PEM format) to trust. These certificates are used to sign the manifest. Supersedes the `trust_anchors` setting. The list must NOT contain certificates with the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) with the CA attribute `True`. |
+| `--trust_config` | `C2PATOOL_TRUST_CONFIG` | URL or relative path to a file containing the allowed set of custom certificate extended key usages (EKUs). Each entry in the list is an object identifiers in [OID dot notation](http://www.oid-info.com/#oid) format.  |
+
+</div>
 
 For example:
 
@@ -790,11 +798,19 @@ c2patool sample/C.jpg trust \
   --trust_config sample/store.cfg
 ```
 
-### Using the temporary contentcredentials.org / Verify trust settings
+Another example with URL argument values:
 
-**IMPORTANT:** The C2PA intends to publish an official C2PA Public Trust List. Until that time, temporary known certificate lists used by https://contentcredentials.org/verify have been published. These lists are subject to change, and will be deprecated.
+```shell
+c2patool sample/C.jpg trust \
+  --trust_anchors https://server.com/anchors.pem \
+  --trust_config https://server.com/store.cfg
+```
 
-You can configure your client to use the temporary trust settings used by contentcredentials.org / Verify by setting the following environment variables on your system:
+### Using the Verify known certificate list
+
+**IMPORTANT:** The C2PA intends to publish an official trust list. Until that time, the [C2PA Verify tool uses a temporary known certificate list](https://opensource.contentauthenticity.org/docs/verify-known-cert-list). These lists are subject to change, and will be deprecated when C2PA publishes its trust list.
+
+To configure C2PA tool to use the Verify temporary known certificate list, set the following environment variables on your system:
 
 ```shell
 export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
@@ -802,7 +818,7 @@ export C2PATOOL_ALLOWED_LIST='https://contentcredentials.org/trust/allowed.sha25
 export C2PATOOL_TRUST_CONFIG='https://contentcredentials.org/trust/store.cfg'
 ```
 
-**Note:** Setting these variables will make several HTTP requests each time `c2patool` is called. As these lists may change without notice (with the allowed list changing quite frequently) this may be desired to stay in sync with what is displayed on the Verify site. However, if working with bulk operations, you may want to locally cache these files to avoid an abundance of network calls.
+**Note:** When these environment variables are set, C2PA Tool will make several HTTP requests each time it  runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
 
 You can then run:
 
@@ -810,9 +826,7 @@ You can then run:
 c2patool sample/C.jpg trust
 ```
 
-**Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
-
-Additionally, if you do not want to use environment variables, you can pass these values as arguments instead:
+You can also specify these values as CLI arguments instead:
 
 ```shell
 c2patool sample/C.jpg trust \
@@ -820,6 +834,8 @@ c2patool sample/C.jpg trust \
   --allowed_list='https://contentcredentials.org/trust/allowed.sha256.txt' \
   --trust_config='https://contentcredentials.org/trust/store.cfg'
 ```
+
+**Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
 
 ## Nightly builds
 
