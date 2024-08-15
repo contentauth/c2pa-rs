@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ windows-latest, macos-latest, ubuntu-latest ]
-        rust_version: [ stable, 1.74.0 ]
+        rust_version: [ stable ]
 
     steps:
       - name: Checkout repository

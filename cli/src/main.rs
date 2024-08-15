@@ -149,7 +149,7 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-     /// Sub-command to configure trust store options, "trust --help for more details"
+    /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
         /// URL or path to file containing list of trust anchors in PEM format
         #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]

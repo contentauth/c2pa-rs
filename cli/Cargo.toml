@@ -17,7 +17,6 @@ documentation = "https://opensource.contentauthenticity.org/docs/c2patool"
 readme = "README.md"
 keywords = ["c2pa", "xmp", "metadata"]
 edition = "2018"
-rust-version = "1.74.0"
 homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2patool"
 
