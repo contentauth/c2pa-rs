@@ -6,6 +6,18 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.33.2
+_15 August 2024_
+
+* Bmff write fix ([#552](https://github.com/contentauth/c2pa-rs/pull/552))
+* Fix remote embedding RIFF when specifying mime type ([#551](https://github.com/contentauth/c2pa-rs/pull/551))
+* Fix data hash out of bounds when using placeholder beyond stream length ([#546](https://github.com/contentauth/c2pa-rs/pull/546))
+* Adds embeddable apis and remote_url/no_embed options ([#537](https://github.com/contentauth/c2pa-rs/pull/537))
+* export_schema: add unstable_api feature ([#542](https://github.com/contentauth/c2pa-rs/pull/542))
+* Ingredient checks ([#529](https://github.com/contentauth/c2pa-rs/pull/529))
+* Add base_path field to Builder ([#539](https://github.com/contentauth/c2pa-rs/pull/539))
+* Export `AssertionDefinition` and `ActionTemplate` in public API ([#522](https://github.com/contentauth/c2pa-rs/pull/522))
+
 ## 0.33.1
 _30 July 2024_
 
