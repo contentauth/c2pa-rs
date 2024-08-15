@@ -103,20 +103,25 @@ impl Stabilizer {
                         let original_value = original_map.remove(key).unwrap();
                         original_map.insert(stabilized_key.to_owned(), original_value);
                     }
+
+                    // If the modified map doesn't contain this key, then it could've been removed or
+                    // moved somewhere else, which we currently do not handle, so ignore it.
+                    if !modified_map.contains_key(key) {
+                        original_map.remove(key);
+                    }
                 }
 
+                // TODO: dedup with above
                 for (mut key, _) in modified_map.clone().into_iter() {
                     self.stabilize_value_replace(modified_map.get_mut(&key).unwrap());
 
-                    // TODO: dedup with above
                     if let Some(stabilized_key) = self.stabilize_value(&key) {
                         let modified_value = modified_map.remove(&key).unwrap();
                         modified_map.insert(stabilized_key.to_owned(), modified_value);
                         key = stabilized_key.to_owned();
                     }
 
-                    // If the original map doesn't contain the key by this point, then we know it's a new field
-                    // introduced in a newer version of c2pa-rs, so ignore it.
+                    // Same reasoning here as above.
                     if !original_map.contains_key(&key) {
                         modified_map.remove(&key);
                     } else {
