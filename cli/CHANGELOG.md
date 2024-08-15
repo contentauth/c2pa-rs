@@ -6,6 +6,12 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.7
+_15 August 2024_
+
+* Update to latest c2pa SDK ([contentauth/c2patool#222](https://github.com/contentauth/c2patool/pull/222))
+* Remove rust toolchain version lock ([contentauth/c2patool#221](https://github.com/contentauth/c2patool/pull/221))
+* Update security guidance to link to SECURITY.md ([contentauth/c2patool#217](https://github.com/contentauth/c2patool/pull/217))
 ## 0.9.6
 _30 July 2024_
 
