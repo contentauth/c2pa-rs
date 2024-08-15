@@ -14,6 +14,7 @@
 use std::{
     fs::{self, File},
     io::Cursor,
+    mem,
     path::PathBuf,
     thread,
 };
@@ -79,7 +80,6 @@ impl Stabilizer {
         }
     }
 
-    // TODO: restructure this function so it takes into account top-level fields
     // This function does two things:
     // * Stabilizes unstable keys/values
     // * Filters new features/fields that do not exist in the original json
@@ -124,8 +124,12 @@ impl Stabilizer {
                     }
                 }
             }
-            _ => {
-                // In this case, the structure of the json is different, therefore not a match
+            (original, modified) => {
+                // In this case, we have differing types, so filter them for now.
+                if mem::discriminant(original) != mem::discriminant(modified) {
+                    *original = Value::Null;
+                    *modified = Value::Null;
+                }
             }
         }
     }

@@ -10,7 +10,7 @@ A tool for generating a "compatibility snapshot" of all supported asset types wi
 When `c2pa-compat` is executed, it will create a compatibility snapshot in `sdk/tests/fixtures/compat/<VERSION>`, where `<VERSON>` represents the current `c2pa-rs` version. Take a look at what an example snapshot might look like:
 
     .
-    ├── gif                    # Snapshot for a gif asset 
+    ├── gif                     # Snapshot for a gif asset 
     │   ├── embedded.c2pa       # Binary C2PA manifest for embedded asset
     │   ├── embedded.json       # JSON C2PA manifest (read after signing) for embedded asset
     │   ├── embedded.patch      # Asset embedded with C2PA manifest diffed against original asset
