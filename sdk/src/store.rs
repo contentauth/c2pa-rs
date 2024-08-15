@@ -2849,7 +2849,7 @@ impl Store {
             // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
-            save_jumbf_to_file(&data, &output_path, Some(&output_path))?;
+            save_jumbf_to_file(&data, &output_path, Some(dest_path))?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -4834,7 +4834,13 @@ pub mod tests {
         let mut report = DetailedStatusTracker::new();
 
         // can we read back in
-        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+
+        assert!(errors.is_empty());
+
+        println!("store = {new_store}");
     }
 
     #[test]
