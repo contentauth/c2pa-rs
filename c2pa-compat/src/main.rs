@@ -12,9 +12,11 @@
 // each license.
 
 use std::{
+    env,
     fs::{self, File},
     io::Cursor,
     path::{Path, PathBuf},
+    process,
 };
 
 use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
@@ -73,7 +75,22 @@ impl CompatDetails {
     }
 }
 
+// TODO: take a param to either generate version or latest --current-version flag
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Must specify path to snapshot output as argument.");
+        process::exit(-1);
+    }
+
+    let snapshot_path = Path::new(&args[1]);
+    if snapshot_path.exists() {
+        // fs::remove_dir_all(&compat_dir)?;
+        eprintln!("Snapshout output path already exists.");
+        process::exit(-1);
+    }
+    fs::create_dir(snapshot_path)?;
+
     // TODO: these assets should ideally be as small as possible (however, they are diffed anyways)
     let mut details = CompatDetails::new(vec![
         CompatAssetDetails::new("C.jpg", "jpeg"),
@@ -85,14 +102,8 @@ fn main() -> Result<()> {
         CompatAssetDetails::new("libpng-test.png", "png"),
         CompatAssetDetails::new("TUSCANY.TIF", "tiff"),
     ]);
+
     let fixtures_path = PathBuf::from(FIXTURES_PATH);
-
-    let compat_dir = fixtures_path.join("compat").join(c2pa::VERSION);
-    if Path::new(&compat_dir).exists() {
-        fs::remove_dir_all(&compat_dir)?;
-    }
-    fs::create_dir(&compat_dir)?;
-
     let public_key = fs::read(fixtures_path.join(&details.certificate))?;
     let private_key = fs::read(fixtures_path.join(&details.private_key))?;
 
@@ -108,7 +119,7 @@ fn main() -> Result<()> {
         );
 
         let mut embedded_builder = Builder::from_json(FULL_MANIFEST)?;
-        embedded_builder.base_path = Some(PathBuf::from(FIXTURES_PATH));
+        embedded_builder.base_path = Some(fixtures_path.clone());
 
         let mut signed_embedded_asset = Cursor::new(Vec::new());
         let embedded_c2pa_manifest = embedded_builder.sign(
@@ -126,15 +137,15 @@ fn main() -> Result<()> {
             &mut signed_embedded_asset,
         )?;
 
-        let dir_path = compat_dir.join(&asset_details.category);
+        let dir_path = snapshot_path.join(&asset_details.category);
         fs::create_dir(&dir_path)?;
 
         let mut remote_builder = Builder::from_json(FULL_MANIFEST)?;
-        remote_builder.base_path = Some(PathBuf::from(FIXTURES_PATH));
+        remote_builder.base_path = Some(fixtures_path.clone());
         remote_builder.no_embed = true;
         remote_builder.remote_url = Some(format!(
             "http://localhost:8000/{}/{}/remote.c2pa",
-            c2pa::VERSION,
+            snapshot_path.file_name().unwrap().to_str().unwrap(),
             asset_details.category
         ));
 
@@ -201,9 +212,9 @@ fn main() -> Result<()> {
         serde_json::to_writer(&mut embedded_json_manifest, &embedded_reader)?;
     }
 
-    fs::write(compat_dir.join("manifest.json"), FULL_MANIFEST)?;
+    fs::write(snapshot_path.join("manifest.json"), FULL_MANIFEST)?;
     fs::write(
-        compat_dir.join("compat-details.json"),
+        snapshot_path.join("compat-details.json"),
         serde_json::to_string(&details)?,
     )?;
 

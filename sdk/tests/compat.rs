@@ -15,7 +15,7 @@ use std::{
     fs::{self, File},
     io::Cursor,
     mem,
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
 };
 
@@ -54,11 +54,19 @@ pub struct CompatDetails {
 
 // Stabilizes hashes/uuids, all values prone to change during signing.
 #[derive(Debug)]
-struct Stabilizer {}
+struct Stabilizer {
+    skip_unknown: bool,
+}
 
 impl Stabilizer {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            skip_unknown: false,
+        }
+    }
+
+    pub fn with_skip_unknown() -> Self {
+        Self { skip_unknown: true }
     }
 
     // Returns whether or not the value needs to be stabilized and the new stabilized value.
@@ -106,7 +114,7 @@ impl Stabilizer {
 
                     // If the modified map doesn't contain this key, then it could've been removed or
                     // moved somewhere else, which we currently do not handle, so ignore it.
-                    if !modified_map.contains_key(key) {
+                    if self.skip_unknown && !modified_map.contains_key(key) {
                         original_map.remove(key);
                     }
                 }
@@ -122,7 +130,7 @@ impl Stabilizer {
                     }
 
                     // Same reasoning here as above.
-                    if !original_map.contains_key(&key) {
+                    if self.skip_unknown && !original_map.contains_key(&key) {
                         modified_map.remove(&key);
                     } else {
                         self.stabilize(&mut original_map[&key], &mut modified_map[&key]);
@@ -131,7 +139,7 @@ impl Stabilizer {
             }
             (original, modified) => {
                 // In this case, we have differing types, so filter them for now.
-                if mem::discriminant(original) != mem::discriminant(modified) {
+                if self.skip_unknown && mem::discriminant(original) != mem::discriminant(modified) {
                     *original = Value::Null;
                     *modified = Value::Null;
                 }
@@ -140,114 +148,123 @@ impl Stabilizer {
     }
 }
 
-fn serve_remote_manifests() -> Result<()> {
-    thread::spawn(|| {
+fn serve_remote_manifests(snapshot_path: PathBuf) {
+    thread::spawn(move || {
         let server = Server::http("localhost:8000").unwrap();
 
         for request in server.incoming_requests() {
-            let response = Response::from_file(
-                File::open(format!("{FIXTURES_PATH}/compat/{}", request.url())).unwrap(),
-            );
+            let response =
+                Response::from_file(File::open(snapshot_path.join(&request.url()[1..])).unwrap());
             request.respond(response).unwrap();
         }
     });
+}
+
+// TODO: make failed assertions pretty output
+fn verify_snapshot(mut stabilizer: Stabilizer, snapshot_path: &Path) -> Result<()> {
+    let details: CompatDetails =
+        serde_json::from_reader(File::open(snapshot_path.join("compat-details.json"))?)?;
+
+    for asset_details in details.assets {
+        let asset_dir = snapshot_path.join(&asset_details.category);
+
+        let format = c2pa::format_from_path(&asset_details.asset).unwrap();
+        let original_asset = fs::read(Path::new(FIXTURES_PATH).join(&asset_details.asset))?;
+
+        // Some versions of c2pa-rs don't support remote writing for certain assets.
+        if let Some(remote_size) = asset_details.remote_size {
+            let expected_remote_asset_patch = fs::read(asset_dir.join("remote.patch"))?;
+            let expected_remote_asset_patch = lz4_flex::decompress(
+                &expected_remote_asset_patch,
+                remote_size.uncompressed_patch_size,
+            )
+            .expect("Failed to decompress remote patch.");
+            let mut expected_remote_asset = Vec::with_capacity(remote_size.applied_size);
+            bsdiff::patch(
+                &original_asset,
+                &mut Cursor::new(expected_remote_asset_patch),
+                &mut expected_remote_asset,
+            )
+            .expect("Failed to apply remote patch.");
+
+            let expected_remote_reader: Reader =
+                serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
+            let mut expected_remote_json_manifest = serde_json::to_value(expected_remote_reader)?;
+
+            let mut actual_json_from_remote_asset = serde_json::to_value(Reader::from_stream(
+                &format,
+                Cursor::new(expected_remote_asset),
+            )?)?;
+            stabilizer.stabilize(
+                &mut expected_remote_json_manifest,
+                &mut actual_json_from_remote_asset,
+            );
+
+            assert_eq!(expected_remote_json_manifest, actual_json_from_remote_asset);
+        }
+
+        let embedded_size = asset_details.embedded_size;
+
+        let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
+        let expected_embedded_asset_patch = lz4_flex::decompress(
+            &expected_embedded_asset_patch,
+            embedded_size.uncompressed_patch_size,
+        )
+        .expect("Failed to decompress embedded patch.");
+        let mut expected_embedded_asset = Vec::with_capacity(embedded_size.applied_size);
+        bsdiff::patch(
+            &original_asset,
+            &mut Cursor::new(expected_embedded_asset_patch),
+            &mut expected_embedded_asset,
+        )
+        .expect("Failed to apply embedded patch.");
+
+        let expected_embedded_reader: Reader =
+            serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
+        let mut expected_embedded_json_manifest = serde_json::to_value(&expected_embedded_reader)?;
+
+        // We filter any new keys added when reading with the new version of c2pa-rs. This covers the case where
+        // if a new field is added to a new version of c2pa-rs, it still reports as correct because the old fields
+        // are still the same.
+        let mut actual_json_from_embedded_asset = serde_json::to_value(Reader::from_stream(
+            &format,
+            Cursor::new(expected_embedded_asset),
+        )?)?;
+        stabilizer.stabilize(
+            &mut expected_embedded_json_manifest,
+            &mut actual_json_from_embedded_asset,
+        );
+
+        // Note that we don't assert the binary manifest because they can still be different, we aren't providing
+        // guarantees that they are stored the same, we are guaranteeing that they can still be read the same.
+        assert_eq!(
+            expected_embedded_json_manifest,
+            actual_json_from_embedded_asset
+        );
+    }
 
     Ok(())
 }
 
 #[test]
 fn test_compat() -> Result<()> {
-    serve_remote_manifests()?;
+    let compat_dir = Path::new(FIXTURES_PATH).join("compat");
+    serve_remote_manifests(compat_dir.to_path_buf());
 
-    let fixtures_path = PathBuf::from(FIXTURES_PATH);
-    for version_dir in fs::read_dir(fixtures_path.join("compat"))? {
-        let version_dir = version_dir?.path();
-
-        let details: CompatDetails =
-            serde_json::from_reader(File::open(version_dir.join("compat-details.json"))?)?;
-
-        for asset_details in details.assets {
-            let asset_dir = version_dir.join(&asset_details.category);
-
-            let format = c2pa::format_from_path(&asset_details.asset).unwrap();
-            let original_asset = fs::read(fixtures_path.join(&asset_details.asset))?;
-
-            let mut stabilizer = Stabilizer::new();
-
-            // Some versions of c2pa-rs don't support remote writing for certain assets.
-            if let Some(remote_size) = asset_details.remote_size {
-                let expected_remote_asset_patch = fs::read(asset_dir.join("remote.patch"))?;
-                let expected_remote_asset_patch = lz4_flex::decompress(
-                    &expected_remote_asset_patch,
-                    remote_size.uncompressed_patch_size,
-                )
-                .expect("Failed to decompress remote patch.");
-                let mut expected_remote_asset = Vec::with_capacity(remote_size.applied_size);
-                bsdiff::patch(
-                    &original_asset,
-                    &mut Cursor::new(expected_remote_asset_patch),
-                    &mut expected_remote_asset,
-                )
-                .expect("Failed to apply remote patch.");
-
-                let expected_remote_reader: Reader =
-                    serde_json::from_reader(File::open(asset_dir.join("remote.json"))?)?;
-                let mut expected_remote_json_manifest =
-                    serde_json::to_value(expected_remote_reader)?;
-
-                let mut actual_json_from_remote_asset = serde_json::to_value(Reader::from_stream(
-                    &format,
-                    Cursor::new(expected_remote_asset),
-                )?)?;
-                stabilizer.stabilize(
-                    &mut expected_remote_json_manifest,
-                    &mut actual_json_from_remote_asset,
-                );
-
-                assert_eq!(expected_remote_json_manifest, actual_json_from_remote_asset);
-            }
-
-            let embedded_size = asset_details.embedded_size;
-
-            let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
-            let expected_embedded_asset_patch = lz4_flex::decompress(
-                &expected_embedded_asset_patch,
-                embedded_size.uncompressed_patch_size,
-            )
-            .expect("Failed to decompress embedded patch.");
-            let mut expected_embedded_asset = Vec::with_capacity(embedded_size.applied_size);
-            bsdiff::patch(
-                &original_asset,
-                &mut Cursor::new(expected_embedded_asset_patch),
-                &mut expected_embedded_asset,
-            )
-            .expect("Failed to apply embedded patch.");
-
-            let expected_embedded_reader: Reader =
-                serde_json::from_reader(File::open(asset_dir.join("embedded.json"))?)?;
-            let mut expected_embedded_json_manifest =
-                serde_json::to_value(&expected_embedded_reader)?;
-
-            // We filter any new keys added when reading with the new version of c2pa-rs. This covers the case where
-            // if a new field is added to a new version of c2pa-rs, it still reports as correct because the old fields
-            // are still the same.
-            let mut actual_json_from_embedded_asset = serde_json::to_value(Reader::from_stream(
-                &format,
-                Cursor::new(expected_embedded_asset),
-            )?)?;
-            stabilizer.stabilize(
-                &mut expected_embedded_json_manifest,
-                &mut actual_json_from_embedded_asset,
-            );
-
-            // Note that we don't assert the binary manifest because they can still be different, we aren't providing
-            // guarantees that they are stored the same, we are guaranteeing that they can still be read the same.
-            assert_eq!(
-                expected_embedded_json_manifest,
-                actual_json_from_embedded_asset
-            );
+    for version_dir in fs::read_dir(compat_dir)? {
+        let version_dir = version_dir?;
+        if &version_dir.file_name() != "latest" {
+            verify_snapshot(Stabilizer::with_skip_unknown(), &version_dir.path())?;
         }
     }
 
     Ok(())
+}
+
+#[test]
+fn test_latest_compat() -> Result<()> {
+    let compat_dir = Path::new(FIXTURES_PATH).join("compat");
+    serve_remote_manifests(compat_dir.to_path_buf());
+
+    verify_snapshot(Stabilizer::new(), &compat_dir.join("latest"))
 }

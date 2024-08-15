@@ -12,15 +12,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Get latest existing tag
+        uses: WyriHaximus/github-action-get-previous-tag@v1
+        id: get-latest-tag
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Create compat snapshot
-        run: cargo run -p c2pa-compat
-
-      - name: Get latest existing tag
-        uses: WyriHaximus/github-action-get-previous-tag@v1
-        id: get-latest-tag
+        run: cargo run -p c2pa-compat sdk/tests/fixtures/compat/${{ steps.get-latest-tag.outputs.tag }}
 
       - name: Send compat PR
         uses: peter-evans/create-pull-request@v6

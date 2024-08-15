@@ -29,6 +29,8 @@ When `c2pa-compat` is executed, it will create a compatibility snapshot in `sdk/
     │   └── ...
     ├── tiff
     │   └── ...
+    ├── bmff
+    │   └── ...
     ├── compat-details.json     # Details about all of the assets in the snapshot
     └── manifest.json           # Original JSON manifest used for signing
 
@@ -42,6 +44,8 @@ Starting from the top, `compat-details.json` stores important information, such 
 Getting into each asset folder, there will be either 3 or 6 files, depending on if the asset supports remote manifests. Each folder will contain an embedded/remote binary C2PA manifest, a JSON manifest which is the result of reading the signed asset, and a patch file. The JSON manifest is used in the integration test for the expected comparison, and the patch file is a diffed and compressed binary file of the original asset containing the signed manifest (diffing drastically reduces storage size).
 
 With this information, an integration test located at `sdk/tests/compat.rs` will attempt to read each asset and verify the result against the expected JSON manifest. If they match, compatibility ensured, if not, something went wrong. A potential issue that may occur is when a new version of `c2pa-rs` introduces a new field, removes an old field, or changes the location of an existing field. Currently, there is no method to verify this. The integration test will ignore unknown fields that aren't available in both JSON manifests (the expected and read value). In the case where some fields/values may change after each sign (e.g. UUIDs, XMP IDs, etc.), the integration test will filter these values into something like "[URN_UUID]" or "[XMP_ID]". For more information, [read here](https://github.com/contentauth/c2pa-rs/pull/513#issuecomment-2291265657).
+
+After every release of `c2pa-rs`, in `.github/workflows/publish.yml`, a job will run and generate  a `c2pa-compat` snapshot for the current version, then automatically send a pull request.
 
 ## How to maintain it
 - `src/full-manifest.json` should always contain every possible manifest feature for every release.
