@@ -701,7 +701,7 @@ expression: "unescape_json(&Reader::from_file(output_path.join(input2_name))?.js
           "label": "cawg.training-mining"
         }
       ],
-      "claim_generator": "test_app/0.0.1 c2patool/0.9.3 c2pa-rs/0.33.1",
+      "claim_generator": "test_app/0.0.1 c2patool/0.9.6 c2pa-rs/0.33.1",
       "claim_generator_info": [
         {
           "icon": {
@@ -713,7 +713,7 @@ expression: "unescape_json(&Reader::from_file(output_path.join(input2_name))?.js
         },
         {
           "name": "c2patool",
-          "version": "0.9.3"
+          "version": "0.9.6"
         },
         {
           "name": "c2pa-rs",
