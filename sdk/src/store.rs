@@ -1597,13 +1597,17 @@ impl Store {
         if found_jumbf {
             // add exclusion hash for bytes before and after jumbf
             let mut dh = DataHash::new("jumbf manifest", alg);
-            if block_end > block_start {
-                dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
-            }
 
             if calc_hashes {
+                if block_end > block_start && (block_end as u64) <= stream_len {
+                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
+                }
+
                 // this check is only valid on the final sized asset
-                if block_end as u64 > stream_len {
+                //
+                // a case may occur where there is no existing manifest in the stream and the
+                // asset handler creates a placeholder beyond the length of the stream
+                if block_end as u64 > stream_len + (block_end - block_start) as u64 {
                     return Err(Error::BadParam(
                         "data hash exclusions out of range".to_string(),
                     ));
@@ -1611,6 +1615,10 @@ impl Store {
 
                 dh.gen_hash_from_stream(stream)?;
             } else {
+                if block_end > block_start {
+                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
+                }
+
                 match alg {
                     "sha256" => dh.set_hash([0u8; 32].to_vec()),
                     "sha384" => dh.set_hash([0u8; 48].to_vec()),
@@ -2517,7 +2525,7 @@ impl Store {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // Add remote reference XMP if needed and strip out existing manifest
-        // We don't need to strip manifests if we are replacing an exsiting one
+        // We don't need to strip manifests if we are replacing an existing one
         let (url, remove_manifests) = match pc.remote_manifest() {
             RemoteManifest::NoRemote => (None, false),
             RemoteManifest::SideCar => (None, true),
@@ -2841,7 +2849,7 @@ impl Store {
             // source and dest the same so save_jumbf_to_file will use the same file since we have already cloned
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
-            save_jumbf_to_file(&data, &output_path, Some(&output_path))?;
+            save_jumbf_to_file(&data, &output_path, Some(dest_path))?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -4826,7 +4834,13 @@ pub mod tests {
         let mut report = DetailedStatusTracker::new();
 
         // can we read back in
-        let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+
+        assert!(errors.is_empty());
+
+        println!("store = {new_store}");
     }
 
     #[test]
