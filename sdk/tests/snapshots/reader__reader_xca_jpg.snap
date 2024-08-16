@@ -45,7 +45,7 @@ expression: unescape_json(&reader.json())?
           "label": "c2pa.actions"
         }
       ],
-      "claim_generator": "make_test_images/0.33.1 c2pa-rs/[VERSION]",
+      "claim_generator": "make_test_images/[VERSION] c2pa-rs/[VERSION]",
       "claim_generator_info": [
         {
           "name": "make_test_images",

@@ -56,7 +56,7 @@ macro_rules! apply_filters {
         // Timestamp2
         settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
         // Claim generator info.
-        settings.add_filter(&format!(r#"{}""#, env!("CARGO_PKG_VERSION")), r#"[VERSION]""#);
+        settings.add_filter(env!("CARGO_PKG_VERSION"), "[VERSION]");
         let _guard = settings.bind_to_scope();
     }
 }

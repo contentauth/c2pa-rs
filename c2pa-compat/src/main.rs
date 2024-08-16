@@ -14,11 +14,12 @@
 use std::{
     env,
     fs::{self, File},
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     process,
 };
 
+use brotli::CompressorWriter;
 use c2pa::{Builder, CallbackSigner, Error, Reader, Result, SigningAlg};
 use serde::Serialize;
 
@@ -28,9 +29,12 @@ const FULL_MANIFEST: &str = include_str!("../../sdk/tests/fixtures/simple_manife
 
 const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sdk/tests/fixtures");
 
+const COMPRESSION_LEVEL: u32 = 11;
+const COMPRESSION_WINDOW_SIZE: u32 = 22;
+
 #[derive(Debug, Serialize)]
 pub struct BinarySize {
-    uncompressed_patch_size: usize,
+    decompressed_patch_size: usize,
     applied_size: usize,
 }
 
@@ -86,7 +90,7 @@ fn main() -> Result<()> {
     let snapshot_path = Path::new(&args[1]);
     if snapshot_path.exists() {
         // fs::remove_dir_all(&compat_dir)?;
-        eprintln!("Snapshout output path already exists.");
+        eprintln!("Snapshot output path already exists.");
         process::exit(-1);
     }
     fs::create_dir(snapshot_path)?;
@@ -175,13 +179,21 @@ fn main() -> Result<()> {
                 .expect("Failed to make remote diff.");
 
                 asset_details.remote_size = Some(BinarySize {
-                    uncompressed_patch_size: signed_remote_asset_patch.len(),
+                    decompressed_patch_size: signed_remote_asset_patch.len(),
                     applied_size: remote_size,
                 });
 
-                let signed_remote_asset_patch = lz4_flex::compress(&signed_remote_asset_patch);
+                let mut compressed_signed_remote_asset_patch =
+                    Vec::with_capacity(signed_remote_asset_patch.len());
+                let mut compressor = CompressorWriter::new(
+                    &mut compressed_signed_remote_asset_patch,
+                    signed_remote_asset_patch.len(),
+                    COMPRESSION_LEVEL,
+                    COMPRESSION_WINDOW_SIZE,
+                );
+                compressor.write_all(&signed_remote_asset_patch)?;
 
-                fs::write(dir_path.join("remote.patch"), signed_remote_asset_patch)?;
+                fs::write(dir_path.join("remote.patch"), compressor.into_inner())?;
                 fs::write(dir_path.join("remote.c2pa"), remote_c2pa_manifest)?;
                 let mut remote_json_manifest = File::create(dir_path.join("remote.json"))?;
                 serde_json::to_writer(&mut remote_json_manifest, &remote_reader)?;
@@ -199,13 +211,21 @@ fn main() -> Result<()> {
         .expect("Failed to make embedded diff.");
 
         asset_details.embedded_size = Some(BinarySize {
-            uncompressed_patch_size: signed_embedded_asset_patch.len(),
+            decompressed_patch_size: signed_embedded_asset_patch.len(),
             applied_size: embedded_size,
         });
 
-        let signed_embedded_asset_patch = lz4_flex::compress(&signed_embedded_asset_patch);
+        let mut compressed_signed_embedded_asset_patch =
+            Vec::with_capacity(signed_embedded_asset_patch.len());
+        let mut compressor = CompressorWriter::new(
+            &mut compressed_signed_embedded_asset_patch,
+            signed_embedded_asset_patch.len(),
+            COMPRESSION_LEVEL,
+            COMPRESSION_WINDOW_SIZE,
+        );
+        compressor.write_all(&signed_embedded_asset_patch)?;
 
-        fs::write(dir_path.join("embedded.patch"), signed_embedded_asset_patch)?;
+        fs::write(dir_path.join("embedded.patch"), compressor.into_inner())?;
         fs::write(dir_path.join("embedded.c2pa"), embedded_c2pa_manifest)?;
         // Use serde_json::to_writer to avoid escaping
         let mut embedded_json_manifest = File::create(dir_path.join("embedded.json"))?;

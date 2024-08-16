@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # TODO: make this job run only when there's a minor semver change 
   compat-snapshot:
     runs-on: ubuntu-latest
     steps:

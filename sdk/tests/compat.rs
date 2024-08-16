@@ -13,12 +13,13 @@
 
 use std::{
     fs::{self, File},
-    io::Cursor,
+    io::{Cursor, Read},
     mem,
     path::{Path, PathBuf},
     thread,
 };
 
+use brotli::Decompressor;
 use c2pa::{Reader, Result, SigningAlg};
 use serde::Deserialize;
 use serde_json::Value;
@@ -28,7 +29,7 @@ const FIXTURES_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures
 
 #[derive(Debug, Deserialize)]
 pub struct BinarySize {
-    uncompressed_patch_size: usize,
+    decompressed_patch_size: usize,
     applied_size: usize,
 }
 
@@ -174,11 +175,15 @@ fn verify_snapshot(mut stabilizer: Stabilizer, snapshot_path: &Path) -> Result<(
         // Some versions of c2pa-rs don't support remote writing for certain assets.
         if let Some(remote_size) = asset_details.remote_size {
             let expected_remote_asset_patch = fs::read(asset_dir.join("remote.patch"))?;
-            let expected_remote_asset_patch = lz4_flex::decompress(
-                &expected_remote_asset_patch,
-                remote_size.uncompressed_patch_size,
-            )
-            .expect("Failed to decompress remote patch.");
+
+            let mut decompressor = Decompressor::new(
+                Cursor::new(expected_remote_asset_patch),
+                remote_size.decompressed_patch_size,
+            );
+            let mut expected_remote_asset_patch =
+                Vec::with_capacity(remote_size.decompressed_patch_size);
+            decompressor.read_to_end(&mut expected_remote_asset_patch)?;
+
             let mut expected_remote_asset = Vec::with_capacity(remote_size.applied_size);
             bsdiff::patch(
                 &original_asset,
@@ -206,11 +211,15 @@ fn verify_snapshot(mut stabilizer: Stabilizer, snapshot_path: &Path) -> Result<(
         let embedded_size = asset_details.embedded_size;
 
         let expected_embedded_asset_patch = fs::read(asset_dir.join("embedded.patch"))?;
-        let expected_embedded_asset_patch = lz4_flex::decompress(
-            &expected_embedded_asset_patch,
-            embedded_size.uncompressed_patch_size,
-        )
-        .expect("Failed to decompress embedded patch.");
+
+        let mut decompressor = Decompressor::new(
+            Cursor::new(expected_embedded_asset_patch),
+            embedded_size.decompressed_patch_size,
+        );
+        let mut expected_embedded_asset_patch =
+            Vec::with_capacity(embedded_size.decompressed_patch_size);
+        decompressor.read_to_end(&mut expected_embedded_asset_patch)?;
+
         let mut expected_embedded_asset = Vec::with_capacity(embedded_size.applied_size);
         bsdiff::patch(
             &original_asset,
@@ -251,20 +260,15 @@ fn test_compat() -> Result<()> {
     let compat_dir = Path::new(FIXTURES_PATH).join("compat");
     serve_remote_manifests(compat_dir.to_path_buf());
 
-    for version_dir in fs::read_dir(compat_dir)? {
+    // TODO: ignore other directories/files like .DS_Store
+    for version_dir in fs::read_dir(&compat_dir)? {
         let version_dir = version_dir?;
         if &version_dir.file_name() != "latest" {
             verify_snapshot(Stabilizer::with_skip_unknown(), &version_dir.path())?;
         }
     }
 
-    Ok(())
-}
-
-#[test]
-fn test_latest_compat() -> Result<()> {
-    let compat_dir = Path::new(FIXTURES_PATH).join("compat");
-    serve_remote_manifests(compat_dir.to_path_buf());
-
+    // TODO: This should be in a separate test case, but then we'd need to setup
+    //       serve_remote_manifests to only start up one global server.
     verify_snapshot(Stabilizer::new(), &compat_dir.join("latest"))
 }
