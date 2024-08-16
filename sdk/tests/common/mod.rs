@@ -56,7 +56,8 @@ macro_rules! apply_filters {
         // Timestamp2
         settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
         // Claim generator info.
-        settings.add_filter(env!("CARGO_PKG_VERSION"), "[VERSION]");
+        // NOTE: using env!("CARGO_PACKAGE_VERSION") here for some reason uses the version on main branch instead of local.
+        settings.add_filter(c2pa::VERSION, "[VERSION]");
         let _guard = settings.bind_to_scope();
     }
 }
