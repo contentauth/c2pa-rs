@@ -80,7 +80,11 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests
+      - name: Run Wasm tests (c2pa-crypto)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./crypto
+
+      - name: Run Wasm tests (c2pa-rs)
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
