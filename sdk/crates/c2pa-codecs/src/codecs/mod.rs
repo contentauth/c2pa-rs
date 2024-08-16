@@ -16,8 +16,8 @@
 pub mod c2pa;
 #[cfg(feature = "gif")]
 pub mod gif;
-// #[cfg(feature = "jpeg")]
-// pub mod jpeg_io;
+#[cfg(feature = "jpeg")]
+pub mod jpeg;
 // #[cfg(feature = "mp3")]
 // pub mod mp3_io;
 // #[cfg(feature = "pdf")]

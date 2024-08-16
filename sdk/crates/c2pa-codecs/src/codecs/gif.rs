@@ -19,9 +19,8 @@ use std::{
 use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::{
-    xmp::{self, MIN_XMP},
-    BoxHash, ByteSpan, CodecError, DataHash, Decode, Embed, Embeddable, Encode, Hash,
-    NamedByteSpan, Span, Support,
+    BoxSpan, ByteSpan, C2paSpan, CodecError, Decode, DefaultSpan, Embed, Embeddable, Encode,
+    EncodeInPlace, NamedByteSpan, Span, Support,
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
@@ -40,40 +39,26 @@ impl Support for GifCodec<()> {
     const MAX_SIGNATURE_LEN: usize = 3;
 
     fn supports_signature(signature: &[u8]) -> bool {
-        signature.len() >= 3 && signature == *b"GIF"
+        signature[0..3] == *b"GIF"
     }
 
     fn supports_extension(ext: &str) -> bool {
-        match ext {
-            "gif" => true,
-            _ => false,
-        }
+        matches!(ext, "gif")
     }
 
     fn supports_mime(mime: &str) -> bool {
-        match mime {
-            "image/gif" => true,
-            _ => false,
-        }
+        matches!(mime, "image/gif")
     }
 }
 
 impl<R: Read + Seek> Embed for GifCodec<R> {
-    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
-        Embeddable {
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError> {
+        Ok(Embeddable {
             bytes: ApplicationExtension::new_c2pa(bytes).to_bytes(),
-        }
+        })
     }
 
-    fn read_embeddable(&mut self) -> Embeddable {
-        todo!()
-    }
-
-    fn write_embeddable(
-        &mut self,
-        embeddable: Embeddable,
-        dst: impl Write,
-    ) -> Result<(), CodecError> {
+    fn embed(&mut self, embeddable: Embeddable, dst: impl Write) -> Result<(), CodecError> {
         todo!()
     }
 }
@@ -101,29 +86,9 @@ impl<R: Read + Seek> Encode for GifCodec<R> {
         }
     }
 
-    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
-        let mut codec = GifCodec::new(&mut dst);
-        let old_block_marker = match codec.find_c2pa_block()? {
-            Some(old_block_marker) => old_block_marker,
-            None => return Err(CodecError::NothingToPatch),
-        };
-
-        let new_block = ApplicationExtension::new_c2pa(c2pa);
-
-        Self::replace_block_in_place(&mut dst, &old_block_marker.into(), &new_block.into())
-    }
-
     fn write_xmp(&mut self, mut dst: impl Write, xmp: &str) -> Result<(), CodecError> {
-        let xmp = xmp::add_provenance(
-            // TODO: we read xmp here, then search for it again after, we can cache it
-            &self
-                .read_xmp()?
-                .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
-            xmp,
-        )?;
-
         let old_block_marker = self.find_xmp_block()?;
-        let new_block = ApplicationExtension::new_xmp(xmp.into_bytes());
+        let new_block = ApplicationExtension::new_xmp(xmp.as_bytes().to_vec());
 
         match old_block_marker {
             Some(old_block_marker) => {
@@ -131,6 +96,20 @@ impl<R: Read + Seek> Encode for GifCodec<R> {
             }
             None => self.insert_block(&mut dst, &new_block.into()),
         }
+    }
+}
+
+impl<R: Read + Write + Seek> EncodeInPlace for GifCodec<R> {
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError> {
+        let mut codec = GifCodec::new(&mut self.src);
+        let old_block_marker = match codec.find_c2pa_block()? {
+            Some(old_block_marker) => old_block_marker,
+            None => return Err(CodecError::NothingToPatch),
+        };
+
+        let new_block = ApplicationExtension::new_c2pa(c2pa);
+
+        Self::replace_block_in_place(&mut self.src, &old_block_marker.into(), &new_block.into())
     }
 }
 
@@ -205,7 +184,7 @@ impl<R: Read + Seek> GifCodec<R> {
         if new_bytes.len() as u64 != old_block_marker.len() {
             return Err(CodecError::InvalidPatchSize {
                 expected: old_block_marker.len(),
-                actually: new_bytes.len() as u64,
+                actual: new_bytes.len() as u64,
             });
         }
 
@@ -226,6 +205,8 @@ impl<R: Read + Seek> GifCodec<R> {
 
         // 0x39 is 9 in ASCII.
         dst.write_u8(0x39)?;
+        self.src.seek(SeekFrom::Current(1))?;
+
         Ok(())
     }
 }
@@ -256,7 +237,7 @@ impl<R: Read + Seek> Decode for GifCodec<R> {
                     }
                 }
 
-                bytes.truncate(bytes.len() - 258);
+                bytes.truncate(bytes.len() - 257);
                 String::from_utf8(bytes)
                     .map(Some)
                     .map_err(|_| CodecError::InvalidXmpBlock)
@@ -267,14 +248,14 @@ impl<R: Read + Seek> Decode for GifCodec<R> {
 }
 
 impl<R: Read + Seek> Span for GifCodec<R> {
-    fn hash(&mut self) -> Result<Hash, CodecError> {
-        Ok(Hash::Data(self.data_hash()?))
+    fn span(&mut self) -> Result<DefaultSpan, CodecError> {
+        Ok(DefaultSpan::Data(self.c2pa_span()?))
     }
 
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
+    fn c2pa_span(&mut self) -> Result<C2paSpan, CodecError> {
         let c2pa_block = self.find_c2pa_block()?;
         match c2pa_block {
-            Some(c2pa_block) => Ok(DataHash {
+            Some(c2pa_block) => Ok(C2paSpan {
                 spans: vec![ByteSpan {
                     start: c2pa_block.start(),
                     len: c2pa_block.len(),
@@ -284,7 +265,7 @@ impl<R: Read + Seek> Span for GifCodec<R> {
                 self.skip_preamble()?;
 
                 let end_preamble_pos = self.src.stream_position()?;
-                Ok(DataHash {
+                Ok(C2paSpan {
                     spans: vec![ByteSpan {
                         start: end_preamble_pos,
                         len: 1, // Need at least size 1.
@@ -294,7 +275,7 @@ impl<R: Read + Seek> Span for GifCodec<R> {
         }
     }
 
-    fn box_hash(&mut self) -> Result<BoxHash, CodecError> {
+    fn box_span(&mut self) -> Result<BoxSpan, CodecError> {
         let c2pa_block_exists = self.find_c2pa_block()?.is_some();
 
         Blocks::new(&mut self.src)?
@@ -360,7 +341,7 @@ impl<R: Read + Seek> Span for GifCodec<R> {
                     Ok((named_spans, Some(marker), offset))
                 },
             )
-            .map(|(named_spans, _, _)| BoxHash { spans: named_spans })
+            .map(|(named_spans, _, _)| BoxSpan { spans: named_spans })
     }
 }
 
@@ -1128,6 +1109,8 @@ mod tests {
             data_sub_blocks: DataSubBlocks::empty(),
         });
         codec.insert_block(&mut dst1, &test_block)?;
+
+        let mut codec = GifCodec::new(dst1);
         let mut dst2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         codec.insert_block(&mut dst2, &test_block)?;
 
@@ -1210,8 +1193,8 @@ mod tests {
         let mut codec1 = GifCodec::new(src);
 
         assert_eq!(
-            codec1.data_hash()?,
-            DataHash {
+            codec1.c2pa_span()?,
+            C2paSpan {
                 spans: vec![ByteSpan { start: 781, len: 1 }]
             }
         );
@@ -1221,8 +1204,8 @@ mod tests {
 
         let mut codec2 = GifCodec::new(dst1);
         assert_eq!(
-            codec2.data_hash()?,
-            DataHash {
+            codec2.c2pa_span()?,
+            C2paSpan {
                 spans: vec![ByteSpan {
                     start: 781,
                     len: 20
@@ -1238,7 +1221,7 @@ mod tests {
         let src = Cursor::new(SAMPLE1);
 
         let mut codec = GifCodec::new(src);
-        let box_hash = codec.box_hash()?;
+        let box_hash = codec.box_span()?;
         assert_eq!(
             box_hash.spans.first(),
             Some(&NamedByteSpan {
@@ -1283,21 +1266,4 @@ mod tests {
 
     //     Ok(())
     // }
-
-    #[test]
-    fn test_remote_ref() -> Result<(), CodecError> {
-        let src = Cursor::new(SAMPLE1);
-
-        let mut codec1 = GifCodec::new(src);
-
-        codec1.read_xmp()?;
-
-        let mut dst1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        codec1.write_xmp(&mut dst1, "Test")?;
-
-        let mut codec2 = GifCodec::new(dst1);
-        assert_eq!(codec2.read_xmp()?, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_string()));
-
-        Ok(())
-    }
 }

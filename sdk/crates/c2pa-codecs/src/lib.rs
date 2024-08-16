@@ -16,7 +16,7 @@ use std::{
     num,
 };
 
-use codecs::{c2pa::C2paCodec, gif::GifCodec, svg::SvgCodec};
+use codecs::{c2pa::C2paCodec, gif::GifCodec, jpeg::JpegCodec, svg::SvgCodec};
 pub use protocols::*; // TODO: for now
 use thiserror::Error;
 
@@ -32,21 +32,31 @@ pub enum Codec<R, E = ()> {
     C2pa(C2paCodec<R>),
     Gif(GifCodec<R>),
     Svg(SvgCodec<R>),
+    Jpeg(JpegCodec<R>),
     External(E),
 }
 
 impl<R: Read + Seek> Codec<R> {
     pub fn from_stream(mut src: R) -> Result<Self, CodecError> {
-        let mut signature = [0; MAX_SIGNATURE_LEN];
+        src.rewind()?;
+        let mut signature = vec![0; Codec::MAX_SIGNATURE_LEN];
         src.read_exact(&mut signature)?;
+
+        // TODO: if one of these methods error, then skip it
+        // TODO: also need to rewind streams in the case of svg
         if C2paCodec::supports_signature(&signature) {
             Ok(Self::C2pa(C2paCodec::new(src)))
         } else if GifCodec::supports_signature(&signature) {
             Ok(Self::Gif(GifCodec::new(src)))
-        } else if SvgCodec::supports_signature(&signature) {
-            Ok(Self::Svg(SvgCodec::new(src)))
+        } else if JpegCodec::supports_signature(&signature) {
+            Ok(Self::Jpeg(JpegCodec::new(src)))
         } else {
-            Err(CodecError::UnknownFormat)
+            src.rewind()?;
+            if SvgCodec::supports_stream(&mut src)? {
+                Ok(Self::Svg(SvgCodec::new(src)))
+            } else {
+                Err(CodecError::UnknownFormat)
+            }
         }
     }
 
@@ -57,6 +67,8 @@ impl<R: Read + Seek> Codec<R> {
             Ok(Self::Gif(GifCodec::new(src)))
         } else if SvgCodec::supports_extension(extension) {
             Ok(Self::Svg(SvgCodec::new(src)))
+        } else if JpegCodec::supports_extension(extension) {
+            Ok(Self::Jpeg(JpegCodec::new(src)))
         } else {
             Err(CodecError::UnknownFormat)
         }
@@ -69,6 +81,8 @@ impl<R: Read + Seek> Codec<R> {
             Ok(Self::Gif(GifCodec::new(src)))
         } else if SvgCodec::supports_mime(mime) {
             Ok(Self::Svg(SvgCodec::new(src)))
+        } else if JpegCodec::supports_mime(mime) {
+            Ok(Self::Jpeg(JpegCodec::new(src)))
         } else {
             Err(CodecError::UnknownFormat)
         }
@@ -87,6 +101,7 @@ impl<R: Read + Seek, E: Encode> Encode for Codec<R, E> {
             Codec::Gif(codec) => codec.write_c2pa(dst, c2pa),
             Codec::C2pa(codec) => codec.write_c2pa(dst, c2pa),
             Codec::Svg(codec) => codec.write_c2pa(dst, c2pa),
+            Codec::Jpeg(codec) => codec.write_c2pa(dst, c2pa),
             Codec::External(codec) => codec.write_c2pa(dst, c2pa),
         }
     }
@@ -96,6 +111,7 @@ impl<R: Read + Seek, E: Encode> Encode for Codec<R, E> {
             Codec::Gif(codec) => codec.remove_c2pa(dst),
             Codec::C2pa(codec) => codec.remove_c2pa(dst),
             Codec::Svg(codec) => codec.remove_c2pa(dst),
+            Codec::Jpeg(codec) => codec.remove_c2pa(dst),
             Codec::External(codec) => codec.remove_c2pa(dst),
         }
     }
@@ -105,54 +121,21 @@ impl<R: Read + Seek, E: Encode> Encode for Codec<R, E> {
             Codec::Gif(codec) => codec.write_xmp(dst, xmp),
             Codec::C2pa(codec) => codec.write_xmp(dst, xmp),
             Codec::Svg(codec) => codec.write_xmp(dst, xmp),
+            Codec::Jpeg(codec) => codec.write_xmp(dst, xmp),
             Codec::External(codec) => codec.write_xmp(dst, xmp),
-        }
-    }
-
-    fn patch_c2pa(&self, dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::C2pa(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::Svg(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::External(codec) => codec.patch_c2pa(dst, c2pa),
         }
     }
 }
 
-impl<R: Read + Seek> Encode for Codec<R, ()> {
-    fn write_c2pa(&mut self, dst: impl Write, c2pa: &[u8]) -> Result<(), CodecError> {
+impl<R: Read + Write + Seek, E: EncodeInPlace> EncodeInPlace for Codec<R, E> {
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError> {
         match self {
-            Codec::Gif(codec) => codec.write_c2pa(dst, c2pa),
-            Codec::C2pa(codec) => codec.write_c2pa(dst, c2pa),
-            Codec::Svg(codec) => codec.write_c2pa(dst, c2pa),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn remove_c2pa(&mut self, dst: impl Write) -> Result<bool, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.remove_c2pa(dst),
-            Codec::C2pa(codec) => codec.remove_c2pa(dst),
-            Codec::Svg(codec) => codec.remove_c2pa(dst),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn write_xmp(&mut self, dst: impl Write, xmp: &str) -> Result<(), CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.write_xmp(dst, xmp),
-            Codec::C2pa(codec) => codec.write_xmp(dst, xmp),
-            Codec::Svg(codec) => codec.write_xmp(dst, xmp),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn patch_c2pa(&self, dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::C2pa(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::Svg(codec) => codec.patch_c2pa(dst, c2pa),
-            Codec::External(_) => Err(CodecError::Unsupported),
+            Codec::Gif(codec) => codec.patch_c2pa(c2pa),
+            Codec::C2pa(codec) => codec.patch_c2pa(c2pa),
+            Codec::Svg(codec) => codec.patch_c2pa(c2pa),
+            // TODO:
+            Codec::Jpeg(_) => Err(CodecError::Unsupported),
+            Codec::External(codec) => codec.patch_c2pa(c2pa),
         }
     }
 }
@@ -163,6 +146,7 @@ impl<R: Read + Seek, E: Decode> Decode for Codec<R, E> {
             Codec::Gif(codec) => codec.read_c2pa(),
             Codec::C2pa(codec) => codec.read_c2pa(),
             Codec::Svg(codec) => codec.read_c2pa(),
+            Codec::Jpeg(codec) => codec.read_c2pa(),
             Codec::External(codec) => codec.read_c2pa(),
         }
     }
@@ -172,208 +156,116 @@ impl<R: Read + Seek, E: Decode> Decode for Codec<R, E> {
             Codec::Gif(codec) => codec.read_xmp(),
             Codec::C2pa(codec) => codec.read_xmp(),
             Codec::Svg(codec) => codec.read_xmp(),
+            Codec::Jpeg(codec) => codec.read_xmp(),
             Codec::External(codec) => codec.read_xmp(),
         }
     }
 }
 
-impl<R: Read + Seek> Decode for Codec<R, ()> {
-    fn read_c2pa(&mut self) -> Result<Option<Vec<u8>>, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.read_c2pa(),
-            Codec::C2pa(codec) => codec.read_c2pa(),
-            Codec::Svg(codec) => codec.read_c2pa(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn read_xmp(&mut self) -> Result<Option<String>, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.read_xmp(),
-            Codec::C2pa(codec) => codec.read_xmp(),
-            Codec::Svg(codec) => codec.read_xmp(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-}
-
 impl<R: Read + Seek, E: Embed> Embed for Codec<R, E> {
-    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
-        match self {
-            Codec::Gif(codec) => codec.embeddable(bytes),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.embeddable(bytes),
-            Codec::External(codec) => codec.embeddable(bytes),
-        }
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError> {
+        Err(CodecError::Unsupported)
     }
 
-    fn read_embeddable(&mut self) -> Embeddable {
+    fn embed(&mut self, embeddable: Embeddable, dst: impl Write) -> Result<(), CodecError> {
         match self {
-            Codec::Gif(codec) => codec.read_embeddable(),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.read_embeddable(),
-            // TODO: same here
-            Codec::External(codec) => codec.read_embeddable(),
-        }
-    }
-
-    fn write_embeddable(
-        &mut self,
-        embeddable: Embeddable,
-        dst: impl Write,
-    ) -> Result<(), CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.write_embeddable(embeddable, dst),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.write_embeddable(embeddable, dst),
-            Codec::External(codec) => codec.write_embeddable(embeddable, dst),
-        }
-    }
-}
-
-impl<R: Read + Seek> Embed for Codec<R, ()> {
-    fn embeddable(&self, bytes: &[u8]) -> Embeddable {
-        match self {
-            Codec::Gif(codec) => codec.embeddable(bytes),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.embeddable(bytes),
-            // TODO: this case should be unreachable, it shouldn't be possible to call from_external(()), maybe panic
-            Codec::External(_) => todo!(),
-        }
-    }
-
-    fn read_embeddable(&mut self) -> Embeddable {
-        match self {
-            Codec::Gif(codec) => codec.read_embeddable(),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.read_embeddable(),
-            // TODO: same here
-            Codec::External(_) => todo!(),
-        }
-    }
-
-    fn write_embeddable(
-        &mut self,
-        embeddable: Embeddable,
-        dst: impl Write,
-    ) -> Result<(), CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.write_embeddable(embeddable, dst),
-            Codec::C2pa(codec) => todo!(),
-            Codec::Svg(codec) => codec.write_embeddable(embeddable, dst),
-            // TODO: same here
-            Codec::External(_) => todo!(),
+            Codec::Gif(codec) => codec.embed(embeddable, dst),
+            Codec::C2pa(codec) => codec.embed(embeddable, dst),
+            Codec::Svg(codec) => codec.embed(embeddable, dst),
+            Codec::Jpeg(codec) => codec.embed(embeddable, dst),
+            Codec::External(codec) => codec.embed(embeddable, dst),
         }
     }
 }
 
 impl<R: Read + Seek, E: Span> Span for Codec<R, E> {
-    fn hash(&mut self) -> Result<Hash, CodecError> {
+    fn span(&mut self) -> Result<DefaultSpan, CodecError> {
         match self {
-            Codec::Gif(codec) => codec.hash(),
-            Codec::C2pa(codec) => codec.hash(),
-            Codec::Svg(codec) => codec.hash(),
-            Codec::External(codec) => codec.hash(),
+            Codec::Gif(codec) => codec.span(),
+            Codec::C2pa(codec) => codec.span(),
+            Codec::Svg(codec) => codec.span(),
+            Codec::Jpeg(codec) => codec.span(),
+            Codec::External(codec) => codec.span(),
         }
     }
 
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
+    fn c2pa_span(&mut self) -> Result<C2paSpan, CodecError> {
         match self {
-            Codec::Gif(codec) => codec.data_hash(),
-            Codec::C2pa(codec) => codec.data_hash(),
-            Codec::Svg(codec) => codec.data_hash(),
-            Codec::External(codec) => codec.data_hash(),
+            Codec::Gif(codec) => codec.c2pa_span(),
+            Codec::C2pa(codec) => codec.c2pa_span(),
+            Codec::Svg(codec) => codec.c2pa_span(),
+            Codec::Jpeg(codec) => codec.c2pa_span(),
+            Codec::External(codec) => codec.c2pa_span(),
         }
     }
 
-    fn box_hash(&mut self) -> Result<BoxHash, CodecError> {
+    fn box_span(&mut self) -> Result<BoxSpan, CodecError> {
         match self {
-            Codec::Gif(codec) => codec.box_hash(),
-            Codec::C2pa(codec) => codec.box_hash(),
-            Codec::Svg(codec) => codec.box_hash(),
-            Codec::External(codec) => codec.box_hash(),
+            Codec::Gif(codec) => codec.box_span(),
+            Codec::C2pa(codec) => codec.box_span(),
+            Codec::Svg(codec) => codec.box_span(),
+            Codec::Jpeg(codec) => codec.box_span(),
+            Codec::External(codec) => codec.box_span(),
         }
     }
 
-    fn bmff_hash(&mut self) -> Result<BmffHash, CodecError> {
+    fn bmff_span(&mut self) -> Result<BmffSpan, CodecError> {
         match self {
-            Codec::Gif(codec) => codec.bmff_hash(),
-            Codec::C2pa(codec) => codec.bmff_hash(),
-            Codec::Svg(codec) => codec.bmff_hash(),
-            Codec::External(codec) => codec.bmff_hash(),
+            Codec::Gif(codec) => codec.bmff_span(),
+            Codec::C2pa(codec) => codec.bmff_span(),
+            Codec::Svg(codec) => codec.bmff_span(),
+            Codec::Jpeg(codec) => codec.bmff_span(),
+            Codec::External(codec) => codec.bmff_span(),
         }
     }
 
-    fn collection_hash(&mut self) -> Result<CollectionHash, CodecError> {
+    fn collection_span(&mut self) -> Result<CollectionSpan, CodecError> {
         match self {
-            Codec::Gif(codec) => codec.collection_hash(),
-            Codec::C2pa(codec) => codec.collection_hash(),
-            Codec::Svg(codec) => codec.collection_hash(),
-            Codec::External(codec) => codec.collection_hash(),
-        }
-    }
-}
-
-impl<R: Read + Seek> Span for Codec<R, ()> {
-    fn hash(&mut self) -> Result<Hash, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.hash(),
-            Codec::C2pa(codec) => codec.hash(),
-            Codec::Svg(codec) => codec.hash(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.data_hash(),
-            Codec::C2pa(codec) => codec.data_hash(),
-            Codec::Svg(codec) => codec.data_hash(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn box_hash(&mut self) -> Result<BoxHash, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.box_hash(),
-            Codec::C2pa(codec) => codec.box_hash(),
-            Codec::Svg(codec) => codec.box_hash(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn bmff_hash(&mut self) -> Result<BmffHash, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.bmff_hash(),
-            Codec::C2pa(codec) => codec.bmff_hash(),
-            Codec::Svg(codec) => codec.bmff_hash(),
-            Codec::External(_) => Err(CodecError::Unsupported),
-        }
-    }
-
-    fn collection_hash(&mut self) -> Result<CollectionHash, CodecError> {
-        match self {
-            Codec::Gif(codec) => codec.collection_hash(),
-            Codec::C2pa(codec) => codec.collection_hash(),
-            Codec::Svg(codec) => codec.collection_hash(),
-            Codec::External(_) => Err(CodecError::Unsupported),
+            Codec::Gif(codec) => codec.collection_span(),
+            Codec::C2pa(codec) => codec.collection_span(),
+            Codec::Svg(codec) => codec.collection_span(),
+            Codec::Jpeg(codec) => codec.collection_span(),
+            Codec::External(codec) => codec.collection_span(),
         }
     }
 }
 
 impl Support for Codec<()> {
-    const MAX_SIGNATURE_LEN: usize = MAX_SIGNATURE_LEN;
+    // TODO: find max signatuture len among all codecs via Supporter::MAX_SIGNATURE_LEN
+    const MAX_SIGNATURE_LEN: usize = 13;
 
     fn supports_signature(signature: &[u8]) -> bool {
         GifCodec::supports_signature(signature)
+            || C2paCodec::supports_signature(signature)
+            || JpegCodec::supports_signature(signature)
+    }
+
+    fn supports_stream(mut src: impl Read + Seek) -> Result<bool, CodecError> {
+        src.rewind()?;
+        let mut signature = vec![0; Codec::MAX_SIGNATURE_LEN];
+        src.read_exact(&mut signature)?;
+
+        match Codec::supports_signature(&signature) {
+            true => Ok(true),
+            false => {
+                src.rewind()?;
+                SvgCodec::supports_stream(src)
+            }
+        }
     }
 
     fn supports_extension(extension: &str) -> bool {
         GifCodec::supports_extension(extension)
+            || C2paCodec::supports_extension(extension)
+            || SvgCodec::supports_extension(extension)
+            || JpegCodec::supports_extension(extension)
     }
 
     fn supports_mime(mime: &str) -> bool {
         GifCodec::supports_mime(mime)
+            || SvgCodec::supports_mime(mime)
+            || C2paCodec::supports_mime(mime)
+            || JpegCodec::supports_mime(mime)
     }
 }
 
@@ -387,18 +279,24 @@ pub enum CodecError {
     #[error("TODO")]
     Unimplemented,
 
-    #[error("TODO")]
+    #[error("Unknown format while creating the Codec.")]
     UnknownFormat,
 
-    #[error("TODO")]
+    #[error("Incorrect file format for the codec.")]
+    IncorrectFormat,
+
+    #[error("Attempted to patch a file without an existing manifest.")]
     NothingToPatch,
 
-    #[error("TODO")]
-    InvalidPatchSize { expected: u64, actually: u64 },
+    #[error("Invalid size of patch, expected {expected}, got {actual}.")]
+    InvalidPatchSize { expected: u64, actual: u64 },
+
+    #[error("More than one C2PA manifest was found inside the file.")]
+    MoreThanOneC2pa,
 
     // This case occurs, for instance, when the magic trailer at the end of an XMP block in a GIF
     // does not conform to spec or the string is not valid UTF-8.
-    #[error("XMP was found, but failed to validate")]
+    #[error("XMP was found, but failed to validate.")]
     InvalidXmpBlock,
 
     #[error("TODO")]
@@ -407,7 +305,7 @@ pub enum CodecError {
         context: String,
     },
 
-    #[error("TODO")]
+    #[error("Attempted to seek out of bounds.")]
     SeekOutOfBounds(num::TryFromIntError),
 
     // TODO: use quick_xml

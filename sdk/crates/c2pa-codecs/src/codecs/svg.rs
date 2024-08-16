@@ -19,7 +19,8 @@ use fast_xml::{
 };
 
 use crate::{
-    ByteSpan, CodecError, DataHash, Decode, Embed, Embeddable, Encode, Hash, Span, Support,
+    ByteSpan, C2paSpan, CodecError, Decode, DefaultSpan, Embed, Embeddable, Encode, EncodeInPlace,
+    Span, Support,
 };
 
 const SVG: &str = "svg";
@@ -42,37 +43,54 @@ impl<R> SvgCodec<R> {
 impl Support for SvgCodec<()> {
     const MAX_SIGNATURE_LEN: usize = 0;
 
-    fn supports_signature(_signature: &[u8]) -> bool {
-        todo!()
+    // TODO: does this impl cover all cases? it should also run last due to the computation
+    //       we can probably also add a short circuit type of method, where if the first few bytes
+    //       aren't xml it isn't an svg
+    // TODO: we also need to reset the stream to the first x bytes when this returns
+    fn supports_stream(src: impl Read + Seek) -> Result<bool, CodecError> {
+        let mut src = BufReader::new(src);
+        let mut reader = Reader::from_reader(&mut src);
+
+        let mut event = Vec::new();
+        loop {
+            match reader.read_event(&mut event) {
+                Ok(Event::Start(ref e)) => {
+                    if e.name() == SVG.as_bytes() {
+                        return Ok(true);
+                    }
+                }
+                Ok(Event::Eof) | Err(_) => break,
+                _ => {}
+            }
+
+            event.clear();
+        }
+
+        Ok(false)
     }
 
     fn supports_extension(extension: &str) -> bool {
-        extension == "svg" || extension == "xhtml" || extension == "xml"
+        matches!(extension, "svg" | "xhtml" | "xml")
     }
 
     fn supports_mime(mime: &str) -> bool {
-        mime == "application/svg+xml"
-            || mime == "application/xhtml+xml"
-            || mime == "application/xml"
-            || mime == "image/svg+xml"
-            || mime == "text/xml"
+        matches!(
+            mime,
+            "application/svg+xml"
+                | "application/xhtml+xml"
+                | "application/xml"
+                | "image/svg+xml"
+                | "text/xml"
+        )
     }
 }
 
 impl<R: Read + Seek> Embed for SvgCodec<R> {
-    fn embeddable(&self, bytes: &[u8]) -> crate::Embeddable {
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError> {
         todo!()
     }
 
-    fn read_embeddable(&mut self) -> Embeddable {
-        todo!()
-    }
-
-    fn write_embeddable(
-        &mut self,
-        embeddable: Embeddable,
-        dst: impl Write,
-    ) -> Result<(), CodecError> {
+    fn embed(&mut self, embeddable: Embeddable, dst: impl Write) -> Result<(), CodecError> {
         todo!()
     }
 }
@@ -140,8 +158,10 @@ enum DetectedTagsDepth {
 
 // returns tuple of found manifest, where in the XML hierarchy the manifest needs to go, and the manifest insertion point
 fn detect_manifest_location(
-    mut src: impl Read,
+    mut src: impl Read + Seek,
 ) -> Result<(Option<Vec<u8>>, DetectedTagsDepth, usize), CodecError> {
+    src.rewind()?;
+
     let mut buf = Vec::new();
 
     let buf_reader = BufReader::new(&mut src);
@@ -443,6 +463,8 @@ impl<R: Read + Seek> Encode for SvgCodec<R> {
     }
 
     fn remove_c2pa(&mut self, dst: impl Write) -> Result<bool, CodecError> {
+        self.src.rewind()?;
+
         let buf_reader = BufReader::new(&mut self.src);
         let mut reader = Reader::from_reader(buf_reader);
 
@@ -533,10 +555,12 @@ impl<R: Read + Seek> Encode for SvgCodec<R> {
 
         Ok(removed)
     }
+}
 
-    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
+impl<R: Read + Write + Seek> EncodeInPlace for SvgCodec<R> {
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError> {
         let (asset_manifest_opt, _detected_tag_location, insertion_point) =
-            detect_manifest_location(&mut dst)?;
+            detect_manifest_location(&mut self.src)?;
         let encoded_store_bytes = base64::encode(c2pa);
 
         if let Some(manifest_bytes) = asset_manifest_opt {
@@ -544,13 +568,13 @@ impl<R: Read + Seek> Encode for SvgCodec<R> {
             let encoded_manifest_bytes = base64::encode(&manifest_bytes);
             // can patch if encoded lengths are ==
             if encoded_store_bytes.len() == encoded_manifest_bytes.len() {
-                dst.seek(SeekFrom::Start(insertion_point as u64))?;
-                dst.write_all(encoded_store_bytes.as_bytes())?;
+                self.src.seek(SeekFrom::Start(insertion_point as u64))?;
+                self.src.write_all(encoded_store_bytes.as_bytes())?;
                 Ok(())
             } else {
                 Err(CodecError::InvalidPatchSize {
                     expected: encoded_manifest_bytes.len() as u64,
-                    actually: encoded_store_bytes.len() as u64,
+                    actual: encoded_store_bytes.len() as u64,
                 })
             }
         } else {
@@ -560,11 +584,11 @@ impl<R: Read + Seek> Encode for SvgCodec<R> {
 }
 
 impl<R: Read + Seek> Span for SvgCodec<R> {
-    fn hash(&mut self) -> Result<Hash, CodecError> {
-        Ok(Hash::Data(self.data_hash()?))
+    fn span(&mut self) -> Result<DefaultSpan, CodecError> {
+        Ok(DefaultSpan::Data(self.c2pa_span()?))
     }
 
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
+    fn c2pa_span(&mut self) -> Result<C2paSpan, CodecError> {
         let output: Vec<u8> = Vec::new();
         let mut dst = Cursor::new(output);
 
@@ -585,7 +609,7 @@ impl<R: Read + Seek> Span for SvgCodec<R> {
             len: encoded_manifest_len as u64,
         });
 
-        Ok(DataHash { spans: positions })
+        Ok(C2paSpan { spans: positions })
     }
 }
 

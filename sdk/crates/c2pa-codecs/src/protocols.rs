@@ -1,9 +1,6 @@
-use std::io::{Read, Seek, Write};
+use std::io::{BufReader, Read, Seek, Write};
 
 use crate::{xmp, CodecError};
-
-// TODO: find max signatuture len among all codecs via Supporter::MAX_SIGNATURE_LEN
-pub const MAX_SIGNATURE_LEN: usize = 8;
 
 // NOTE: the reason encoders/decoders take &mut self and no src is because they take them on construction.
 //       in a normal gif signing flow, we read, write, read, then write again There's a lot of info we can cache.
@@ -15,17 +12,6 @@ pub trait Encode {
 
     /// Removes the C2PA block from the stream or returns false if a C2PA block was not found.
     fn remove_c2pa(&mut self, dst: impl Write) -> Result<bool, CodecError>;
-
-    /// Replaces the C2PA block with the specified manifest ONLY if the given manifest is the same exact
-    /// size as the existing C2PA block.
-    ///
-    /// If no C2PA block was found, then errors with [`ParseError::NothingToPatch`].
-    /// If the size of the found C2PA block differs, then errors with [`ParseError::InvalidPatchSize`].
-    fn patch_c2pa(&self, dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
-        let _ = dst;
-        let _ = c2pa;
-        Err(CodecError::Unimplemented)
-    }
 
     fn write_xmp(&mut self, dst: impl Write, xmp: &str) -> Result<(), CodecError> {
         let _ = dst;
@@ -49,12 +35,21 @@ pub trait Encode {
         Err(CodecError::Unimplemented)
     }
 
-    fn remove_xmp_provenance(&mut self, dst: impl Write, xmp: &str) -> Result<(), CodecError>
+    fn remove_xmp_provenance(&mut self, dst: impl Write) -> Result<(), CodecError>
     where
         Self: Decode,
     {
         todo!()
     }
+}
+
+pub trait EncodeInPlace {
+    /// Replaces the C2PA block with the specified manifest ONLY if the given manifest is the same exact
+    /// size as the existing C2PA block.
+    ///
+    /// If no C2PA block was found, then errors with [`ParseError::NothingToPatch`].
+    /// If the size of the found C2PA block differs, then errors with [`ParseError::InvalidPatchSize`].
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError>;
 }
 
 pub trait Decode {
@@ -70,36 +65,32 @@ pub trait Decode {
 }
 
 pub trait Embed {
-    fn embeddable(&self, bytes: &[u8]) -> Embeddable;
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError>;
 
-    fn read_embeddable(&mut self) -> Embeddable;
+    // fn read_embeddable(&mut self) -> Embeddable;
 
-    fn write_embeddable(
-        &mut self,
-        embeddable: Embeddable,
-        dst: impl Write,
-    ) -> Result<(), CodecError>;
+    fn embed(&mut self, embeddable: Embeddable, dst: impl Write) -> Result<(), CodecError>;
 }
 
 pub trait Span {
-    fn hash(&mut self) -> Result<Hash, CodecError>;
+    fn span(&mut self) -> Result<DefaultSpan, CodecError>;
 
     // TODO: document that if there is no c2pa manifest it should return where it should be
     // TODO: what happens if a data hash has multiple placeholder locations? how does the code know where to hash?
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
+    fn c2pa_span(&mut self) -> Result<C2paSpan, CodecError> {
         Err(CodecError::Unimplemented)
     }
 
     // TODO: read above
-    fn box_hash(&mut self) -> Result<BoxHash, CodecError> {
+    fn box_span(&mut self) -> Result<BoxSpan, CodecError> {
         Err(CodecError::Unimplemented)
     }
 
-    fn bmff_hash(&mut self) -> Result<BmffHash, CodecError> {
+    fn bmff_span(&mut self) -> Result<BmffSpan, CodecError> {
         Err(CodecError::Unimplemented)
     }
 
-    fn collection_hash(&mut self) -> Result<CollectionHash, CodecError> {
+    fn collection_span(&mut self) -> Result<CollectionSpan, CodecError> {
         Err(CodecError::Unimplemented)
     }
 }
@@ -107,12 +98,23 @@ pub trait Span {
 pub trait Support {
     const MAX_SIGNATURE_LEN: usize;
 
-    fn supports_signature(signature: &[u8]) -> bool;
+    fn supports_signature(signature: &[u8]) -> bool {
+        let _ = signature;
+        false
+    }
 
-    // fn supports_signature_from_stream(mut src: impl Read) -> Result<bool, ParseError> {
-    //     let mut signature = [0; Self::MAX_SIGNATURE_LEN];
+    // Not all file types support a signature (e.g. SVG), but some can be inferred based
+    // on their structure. That operation is likely expensive, which is why we separate it
+    // into a supports_stream method.
+    fn supports_stream(src: impl Read + Seek) -> Result<bool, CodecError> {
+        let _ = src;
+        Err(CodecError::Unimplemented)
+    }
+
+    // fn supports_signature_from_stream(mut src: impl Read) -> Result<bool, CodecError> {
+    //     let mut signature = Vec::with_capacity(Self::MAX_SIGNATURE_LEN);
     //     src.read_exact(&mut signature)?;
-    //     Ok(Self::supports_signature(&signature))
+    //     Self::supports_signature(&signature)
     // }
 
     fn supports_extension(extension: &str) -> bool;
@@ -138,34 +140,88 @@ pub struct NamedByteSpan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DataHash {
+pub struct C2paSpan {
     /// Span of bytes that encompass the manifest with specifical consideration
     /// for some formats defined in the spec.
     pub spans: Vec<ByteSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BoxHash {
+pub struct BoxSpan {
     /// Span of bytes for each block, corresponding to their box name as defined
     /// in the spec.
     pub spans: Vec<NamedByteSpan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BmffHash {
+pub struct BmffSpan {
     // TODO
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CollectionHash {
+pub struct CollectionSpan {
     pub zip_central_directory_span: Option<ByteSpan>,
     pub uri_spans: Vec<ByteSpan>,
 }
 
 #[derive(Debug)]
-pub enum Hash {
-    Data(DataHash),
-    Box(BoxHash),
-    Bmff(BmffHash),
-    Collection(CollectionHash),
+pub enum DefaultSpan {
+    Data(C2paSpan),
+    Box(BoxSpan),
+    Bmff(BmffSpan),
+    Collection(CollectionSpan),
+}
+
+impl Encode for () {
+    fn write_c2pa(&mut self, dst: impl Write, c2pa: &[u8]) -> Result<(), CodecError> {
+        Err(CodecError::Unsupported)
+    }
+
+    fn remove_c2pa(&mut self, dst: impl Write) -> Result<bool, CodecError> {
+        Err(CodecError::Unsupported)
+    }
+}
+
+impl EncodeInPlace for () {
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError> {
+        Err(CodecError::Unsupported)
+    }
+}
+
+impl Decode for () {
+    fn read_c2pa(&mut self) -> Result<Option<Vec<u8>>, CodecError> {
+        Err(CodecError::Unsupported)
+    }
+}
+
+impl Embed for () {
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError> {
+        Err(CodecError::Unsupported)
+    }
+
+    fn embed(&mut self, embeddable: Embeddable, dst: impl Write) -> Result<(), CodecError> {
+        Err(CodecError::Unsupported)
+    }
+}
+
+impl Span for () {
+    fn span(&mut self) -> Result<DefaultSpan, CodecError> {
+        Err(CodecError::Unsupported)
+    }
+}
+
+impl Support for () {
+    const MAX_SIGNATURE_LEN: usize = 0;
+
+    fn supports_stream(src: impl Read + Seek) -> Result<bool, CodecError> {
+        Ok(false)
+    }
+
+    fn supports_extension(extension: &str) -> bool {
+        false
+    }
+
+    fn supports_mime(mime: &str) -> bool {
+        false
+    }
 }

@@ -13,7 +13,10 @@
 
 use std::io::{Read, Seek, Write};
 
-use crate::{ByteSpan, CodecError, DataHash, Decode, Encode, Hash, Span, Support};
+use crate::{
+    ByteSpan, C2paSpan, CodecError, Decode, DefaultSpan, Embed, Embeddable, Encode, EncodeInPlace,
+    Span, Support,
+};
 
 /// Supports working with ".c2pa" files containing only manifest store data
 #[derive(Debug)]
@@ -29,10 +32,6 @@ impl<R> C2paCodec<R> {
 
 impl Support for C2paCodec<()> {
     const MAX_SIGNATURE_LEN: usize = 0;
-
-    fn supports_signature(_signature: &[u8]) -> bool {
-        false
-    }
 
     fn supports_extension(extension: &str) -> bool {
         extension == "c2pa"
@@ -63,20 +62,35 @@ impl<R: Read + Seek> Encode for C2paCodec<R> {
         // TODO: true or false?
         Ok(false)
     }
+}
 
-    fn patch_c2pa(&self, mut dst: impl Read + Write + Seek, c2pa: &[u8]) -> Result<(), CodecError> {
-        dst.write_all(c2pa)?;
+impl<R: Read + Write + Seek> EncodeInPlace for C2paCodec<R> {
+    fn patch_c2pa(&mut self, c2pa: &[u8]) -> Result<(), CodecError> {
+        self.src.write_all(c2pa)?;
+        Ok(())
+    }
+}
+
+impl<R: Read + Seek> Embed for C2paCodec<R> {
+    fn embeddable(bytes: &[u8]) -> Result<Embeddable, CodecError> {
+        Ok(Embeddable {
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    fn embed(&mut self, embeddable: Embeddable, mut dst: impl Write) -> Result<(), CodecError> {
+        dst.write_all(&embeddable.bytes)?;
         Ok(())
     }
 }
 
 impl<R: Read + Seek> Span for C2paCodec<R> {
-    fn hash(&mut self) -> Result<Hash, CodecError> {
+    fn span(&mut self) -> Result<DefaultSpan, CodecError> {
         todo!()
     }
 
-    fn data_hash(&mut self) -> Result<DataHash, CodecError> {
-        Ok(DataHash {
+    fn c2pa_span(&mut self) -> Result<C2paSpan, CodecError> {
+        Ok(C2paSpan {
             spans: vec![ByteSpan { start: 0, len: 0 }],
         })
     }
