@@ -17,6 +17,7 @@ pub(crate) fn encode(data: &[u8]) -> String {
     general_purpose::STANDARD.encode(data)
 }
 
+#[allow(dead_code)] // TEMPORARY while refactoring
 pub(crate) fn decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
     general_purpose::STANDARD.decode(data)
 }

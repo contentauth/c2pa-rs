@@ -61,6 +61,7 @@ pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+#[allow(unused)] // TEMPORARY while refactoring
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
