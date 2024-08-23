@@ -2124,7 +2124,6 @@ impl Store {
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
-
         #[allow(unused_mut)] // Not mutable in the non-async case.
         let mut jumbf_bytes = self.start_save_stream(
             format,
