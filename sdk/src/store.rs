@@ -34,6 +34,7 @@ use crate::{
     assertions::{
         labels::{self, CLAIM},
         BmffHash, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient, Relationship, SubsetMap,
+        UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -41,6 +42,7 @@ use crate::{
     claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
+    dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
@@ -79,6 +81,7 @@ pub struct Store {
     label: String,
     provenance_path: Option<String>,
     trust_handler: Box<dyn TrustHandlerConfig>,
+    dynamic_assertions: Vec<Box<dyn DynamicAssertion>>,
 }
 
 struct ManifestInfo<'a> {
@@ -129,6 +132,7 @@ impl Store {
             #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
+            dynamic_assertions: Vec::new(),
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -231,6 +235,16 @@ impl Store {
         } else {
             Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or_default()
         }
+    }
+
+    /// get a list of dynamic assertions
+    fn dynamic_assertions(&mut self) -> &Vec<Box<dyn DynamicAssertion>> {
+        &self.dynamic_assertions
+    }
+
+    /// Add a dynamic assertion to the store.
+    pub fn add_dynamic_assertion(&mut self, dynamic_assertion: Box<dyn DynamicAssertion>) {
+        self.dynamic_assertions.push(dynamic_assertion);
     }
 
     /// Add a new Claim to this Store. The function
@@ -2034,6 +2048,58 @@ impl Store {
         Err(Error::UnsupportedType)
     }
 
+    /// Inserts placeholders for dynamic assertions to be updated later.
+    fn add_dynamic_assertion_placeholders(&mut self) -> Result<Vec<HashedUri>> {
+        if self.dynamic_assertions.is_empty() {
+            return Ok(Vec::new());
+        }
+        // two passes since we are accessing two fields in self
+        let mut assertions = Vec::new();
+        for da in self.dynamic_assertions().iter() {
+            let reserve_size = da.reserve_size();
+            let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
+            let cbor_delta = data1.len() - reserve_size;
+            let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            assertions.push(UserCbor::new(&da.label(), da_data));
+        }
+
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        assertions
+            .iter()
+            .map(|a| pc.add_assertion_with_salt(a, &DefaultSalt::default()))
+            .collect()
+    }
+
+    /// Write the dynamic assertions to the manifest.
+    #[async_generic()]
+    fn write_dynamic_assertions(&mut self, _da_uris: &[HashedUri]) -> Result<()> {
+        if self.dynamic_assertions.is_empty() {
+            return Ok(());
+        }
+        if _sync {
+            Err(Error::NotImplemented(
+                "dynamic_assertions not implemented for sync".to_string(),
+            ))
+        } else {
+            let mut assertions = Vec::new();
+            for (da, uri) in self.dynamic_assertions.iter().zip(_da_uris.iter()) {
+                let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
+                    .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+                let da_size = da.reserve_size();
+                let preliminary_claim = PreliminaryClaim::new();
+                let da_data = da
+                    .content(&label, Some(da_size), &preliminary_claim)
+                    .await?;
+                assertions.push(UserCbor::new(&label, da_data).to_assertion()?);
+            }
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            for assertion in assertions {
+                pc.replace_assertion(assertion)?;
+            }
+            Ok(())
+        }
+    }
+
     /// Embed the claims store as jumbf into a stream. Updates XMP with provenance record.
     /// When called, the stream should contain an asset matching format.
     /// on return, the stream will contain the new manifest signed with signer
@@ -2053,6 +2119,8 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
+        let da_uris = self.add_dynamic_assertion_placeholders()?;
+
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
@@ -2062,6 +2130,12 @@ impl Store {
             &mut intermediate_stream,
             signer.reserve_size(),
         )?;
+
+        if _sync {
+            self.write_dynamic_assertions(&da_uris)?;
+        } else {
+            self.write_dynamic_assertions_async(&da_uris).await?;
+        }
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
@@ -3355,8 +3429,9 @@ impl Store {
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
         let mut report = OneShotStatusTracker::new();
-        let store = Store::from_jumbf(data, &mut report)?;
-        claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
+        let mut store = Store::from_jumbf(data, &mut report)?;
+        let claims = std::mem::take(&mut store.claims);
+        claim.add_ingredient_data(provenance_label, claims, redactions)?;
         Ok(store)
     }
 }
@@ -3439,6 +3514,7 @@ pub mod tests {
     use std::io::Write;
 
     use memchr::memmem;
+    use serde::Serialize;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
@@ -5714,5 +5790,93 @@ pub mod tests {
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
+    }
+
+    #[actix::test]
+    async fn test_dynamic_assertions() {
+        use async_trait::async_trait;
+
+        use crate::utils::test::temp_async_signer;
+
+        #[derive(Serialize)]
+        struct TestAssertion {
+            my_tag: String,
+        }
+
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> usize {
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                serde_cbor::to_vec(&assertion).unwrap().len()
+            }
+
+            async fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PreliminaryClaim,
+            ) -> Result<Vec<u8>> {
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                Ok(serde_cbor::to_vec(&assertion).unwrap())
+            }
+        }
+
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut buf_io = Cursor::new(file_buffer);
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = temp_async_signer();
+
+        let da = TestDynamicAssertion {};
+        store.add_dynamic_assertion(Box::new(da));
+        store.commit_claim(claim1).unwrap();
+
+        let mut result: Vec<u8> = Vec::new();
+        let mut result_stream = Cursor::new(result);
+
+        store
+            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, signer.as_ref())
+            .await
+            .unwrap();
+
+        // convert our cursor back into a buffer
+        result = result_stream.into_inner();
+
+        // make sure we can read from new file
+        let mut report = DetailedStatusTracker::new();
+        let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
+
+        println!("new_store: {}", new_store);
+
+        Store::verify_store_async(
+            &new_store,
+            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            &mut report,
+        )
+        .await
+        .unwrap();
+
+        let errors = report_split_errors(report.get_log_mut());
+        println!("errors: {:?}", errors);
+        assert!(errors.is_empty());
+        // std::fs::write("target/test.jpg", result).unwrap();
     }
 }

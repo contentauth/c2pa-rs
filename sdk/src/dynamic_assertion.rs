@@ -11,15 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::slice::Iter;
+use std::{fmt::Debug, slice::Iter};
 
+//use ciborium::de;
 use crate::{hashed_uri::HashedUri, Result};
 
 /// A `DynamicAssertion` is an assertion that has the ability
 /// to adjust its content based on other assertions within the
 /// overall Manifest.
 #[async_trait::async_trait]
-pub trait DynamicAssertion {
+pub trait DynamicAssertion: Debug {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
@@ -61,14 +62,24 @@ pub trait DynamicAssertion {
 /// Describes information from the preliminary C2PA Claim that may
 /// be helpful in constructing the final content of a [`DynamicAssertion`].
 #[non_exhaustive]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct PreliminaryClaim {
-    // TO DO: Specify members of this struct.
+    assertion_uris: Vec<HashedUri>,
 }
 
 impl PreliminaryClaim {
+    pub fn new() -> Self {
+        Self {
+            assertion_uris: Vec::new(),
+        }
+    }
+
+    pub fn add_assertion_uri(&mut self, uri: HashedUri) {
+        self.assertion_uris.push(uri);
+    }
+
     /// Return an iterator over the assertions in this Claim.
     pub fn assertions(&self) -> Iter<HashedUri> {
-        unimplemented!();
+        self.assertion_uris.iter()
     }
 }
