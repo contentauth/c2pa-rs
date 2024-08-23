@@ -2072,9 +2072,9 @@ impl Store {
 
     /// Write the dynamic assertions to the manifest.
     #[async_generic()]
-    fn write_dynamic_assertions(&mut self, _da_uris: &[HashedUri]) -> Result<()> {
+    fn write_dynamic_assertions(&mut self, _da_uris: &[HashedUri]) -> Result<bool> {
         if self.dynamic_assertions.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         if _sync {
             Err(Error::NotImplemented(
@@ -2096,7 +2096,7 @@ impl Store {
             for assertion in assertions {
                 pc.replace_assertion(assertion)?;
             }
-            Ok(())
+            Ok(true)
         }
     }
 
@@ -2124,7 +2124,9 @@ impl Store {
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
 
-        let jumbf_bytes = self.start_save_stream(
+
+        #[allow(unused_mut)] // Not mutable in the non-async case.
+        let mut jumbf_bytes = self.start_save_stream(
             format,
             input_stream,
             &mut intermediate_stream,
@@ -2134,7 +2136,23 @@ impl Store {
         if _sync {
             self.write_dynamic_assertions(&da_uris)?;
         } else {
-            self.write_dynamic_assertions_async(&da_uris).await?;
+            if self.write_dynamic_assertions_async(&da_uris).await? {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                match pc.remote_manifest() {
+                    RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                        jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+                        intermediate_stream.rewind()?;
+                        save_jumbf_to_stream(
+                            format,
+                            &mut intermediate_stream,
+                            output_stream,
+                            &jumbf_bytes,
+                        )?;
+                    }
+                    _ => (),
+                };
+            }
         }
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
