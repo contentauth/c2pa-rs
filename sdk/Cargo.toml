@@ -89,6 +89,7 @@ config = { version = "0.14.0", default-features = false, features = [
 conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
+ed25519-dalek = "2.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
@@ -141,7 +142,6 @@ openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
-ed25519-dalek = "2.1.1"
 getrandom = { version = "0.2.7", features = ["js"] }
 # We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
 # to handle certificate timestamp checking correctly.
@@ -175,5 +175,4 @@ wasm-bindgen-test = "0.3.31"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 actix = "0.13.1"
-ed25519-dalek = "2.1.1"
 tokio = { version = "1.36.0", features = ["full"] }

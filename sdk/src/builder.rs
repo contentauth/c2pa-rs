@@ -19,9 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
-#[cfg(feature = "json_schema")]
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
@@ -29,12 +27,12 @@ use zip::{write::FileOptions, ZipArchive, ZipWriter};
 use crate::{
     assertion::AssertionBase,
     assertions::{
-        labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        labels, Actions, CreativeWork, DataHash, Exif, SoftwareAgent, Thumbnail, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
     ingredient::Ingredient,
+    manifest_definition::{AssertionData, AssertionDefinition, ManifestDefinition},
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
@@ -45,113 +43,113 @@ use crate::{
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
-/// A Manifest Definition
-/// This is used to define a manifest and is used to build a ManifestStore
-/// A Manifest is a collection of ingredients and assertions
-/// It is used to define a claim that can be signed and embedded into a file
-#[skip_serializing_none]
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
-pub struct ManifestDefinition {
-    /// Optional prefix added to the generated Manifest Label
-    /// This is typically Internet domain name for the vendor (i.e. `adobe`)
-    pub vendor: Option<String>,
+// /// A Manifest Definition
+// /// This is used to define a manifest and is used to build a ManifestStore
+// /// A Manifest is a collection of ingredients and assertions
+// /// It is used to define a claim that can be signed and embedded into a file
+// #[skip_serializing_none]
+// #[derive(Debug, Default, Deserialize, Serialize)]
+// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// #[non_exhaustive]
+// pub struct ManifestDefinition {
+//     /// Optional prefix added to the generated Manifest Label
+//     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
+//     pub vendor: Option<String>,
 
-    /// Clam Generator Info is always required with at least one entry
-    #[serde(default = "default_claim_generator_info")]
-    pub claim_generator_info: Vec<ClaimGeneratorInfo>,
+//     /// Clam Generator Info is always required with at least one entry
+//     #[serde(default = "default_claim_generator_info")]
+//     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
-    /// Optional manifest metadata
-    pub metadata: Option<Vec<Metadata>>,
+//     /// Optional manifest metadata
+//     pub metadata: Option<Vec<Metadata>>,
 
-    /// A human-readable title, generally source filename.
-    pub title: Option<String>,
+//     /// A human-readable title, generally source filename.
+//     pub title: Option<String>,
 
-    /// The format of the source file as a MIME type.
-    #[serde(default = "default_format")]
-    pub format: String,
+//     /// The format of the source file as a MIME type.
+//     #[serde(default = "default_format")]
+//     pub format: String,
 
-    /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
-    #[serde(default = "default_instance_id")]
-    pub instance_id: String,
+//     /// Instance ID from `xmpMM:InstanceID` in XMP metadata.
+//     #[serde(default = "default_instance_id")]
+//     pub instance_id: String,
 
-    pub thumbnail: Option<ResourceRef>,
+//     pub thumbnail: Option<ResourceRef>,
 
-    /// A List of ingredients
-    #[serde(default = "default_vec::<Ingredient>")]
-    pub ingredients: Vec<Ingredient>,
+//     /// A List of ingredients
+//     #[serde(default = "default_vec::<Ingredient>")]
+//     pub ingredients: Vec<Ingredient>,
 
-    /// A list of assertions
-    #[serde(default = "default_vec::<AssertionDefinition>")]
-    pub assertions: Vec<AssertionDefinition>,
+//     /// A list of assertions
+//     #[serde(default = "default_vec::<AssertionDefinition>")]
+//     pub assertions: Vec<AssertionDefinition>,
 
-    /// A list of redactions - URIs to a redacted assertions
-    pub redactions: Option<Vec<String>>,
+//     /// A list of redactions - URIs to a redacted assertions
+//     pub redactions: Option<Vec<String>>,
 
-    pub label: Option<String>,
-}
+//     pub label: Option<String>,
+// }
 
-fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
-}
+// fn default_instance_id() -> String {
+//     format!("xmp:iid:{}", Uuid::new_v4())
+// }
 
-fn default_claim_generator_info() -> Vec<ClaimGeneratorInfo> {
-    [ClaimGeneratorInfo::default()].to_vec()
-}
+// fn default_claim_generator_info() -> Vec<ClaimGeneratorInfo> {
+//     [ClaimGeneratorInfo::default()].to_vec()
+// }
 
-fn default_format() -> String {
-    "application/octet-stream".to_owned()
-}
+// fn default_format() -> String {
+//     "application/octet-stream".to_owned()
+// }
 
-fn default_vec<T>() -> Vec<T> {
-    Vec::new()
-}
+// fn default_vec<T>() -> Vec<T> {
+//     Vec::new()
+// }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[serde(untagged)]
-pub enum AssertionData {
-    #[cfg_attr(feature = "json_schema", schemars(skip))]
-    Cbor(serde_cbor::Value),
-    Json(serde_json::Value),
-}
+// #[derive(Debug, Deserialize, Serialize, Clone)]
+// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// #[serde(untagged)]
+// pub enum AssertionData {
+//     #[cfg_attr(feature = "json_schema", schemars(skip))]
+//     Cbor(serde_cbor::Value),
+//     Json(serde_json::Value),
+// }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[non_exhaustive]
-pub struct AssertionDefinition {
-    pub label: String,
-    pub data: AssertionData,
-}
+// #[derive(Debug, Deserialize, Serialize, Clone)]
+// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+// #[non_exhaustive]
+// pub struct AssertionDefinition {
+//     pub label: String,
+//     pub data: AssertionData,
+// }
 
-use serde::de::DeserializeOwned;
+// use serde::de::DeserializeOwned;
 
-use crate::assertion::AssertionDecodeError;
-impl AssertionDefinition {
-    pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        match &self.data {
-            AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
-                Error::AssertionDecoding(AssertionDecodeError::from_err(
-                    self.label.to_owned(),
-                    None,
-                    "application/json".to_owned(),
-                    e,
-                ))
-            }),
-            AssertionData::Cbor(value) => {
-                serde_cbor::value::from_value(value.clone()).map_err(|e| {
-                    Error::AssertionDecoding(AssertionDecodeError::from_err(
-                        self.label.to_owned(),
-                        None,
-                        "application/cbor".to_owned(),
-                        e,
-                    ))
-                })
-            }
-        }
-    }
-}
+// use crate::assertion::AssertionDecodeError;
+// impl AssertionDefinition {
+//     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
+//         match &self.data {
+//             AssertionData::Json(value) => serde_json::from_value(value.clone()).map_err(|e| {
+//                 Error::AssertionDecoding(AssertionDecodeError::from_err(
+//                     self.label.to_owned(),
+//                     None,
+//                     "application/json".to_owned(),
+//                     e,
+//                 ))
+//             }),
+//             AssertionData::Cbor(value) => {
+//                 serde_cbor::value::from_value(value.clone()).map_err(|e| {
+//                     Error::AssertionDecoding(AssertionDecodeError::from_err(
+//                         self.label.to_owned(),
+//                         None,
+//                         "application/cbor".to_owned(),
+//                         e,
+//                     ))
+//                 })
+//             }
+//         }
+//     }
+// }
 
 /// A Builder is used to add a signed manifest to an asset.
 ///
@@ -232,6 +230,13 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
+    pub fn from_manifest_definition(definition: ManifestDefinition) -> Self {
+        Self {
+            definition,
+            ..Default::default()
+        }
+    }
+
     /// Creates a new builder from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments
@@ -1032,12 +1037,6 @@ mod tests {
                     "version": "1.0.0"
                 }
             ],
-            "metadata": [
-                {
-                    "dateTime": "1985-04-12T23:20:50.52Z",
-                    "my_custom_metadata": "my custom metatdata value"
-                }
-            ],
             "title": "Test_Manifest",
             "format": "image/tiff",
             "instance_id": "1234",
@@ -1058,7 +1057,13 @@ mod tests {
                     "label": "org.test.assertion",
                     "data": "assertion"
                 }
-            ]
+            ],
+            "metadata": [
+                {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
+            ],
         })
         .to_string()
     }
