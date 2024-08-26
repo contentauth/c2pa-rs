@@ -765,8 +765,8 @@ impl Manifest {
         );
 
         let mut claim = match self.label() {
-            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string()),
-            None => Claim::new(&generator, self.vendor.as_deref()),
+            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string(), 1),
+            None => Claim::new(&generator, self.vendor.as_deref(), 1),
         };
 
         if let Some(info_vec) = self.claim_generator_info.as_ref() {

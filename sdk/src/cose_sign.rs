@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_sign_claim() {
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -369,7 +369,7 @@ mod tests {
             cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
         };
 
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_bogus_signer() {
-        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();

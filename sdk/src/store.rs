@@ -38,7 +38,7 @@ use crate::{
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
+    claim::{Claim, ClaimAssertion, ClaimAssertionType, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
     error::{Error, Result},
@@ -207,15 +207,15 @@ impl Store {
         if self.provenance_path.is_none() {
             // if we have claims and no provenance, return last claim
             if let Some(claim) = self.claims.last() {
-                return Some(Claim::to_claim_uri(claim.label()));
+                return Some(claim.to_claim_uri());
             }
         }
         self.provenance_path.as_ref().cloned()
     }
 
     // set the path of the current provenance claim
-    fn set_provenance_path(&mut self, claim_label: &str) {
-        let path = Claim::to_claim_uri(claim_label);
+    fn set_provenance_path(&mut self, claim: &Claim) {
+        let path = claim.to_claim_uri();
         self.provenance_path = Some(path);
     }
 
@@ -266,7 +266,7 @@ impl Store {
         }
 
         // update the provenance path
-        self.set_provenance_path(claim.label());
+        self.set_provenance_path(&claim);
 
         let claim_label = claim.label().to_string();
 
@@ -670,6 +670,8 @@ impl Store {
             None => claim.alg().to_string(),
         };
 
+        let at = ClaimAssertionType::V1; //todo: set based on label and claim type
+
         // get salt value if set
         let salt = assertion_desc_box.get_salt();
 
@@ -680,7 +682,9 @@ impl Store {
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion = Assertion::from_data_json(&raw_label, json_box.json())?;
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
-                Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
+                Ok(ClaimAssertion::new(
+                    assertion, instance, &hash, &alg, salt, at,
+                ))
             }
             CAI_EMBEDDED_FILE_UUID => {
                 let ef_box = assertion_box
@@ -693,7 +697,9 @@ impl Store {
                 let assertion =
                     Assertion::from_data_binary(&raw_label, &media_type, data_box.data());
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
-                Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
+                Ok(ClaimAssertion::new(
+                    assertion, instance, &hash, &alg, salt, at,
+                ))
             }
             CAI_CBOR_ASSERTION_UUID => {
                 let cbor_box = assertion_box
@@ -701,7 +707,9 @@ impl Store {
                     .ok_or(Error::JumbfBoxNotFound)?;
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
-                Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
+                Ok(ClaimAssertion::new(
+                    assertion, instance, &hash, &alg, salt, at,
+                ))
             }
             CAI_UUID_ASSERTION_UUID => {
                 let uuid_box = assertion_box
@@ -711,7 +719,9 @@ impl Store {
                 let assertion = Assertion::from_data_uuid(&raw_label, &uuid_str, uuid_box.data());
 
                 let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
-                Ok(ClaimAssertion::new(assertion, instance, &hash, &alg, salt))
+                Ok(ClaimAssertion::new(
+                    assertion, instance, &hash, &alg, salt, at,
+                ))
             }
             _ => Err(Error::JumbfCreationError),
         };
@@ -791,7 +801,7 @@ impl Store {
                     cai_store.add_box(Box::new(a_store)); // add the assertion store to the manifest
                 }
                 CLAIM => {
-                    let mut cb = CAIClaimBox::new();
+                    let mut cb = CAIClaimBox::new(claim.version());
 
                     // Add the Claim json
                     let claim_cbor_bytes = claim.data()?;
@@ -815,7 +825,7 @@ impl Store {
                 }
                 CREDENTIALS => {
                     // add vc_store if needed
-                    if !claim.get_verifiable_credentials().is_empty() {
+                    if !claim.get_verifiable_credentials().is_empty() && claim.version() < 2 {
                         let mut vc_store = CAIVerifiableCredentialStore::new();
 
                         // Add assertions to CAI assertion store.
@@ -1000,7 +1010,9 @@ impl Store {
                     ));
                 }
 
-                match desc_box.label().as_ref() {
+                let (box_label, _instance) =
+                    Claim::box_name_label_instance(desc_box.label().as_ref());
+                match box_label.as_ref() {
                     ASSERTIONS => box_order.push(ASSERTIONS),
                     CLAIM => box_order.push(CLAIM),
                     SIGNATURE => box_order.push(SIGNATURE),
@@ -1040,7 +1052,7 @@ impl Store {
 
             // check if version is supported
             let claim_box_ver = claim_desc_box.label();
-            if !Self::check_label_version(Claim::build_version(), &claim_box_ver) {
+            if !Self::check_label_version(&Claim::build_version_support(), &claim_box_ver) {
                 return Err(Error::InvalidClaim(InvalidClaimError::ClaimVersionTooNew));
             }
 
@@ -1187,6 +1199,11 @@ impl Store {
             if let Some(mi) = manifest_boxes.get(CAI_VERIFIABLE_CREDENTIALS_STORE_UUID) {
                 let vc_store = mi.sbox;
                 let num_vcs = vc_store.data_box_count();
+
+                // VC stores should not be in a 2.x claim
+                if claim.version() > 1 {
+                    return Err(Error::InvalidClaim(InvalidClaimError::VersionFailure));
+                }
 
                 for idx in 0..num_vcs {
                     let vc_box = vc_store
@@ -3422,6 +3439,10 @@ pub enum InvalidClaimError {
     #[error("the verifiable credentials store could not be read")]
     VerifiableCredentialStoreInvalid,
 
+    /// The feature is not supported by version
+    #[error("the manifest contained a feature not support by version")]
+    VersionFailure,
+
     /// The assertion store does not contain the expected number of assertions.
     #[error(
         "unexpected number of assertions in assertion store (expected {expected}, found {found})"
@@ -3500,11 +3521,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -3600,6 +3621,125 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_claim_v2_generation() {
+        // test adding to actual image
+
+        use crate::ClaimGeneratorInfo;
+        let ap = fixture_path("earth_apollo17.jpg");
+        let temp_dir = tempdir().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "test-image.jpg");
+
+        // Create claims store.
+        let mut store = Store::new();
+
+        // ClaimGeneratorInfo is mandatory in Claim V2
+        let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 2);
+        create_editing_claim(&mut claim2).unwrap();
+        claim2.add_claim_generator_info(cgi.clone());
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 2);
+        create_capture_claim(&mut claim_capture).unwrap();
+        claim_capture.add_claim_generator_info(cgi);
+
+        // Do we generate JUMBF?
+        let signer = temp_signer();
+
+        // Test generate JUMBF
+        // Get labels for label test
+        let claim1_label = claim1.label().to_string();
+        let capture = claim_capture.label().to_string();
+        let claim2_label = claim2.label().to_string();
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
+        //store.commit_claim(claim1).unwrap();
+        //store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim_capture).unwrap();
+        store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
+        store.commit_claim(claim2).unwrap();
+        store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
+
+        // test finding claims by label
+        //let c1 = store.get_claim(&claim1_label);
+        let c2 = store.get_claim(&capture);
+        let c3 = store.get_claim(&claim2_label);
+        //assert_eq!(&claim1_label, c1.unwrap().label());
+        assert_eq!(&capture, c2.unwrap().label());
+        assert_eq!(claim2_label, c3.unwrap().label());
+
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        // read from new file
+        let new_store =
+            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+
+        // can  we get by the ingredient data back
+        let _some_binary_data: Vec<u8> = vec![
+            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+            0x0b, 0x0e,
+        ];
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            let _restored_json = claim
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+            let _orig_json = store
+                .get_claim(claim.label())
+                .unwrap()
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+
+            // these better match
+            //assert_eq!(orig_json, restored_json);
+            //assert_eq!(claim.hash(), store.claims()[idx].hash());
+
+            println!(
+                "Claim: {} \n{}",
+                claim.label(),
+                claim
+                    .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+                    .expect("could not restore from json")
+            );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim.get_claim_assertion(&label, instance).unwrap();
+            }
+        }
+
+        // test patch file - bytes should be same so error should not be detected
+        let mut splice_point =
+            patch_file(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
+
+        let mut restore_point =
+            patch_file(&op, "testme".as_bytes(), "thumbnail".as_bytes()).unwrap();
+
+        assert_eq!(splice_point, restore_point);
+
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+            .expect("Should still verify");
+
+        // test patching jumbf - error should be detected
+
+        splice_point = update_file_jumbf(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
+        restore_point =
+            update_file_jumbf(&op, "testme".as_bytes(), "thumbnail.v1".as_bytes()).unwrap();
+
+        assert_eq!(splice_point, restore_point);
+
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+            .expect_err("Should not verify");
+    }
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_unknown_asset_type_generation() {
         // test adding to actual image
         let ap = fixture_path("unsupported_type.txt");
@@ -3613,11 +3753,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -3780,11 +3920,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Test generate JUMBF
@@ -3883,11 +4023,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -3979,11 +4119,11 @@ pub mod tests {
             let claim1 = create_test_claim().unwrap();
 
             // Create a new claim.
-            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
             create_editing_claim(&mut claim2).unwrap();
 
             // Create a 3rd party claim
-            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
@@ -4052,11 +4192,11 @@ pub mod tests {
             let claim1 = create_test_claim().unwrap();
 
             // Create a new claim.
-            let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+            let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
             create_editing_claim(&mut claim2).unwrap();
 
             // Create a 3rd party claim
-            let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+            let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
@@ -4126,11 +4266,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -4200,11 +4340,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -4274,11 +4414,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
@@ -4670,7 +4810,7 @@ pub mod tests {
         assert!(!pc.update_manifest());
 
         // create a new update manifest
-        let mut claim = Claim::new("adobe unit test", Some("update_manfifest"));
+        let mut claim = Claim::new("adobe unit test", Some("update_manfifest"), 1);
 
         // must contain an ingredient
         let parent_hashed_uri = HashedUri::new(
@@ -5176,11 +5316,11 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"));
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
         create_editing_claim(&mut claim2).unwrap();
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"));
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?

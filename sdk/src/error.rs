@@ -293,6 +293,9 @@ pub enum Error {
 
     #[error("prerelease content detected")]
     PrereleaseError,
+
+    #[error("capability is not supported by this version")]
+    VersionCompatibility(String),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

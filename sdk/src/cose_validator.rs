@@ -1492,7 +1492,7 @@ pub mod tests {
     fn test_no_timestamp() {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"));
+        let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -1515,7 +1515,7 @@ pub mod tests {
     fn test_stapled_ocsp() {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
+        let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();

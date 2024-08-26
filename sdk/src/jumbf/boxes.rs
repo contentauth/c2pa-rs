@@ -954,9 +954,15 @@ impl BMFFBox for CAIClaimBox {
 }
 
 impl CAIClaimBox {
-    pub fn new() -> Self {
+    pub fn new(version: usize) -> Self {
+        let v = if version > 1 {
+            format!("{}.v{}", labels::CLAIM, version)
+        } else {
+            labels::CLAIM.to_string()
+        };
+
         CAIClaimBox {
-            claim_box: JUMBFSuperBox::new(labels::CLAIM, Some(CAI_CLAIM_UUID)),
+            claim_box: JUMBFSuperBox::new(&v, Some(CAI_CLAIM_UUID)),
         }
     }
 
@@ -969,7 +975,7 @@ impl CAIClaimBox {
 
 impl Default for CAIClaimBox {
     fn default() -> Self {
-        Self::new()
+        Self::new(1)
     }
 }
 
@@ -2452,7 +2458,7 @@ pub mod tests {
     // ANCHOR: Claim Box
     #[test]
     fn cai_claim_box() {
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
 
         let claim_json = String::from(
             "{
@@ -2566,7 +2572,7 @@ pub mod tests {
         cai_store.add_box(Box::new(a_store));
 
         // create a claim & add it to the cai store
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
         let claim_json = String::from(
             "{
             \"recorder\" : \"Photoshop\",
@@ -2634,7 +2640,7 @@ pub mod tests {
         cai_store.add_box(Box::new(a_store));
 
         // create a claim & add it to the cai store
-        let mut cb = CAIClaimBox::new();
+        let mut cb = CAIClaimBox::new(1);
         let claim_json = String::from(
             "{
             \"recorder\" : \"Photoshop\",
