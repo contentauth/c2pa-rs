@@ -99,8 +99,8 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
         .set_claim_generator_info(claim_generator)
         // todo: add the parent ingredient here
         .add_assertion(ACTIONS, &actions)?
-        .add_assertion(CREATIVE_WORK, &creative_work)?
-        .add_assertion(EXIF, &exif)?;
+        .add_assertion_json(CREATIVE_WORK, &creative_work)?
+        .add_assertion_json(EXIF, &exif)?;
     manifest_def.ingredients.push(parent);
 
     let mut builder = c2pa::Builder::from_manifest_definition(manifest_def);
@@ -214,8 +214,8 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
         // .set_parent(parent)
         // .unwrap()
         .add_assertion(ACTIONS, &actions)?
-        .add_assertion(CREATIVE_WORK, &creative_work)?
-        .add_assertion(EXIF, &exif)?;
+        .add_assertion_json(CREATIVE_WORK, &creative_work)?
+        .add_assertion_json(EXIF, &exif)?;
 
     manifest_def.ingredients.push(parent);
 
@@ -237,7 +237,6 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
     dh.set_hash(hash);
 
     // tell SDK to fill in the hash and sign to complete the manifest
-    output_file.rewind()?;
     let final_manifest =
         builder.sign_data_hashed_embeddable(signer.as_ref(), &dh, "jpg", Some(&mut output_file))?;
 
