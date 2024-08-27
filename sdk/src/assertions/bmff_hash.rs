@@ -1074,22 +1074,16 @@ impl BmffHash {
         Ok(bmff_mm_vec)
     }
 
-    pub fn add_merkle_for_mpd(
+    pub fn add_merkle_for_fragmented(
         &mut self,
         alg: &str,
         asset_path: &Path,
+        fragment_paths: &Vec<PathBuf>,
         output_dir: &Path,
         local_id: u32,
         unique_id: Option<u32>,
     ) -> crate::Result<()> {
         let max_proofs: usize = 4; // todo: calculate (number of hashes to perform vs size of manifest) or allow to be set
-
-        let parent_dir = match asset_path.is_dir() {
-            true => asset_path,
-            false => asset_path
-                .parent()
-                .ok_or(Error::BadParam("no parent directory found".to_string()))?,
-        };
 
         if !output_dir.exists() {
             std::fs::create_dir_all(output_dir)?;
@@ -1109,18 +1103,23 @@ impl BmffHash {
         };
 
         // copy to output folder saving paths to fragments and init segments
-        for entry in (parent_dir.read_dir()?).flatten() {
-            let file_path = entry.path();
+        for file_path in fragment_paths {
+            fragments.push(file_path.as_path());
 
-            match file_path.extension() {
-                Some(s) if s == "m4s" => fragments.push(file_path.clone()),
-                Some(s) if s == "mp4" => inits.push(file_path.clone()),
-                _ => (),
-            }
-
-            let output_path = output_dir.join(entry.file_name());
+            let output_path = output_dir.join(
+                file_path
+                    .file_name()
+                    .ok_or(Error::BadParam("file name not found".to_string()))?,
+            );
             fs::copy(file_path, output_path)?;
         }
+        let output_path = output_dir.join(
+            asset_path
+                .file_name()
+                .ok_or(Error::BadParam("file name not found".to_string()))?,
+        );
+        fs::copy(asset_path, output_path)?;
+        inits.push(asset_path);
 
         // create dummy tree to figure out the layout and proof size
         let dummy_tree = C2PAMerkleTree::dummy_tree(fragments.len(), alg);
@@ -1140,6 +1139,11 @@ impl BmffHash {
 
             if box_infos.iter().filter(|b| b.path == "mdat").count() != 1 {
                 return Err(Error::BadParam("expected 1 mdat in fragment".to_string()));
+            }
+
+            // we don't currently support added to fragments with existing manifests
+            if !c2pa_boxes.bmff_merkle.is_empty() {
+                return Err(Error::BadParam("fragment already contains BmffMerkeMap".to_string()));
             }
 
             let mut mm = BmffMerkleMap {
@@ -1251,8 +1255,14 @@ impl BmffHash {
                 write_c2pa_box(&mut uuid_box_data, &[], false, &mm_cbor)?;
 
                 // replace temp C2PA Merkle box
-                fragment_stream.seek(SeekFrom::Start(bmff_mm_info.offset))?;
-                fragment_stream.write_all(&uuid_box_data)?;
+                if uuid_box_data.len() == bmff_mm_info.size as usize {
+                    fragment_stream.seek(SeekFrom::Start(bmff_mm_info.offset))?;
+                    fragment_stream.write_all(&uuid_box_data)?;
+                } else {
+                    return Err(Error::InvalidAsset(
+                        "mp4 fragment Merkle box size does not match".to_string(),
+                    ));
+                }
             }
         }
 
@@ -1466,7 +1476,7 @@ fn sample_offset(
     }
 }
 
-/* 
+/*
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

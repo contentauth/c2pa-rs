@@ -201,12 +201,14 @@ pub(crate) fn _check_ocsp_response(
                             DATE_FMT,
                         )
                         .map_err(|_e| Error::CoseInvalidCert)?
+                        .and_utc()
                         .timestamp();
                         let next_update = NaiveDateTime::parse_from_str(
                             &cert_status.next_update.to_string(),
                             DATE_FMT,
                         )
                         .map_err(|_e| Error::CoseInvalidCert)?
+                        .and_utc()
                         .timestamp();
 
                         // check to see if we are within range or current time within range
@@ -247,6 +249,7 @@ pub(crate) fn _check_ocsp_response(
                                 DATE_FMT,
                             )
                             .map_err(|_e| Error::CoseInvalidCert)?
+                            .and_utc()
                             .timestamp();
 
                             // check to see if we are within range or current time within range

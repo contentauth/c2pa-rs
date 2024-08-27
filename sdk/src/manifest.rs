@@ -1005,11 +1005,12 @@ impl Manifest {
         store.save_to_asset(source_path.as_ref(), signer, dest_path.as_ref())
     }
 
-    /// Embed a signed manifest into DASH assets using a supplied signer.
+    /// Embed a signed manifest into fragmented BMFF content (i.e.DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
-    pub fn embed_to_mpd<P: AsRef<Path>>(
+    pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         asset_path: P,
+        fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
         signer: &dyn Signer,
     ) -> Result<()> {
@@ -1019,7 +1020,12 @@ impl Manifest {
         let mut store = self.to_store()?;
 
         // sign and write our store to DASH content
-        store.save_to_mpd(asset_path.as_ref(), output_path.as_ref(), signer)
+        store.save_to_bmff_fragmented(
+            asset_path.as_ref(),
+            fragment_paths,
+            output_path.as_ref(),
+            signer,
+        )
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.

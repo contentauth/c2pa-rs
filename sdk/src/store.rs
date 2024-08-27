@@ -1849,9 +1849,10 @@ impl Store {
     }
 
     #[cfg(feature = "file_io")]
-    fn start_save_mpd(
+    fn start_save_bmff_fragmented(
         &mut self,
         asset_path: &Path,
+        fragments: &Vec<std::path::PathBuf>,
         output_dir: &Path,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
@@ -1873,7 +1874,7 @@ impl Store {
         bmff_hash.clear_hash();
 
         // generate fragments and produce Merkle tree
-        bmff_hash.add_merkle_for_mpd(pc.alg(), asset_path, output_dir, 1, None)?;
+        bmff_hash.add_merkle_for_fragmented(pc.alg(), asset_path, fragments, output_dir, 1, None)?;
 
         // add in the BMFF assertion
         pc.add_assertion(&bmff_hash)?;
@@ -1906,13 +1907,15 @@ impl Store {
     }
 
     #[cfg(feature = "file_io")]
-    fn save_to_mpd_internal(
+    fn save_to_bmff_fragmented_internal(
         &mut self,
         asset_path: &Path,
+        fragments: &Vec<std::path::PathBuf>,
         output_path: &Path,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
-        let jumbf_bytes = self.start_save_mpd(asset_path, output_path, signer.reserve_size())?;
+        let jumbf_bytes =
+            self.start_save_bmff_fragmented(asset_path, fragments, output_path, signer.reserve_size())?;
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size())?;
@@ -1939,12 +1942,21 @@ impl Store {
 
     /// Embed the claims store as jumbf into Dash assets.
     #[cfg(feature = "file_io")]
-    pub fn save_to_mpd(
+    pub fn save_to_bmff_fragmented(
         &mut self,
         asset_path: &Path,
+        fragments: &Vec<std::path::PathBuf>,
         output_path: &Path,
         signer: &dyn Signer,
     ) -> Result<()> {
+        let mut validation_log = OneShotStatusTracker::new();
+        let jumbf = self.to_jumbf(signer)?;
+
+        let mut temp_store = Store::from_jumbf(&jumbf, &mut validation_log)?;
+
+        temp_store.save_to_bmff_fragmented_internal(asset_path, fragments, output_path, signer)?;
+
+        /*
         const REP_ID: &str = "$RepresentationID$";
         //const SEG_NUMBER: &str = "$Number$";
         const REP_BANDWIDTH: &str = "$Bandwidth$";
@@ -2048,6 +2060,7 @@ impl Store {
                 }
             }
         }
+        */
 
         Ok(())
     }
@@ -4882,32 +4895,84 @@ pub mod tests {
         assert!(errors.is_empty());
     }
 
-    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_jumbf_generation() {
         // test adding to actual image
-        let asset_path = fixture_path(
+        let _asset_path = fixture_path(
             "/Users/mfisher/Downloads/bigbuckbunny-2s/BigBuckBunny_2s_simple_2014_05_09.mpd",
         );
         let output_path = Path::new("/Users/mfisher/Downloads/bunny_out");
 
-        // Create claims store.
-        let mut store = Store::new();
+        for init in
+            glob::glob("/Users/mfisher/Downloads/bigbuckbunny-2s/**/BigBuckBunny_2s_init.mp4")
+                .unwrap()
+        {
+            match init {
+                Ok(p) => {
+                    let mut fragments = Vec::new();
+                    let init_dir = p.parent().unwrap();
+                    let seg_glob = init_dir.join("BigBuckBunny_2s*.m4s");
 
-        // Create a new claim.
-        let claim = create_test_claim().unwrap();
-        store.commit_claim(claim).unwrap();
+                    println!("Init segment: {:?}", p.display());
+                    for seg in glob::glob(&seg_glob.as_os_str().to_string_lossy()).unwrap() {
+                        if let Ok(sp) = seg {
+                            println!("\tSegment: {:?}", sp.display());
+                            fragments.push(sp.to_owned());
+                        }
+                    }
 
-        // Do we generate JUMBF?
-        let signer = temp_signer();
+                    // Create claims store.
+                    let mut store = Store::new();
 
-        // add manifest based on Dash MPD
-        store
-            .save_to_mpd(asset_path.as_path(), output_path, signer.as_ref())
-            .unwrap();
+                    // Create a new claim.
+                    let claim = create_test_claim().unwrap();
+                    store.commit_claim(claim).unwrap();
+
+                    // Do we generate JUMBF?
+                    let signer = temp_signer();
+
+                    // add manifest based on
+                    let new_output_path = output_path.join(init_dir.file_name().unwrap());
+                    store
+                        .save_to_bmff_fragmented(
+                            p.as_path(),
+                            &fragments,
+                            new_output_path.as_path(),
+                            signer.as_ref(),
+                        )
+                        .unwrap();
+
+                    // verify the fragments
+                    let output_init = new_output_path.join(p.file_name().unwrap());
+                    let init_stream = std::fs::read(output_init).unwrap();
+
+                    for entry in &fragments {
+                        let file_path = new_output_path.join(entry.file_name().unwrap());
+
+                        let mut validation_log = DetailedStatusTracker::new();
+
+                        println!("\tVerifying Fragment: {:?}", file_path.display());
+                           
+                        let fragment_stream = std::fs::read(&file_path).unwrap();
+                        let _manifest = Store::load_fragment_from_memory(
+                            "mp4",
+                            &init_stream,
+                            &fragment_stream,
+                            true,
+                            &mut validation_log,
+                        )
+                        .unwrap();
+
+                        let errors = report_split_errors(validation_log.get_log_mut());
+                        assert!(errors.is_empty());
+                    }
+                }
+                Err(_) => assert!(false),
+            }
+        }
     }
-
+    /*
     #[test]
     #[cfg(feature = "file_io")]
     fn test_mpd_validation() {
