@@ -840,30 +840,19 @@ impl Builder {
         signer: &dyn AsyncSigner,
         data_hash: &DataHash,
         format: &str,
-        source: Option<&mut R>,
     ))]
-    pub fn sign_data_hashed_embeddable<R>(
+    pub fn sign_data_hashed_embeddable(
         &mut self,
         signer: &dyn Signer,
         data_hash: &DataHash,
         format: &str,
-        source: Option<&mut R>,
-    ) -> Result<Vec<u8>>
-    where
-        R: Read + Seek + Send,
-    {
-        let format = format_to_mime(format);
-        self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-
+    ) -> Result<Vec<u8>> {
         let mut store = self.to_store()?;
-        let source: Option<&mut dyn crate::CAIRead> = source.map(|s| s as &mut dyn crate::CAIRead);
         if _sync {
-            store.get_data_hashed_embeddable_manifest(data_hash, signer, &format, source)
+            store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
         } else {
             store
-                .get_data_hashed_embeddable_manifest_async(data_hash, signer, &format, source)
+                .get_data_hashed_embeddable_manifest_async(data_hash, signer, format, None)
                 .await
         }
     }
@@ -1011,6 +1000,7 @@ mod tests {
     use crate::{
         assertions::BoxHash,
         asset_handlers::jpeg_io::JpegIO,
+        hash_stream_by_alg,
         utils::test::{temp_signer, write_jpeg_placeholder_stream},
         Reader,
     };
@@ -1443,15 +1433,15 @@ mod tests {
         let mut dh = DataHash::new("source_hash", "sha256");
         dh.exclusions = Some(exclusions);
 
-        // get the embeddable manifest, letting API do the hashing
+        // Hash the bytes excluding the manifest we inserted
         output_stream.rewind().unwrap();
+        let hash =
+            hash_stream_by_alg("sha256", &mut output_stream, dh.exclusions.clone(), true).unwrap();
+        dh.set_hash(hash);
+
+        // get the embeddable manifest, letting API do the hashing
         let signed_manifest: Vec<u8> = builder
-            .sign_data_hashed_embeddable(
-                signer.as_ref(),
-                &dh,
-                "image/jpeg",
-                Some(&mut output_stream),
-            )
+            .sign_data_hashed_embeddable(signer.as_ref(), &dh, "image/jpeg")
             .unwrap();
 
         use std::io::{Seek, SeekFrom, Write};

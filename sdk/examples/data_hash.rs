@@ -16,8 +16,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
-    io::{Read, Seek, Write},
-    path::PathBuf,
+    io::{Cursor, Read, Seek, Write},
+    path::{Path, PathBuf},
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,30 +42,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn user_data_hash_with_sdk_hashing() -> Result<()> {
-    const GENERATOR: &str = "test_app";
-
-    // You will often implement your own Signer trait to perform on device signing
-    let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
-    let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
-    let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)?;
-
-    let src = "sdk/tests/fixtures/earth_apollo17.jpg";
-    let dst = "target/tmp/output.jpg";
-
-    let source = PathBuf::from(src);
-    let dest = PathBuf::from(dst);
-
-    let mut input_file = std::fs::OpenOptions::new().read(true).open(&source)?;
-
-    let mut output_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&dest)?;
-
-    let mut parent = Ingredient::from_file(source.as_path())?;
+fn manifest_definition<S: AsRef<Path>>(source: S) -> Result<ManifestDefinition> {
+    let mut parent = Ingredient::from_file(source.as_ref())?;
     parent.set_is_parent();
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
@@ -91,7 +69,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
     }"#,
     )?;
 
-    let mut claim_generator = ClaimGeneratorInfo::new(GENERATOR);
+    let mut claim_generator = ClaimGeneratorInfo::new("test_app".to_string());
     claim_generator.set_version("0.1");
 
     let mut manifest_def = ManifestDefinition::new();
@@ -103,51 +81,62 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
         .add_assertion_json(EXIF, &exif)?;
     manifest_def.ingredients.push(parent);
 
-    let mut builder = c2pa::Builder::from_manifest_definition(manifest_def);
+    Ok(manifest_def)
+}
 
-    let unfinished_manifest =
+#[cfg(not(target_arch = "wasm32"))]
+fn user_data_hash_with_sdk_hashing() -> Result<()> {
+    // You will often implement your own Signer trait to perform on device signing
+    let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
+    let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
+    let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)?;
+
+    let src = "sdk/tests/fixtures/earth_apollo17.jpg";
+
+    let source = PathBuf::from(src);
+
+    let mut builder = c2pa::Builder::from_manifest_definition(manifest_definition(&source)?);
+
+    let placeholder_manifest =
         builder.data_hashed_placeholder(signer.reserve_size(), "image/jpeg")?;
 
-    // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
-    // generate new file inserting unfinished manifest into file
-    input_file.rewind()?;
-    let mut before = vec![0u8; 2];
-    input_file.read_exact(before.as_mut_slice())?;
+    let bytes = std::fs::read(&source)?;
+    let mut output: Vec<u8> = Vec::with_capacity(bytes.len() + placeholder_manifest.len());
 
-    output_file.write_all(&before)?;
+    // Generate new file inserting unfinished manifest into file.
+    // Figure out where you want to put the manifest.
+    // Here we put it at the beginning of the JPEG as first segment after the 2 byte SOI marker.
+    let manifest_pos = 2;
+    output.extend_from_slice(&bytes[0..manifest_pos]);
+    output.extend_from_slice(&placeholder_manifest);
+    output.extend_from_slice(&bytes[manifest_pos..]);
 
-    // write completed final manifest
-    output_file.write_all(&unfinished_manifest)?;
-
-    // write bytes after
-    let mut after_buf = Vec::new();
-    input_file.read_to_end(&mut after_buf)?;
-    output_file.write_all(&after_buf)?;
+    // make a stream from the output bytes
+    let mut output_stream = Cursor::new(output);
 
     // we need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, unfinished_manifest.len());
-    dh.add_exclusion(hr);
+    let hr = HashRange::new(manifest_pos, placeholder_manifest.len());
+    dh.add_exclusion(hr.clone());
+
+    // Hash the bytes excluding the manifest we inserted
+    let hash = hash_stream_by_alg("sha256", &mut output_stream, Some([hr].to_vec()), true)?;
+    dh.set_hash(hash);
 
     // tell SDK to fill in the hash and sign to complete the manifest
-    output_file.rewind()?;
-    let final_manifest = builder.sign_data_hashed_embeddable(
-        signer.as_ref(),
-        &dh,
-        "image/jpeg",
-        Some(&mut output_file),
-    )?;
+    let final_manifest = builder.sign_data_hashed_embeddable(signer.as_ref(), &dh, "image/jpeg")?;
 
     // replace temporary manifest with final signed manifest
     // move to location where we inserted manifest,
     // note: temporary manifest and final manifest will be the same size
-    output_file.seek(std::io::SeekFrom::Start(2))?;
+    output_stream.seek(std::io::SeekFrom::Start(2))?;
 
     // write completed final manifest bytes over temporary bytes
-    output_file.write_all(&final_manifest)?;
+    output_stream.write_all(&final_manifest)?;
 
-    // make sure the output file is correct
-    let reader = Reader::from_file(&dest)?;
+    output_stream.rewind()?;
+    // make sure the output stream is correct
+    let reader = Reader::from_stream("image/jpeg", &mut output_stream)?;
 
     // example of how to print out the whole manifest as json
     println!("{reader}\n");
@@ -157,15 +146,13 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn user_data_hash_with_user_hashing() -> Result<()> {
-    const GENERATOR: &str = "test_app";
-
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
     let pkey_path = "sdk/tests/fixtures/certs/es256.pem";
     let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Es256, None)?;
 
     let src = "sdk/tests/fixtures/earth_apollo17.jpg";
-    let dst = "target/tmp/output.jpg";
+    let dst = "target/tmp/output_hashed.jpg";
 
     let source = PathBuf::from(src);
     let dest = PathBuf::from(dst);
@@ -179,55 +166,16 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
         .truncate(true)
         .open(&dest)?;
 
-    let parent = Ingredient::from_file(source.as_path())?;
-
-    // create an action assertion stating that we imported this file
-    let actions = Actions::new().add_action(
-        Action::new(c2pa_action::PLACED)
-            .set_parameter("identifier", parent.instance_id().to_owned())?,
-    );
-
-    // build a creative work assertion
-    let creative_work =
-        CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
-
-    let exif = Exif::from_json_str(
-        r#"{
-        "@context" : {
-        "exif": "http://ns.adobe.com/exif/1.0/"
-        },
-        "exif:GPSVersionID": "2.2.0.0",
-        "exif:GPSLatitude": "39,21.102N",
-        "exif:GPSLongitude": "74,26.5737W",
-        "exif:GPSAltitudeRef": 0,
-        "exif:GPSAltitude": "100963/29890",
-        "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
-    }"#,
-    )?;
-
-    let mut claim_generator = ClaimGeneratorInfo::new(GENERATOR);
-    claim_generator.set_version("0.1");
-
-    let mut manifest_def = ManifestDefinition::new();
-    manifest_def
-        .set_claim_generator_info(claim_generator)
-        // .set_parent(parent)
-        // .unwrap()
-        .add_assertion(ACTIONS, &actions)?
-        .add_assertion_json(CREATIVE_WORK, &creative_work)?
-        .add_assertion_json(EXIF, &exif)?;
-
-    manifest_def.ingredients.push(parent);
-
-    let mut builder = c2pa::Builder::from_manifest_definition(manifest_def);
+    let mut builder = c2pa::Builder::from_manifest_definition(manifest_definition(&source)?);
 
     // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)
-    let unfinished_manifest = builder.data_hashed_placeholder(signer.reserve_size(), "jpg")?;
+    let placeholder_manifest =
+        builder.data_hashed_placeholder(signer.reserve_size(), "image/jpeg")?;
 
     // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
     // we will need to add a data hash that excludes the manifest
     let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, unfinished_manifest.len());
+    let hr = HashRange::new(2, placeholder_manifest.len());
     dh.add_exclusion(hr);
 
     // since the only thing we are excluding in this example is the manifest we can just hash all the bytes
@@ -237,19 +185,27 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
     dh.set_hash(hash);
 
     // tell SDK to fill in the hash and sign to complete the manifest
-    let final_manifest =
-        builder.sign_data_hashed_embeddable(signer.as_ref(), &dh, "jpg", Some(&mut output_file))?;
+    let final_manifest: Vec<u8> =
+        builder.sign_data_hashed_embeddable(signer.as_ref(), &dh, "image/jpeg")?;
 
-    // replace temporary manifest with final signed manifest
-    // move to location where we inserted manifest,
-    // note: temporary manifest and final manifest will be the same size
-    output_file.seek(std::io::SeekFrom::Start(2))?;
+    // generate new file inserting final manifest into file
+    input_file.rewind().unwrap();
+    let mut before = vec![0u8; 2];
+    input_file.read_exact(before.as_mut_slice()).unwrap();
 
-    // write completed final manifest bytes over temporary bytes
-    output_file.write_all(&final_manifest)?;
+    output_file.write_all(&before).unwrap();
+
+    // write completed final manifest
+    output_file.write_all(&final_manifest).unwrap();
+
+    // write bytes after
+    let mut after_buf = Vec::new();
+    input_file.read_to_end(&mut after_buf).unwrap();
+    output_file.write_all(&after_buf).unwrap();
 
     // make sure the output file is correct
-    let reader = Reader::from_file(&dest)?;
+    output_file.rewind()?;
+    let reader = Reader::from_stream("image/jpeg", output_file)?;
 
     // example of how to print out the whole manifest as json
     println!("{reader}\n");
