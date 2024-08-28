@@ -87,7 +87,7 @@ fn main() -> Result<()> {
     let json = manifest_def(title, format);
 
     let mut builder = Builder::from_json(&json)?;
-    builder.add_ingredient(
+    builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
             "relationship": "parentOf"

@@ -250,6 +250,15 @@ impl Builder {
         })
     }
 
+    /// Sets the ClaimGeneratorInfo for this [`Builder`]
+    pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
+    where
+        I: Into<ClaimGeneratorInfo>,
+    {
+        self.definition.claim_generator_info = [claim_generator_info.into()].to_vec();
+        self
+    }
+
     /// Sets the MIME format for this [`Builder`].
     ///
     /// # Arguments
@@ -354,7 +363,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Adds an [`Ingredient`] to the manifest
+    /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
     /// # Arguments
     /// * `ingredient_json` - A JSON string representing the [`Ingredient`].
     /// * `format` - The format of the [`Ingredient`].
@@ -364,7 +373,7 @@ impl Builder {
     /// # Errors
     /// * If the [`Ingredient`] is not valid
     #[async_generic()]
-    pub fn add_ingredient<'a, T, R>(
+    pub fn add_ingredient_from_stream<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
         format: &str,
@@ -383,6 +392,15 @@ impl Builder {
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
+    }
+
+    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient.
+    pub fn add_ingredient<I>(&mut self, ingredient: I) -> &mut Self
+    where
+        I: Into<Ingredient>,
+    {
+        self.definition.ingredients.push(ingredient.into());
+        self
     }
 
     /// Adds a resource to the manifest.
@@ -816,6 +834,8 @@ impl Builder {
             }
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
+        self.definition.format = format.to_string();
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
@@ -1099,7 +1119,7 @@ mod tests {
         };
 
         builder
-            .add_ingredient(parent_json(), "image/jpeg", &mut image)
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut image)
             .unwrap();
 
         builder
@@ -1181,7 +1201,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(parent_json().to_string(), format, &mut source)
+            .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();
 
         builder
@@ -1289,7 +1309,7 @@ mod tests {
 
             let mut builder = Builder::from_json(&manifest_json()).unwrap();
             builder
-                .add_ingredient(parent_json(), format, &mut source)
+                .add_ingredient_from_stream(parent_json(), format, &mut source)
                 .unwrap();
 
             builder
@@ -1336,7 +1356,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(parent_json(), format, &mut source)
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
 
         builder

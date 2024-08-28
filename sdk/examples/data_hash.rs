@@ -25,8 +25,8 @@ use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
     },
-    create_signer, hash_stream_by_alg, ClaimGeneratorInfo, HashRange, Ingredient,
-    ManifestDefinition, Reader, Result, SigningAlg,
+    create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
+    Relationship, Result, SigningAlg,
 };
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -42,9 +42,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn manifest_definition<S: AsRef<Path>>(source: S) -> Result<ManifestDefinition> {
+fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     let mut parent = Ingredient::from_file(source.as_ref())?;
-    parent.set_is_parent();
+    parent.set_relationship(Relationship::ParentOf);
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
         Action::new(c2pa_action::PLACED)
@@ -69,19 +69,19 @@ fn manifest_definition<S: AsRef<Path>>(source: S) -> Result<ManifestDefinition> 
     }"#,
     )?;
 
+    let mut builder = Builder::default();
+
     let mut claim_generator = ClaimGeneratorInfo::new("test_app".to_string());
     claim_generator.set_version("0.1");
 
-    let mut manifest_def = ManifestDefinition::new();
-    manifest_def
+    builder
         .set_claim_generator_info(claim_generator)
-        // todo: add the parent ingredient here
+        .add_ingredient(parent)
         .add_assertion(ACTIONS, &actions)?
         .add_assertion_json(CREATIVE_WORK, &creative_work)?
         .add_assertion_json(EXIF, &exif)?;
-    manifest_def.ingredients.push(parent);
 
-    Ok(manifest_def)
+    Ok(builder)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -95,7 +95,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
 
     let source = PathBuf::from(src);
 
-    let mut builder = c2pa::Builder::from_manifest_definition(manifest_definition(&source)?);
+    let mut builder = builder_from_source(&source)?; // c2pa::Builder::from_manifest_definition(manifest_definition(&source)?);
 
     let placeholder_manifest =
         builder.data_hashed_placeholder(signer.reserve_size(), "image/jpeg")?;
@@ -166,8 +166,7 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
         .truncate(true)
         .open(&dest)?;
 
-    let mut builder = c2pa::Builder::from_manifest_definition(manifest_definition(&source)?);
-
+    let mut builder = builder_from_source(&source)?;
     // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)
     let placeholder_manifest =
         builder.data_hashed_placeholder(signer.reserve_size(), "image/jpeg")?;
