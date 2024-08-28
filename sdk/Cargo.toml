@@ -167,6 +167,7 @@ mockall = "0.11.2"
 c2pa = { path = ".", features = [
 	"unstable_api",
 ] } # allow integration tests to use the new API
+glob = "0.3.1"
 jumbf = "0.4.0"
 
 

@@ -1636,7 +1636,7 @@ impl Claim {
         }
     }
 
-    fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         self.original_bytes = None;
     }
 
