@@ -117,7 +117,7 @@ pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
-pub use builder::Builder;
+pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use error::{Error, Result};
@@ -128,8 +128,6 @@ pub use ingredient::Ingredient;
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
-#[cfg(feature = "unstable_api")]
-pub use manifest_definition::ManifestDefinition;
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
 #[cfg(feature = "v1_api")]
@@ -161,8 +159,6 @@ pub(crate) mod ingredient;
 pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
-#[cfg(feature = "unstable_api")]
-pub(crate) mod manifest_definition;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
 pub(crate) mod ocsp_utils;
