@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.33.2"
+version = "0.33.3"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -65,7 +65,7 @@ crate-type = ["lib"]
 
 [dependencies]
 asn1-rs = "0.5.2"
-async-generic = "0.1.2"
+async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
