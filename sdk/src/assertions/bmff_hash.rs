@@ -12,12 +12,10 @@
 // each license.
 
 use std::{
-    cmp::{self, min},
     collections::{hash_map::Entry::Vacant, HashMap},
-    fmt, fs,
-    io::{BufReader, Cursor, Read, Seek, SeekFrom, Write},
+    fmt,
+    io::{BufReader, Cursor, Read, Seek},
     ops::Deref,
-    path::{Path, PathBuf},
 };
 
 use mp4::*;
@@ -32,9 +30,7 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    asset_handlers::bmff_io::{
-        bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, write_c2pa_box, BoxInfoLite,
-    },
+    asset_handlers::bmff_io::{bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BoxInfoLite},
     asset_io::CAIRead,
     cbor_types::UriT,
     utils::{
@@ -42,8 +38,8 @@ use crate::{
             concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
             Hasher,
         },
-        io_utils::{insert_data_at, stream_len},
-        merkle::{C2PAMerkleTree, MerkleNode},
+        io_utils::stream_len,
+        merkle::C2PAMerkleTree,
     },
     Error,
 };
@@ -112,7 +108,7 @@ impl<'de> Visitor<'de> for VecByteBufVisitor {
     where
         V: SeqAccess<'de>,
     {
-        let len = cmp::min(visitor.size_hint().unwrap_or(0), 4096);
+        let len = std::cmp::min(visitor.size_hint().unwrap_or(0), 4096);
         let mut byte_bufs: Vec<ByteBuf> = Vec::with_capacity(len);
 
         while let Some(b) = visitor.next_element()? {
@@ -345,7 +341,7 @@ impl BmffHash {
 
     /// Generate the hash value for the asset using the range from the BmffHash.
     #[cfg(feature = "file_io")]
-    pub fn gen_hash(&mut self, asset_path: &Path) -> crate::error::Result<()> {
+    pub fn gen_hash(&mut self, asset_path: &std::path::Path) -> crate::error::Result<()> {
         let mut file = std::fs::File::open(asset_path)?;
         self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file)?));
         Ok(())
@@ -392,9 +388,13 @@ impl BmffHash {
         }
     }
 
-    pub fn update_fragmented_inithash(&mut self, asset_path: &Path) -> crate::error::Result<()> {
+    #[cfg(feature = "file_io")]
+    pub fn update_fragmented_inithash(
+        &mut self,
+        asset_path: &std::path::Path,
+    ) -> crate::error::Result<()> {
         if let Some(mm) = &mut self.merkle {
-            let mut init_stream = fs::File::open(asset_path)?;
+            let mut init_stream = std::fs::File::open(asset_path)?;
             let mpd_mm = mm.get_mut(0).ok_or(Error::NotFound)?;
 
             let curr_alg = match &mpd_mm.alg {
@@ -481,8 +481,13 @@ impl BmffHash {
         moof_list
     }
 
-    pub fn verify_hash(&self, asset_path: &Path, alg: Option<&str>) -> crate::error::Result<()> {
-        let mut data = fs::File::open(asset_path)?;
+    #[cfg(feature = "file_io")]
+    pub fn verify_hash(
+        &self,
+        asset_path: &std::path::Path,
+        alg: Option<&str>,
+    ) -> crate::error::Result<()> {
+        let mut data = std::fs::File::open(asset_path)?;
         self.verify_stream_hash(&mut data, alg)
     }
 
@@ -763,6 +768,119 @@ impl BmffHash {
         Ok(())
     }
 
+    #[cfg(feature = "file_io")]
+    pub fn verify_stream_segments(
+        &self,
+        init_stream: &mut dyn CAIRead,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        alg: Option<&str>,
+    ) -> crate::Result<()> {
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a.to_owned(),
+                None => "sha256".to_string(),
+            },
+        };
+
+        // handle file level hashing
+        if self.hash().is_some() {
+            return Err(Error::HashMismatch(
+                "Hash value should not be present for a fragmented BMFF asset".to_string(),
+            ));
+        }
+
+        // Merkle hashed BMFF
+        if let Some(mm_vec) = self.merkle() {
+            // inithash cache to prevent duplicate work.
+            let mut init_hashes = std::collections::HashSet::new();
+
+            for fp in fragment_paths {
+                let mut fragment_stream = std::fs::File::open(fp)?;
+
+                // get merkle boxes from segment
+                let c2pa_boxes = read_bmff_c2pa_boxes(&mut fragment_stream)?;
+                let bmff_merkle = c2pa_boxes.bmff_merkle;
+
+                if bmff_merkle.is_empty() {
+                    return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
+                }
+
+                for bmff_mm in bmff_merkle {
+                    // find matching MerkleMap for this uniqueId & localId
+                    if let Some(mm) = mm_vec.iter().find(|mm| {
+                        mm.unique_id == bmff_mm.unique_id && mm.local_id == bmff_mm.local_id
+                    }) {
+                        let alg = match &mm.alg {
+                            Some(a) => a,
+                            None => &curr_alg,
+                        };
+
+                        // check the inithash (for fragmented MP4 with multiple files this is the hash of the init_segment minus any exclusions)
+                        if let Some(init_hash) = &mm.init_hash {
+                            let bmff_exclusions = &self.exclusions;
+
+                            let init_hash_str = extfmt::Hexlify(init_hash).to_string();
+                            if !init_hashes.contains(&init_hash_str) {
+                                // convert BMFF exclusion map to flat exclusion list
+                                init_stream.rewind()?;
+                                let exclusions = bmff_to_jumbf_exclusions(
+                                    init_stream,
+                                    bmff_exclusions,
+                                    self.bmff_version > 1,
+                                )?;
+
+                                if !verify_stream_by_alg(
+                                    alg,
+                                    init_hash,
+                                    init_stream,
+                                    Some(exclusions),
+                                    true,
+                                ) {
+                                    return Err(Error::HashMismatch(
+                                        "BMFF inithash mismatch".to_string(),
+                                    ));
+                                }
+
+                                init_hashes.insert(init_hash_str);
+                            }
+
+                            // check the segments
+                            fragment_stream.rewind()?;
+                            let fragment_exclusions = bmff_to_jumbf_exclusions(
+                                &mut fragment_stream,
+                                bmff_exclusions,
+                                self.bmff_version > 1,
+                            )?;
+
+                            // hash the entire fragment minus exclusions
+                            let hash = hash_stream_by_alg(
+                                alg,
+                                &mut fragment_stream,
+                                Some(fragment_exclusions),
+                                true,
+                            )?;
+
+                            // check MerkleMap for the hash
+                            if !mm.check_merkle_tree(alg, &hash, bmff_mm.location, &bmff_mm.hashes)
+                            {
+                                return Err(Error::HashMismatch("Fragment not valid".to_string()));
+                            }
+                        }
+                    } else {
+                        return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
+                    }
+                }
+            }
+        } else {
+            return Err(Error::HashMismatch(
+                "Merkle value must be present for a fragmented BMFF asset".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     // Used to verify fragmented BMFF assets spread across multiple file.
     pub fn verify_stream_segment(
         &self,
@@ -860,12 +978,13 @@ impl BmffHash {
         Ok(())
     }
 
+    #[cfg(feature = "file_io")]
     pub fn add_merkle_for_fragmented(
         &mut self,
         alg: &str,
-        asset_path: &Path,
-        fragment_paths: &Vec<PathBuf>,
-        output_dir: &Path,
+        asset_path: &std::path::Path,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        output_dir: &std::path::Path,
         local_id: u32,
         unique_id: Option<u32>,
     ) -> crate::Result<()> {
@@ -897,24 +1016,24 @@ impl BmffHash {
                     .file_name()
                     .ok_or(Error::BadParam("file name not found".to_string()))?,
             );
-            fs::copy(file_path, output_path)?;
+            std::fs::copy(file_path, output_path)?;
         }
         let output_path = output_dir.join(
             asset_path
                 .file_name()
                 .ok_or(Error::BadParam("file name not found".to_string()))?,
         );
-        fs::copy(asset_path, output_path)?;
+        std::fs::copy(asset_path, output_path)?;
         inits.push(asset_path);
 
         // create dummy tree to figure out the layout and proof size
         let dummy_tree = C2PAMerkleTree::dummy_tree(fragments.len(), alg);
 
-        let mut location_to_fragment_map: HashMap<u32, PathBuf> = HashMap::new();
+        let mut location_to_fragment_map: HashMap<u32, std::path::PathBuf> = HashMap::new();
 
         // copy to destination and insert placeholder C2PA Merkle box
         for (location, seg) in (0_u32..).zip(fragments.iter()) {
-            let mut seg_reader = fs::File::open(seg)?;
+            let mut seg_reader = std::fs::File::open(seg)?;
 
             let c2pa_boxes = read_bmff_c2pa_boxes(&mut seg_reader)?;
             let box_infos = &c2pa_boxes.box_infos;
@@ -927,7 +1046,7 @@ impl BmffHash {
                 return Err(Error::BadParam("expected 1 mdat in fragment".to_string()));
             }
 
-            // we don't currently support added to fragments with existing manifests
+            // we don't currently support adding to fragments with existing manifests
             if !c2pa_boxes.bmff_merkle.is_empty() {
                 return Err(Error::BadParam(
                     "fragment already contains BmffMerkeMap".to_string(),
@@ -956,7 +1075,12 @@ impl BmffHash {
 
             // generate the UUID box
             let mut uuid_box_data: Vec<u8> = Vec::with_capacity(mm_cbor.len() * 2);
-            write_c2pa_box(&mut uuid_box_data, &[], false, &mm_cbor)?;
+            crate::asset_handlers::bmff_io::write_c2pa_box(
+                &mut uuid_box_data,
+                &[],
+                false,
+                &mm_cbor,
+            )?;
             if uuid_box_data[uuid_box_data.len() - 1] == 0 {
                 println!("had zeros");
             }
@@ -966,7 +1090,7 @@ impl BmffHash {
                 .find(|b| b.path == "moof")
                 .ok_or(Error::BadParam("expected 1 moof in fragment".to_string()))?;
 
-            let mut source = fs::File::open(seg)?;
+            let mut source = std::fs::File::open(seg)?;
             let output_filename = seg
                 .file_name()
                 .ok_or(Error::NotFound)?
@@ -976,7 +1100,12 @@ impl BmffHash {
             let mut dest = std::fs::OpenOptions::new().write(true).open(&dest_path)?;
 
             // UUID to insert into output asset
-            insert_data_at(&mut source, &mut dest, first_moof.offset, &uuid_box_data)?;
+            crate::utils::io_utils::insert_data_at(
+                &mut source,
+                &mut dest,
+                first_moof.offset,
+                &uuid_box_data,
+            )?;
 
             // save file path for each which location in Merkle tree
             location_to_fragment_map.insert(location, dest_path);
@@ -984,10 +1113,10 @@ impl BmffHash {
 
         // fill in actual hashes now that we have inserted the C2PA box.
         let bmff_exclusions = &self.exclusions;
-        let mut leaves: Vec<MerkleNode> = Vec::with_capacity(fragments.len());
+        let mut leaves: Vec<crate::utils::merkle::MerkleNode> = Vec::with_capacity(fragments.len());
         for i in 0..fragments.len() as u32 {
             if let Some(path) = location_to_fragment_map.get(&i) {
-                let mut fragment_stream = fs::File::open(path)?;
+                let mut fragment_stream = std::fs::File::open(path)?;
 
                 let fragment_exclusions = bmff_to_jumbf_exclusions(
                     &mut fragment_stream,
@@ -1000,7 +1129,7 @@ impl BmffHash {
                     hash_stream_by_alg(alg, &mut fragment_stream, Some(fragment_exclusions), true)?;
 
                 // add Merkle lead
-                leaves.push(MerkleNode(hash));
+                leaves.push(crate::utils::merkle::MerkleNode(hash));
             }
         }
 
@@ -1043,12 +1172,17 @@ impl BmffHash {
 
                 // generate the C2PA Merkle box with final hash
                 let mut uuid_box_data: Vec<u8> = Vec::with_capacity(mm_cbor.len() * 2);
-                write_c2pa_box(&mut uuid_box_data, &[], false, &mm_cbor)?;
+                crate::asset_handlers::bmff_io::write_c2pa_box(
+                    &mut uuid_box_data,
+                    &[],
+                    false,
+                    &mm_cbor,
+                )?;
 
                 // replace temp C2PA Merkle box
                 if uuid_box_data.len() == bmff_mm_info.size as usize {
-                    fragment_stream.seek(SeekFrom::Start(bmff_mm_info.offset))?;
-                    fragment_stream.write_all(&uuid_box_data)?;
+                    fragment_stream.seek(std::io::SeekFrom::Start(bmff_mm_info.offset))?;
+                    std::io::Write::write_all(&mut fragment_stream, &uuid_box_data)?;
                 } else {
                     return Err(Error::InvalidAsset(
                         "mp4 fragment Merkle box size does not match".to_string(),
@@ -1058,7 +1192,7 @@ impl BmffHash {
         }
 
         // save desired Merkle tree row (for now complete tree)
-        let tree_row = min(max_proofs, m_tree.layers.len() - 1);
+        let tree_row = std::cmp::min(max_proofs, m_tree.layers.len() - 1);
         let merkle_row = m_tree.layers[tree_row].clone();
         let mut hashes = Vec::new();
         for mn in merkle_row {

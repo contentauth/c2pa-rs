@@ -377,6 +377,32 @@ impl ManifestStore {
         }
     }
 
+    #[cfg(feature = "file_io")]
+    /// Loads a ManifestStore from an init segment and fragments.  This
+    /// would be used to load and validate fragmented MP4 files that span
+    /// multiple separate assets files.
+    pub fn from_fragments(
+        asset_type: &str,
+        init_segment_path: &Path,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        verify: bool,
+    ) -> Result<ManifestStore> {
+        let mut validation_log = DetailedStatusTracker::new();
+
+        let mut init_segment = std::fs::File::open(init_segment_path)?;
+
+        match Store::load_from_file_and_fragments(
+            asset_type,
+            &mut init_segment,
+            fragment_paths,
+            verify,
+            &mut validation_log,
+        ) {
+            Ok(store) => Ok(Self::from_store(store, &validation_log)),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Asynchronously loads a manifest from a buffer holding a binary manifest (.c2pa) and validates against an asset buffer
     ///
     /// # Example: Creating a manifest store from a .c2pa manifest and validating it against an asset

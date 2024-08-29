@@ -1234,7 +1234,7 @@ impl Manifest {
             .await
     }
 
-    /// Embed a signed manifest into fragmented BMFF content (i.e.DASH) assets using a supplied signer.
+    /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
     pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,

@@ -15,8 +15,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::Result;
 
-/// Insert data at arbitrary location in a stream.  
-/// location is from the start of the source stream
+// Insert data at arbitrary location in a stream.
+// location is from the start of the source stream
+#[allow(dead_code)]
 pub(crate) fn insert_data_at<R: Read + Seek, W: Write>(
     source: &mut R,
     dest: &mut W,
@@ -40,7 +41,8 @@ pub(crate) fn insert_data_at<R: Read + Seek, W: Write>(
     Ok(())
 }
 
-/// returns length of the steam
+// Returns length of the stream, stream position is preserved
+#[allow(dead_code)]
 pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64> {
     let old_pos = reader.stream_position()?;
     let len = reader.seek(SeekFrom::End(0))?;

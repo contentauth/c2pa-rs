@@ -16,7 +16,10 @@ use std::{
     io::{Cursor, Read, Seek},
 };
 #[cfg(feature = "file_io")]
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
@@ -3380,6 +3383,38 @@ impl Store {
         Ok(store)
     }
 
+    /// Load Store from a init and fragments
+    /// asset_type: asset extension or mime type
+    /// init_segment: reader for the file containing the initialization segments
+    /// fragments: list of paths to the fragments to verify
+    /// verify: if true will run verification checks when loading, all fragments must verify for Ok status
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[cfg(feature = "file_io")]
+    pub fn load_from_file_and_fragments(
+        asset_type: &str,
+        init_segment: &mut dyn CAIRead,
+        fragments: &Vec<PathBuf>,
+        verify: bool,
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<Store> {
+        let mut init_seg_data = Vec::new();
+        init_segment.read_to_end(&mut init_seg_data)?;
+
+        Store::get_store_from_memory(asset_type, &init_seg_data, validation_log).and_then(|store| {
+            // verify the store
+            if verify {
+                // verify store and claims
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                    validation_log,
+                )?;
+            }
+
+            Ok(store)
+        })
+    }
+
     /// Load Store from a in-memory asset
     /// asset_type: asset extension or mime type
     /// data: reference to bytes of the the file
@@ -5898,6 +5933,26 @@ pub mod tests {
                         let errors = report_split_errors(validation_log.get_log_mut());
                         assert!(errors.is_empty());
                     }
+
+                    // test verifying all at once
+                    let mut output_fragments = Vec::new();
+                    for entry in &fragments {
+                        output_fragments.push(new_output_path.join(entry.file_name().unwrap()));
+                    }
+
+                    let mut reader = Cursor::new(init_stream);
+                    let mut validation_log = DetailedStatusTracker::new();
+                    let _manifest = Store::load_from_file_and_fragments(
+                        "mp4",
+                        &mut reader,
+                        &output_fragments,
+                        true,
+                        &mut validation_log,
+                    )
+                    .unwrap();
+
+                    let errors = report_split_errors(validation_log.get_log_mut());
+                    assert!(errors.is_empty());
                 }
                 Err(_) => panic!("test misconfigures"),
             }
