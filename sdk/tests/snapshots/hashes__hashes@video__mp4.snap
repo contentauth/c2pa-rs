@@ -1,0 +1,184 @@
+---
+source: sdk/tests/hashes.rs
+expression: "unescape_json(&Reader::from_stream(format, &mut dest)?.json())?"
+---
+{
+  "active_manifest": "[MANIFEST_URN]",
+  "manifests": {
+    "[MANIFEST_URN]": {
+      "assertions": [
+        {
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                "parameters": {
+                  "description": "import"
+                },
+                "softwareAgent": {
+                  "name": "TestApp",
+                  "something": "else",
+                  "version": "1.0"
+                }
+              }
+            ]
+          },
+          "label": "c2pa.actions.v2"
+        },
+        {
+          "data": {
+            "alg": "sha256",
+            "exclusions": [
+              {
+                "data": [
+                  {
+                    "offset": 8,
+                    "value": [
+                      216,
+                      254,
+                      195,
+                      214,
+                      27,
+                      14,
+                      72,
+                      60,
+                      146,
+                      151,
+                      88,
+                      40,
+                      135,
+                      126,
+                      196,
+                      129
+                    ]
+                  }
+                ],
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": null,
+                "version": null,
+                "xpath": "/uuid"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": null,
+                "version": null,
+                "xpath": "/ftyp"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": null,
+                "version": null,
+                "xpath": "/meta/iloc"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": null,
+                "version": null,
+                "xpath": "/mfra/tfra"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": [
+                  {
+                    "length": 0,
+                    "offset": 16
+                  }
+                ],
+                "version": null,
+                "xpath": "/moov/trak/mdia/minf/stbl/stco"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": null,
+                "length": null,
+                "subset": [
+                  {
+                    "length": 0,
+                    "offset": 16
+                  }
+                ],
+                "version": null,
+                "xpath": "/moov/trak/mdia/minf/stbl/co64"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": [
+                  1,
+                  0,
+                  0
+                ],
+                "length": null,
+                "subset": [
+                  {
+                    "length": 8,
+                    "offset": 16
+                  }
+                ],
+                "version": null,
+                "xpath": "/moof/traf/tfhd"
+              },
+              {
+                "data": null,
+                "exact": null,
+                "flags": [
+                  1,
+                  0,
+                  0
+                ],
+                "length": null,
+                "subset": [
+                  {
+                    "length": 4,
+                    "offset": 16
+                  }
+                ],
+                "version": null,
+                "xpath": "/moof/traf/trun"
+              }
+            ],
+            "hash": "[HASH]",
+            "name": "jumbf manifest"
+          },
+          "label": "c2pa.hash.bmff.v2"
+        }
+      ],
+      "claim_generator": "test/1.0 c2pa-rs/[VERSION]",
+      "claim_generator_info": [
+        {
+          "name": "test",
+          "version": "1.0"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "[VERSION]"
+        }
+      ],
+      "format": "[FORMAT]",
+      "ingredients": [],
+      "instance_id": [XMP_ID]",
+      "label": "[MANIFEST_URN]",
+      "signature_info": {
+        "alg": "Ed25519",
+        "cert_serial_number": "638838410810235485828984295321338730070538954823",
+        "issuer": "C2PA Test Signing Cert"
+      }
+    }
+  }
+}

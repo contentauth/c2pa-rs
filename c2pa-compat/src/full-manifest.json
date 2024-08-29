@@ -1,0 +1,123 @@
+{
+  "title": "extensive-version-snapshot",
+  "format": "TODO",
+  "instance_id": "TOOD",
+  "claim_generator_info": [
+    {
+      "name": "My claim generator",
+      "version": "0.1.0",
+      "icon": {
+        "format": "image/svg+xml",
+        "identifier": "sample1.svg"
+      }
+    }
+  ],
+  "metadata": [
+    {
+      "reviews": [
+        {
+          "explanation": "Some explanation",
+          "code": "ingredient.notVisible",
+          "value": 2
+        }
+      ],
+      "dateTime": "1985-04-12T23:20:50.52Z",
+      "dataSource": {
+        "type": "humanEntry.identified",
+        "details": "Some details",
+        "actors": [
+          {
+            "identifier": "Some identifier"
+          }
+        ]
+      },
+      "my_custom_metadata": "my custom metatdata value"
+    }
+  ],
+  "thumbnail": {
+    "format": "image/jpeg",
+    "identifier": "C.jpg",
+    "data_types": [
+      {
+        "type": "c2pa.types.classifier",
+        "version": "0.1.0"
+      }
+    ]
+  },
+  "assertions": [
+    {
+      "label": "TODO: add every single type of assertion, v1 + v2 + vX",
+      "data": {
+        "TODO": "TODO: are assertions validated? are they all treated the same, just a blob?"
+      }
+    }
+  ],
+  "ingredients": [
+    {
+      "title": "CA.jpg",
+      "format": "image/jpeg",
+      "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+      "relationship": "parentOf",
+      "thumbnail": {
+        "format": "image/png",
+        "identifier": "fixtures/png/exp-test1.png",
+        "data_types": [
+          {
+            "type": "c2pa.types.classifier",
+            "version": "0.1.0"
+          }
+        ]
+      },
+      "validation_status": [
+        {
+          "code": "claimSignature.validated",
+          "url": "TODO",
+          "explanation": "Some explanation"
+        }
+      ],
+      "description": "Some description",
+      "informational_URI": "google.com",
+      "metadata": {
+        "reviews": [
+          {
+            "explanation": "Some explanation",
+            "code": "ingredient.notVisible",
+            "value": 2
+          }
+        ],
+        "dateTime": "1985-04-12T23:20:50.52Z",
+        "dataSource": {
+          "type": "humanEntry.identified",
+          "details": "Some details",
+          "actors": [
+            {
+              "identifier": "Some identifier"
+            }
+          ]
+        },
+        "my_custom_metadata": "my custom metatdata value"
+      },
+      "data_types": [
+        {
+          "type": "c2pa.types.classifier",
+          "version": "0.1.0"
+        }
+      ]
+    },
+    {
+      "title": "prompt",
+      "format": "text/plain",
+      "relationship": "inputTo",
+      "data": {
+        "format": "text/plain",
+        "identifier": "prompt.txt",
+        "data_types": [
+          {
+            "type": "c2pa.types.generator.prompt"
+          }
+        ]
+      }
+    }
+  ],
+  "redactions": ["TODO"]
+}

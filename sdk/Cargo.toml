@@ -97,7 +97,7 @@ img-parts = "0.3.0"
 jfifdump = "0.5.1"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
-lazy_static = "1.4.0"
+lazy_static = "1.5.0"
 memchr = "2.7.1"
 multibase = "0.9.0"
 multihash = "0.11.4"
@@ -123,7 +123,7 @@ sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
-url = "2.2.2, <2.5.1"                                               # Can't use 2.5.1 or newer until new license is reviewed.
+url = "2.2.2, <2.5.1" # Can't use 2.5.1 or newer until new license is reviewed.
 uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.15.1"
 x509-certificate = "0.21.0"
@@ -165,10 +165,15 @@ web-sys = { version = "0.3.58", features = [
 anyhow = "1.0.40"
 mockall = "0.11.2"
 c2pa = { path = ".", features = [
+	# allow integration tests to use the new API
 	"unstable_api",
-] } # allow integration tests to use the new API
+] }
 jumbf = "0.4.0"
-
+insta = { version = "1.39.0", features = ["json", "redactions", "filters"] }
+# The deps below are used for tests/compat.rs
+tiny_http = "0.12.0"
+bsdiff = "0.2.0"
+brotli = "6.0.0"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
@@ -177,3 +182,8 @@ wasm-bindgen-test = "0.3.31"
 actix = "0.13.1"
 ed25519-dalek = "2.1.1"
 tokio = { version = "1.36.0", features = ["full"] }
+c2pa = { path = ".", features = [
+	# Always add thumbnails for integration test consistency when --all-features is passed.
+	"add_thumbnails",
+	"fetch_remote_manifests",
+] }

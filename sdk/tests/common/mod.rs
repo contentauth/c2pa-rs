@@ -11,17 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod compare_readers;
 mod test_signer;
 
-use std::{
-    fs,
-    io::{Read, Seek},
-    path::{Path, PathBuf},
-};
-
-use c2pa::{format_from_path, Reader, Result};
-pub use compare_readers::compare_readers;
+use c2pa::{Reader, Result};
 #[allow(unused)]
 pub use test_signer::test_signer;
 
@@ -37,64 +29,41 @@ macro_rules! assert_err {
 #[allow(unused_imports)]
 pub(super) use assert_err;
 
-pub fn fixtures_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
-    PathBuf::from("tests/fixtures").join(file_name)
-}
-
-pub fn known_good_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
-    PathBuf::from("tests/known_good").join(file_name)
-}
-
-/// get a file from path without requiring file_io feature enabled in the c2pa crate
-pub fn reader_from_file<P: AsRef<Path>>(path: P) -> Result<Reader> {
-    let format = format_from_path(&path).ok_or(c2pa::Error::UnsupportedType)?;
-    Reader::from_stream(&format, &mut fs::File::open(&path)?)
-}
-
-#[allow(unused)]
-pub fn write_known_good<P: AsRef<Path>>(file_name: P) -> Result<()> {
-    let reader = reader_from_file(fixtures_path(&file_name))?;
-    let mut path = known_good_path(file_name);
-    path.set_extension("json");
-    fs::write(path, reader.json()).map_err(Into::into)
-}
-
-pub fn read_known_good<P: AsRef<Path>>(file_name: P) -> std::io::Result<String> {
-    let mut path = known_good_path(file_name);
-    path.set_extension("json");
-    fs::read_to_string(path)
-}
-
-#[allow(unused)]
-pub fn compare_to_known_good<P: AsRef<Path>>(reader: &Reader, file_name: P) -> Result<()> {
-    let known = read_known_good(&file_name)?;
-    let reader1 = Reader::from_json(&known)?;
-    //et reader2 = reader_from_file(fixtures_path(file_name))?;
-    let result = compare_readers(&reader1, reader)?;
-    assert!(result.is_empty(), "{}", result.join("\n"));
-    Ok(())
+// Filter unstable output values and order them.
+#[macro_export]
+macro_rules! apply_filters {
+    {} => {
+        // TODO: c2pa regex patterns can be more strict and granular
+        let mut settings = insta::Settings::clone_current();
+        // Sort by default.
+        settings.set_sort_maps(true);
+        // macOS temp folder
+        settings.add_filter(r"/var/folders/\S+?/T/\S+", "[TEMP_FILE]");
+        // Linux temp folder
+        settings.add_filter(r"/tmp/\.tmp\S+", "[TEMP_FILE]");
+        // Windows temp folder
+        settings.add_filter(r"\b[A-Z]:\\.*\\Local\\Temp\\\S+", "[TEMP_FILE]");
+        // Convert Windows paths to Unix Paths
+        settings.add_filter(r"\\\\?([\w\d.])", "/$1");
+        // Jumbf URI
+        settings.add_filter(r#""self#jumbf=.*""#, r#""[JUMBF_URI]""#);
+        // Xmp id
+        settings.add_filter(r#""xmp:iid:.*""#, r#"[XMP_ID]""#);
+        // Manifest URN
+        settings.add_filter(r#""(?:[^:]+:)?urn:uuid:.*""#, r#""[MANIFEST_URN]""#);
+        // Timestamp1
+        settings.add_filter(r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}""#, r#""[TIMESTAMP1]""#);
+        // Timestamp2
+        settings.add_filter(r#"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ UTC"#, r#""[TIMESTAMP2]""#);
+        // Claim generator info.
+        settings.add_filter(&c2pa::VERSION.replace(".", "\\."), "[VERSION]");
+        let _guard = settings.bind_to_scope();
+    }
 }
 
 #[allow(unused)]
-pub fn compare_stream_to_known_good<P: AsRef<Path>, S: Read + Seek + Send>(
-    stream: &mut S,
-    format: &str,
-    known_file: P,
-) -> Result<()> {
-    let known = read_known_good(&known_file)?;
-    let reader1 = Reader::from_json(&known)?;
-    let reader2 = Reader::from_stream(format, stream)?;
-    let result = compare_readers(&reader1, &reader2)?;
-    assert!(result.is_empty(), "{}", result.join("\n"));
-    Ok(())
-}
-
-#[allow(unused)]
-pub fn fixture_stream(name: &str) -> Result<(String, fs::File)> {
-    let path = fixtures_path(name);
-    let format = format_from_path(&path).ok_or(c2pa::Error::UnsupportedType)?;
-    let stream = fs::File::open(&path)?;
-    Ok((format, stream))
+pub fn unescape_json(str: &str) -> Result<serde_json::Value> {
+    Ok(serde_json::from_str(str)?)
 }
 
 #[allow(unused)]
