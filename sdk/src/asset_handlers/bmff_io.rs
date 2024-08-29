@@ -1109,6 +1109,7 @@ fn get_uuid_token(
     None
 }
 
+#[allow(dead_code)]
 pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
     pub bmff_merkle: Vec<BmffMerkleMap>,

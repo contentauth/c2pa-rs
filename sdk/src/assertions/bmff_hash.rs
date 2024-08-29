@@ -995,7 +995,6 @@ impl BmffHash {
             }
         }
 
-        let mut inits = Vec::new();
         let mut fragments = Vec::new();
 
         let unique_id = match unique_id {
@@ -1020,7 +1019,6 @@ impl BmffHash {
                 .ok_or(Error::BadParam("file name not found".to_string()))?,
         );
         std::fs::copy(asset_path, output_path)?;
-        inits.push(asset_path);
 
         // create dummy tree to figure out the layout and proof size
         let dummy_tree = C2PAMerkleTree::dummy_tree(fragments.len(), alg);
@@ -1076,9 +1074,6 @@ impl BmffHash {
                 false,
                 &mm_cbor,
             )?;
-            if uuid_box_data[uuid_box_data.len() - 1] == 0 {
-                println!("had zeros");
-            }
 
             let first_moof = box_infos
                 .iter()
@@ -1123,7 +1118,7 @@ impl BmffHash {
                 let hash =
                     hash_stream_by_alg(alg, &mut fragment_stream, Some(fragment_exclusions), true)?;
 
-                // add Merkle lead
+                // add merkle leaf
                 leaves.push(crate::utils::merkle::MerkleNode(hash));
             }
         }
