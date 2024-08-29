@@ -126,7 +126,7 @@ url = "2.2.2, <2.5.1" # Can't use 2.5.1 or newer until new license is reviewed.
 uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.15.1"
 x509-certificate = "0.21.0"
-zip = { git = "https://github.com/ok-nick/zip2.git", default-features = false }
+zip = "2.2.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
