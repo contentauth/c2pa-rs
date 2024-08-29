@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.33.1"
+version = "0.33.3"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
 	"Maurice Fisher <mfisher@adobe.com>",
@@ -66,6 +66,7 @@ crate-type = ["lib"]
 [dependencies]
 asn1-rs = "0.5.2"
 async-generic = "1.1"
+async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
 base64 = "0.21.2"
@@ -73,7 +74,7 @@ bcder = "0.7.3"
 bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-chrono = { version = "0.4.27", default-features = false, features = [
+chrono = { version = "0.4.28", default-features = false, features = [
 	"serde",
 	"wasmbind",
 ] }
@@ -118,7 +119,7 @@ serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.4.0"
 serde-transcode = "1.1.1"
-sha2 = "0.10.2"
+sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.63"
 treeline = "0.1.0"
@@ -127,6 +128,7 @@ uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.15.1"
 x509-certificate = "0.21.0"
 zip = "2.2.0"
+
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
@@ -145,7 +147,8 @@ getrandom = { version = "0.2.7", features = ["js"] }
 # to handle certificate timestamp checking correctly.
 instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
-rsa = "0.6.1"
+rand_core = "0.9.0-alpha.2"
+rsa = { version = "0.9.6", features = ["sha2"] }
 serde-wasm-bindgen = "0.5.0"
 spki = "0.6.0"
 wasm-bindgen = "0.2.83"

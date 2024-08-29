@@ -237,6 +237,10 @@ where
     let data_len = data.seek(SeekFrom::End(0))?;
     data.rewind()?;
 
+    if data_len < 1 {
+        return Err(Error::OtherError("no data to hash".into()));
+    }
+
     let ranges = match hash_range {
         Some(mut hr) if !hr.is_empty() => {
             // hash data skipping excluded regions
