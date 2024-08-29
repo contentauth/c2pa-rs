@@ -228,10 +228,6 @@ pub struct BmffMerkleMap {
     pub location: u32,
 
     pub hashes: Option<VecByteBuf>,
-
-    // temp range to hold bytes to be hashes for flat file MerkleMap
-    #[serde(skip)]
-    pub data_range: Vec<HashRange>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -1058,7 +1054,6 @@ impl BmffHash {
                 local_id,
                 location,
                 hashes: None,
-                data_range: Vec::new(),
             };
 
             let proof = dummy_tree.get_proof_by_index(location as usize, max_proofs)?;
