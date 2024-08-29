@@ -25,6 +25,9 @@ pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod collection_hash;
+pub use collection_hash::{CollectionHash, UriHashedDataMap};
+
 mod creative_work;
 pub use creative_work::CreativeWork;
 

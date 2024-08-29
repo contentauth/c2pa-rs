@@ -39,6 +39,11 @@ pub const DATA_HASH: &str = "c2pa.hash.data";
 /// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_general_boxes_hash>.
 pub const BOX_HASH: &str = "c2pa.hash.boxes";
 
+/// Label prefix for a collection hash assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_collection_data_hash>.
+pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
+
 /// Label prefix for a BMFF-based hash assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_bmff_based_hash>.
