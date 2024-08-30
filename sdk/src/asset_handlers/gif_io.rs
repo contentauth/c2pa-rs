@@ -29,7 +29,10 @@ use crate::{
         HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::Result,
-    utils::xmp_inmemory_utils::{self, MIN_XMP},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
     CAIRead, CAIReadWrite, Error,
 };
 
@@ -107,9 +110,7 @@ impl CAIWriter for GifIO {
                 },
                 HashObjectPositions {
                     offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(
-                        input_stream.seek(SeekFrom::End(0))? - c2pa_block.end(),
-                    )?,
+                    length: usize::try_from(stream_len(input_stream)? - c2pa_block.end())?,
                     htype: HashBlockObjectType::Other,
                 },
             ]),
@@ -130,8 +131,7 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos + 1,
-                        length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
-                            - end_preamble_pos,
+                        length: usize::try_from(stream_len(input_stream)?)? - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
                     },
                 ])
