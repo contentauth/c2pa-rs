@@ -78,6 +78,8 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    #[cfg(feature = "file_io")]
+    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -1376,6 +1378,13 @@ impl Claim {
                                 *fragment_data,
                                 Some(claim.alg()),
                             ),
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
+                            .verify_stream_segments(
+                                *initseg_data,
+                                fragment_paths,
+                                Some(claim.alg()),
+                            ),
                     };
 
                     match hash_result {
@@ -1636,7 +1645,7 @@ impl Claim {
         }
     }
 
-    fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         self.original_bytes = None;
     }
 

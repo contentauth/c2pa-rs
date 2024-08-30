@@ -29,7 +29,10 @@ use crate::{
         HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::Result,
-    utils::xmp_inmemory_utils::{self, MIN_XMP},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
     CAIRead, CAIReadWrite, Error,
 };
 
@@ -62,7 +65,7 @@ impl CAIReader for GifIO {
             }
         }
 
-        bytes.truncate(bytes.len() - 258);
+        bytes.truncate(bytes.len() - 257);
         String::from_utf8(bytes).ok()
     }
 }
@@ -107,9 +110,7 @@ impl CAIWriter for GifIO {
                 },
                 HashObjectPositions {
                     offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(
-                        input_stream.seek(SeekFrom::End(0))? - c2pa_block.end(),
-                    )?,
+                    length: usize::try_from(stream_len(input_stream)? - c2pa_block.end())?,
                     htype: HashBlockObjectType::Other,
                 },
             ]),
@@ -130,8 +131,7 @@ impl CAIWriter for GifIO {
                     },
                     HashObjectPositions {
                         offset: end_preamble_pos + 1,
-                        length: usize::try_from(input_stream.seek(SeekFrom::End(0))?)?
-                            - end_preamble_pos,
+                        length: usize::try_from(stream_len(input_stream)?)? - end_preamble_pos,
                         htype: HashBlockObjectType::Other,
                     },
                 ])
@@ -1469,7 +1469,7 @@ mod tests {
         )?;
 
         let xmp = gif_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta".to_owned()));
+        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>".to_owned()));
 
         Ok(())
     }
