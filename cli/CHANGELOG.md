@@ -6,6 +6,11 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.8
+_30 August 2024_
+
+* Initial fragment support ([contentauth/c2patool#230](https://github.com/contentauth/c2patool/pull/230))
+* Add warning about accessing a private key directly ([contentauth/c2patool#218](https://github.com/contentauth/c2patool/pull/218))
 ## 0.9.7
 _15 August 2024_
 
