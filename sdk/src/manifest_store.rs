@@ -381,20 +381,22 @@ impl ManifestStore {
     /// Loads a ManifestStore from an init segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate assets files.
-    pub fn from_fragments(
-        asset_type: &str,
-        init_segment_path: &Path,
-        fragment_paths: &Vec<std::path::PathBuf>,
+    pub fn from_fragments<P: AsRef<Path>>(
+        path: P,
+        fragments: &Vec<std::path::PathBuf>,
         verify: bool,
     ) -> Result<ManifestStore> {
         let mut validation_log = DetailedStatusTracker::new();
 
-        let mut init_segment = std::fs::File::open(init_segment_path)?;
+        let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
+            .ok_or(crate::Error::UnsupportedType)?;
+
+        let mut init_segment = std::fs::File::open(path.as_ref())?;
 
         match Store::load_from_file_and_fragments(
-            asset_type,
+            &asset_type,
             &mut init_segment,
-            fragment_paths,
+            fragments,
             verify,
             &mut validation_log,
         ) {
