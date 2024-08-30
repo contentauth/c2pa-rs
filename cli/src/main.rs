@@ -25,7 +25,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport};
+use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport, Signer};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -163,6 +163,22 @@ enum Commands {
         #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
         trust_config: Option<TrustResource>,
     },
+    /// Sub-command to add manifest to fragmented BMFF content
+    ///
+    /// The init path can be a glob to process entire directories of content, for example:
+    ///
+    /// c2patool -m test2.json -o /my_output_folder "/my_renditions/**/my_init.mp4" fragment --fragments_glob "myfile_abc*[0-9].m4s"
+    ///
+    /// Note: the glob patterns are quoted to prevent shell expansion.
+    Fragment {
+        /// Glob pattern to find the fragments of the asset. The path is automatically set to be the same as
+        /// the init segment.
+        ///
+        /// The fragments_glob pattern should only match fragment file names not the full paths (e.g. "myfile_abc*[0-9].m4s"
+        /// to match [myfile_abc1.m4s, myfile_abc2180.m4s, ...] )
+        #[arg(long = "fragments_glob", verbatim_doc_comment)]
+        fragments_glob: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -287,7 +303,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
                 enable_trust_checks = true;
             }
         }
-        None => {}
+        _ => {}
     }
 
     // if any trust setting is provided enable the trust checks
@@ -306,6 +322,103 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn sign_fragmented(
+    manifest: &mut Manifest,
+    signer: &dyn Signer,
+    init_pattern: &PathBuf,
+    frag_pattern: &PathBuf,
+    output_path: &PathBuf,
+) -> Result<()> {
+    // search folders for init segments
+    let ip = init_pattern.to_str().ok_or(c2pa::Error::OtherError(
+        "could not parse source pattern".into(),
+    ))?;
+    let inits = glob::glob(ip).context("could not process glob pattern")?;
+    let mut count = 0;
+    for init in inits {
+        match init {
+            Ok(p) => {
+                let mut fragments = Vec::new();
+                let init_dir = p.parent().context("init segment had no parent dir")?;
+                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
+
+                // grab the fragments that go with this init segment
+                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
+                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
+                for seg in seg_paths {
+                    match seg {
+                        Ok(f) => fragments.push(f),
+                        Err(_) => return Err(anyhow!("fragment path not valid")),
+                    }
+                }
+
+                println!("Adding manifest to: {:?}", p);
+                let new_output_path =
+                    output_path.join(init_dir.file_name().context("invalid file name")?);
+                manifest.embed_to_bmff_fragmented(&p, &fragments, &new_output_path, signer)?;
+
+                count += 1;
+            }
+            Err(_) => bail!("bad path to init segment"),
+        }
+    }
+    if count == 0 {
+        println!("No files matching pattern: {}", ip);
+    }
+    Ok(())
+}
+
+fn verify_fragmented(init_pattern: &PathBuf, frag_pattern: &PathBuf) -> Result<Vec<ManifestStore>> {
+    let mut stores = Vec::new();
+
+    let ip = init_pattern
+        .to_str()
+        .context("could not parse source pattern")?;
+    let inits = glob::glob(ip).context("could not process glob pattern")?;
+    let mut count = 0;
+
+    // search folders for init segments
+    for init in inits {
+        match init {
+            Ok(p) => {
+                let mut fragments = Vec::new();
+                let init_dir = p.parent().context("init segment had no parent dir")?;
+                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
+
+                // grab the fragments that go with this init segment
+                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
+                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
+                for seg in seg_paths {
+                    match seg {
+                        Ok(f) => fragments.push(f),
+                        Err(_) => return Err(anyhow!("fragment path not valid")),
+                    }
+                }
+
+                println!("Verifying manifest: {:?}", p);
+                let store = ManifestStore::from_fragments(p, &fragments, true)?;
+                if let Some(vs) = store.validation_status() {
+                    if let Some(e) = vs.iter().find(|v| !v.passed()) {
+                        eprintln!("Error validating segments: {:?}", e);
+                        return Ok(stores);
+                    }
+                }
+
+                stores.push(store);
+
+                count += 1;
+            }
+            Err(_) => bail!("bad path to init segment"),
+        }
+    }
+
+    if count == 0 {
+        println!("No files matching pattern: {}", ip);
+    }
+
+    Ok(stores)
 }
 
 fn main() -> Result<()> {
@@ -331,6 +444,17 @@ fn main() -> Result<()> {
     if args.tree {
         ManifestStoreReport::dump_tree(path)?;
         return Ok(());
+    }
+
+    let is_fragment = if let Some(Commands::Fragment { fragments_glob: _ }) = &args.command {
+        true
+    } else {
+        false
+    };
+
+    // make sure path is not a glob when not fragmented
+    if !args.path.is_file() && !is_fragment {
+        bail!("glob patterns only allowed when using \"fragment\" command")
     }
 
     // configure the SDK
@@ -413,7 +537,7 @@ fn main() -> Result<()> {
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
         // note: This could be treated as an update manifest eventually since the image is the same
-        if manifest.parent().is_none() {
+        if manifest.parent().is_none() && !is_fragment {
             let source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
                 manifest.set_parent(source_ingredient)?;
@@ -430,50 +554,69 @@ fn main() -> Result<()> {
             manifest.set_sidecar_manifest();
         }
 
+        let signer = if let Some(signer_process_name) = args.signer_path {
+            let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+
+            let process_runner = Box::new(ExternalProcessRunner::new(
+                cb_config.clone(),
+                signer_process_name,
+            ));
+            let signer = CallbackSigner::new(process_runner, cb_config);
+
+            Box::new(signer)
+        } else {
+            sign_config.signer()?
+        };
+
         if let Some(output) = args.output {
-            if ext_normal(&output) != ext_normal(&args.path) {
-                bail!("Output type must match source type");
-            }
-            if output.exists() && !args.force {
-                bail!("Output already exists, use -f/force to force write");
-            }
+            // fragmented embedding
+            if let Some(Commands::Fragment { fragments_glob }) = &args.command {
+                if output.exists() && !output.is_dir() {
+                    bail!("Output cannot point to existing file, must be a directory");
+                }
 
-            if output.file_name().is_none() {
-                bail!("Missing filename on output");
-            }
-            if output.extension().is_none() {
-                bail!("Missing extension output");
-            }
-
-            let signer = if let Some(signer_process_name) = args.signer_path {
-                let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
-
-                let process_runner = Box::new(ExternalProcessRunner::new(
-                    cb_config.clone(),
-                    signer_process_name,
-                ));
-                let signer = CallbackSigner::new(process_runner, cb_config);
-
-                Box::new(signer)
+                if let Some(fg) = &fragments_glob {
+                    return sign_fragmented(
+                        &mut manifest,
+                        signer.as_ref(),
+                        &args.path,
+                        fg,
+                        &output,
+                    );
+                } else {
+                    bail!("fragments_glob must be set");
+                }
             } else {
-                sign_config.signer()?
-            };
+                if ext_normal(&output) != ext_normal(&args.path) {
+                    bail!("Output type must match source type");
+                }
+                if output.exists() && !args.force {
+                    bail!("Output already exists, use -f/force to force write");
+                }
 
-            manifest
-                .embed(&args.path, &output, signer.as_ref())
-                .context("embedding manifest")?;
+                if output.file_name().is_none() {
+                    bail!("Missing filename on output");
+                }
+                if output.extension().is_none() {
+                    bail!("Missing extension output");
+                }
 
-            // generate a report on the output file
-            if args.detailed {
-                println!(
-                    "{}",
-                    ManifestStoreReport::from_file(&output).map_err(special_errs)?
-                );
-            } else {
-                println!(
-                    "{}",
-                    ManifestStore::from_file(&output).map_err(special_errs)?
-                )
+                manifest
+                    .embed(&args.path, &output, signer.as_ref())
+                    .context("embedding manifest")?;
+
+                // generate a report on the output file
+                if args.detailed {
+                    println!(
+                        "{}",
+                        ManifestStoreReport::from_file(&output).map_err(special_errs)?
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        ManifestStore::from_file(&output).map_err(special_errs)?
+                    )
+                }
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -524,10 +667,26 @@ fn main() -> Result<()> {
             ManifestStoreReport::from_file(&args.path).map_err(special_errs)?
         )
     } else {
-        println!(
-            "{}",
-            ManifestStore::from_file(&args.path).map_err(special_errs)?
-        )
+        if let Some(Commands::Fragment { fragments_glob }) = &args.command {
+            if let Some(fg) = &fragments_glob {
+                let stores = verify_fragmented(&args.path, fg)?;
+                if stores.len() == 1 {
+                    println!("{}", stores[0]);
+                } else {
+                    println!("{} Init manifests validated", stores.len());
+                }
+            } else {
+                println!(
+                    "{}",
+                    ManifestStore::from_file(&args.path).map_err(special_errs)?
+                )
+            }
+        } else {
+            println!(
+                "{}",
+                ManifestStore::from_file(&args.path).map_err(special_errs)?
+            )
+        }
     }
 
     Ok(())

@@ -22,7 +22,7 @@ repository = "https://github.com/contentauth/c2patool"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.33.2", features = [
+c2pa = { version = "0.34.0", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",
@@ -30,6 +30,7 @@ c2pa = { version = "0.33.2", features = [
 ] }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.4"
+glob = "0.3.1"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
