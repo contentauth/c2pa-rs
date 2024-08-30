@@ -39,7 +39,7 @@ use crate::{
         RemoteRefEmbed,
     },
     error::{Error, Result},
-    utils::base64,
+    utils::{base64, io_utils::stream_len},
 };
 
 static SUPPORTED_TYPES: [&str; 8] = [
@@ -470,7 +470,7 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(input_stream.seek(SeekFrom::End(0))?)
+        let length = usize::value_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             - end;
         positions.push(HashObjectPositions {

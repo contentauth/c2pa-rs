@@ -29,7 +29,10 @@ use crate::{
         RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 12] = [
@@ -471,7 +474,7 @@ impl CAIWriter for RiffIO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = output_stream.seek(SeekFrom::End(0))?;
+        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai

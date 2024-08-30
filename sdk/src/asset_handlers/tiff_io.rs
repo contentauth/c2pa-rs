@@ -32,7 +32,10 @@ use crate::{
         RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 const II: [u8; 2] = *b"II";
@@ -354,22 +357,12 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
-fn stream_len(reader: &mut dyn CAIRead) -> crate::Result<u64> {
-    let old_pos = reader.stream_position()?;
-    let len = reader.seek(SeekFrom::End(0))?;
-
-    if old_pos != len {
-        reader.seek(SeekFrom::Start(old_pos))?;
-    }
-
-    Ok(len)
-}
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R>(input: &mut R) -> Result<(Arena<ImageFileDirectory>, Token, Endianness, bool)>
 where
     R: Read + Seek + ?Sized,
 {
-    let _size = input.seek(SeekFrom::End(0))?;
+    let _size = stream_len(input)?;
     input.rewind()?;
 
     let ts = TiffStructure::load(input)?;
