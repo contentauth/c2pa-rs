@@ -233,13 +233,6 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
-    pub fn from_manifest_definition(definition: ManifestDefinition) -> Self {
-        Self {
-            definition,
-            ..Default::default()
-        }
-    }
-
     /// Creates a new builder from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments

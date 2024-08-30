@@ -222,12 +222,6 @@ impl MakeTestImages {
             .into_owned();
         let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
 
-        // let json = json!({
-        //     "title": name,
-        //     "relationship": relationship,
-        // })
-        // .to_string();
-
         let mut parent = Ingredient::from_stream(format, &mut source)?;
         parent.set_relationship(relationship);
         parent.set_title(name);
