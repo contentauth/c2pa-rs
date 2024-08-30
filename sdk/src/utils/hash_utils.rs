@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{Error, Result};
+use crate::{utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
@@ -232,7 +232,7 @@ where
         }
     };
 
-    let data_len = data.seek(SeekFrom::End(0))?;
+    let data_len = stream_len(data)?;
     data.rewind()?;
 
     if data_len < 1 {
