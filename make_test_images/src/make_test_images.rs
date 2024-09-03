@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use c2pa::{
     create_signer,
     jumbf_io::{get_supported_types, load_jumbf_from_stream, save_jumbf_to_stream},
-    Builder, Error, Reader, Signer, SigningAlg,
+    Builder, Error, Ingredient, Reader, Relationship, Signer, SigningAlg,
 };
 use memchr::memmem;
 use nom::AsBytes;
@@ -208,7 +208,7 @@ impl MakeTestImages {
     fn add_ingredient_from_file(
         builder: &mut Builder,
         path: &Path,
-        relationship: &str,
+        relationship: Relationship,
     ) -> Result<String> {
         let mut source = fs::File::open(path).context("opening ingredient")?;
         let name = path
@@ -222,19 +222,17 @@ impl MakeTestImages {
             .into_owned();
         let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
 
-        let json = json!({
-            "title": name,
-            "relationship": relationship,
-        })
-        .to_string();
-
-        let ingredient = builder.add_ingredient(&json, format, &mut source)?;
-        if ingredient.thumbnail_ref().is_none() {
+        let mut parent = Ingredient::from_stream(format, &mut source)?;
+        parent.set_relationship(relationship);
+        parent.set_title(name);
+        if parent.thumbnail_ref().is_none() {
             source.rewind()?;
             let (format, thumbnail) =
                 make_thumbnail_from_stream(format, &mut source).context("making thumbnail")?;
-            ingredient.set_thumbnail(format, thumbnail)?;
+            parent.set_thumbnail(format, thumbnail)?;
         }
+
+        builder.add_ingredient(parent);
 
         Ok(
             builder.definition.ingredients[builder.definition.ingredients.len() - 1]
@@ -300,7 +298,7 @@ impl MakeTestImages {
                 let src_path = &self.make_path(src);
 
                 let instance_id =
-                    Self::add_ingredient_from_file(&mut builder, src_path, "parentOf")?;
+                    Self::add_ingredient_from_file(&mut builder, src_path, Relationship::ParentOf)?;
 
                 actions.push(json!(
                     {
@@ -376,8 +374,11 @@ impl MakeTestImages {
                 let instance_id = match ingredient_table.get(ing.as_str()) {
                     Some(id) => id.to_string(),
                     None => {
-                        let instance_id =
-                            Self::add_ingredient_from_file(&mut builder, ing_path, "componentOf")?;
+                        let instance_id = Self::add_ingredient_from_file(
+                            &mut builder,
+                            ing_path,
+                            Relationship::ComponentOf,
+                        )?;
                         ingredient_table.insert(ing, instance_id.clone());
                         instance_id
                     }
@@ -490,7 +491,7 @@ impl MakeTestImages {
         let mut builder = Builder::from_json(&json)?;
 
         let parent_name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
-        builder.add_ingredient(
+        builder.add_ingredient_from_stream(
             json!({
                 "title": parent_name,
                 "relationship": "parentOf"
