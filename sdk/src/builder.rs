@@ -27,7 +27,7 @@ use uuid::Uuid;
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::{AssertionBase, AssertionDecodeError},
+    assertion::AssertionDecodeError,
     assertions::{
         labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
         UserCbor,
@@ -233,6 +233,13 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
+    /// Creates a new builder.
+    /// # Returns
+    /// * A new [`Builder`].
+    pub fn new() -> Self {
+        Default::default()
+    }
+
     /// Creates a new builder from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments
@@ -996,8 +1003,12 @@ impl Builder {
                 "Destination file already exists".to_string(),
             ));
         };
+        if self.definition.title.is_none() {
+            if let Some(title) = dest.file_name() {
+                self.definition.title = Some(title.to_string_lossy().to_string());
+            }
+        }
         let mut dest = std::fs::File::create(dest)?;
-
         self.sign(signer, &format, &mut source, &mut dest)
     }
 }
