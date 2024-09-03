@@ -1247,6 +1247,29 @@ impl Manifest {
             .await
     }
 
+    /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
+    #[cfg(feature = "file_io")]
+    pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
+        &mut self,
+        asset_path: P,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        output_path: P,
+        signer: &dyn Signer,
+    ) -> Result<()> {
+        self.set_asset_from_path(asset_path.as_ref())?;
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to DASH content
+        store.save_to_bmff_fragmented(
+            asset_path.as_ref(),
+            fragment_paths,
+            output_path.as_ref(),
+            signer,
+        )
+    }
+
     /// Removes any existing manifest from a file
     ///
     /// This should only be used for special cases, such as converting an embedded manifest
