@@ -87,7 +87,7 @@ fn main() -> Result<()> {
     let json = manifest_def(title, format);
 
     let mut builder = Builder::from_json(&json)?;
-    builder.add_ingredient(
+    builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
             "relationship": "parentOf"
@@ -122,7 +122,8 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the zipped stream
     zipped.rewind()?;
 
-    let ed_signer = |_context: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
+    let ed_signer =
+        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
     let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
     let mut builder = Builder::from_archive(&mut zipped)?;
@@ -153,23 +154,6 @@ fn main() -> Result<()> {
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())
-}
-
-// Sign the data using the Ed25519 algorithm
-fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
-    use ed25519_dalek::{Signature, Signer, SigningKey};
-    use pem::parse;
-
-    // Parse the PEM data to get the private key
-    let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-    // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
-    let key_bytes = &pem.contents()[16..];
-    let signing_key =
-        SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
-    // Sign the data
-    let signature: Signature = signing_key.sign(data);
-
-    Ok(signature.to_bytes().to_vec())
 }
 
 // #[cfg(feature = "openssl")]
