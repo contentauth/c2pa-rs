@@ -168,6 +168,11 @@ impl Reader {
         self.manifest_store.to_string()
     }
 
+    /// Return certificate chain for the provenance claim
+    pub fn get_provenance_cert_chain(&self) -> Result<String> {
+        self.manifest_store.store().get_provenance_cert_chain()
+    }
+
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
     ///
     /// This validation report only includes error statuses on applied to the active manifest.
