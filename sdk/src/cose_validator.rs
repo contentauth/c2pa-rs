@@ -40,6 +40,7 @@ use crate::{
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
+    utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
     SigningAlg,
@@ -919,6 +920,19 @@ fn check_trust(
     }
 }
 
+fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(sig).is_ok() {
+                // expected P1363 format
+                return Err(Error::CoseSignature);
+            }
+        }
+        _ => (),
+    }
+    Ok(())
+}
+
 /// A wrapper containing information of the signing cert.
 pub(crate) struct CertInfo {
     /// The name of the identity the certificate is issued to.
@@ -1055,6 +1069,9 @@ pub(crate) async fn verify_cose_async(
 
         // todo: check TSA certs against trust list
     }
+
+    // check signature format
+    check_sig(&sign1.signature, alg)?;
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
@@ -1244,6 +1261,9 @@ pub(crate) fn verify_cose(
 
         // todo: check TSA certs against trust list
     }
+
+    // check signature format
+    check_sig(&sign1.signature, alg)?;
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
