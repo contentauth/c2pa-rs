@@ -25,6 +25,7 @@ use coset::{
 
 use crate::{
     cose_validator::{check_cert, verify_cose, VerifyTrustChain},
+    internal::sig_utils::{der_to_p1363, parse_ec_der_sig},
     status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
@@ -182,11 +183,24 @@ pub fn cose_sign(
         sign1.payload.as_ref().unwrap_or(&vec![]),
     );
 
-    if _sync {
-        sign1.signature = signer.sign(&tbs)?;
+    let signature = if _sync {
+        signer.sign(&tbs)?
     } else {
-        sign1.signature = signer.sign(tbs).await?;
-    }
+        signer.sign(tbs).await?
+    };
+
+    // fix up signatures that may be in the wrong format
+    sign1.signature = match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(&signature).is_ok() {
+                // fix up DER signature to be in P1363 format
+                der_to_p1363(&signature, alg)?
+            } else {
+                signature
+            }
+        }
+        _ => signature,
+    };
 
     sign1.payload = None; // clear the payload since it is known
 

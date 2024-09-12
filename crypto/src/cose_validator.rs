@@ -36,7 +36,7 @@ use crate::openssl::verify_trust;
 use crate::validator::{get_validator, CoseValidator};
 use crate::{
     error::{Error, Result},
-    internal::asn1::rfc3161::TstInfo,
+    internal::{asn1::rfc3161::TstInfo, sig_utils::parse_ec_der_sig},
     ocsp_utils::{check_ocsp_response, OcspData},
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
@@ -928,6 +928,20 @@ fn check_trust(
     }
 }
 
+// test for unrecognized signatures
+fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(sig).is_ok() {
+                // expected P1363 format
+                return Err(Error::InvalidEcdsaSignature);
+            }
+        }
+        _ => (),
+    }
+    Ok(())
+}
+
 /// A wrapper containing information of the signing cert.
 pub(crate) struct CertInfo {
     /// The name of the identity the certificate is issued to.
@@ -1068,6 +1082,17 @@ pub async fn verify_cose_async(
         )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided,
@@ -1263,6 +1288,17 @@ pub fn verify_cose(
         )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided,

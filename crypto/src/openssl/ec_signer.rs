@@ -17,14 +17,11 @@ use openssl::{
     pkey::{PKey, Private},
     x509::X509,
 };
-use x509_parser::der_parser::{
-    self,
-    der::{parse_der_integer, parse_der_sequence_defined_g},
-};
 
 use super::check_chain_order;
 use crate::{
     error::{Error, Result},
+    internal::sig_utils::der_to_p1363,
     signer::ConfigurableSigner,
     Signer, SigningAlg,
 };
@@ -120,91 +117,4 @@ impl Signer for EcSigner {
                                                      // timestamps so account
                                                      // for size
     }
-}
-
-// C2PA use P1363 format for EC signatures so we must
-// convert from ASN.1 DER to IEEE P1363 format to verify.
-struct ECSigComps<'a> {
-    r: &'a [u8],
-    s: &'a [u8],
-}
-
-fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
-    // IMPORTANT: OpenSslMutex::acquire() should have been called by calling fn.
-    // Please don't make this pub or pub(crate) without finding a way to ensure
-    // that precondition.
-
-    parse_der_sequence_defined_g(|content: &[u8], _| {
-        let (rem1, r) = parse_der_integer(content)?;
-        let (_rem2, s) = parse_der_integer(rem1)?;
-
-        Ok((
-            data,
-            ECSigComps {
-                r: r.as_slice()?,
-                s: s.as_slice()?,
-            },
-        ))
-    })(data)
-}
-
-fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
-    // IMPORTANT: OpenSslMutex::acquire() should have been called by calling fn.
-    // Please don't make this pub or pub(crate) without finding a way to ensure
-    // that precondition.
-
-    // P1363 format: r | s
-
-    let (_, p) = parse_ec_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
-
-    let mut r = extfmt::Hexlify(p.r).to_string();
-    let mut s = extfmt::Hexlify(p.s).to_string();
-
-    let sig_len: usize = match alg {
-        SigningAlg::Es256 => 64,
-        SigningAlg::Es384 => 96,
-        SigningAlg::Es512 => 132,
-        _ => return Err(Error::UnsupportedType),
-    };
-
-    // pad or truncate as needed
-    let rp = if r.len() > sig_len {
-        // truncate
-        let offset = r.len() - sig_len;
-        &r[offset..r.len()]
-    } else {
-        // pad
-        while r.len() != sig_len {
-            r.insert(0, '0');
-        }
-        r.as_ref()
-    };
-
-    let sp = if s.len() > sig_len {
-        // truncate
-        let offset = s.len() - sig_len;
-        &s[offset..s.len()]
-    } else {
-        // pad
-        while s.len() != sig_len {
-            s.insert(0, '0');
-        }
-        s.as_ref()
-    };
-
-    if rp.len() != sig_len || rp.len() != sp.len() {
-        return Err(Error::InvalidEcdsaSignature);
-    }
-
-    // merge r and s strings
-    let mut new_sig = rp.to_string();
-    new_sig.push_str(sp);
-
-    // convert back from hex string to byte array
-    (0..new_sig.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
-        })
-        .collect()
 }
