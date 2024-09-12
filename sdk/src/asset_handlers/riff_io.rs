@@ -15,6 +15,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
+    result,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -77,17 +78,6 @@ const XMP_CHUNK_ID: ChunkId = ChunkId {
 
 const XMP_FLAG: u32 = 4;
 
-fn read_items<T>(iter: &mut T) -> Vec<T::Item>
-where
-    T: Iterator,
-{
-    let mut vec: Vec<T::Item> = Vec::new();
-    for item in iter {
-        vec.push(item);
-    }
-    vec
-}
-
 fn get_height_and_width(chunk_contents: &[ChunkContents]) -> Result<(u16, u16)> {
     if let Some(ChunkContents::Data(_id, chunk_data)) = chunk_contents.iter().find(|c| match c {
         ChunkContents::Data(id, _) => *id == VP8L_ID,
@@ -131,17 +121,20 @@ fn inject_c2pa<T>(
     format: &str,
 ) -> Result<ChunkContents>
 where
-    T: std::io::Seek + std::io::Read,
+    T: Seek + std::io::Read,
 {
     let id = chunk.id();
-    let is_riff_chunk: bool = id == riff::RIFF_ID;
+    let is_riff_chunk: bool = id == RIFF_ID;
     stream.rewind()?;
 
-    if is_riff_chunk || id == riff::LIST_ID {
+    if is_riff_chunk || id == LIST_ID {
         let chunk_type = chunk.read_type(stream).map_err(|_| {
             Error::InvalidAsset("RIFF handler could not parse file format {format}".to_string())
         })?;
-        let mut children = read_items(&mut chunk.iter(stream));
+        let mut children = chunk
+            .iter(stream)
+            .collect::<result::Result<Vec<Chunk>, _>>()?;
+
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         if is_riff_chunk && !data.is_empty() {
@@ -224,8 +217,11 @@ where
         }
 
         Ok(ChunkContents::Children(id, chunk_type, children_contents))
-    } else if id == riff::SEQT_ID {
-        let children = read_items(&mut chunk.iter_no_type(stream));
+    } else if id == SEQT_ID {
+        let children = chunk
+            .iter(stream)
+            .collect::<result::Result<Vec<Chunk>, _>>()?;
+
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
@@ -248,12 +244,13 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
 
     let mut chunk_reader = Cursor::new(asset);
 
-    let top_level_chunks = riff::Chunk::read(&mut chunk_reader, 0).ok()?;
+    let top_level_chunks = Chunk::read(&mut chunk_reader, 0).ok()?;
 
     if top_level_chunks.id() == RIFF_ID {
-        for c in top_level_chunks.iter(&mut chunk_reader) {
-            if c.id() == C2PA_CHUNK_ID {
-                return Some((c.offset(), c.len() + 8)); // 8 is len of data chunk header
+        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+            let chunk = chunk.ok()?;
+            if chunk.id() == C2PA_CHUNK_ID {
+                return Some((chunk.offset(), chunk.len() + 8)); // 8 is len of data chunk header
             }
         }
     }
@@ -266,15 +263,18 @@ impl CAIReader for RiffIO {
             reader: input_stream,
         };
 
-        let top_level_chunks = riff::Chunk::read(&mut chunk_reader, 0)?;
+        let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
         }
 
-        for c in top_level_chunks.iter(&mut chunk_reader) {
-            if c.id() == C2PA_CHUNK_ID {
-                return Ok(c.read_contents(&mut chunk_reader)?);
+        for result in top_level_chunks.iter(&mut chunk_reader) {
+            let chunk =
+                result.map_err(|_| Error::InvalidAsset("Invalid RIFF format".to_string()))?;
+
+            if chunk.id() == C2PA_CHUNK_ID {
+                return Ok(chunk.read_contents(&mut chunk_reader)?);
             }
         }
 
@@ -298,12 +298,11 @@ impl CAIReader for RiffIO {
             reader: input_stream,
         };
 
-        for c in top_level_chunks.iter(&mut chunk_reader) {
-            if c.id() == XMP_CHUNK_ID {
-                let output = c.read_contents(&mut chunk_reader).ok()?;
-                let output_string = String::from_utf8_lossy(&output);
-
-                return Some(output_string.to_string());
+        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+            let chunk = chunk.ok()?;
+            if chunk.id() == XMP_CHUNK_ID {
+                let output = chunk.read_contents(&mut chunk_reader).ok()?;
+                return Some(String::from_utf8_lossy(&output).to_string());
             }
         }
 
@@ -361,7 +360,7 @@ impl AssetIO for RiffIO {
         self.read_cai(&mut f)
     }
 
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
         let mut temp_file = Builder::new()
@@ -375,11 +374,8 @@ impl AssetIO for RiffIO {
         rename_or_move(temp_file, asset_path)
     }
 
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
+    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
+        let mut f = File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
 
         self.get_object_locations_from_stream(&mut f)
     }
@@ -496,7 +492,7 @@ impl CAIWriter for RiffIO {
 }
 
 impl AssetPatch for RiffIO {
-    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut asset = OpenOptions::new()
             .write(true)
             .read(true)
@@ -520,14 +516,10 @@ impl AssetPatch for RiffIO {
 
 impl RemoteRefEmbed for RiffIO {
     #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
         let mut input_stream = File::open(asset_path)?;
 
-        let mut output_stream = std::fs::OpenOptions::new()
+        let mut output_stream = OpenOptions::new()
             .read(true)
             .write(true)
             .open(asset_path)
@@ -543,7 +535,7 @@ impl RemoteRefEmbed for RiffIO {
         embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
         match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+            RemoteRefEmbedType::Xmp(manifest_uri) => {
                 if let Some(curr_xmp) = self.read_xmp(input_stream) {
                     let mut new_xmp = add_provenance(&curr_xmp, &manifest_uri)?;
                     if new_xmp.len() % 2 == 1 {
@@ -625,9 +617,9 @@ impl RemoteRefEmbed for RiffIO {
                     Ok(())
                 }
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -637,6 +629,8 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+
+    use std::panic;
 
     use tempfile::tempdir;
 
@@ -668,6 +662,21 @@ pub mod tests {
             }
         }
         assert!(success)
+    }
+
+    #[test]
+    fn test_read_cai_with_incorrect_header_size_does_not_panic() {
+        let riff_io = RiffIO::new("wav");
+
+        let panic_result = panic::catch_unwind(|| {
+            let mut source = File::open(fixture_path("sample3.invalid.wav")).unwrap();
+            assert!(matches!(
+                riff_io.read_cai(&mut source),
+                Err(Error::InvalidAsset(_))
+            ));
+        });
+
+        assert!(panic_result.is_ok());
     }
 
     #[test]
@@ -744,7 +753,7 @@ pub mod tests {
     #[test]
     fn test_read_xmp() {
         let source = fixture_path("test_xmp.webp");
-        let mut reader = std::fs::File::open(source).unwrap();
+        let mut reader = File::open(source).unwrap();
 
         let riff_io = RiffIO::new("webp");
 
@@ -770,7 +779,7 @@ pub mod tests {
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {
-                    let mut output_stream = std::fs::File::open(&output).unwrap();
+                    let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
                     if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
@@ -806,7 +815,7 @@ pub mod tests {
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {
-                    let mut output_stream = std::fs::File::open(&output).unwrap();
+                    let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
                     if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {
@@ -842,7 +851,7 @@ pub mod tests {
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {
-                    let mut output_stream = std::fs::File::open(&output).unwrap();
+                    let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
                     if let Some(xmp) = riff_io.read_xmp(&mut output_stream) {

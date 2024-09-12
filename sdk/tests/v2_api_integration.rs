@@ -90,7 +90,7 @@ mod integration_v2 {
         // don't try to verify on wasm since it doesn't support ed25519 yet
 
         let mut builder = Builder::from_json(&json)?;
-        builder.add_ingredient(PARENT_JSON, format, &mut source)?;
+        builder.add_ingredient_from_stream(PARENT_JSON, format, &mut source)?;
 
         // add a manifest thumbnail ( just reuse the image for now )
         source.rewind()?;
