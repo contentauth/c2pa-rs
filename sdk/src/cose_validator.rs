@@ -920,12 +920,13 @@ fn check_trust(
     }
 }
 
+// test for unrecognized signatures
 fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
             if parse_ec_der_sig(sig).is_ok() {
                 // expected P1363 format
-                return Err(Error::CoseSignature);
+                return Err(Error::InvalidEcdsaSignature);
             }
         }
         _ => (),
@@ -1071,7 +1072,19 @@ pub(crate) async fn verify_cose_async(
     }
 
     // check signature format
-    check_sig(&sign1.signature, alg)?;
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!(
+            "Cose_Sign1",
+            "unsupported signature format",
+            "verify_cose"
+        )
+        .error(Error::CoseSignatureAlgorithmNotSupported)
+        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
@@ -1263,7 +1276,19 @@ pub(crate) fn verify_cose(
     }
 
     // check signature format
-    check_sig(&sign1.signature, alg)?;
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!(
+            "Cose_Sign1",
+            "unsupported signature format",
+            "verify_cose"
+        )
+        .error(Error::CoseSignatureAlgorithmNotSupported)
+        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.

@@ -183,6 +183,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
         signer.sign(tbs).await?
     };
 
+    // fix up signatures that may be in the wrong format
     sign1.signature = match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
             if parse_ec_der_sig(&signature).is_ok() {
