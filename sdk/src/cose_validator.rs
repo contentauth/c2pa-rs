@@ -1073,13 +1073,9 @@ pub(crate) async fn verify_cose_async(
 
     // check signature format
     if let Err(e) = check_sig(&sign1.signature, alg) {
-        let log_item = log_item!(
-            "Cose_Sign1",
-            "unsupported signature format",
-            "verify_cose"
-        )
-        .error(Error::CoseSignatureAlgorithmNotSupported)
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
 
         validation_log.log(log_item, Some(e))?;
 
@@ -1277,13 +1273,9 @@ pub(crate) fn verify_cose(
 
     // check signature format
     if let Err(e) = check_sig(&sign1.signature, alg) {
-        let log_item = log_item!(
-            "Cose_Sign1",
-            "unsupported signature format",
-            "verify_cose"
-        )
-        .error(Error::CoseSignatureAlgorithmNotSupported)
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
 
         validation_log.log(log_item, Some(e))?;
 
