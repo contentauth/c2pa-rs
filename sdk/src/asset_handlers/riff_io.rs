@@ -247,7 +247,8 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
     let top_level_chunks = Chunk::read(&mut chunk_reader, 0).ok()?;
 
     if top_level_chunks.id() == RIFF_ID {
-        for chunk in top_level_chunks.iter(&mut chunk_reader).flatten() {
+        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+            let chunk = chunk.ok()?;
             if chunk.id() == C2PA_CHUNK_ID {
                 return Some((chunk.offset(), chunk.len() + 8)); // 8 is len of data chunk header
             }
@@ -297,7 +298,8 @@ impl CAIReader for RiffIO {
             reader: input_stream,
         };
 
-        for chunk in top_level_chunks.iter(&mut chunk_reader).flatten() {
+        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+            let chunk = chunk.ok()?;
             if chunk.id() == XMP_CHUNK_ID {
                 let output = chunk.read_contents(&mut chunk_reader).ok()?;
                 return Some(String::from_utf8_lossy(&output).to_string());
