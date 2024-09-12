@@ -97,15 +97,28 @@ impl Reader {
         } else {
             Self::from_stream_async(&format, &mut file).await
         };
-        if let Err(Error::JumbfNotFound) = result {
-            // if not embedded or cloud, check for sidecar first and load if it exists
-            let potential_sidecar_path = path.with_extension("c2pa");
-            if potential_sidecar_path.exists() {
-                let manifest_data = read(potential_sidecar_path)?;
-                return Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file);
+        match result {
+            Err(Error::JumbfNotFound) => {
+                // if not embedded or cloud, check for sidecar first and load if it exists
+                let potential_sidecar_path = path.with_extension("c2pa");
+                if potential_sidecar_path.exists() {
+                    let manifest_data = read(potential_sidecar_path)?;
+                    if _sync {
+                        Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file)
+                    } else {
+                        Self::from_manifest_data_and_stream_async(
+                            &manifest_data,
+                            &format,
+                            &mut file,
+                        )
+                        .await
+                    }
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
             }
+            _ => result,
         }
-        result
     }
 
     /// Create a manifest store [`Reader`]` from a JSON string.

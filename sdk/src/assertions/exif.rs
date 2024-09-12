@@ -36,6 +36,9 @@ pub struct Exif {
 }
 
 impl Exif {
+    // A label for our assertion, use reverse domain name syntax
+    pub const LABEL: &'static str = labels::EXIF;
+
     pub fn new() -> Self {
         Self {
             object_context: Some(json!({
