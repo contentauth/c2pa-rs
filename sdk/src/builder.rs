@@ -1008,7 +1008,13 @@ impl Builder {
                 self.definition.title = Some(title.to_string_lossy().to_string());
             }
         }
-        let mut dest = std::fs::File::create(dest)?;
+
+        let mut dest = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dest)?;
         self.sign(signer, &format, &mut source, &mut dest)
     }
 }

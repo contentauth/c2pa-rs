@@ -943,7 +943,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     while current < end {
         // Get box header.
         let header = BoxHeaderLite::read(reader)
-            .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {}", err)))?;
 
         // Break if size zero BoxHeader
         let s = header.size;

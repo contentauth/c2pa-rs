@@ -209,6 +209,46 @@ mod integration_1 {
         Ok(())
     }
 
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_embed_bmff_manifest() -> Result<()> {
+        // set up parent and destination paths
+        let dir = tempdir()?;
+        let output_path = dir.path().join("test_bmff.heic");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("sample1.heic");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("simple_manifest.json");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut builder = Builder::from_json(&json)?;
+        builder.base_path = Some(fixture_path.canonicalize()?);
+
+        // sign and embed into the target file
+        let signer = get_temp_signer();
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+        // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
+
+        assert!(reader.active_manifest().is_some());
+        assert_eq!(reader.validation_status(), None);
+        if let Some(manifest) = reader.active_manifest() {
+            assert!(manifest.title().is_some());
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
+
     struct PlacedCallback {
         path: String,
     }
