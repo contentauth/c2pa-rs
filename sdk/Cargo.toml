@@ -1,13 +1,14 @@
 [package]
 name = "c2pa"
-version = "0.34.0"
+version = "0.35.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
-	"Maurice Fisher <mfisher@adobe.com>",
-	"Gavin Peacock <gpeacock@adobe.com>",
-	"Eric Scouten <scouten@adobe.com>",
-	"Leonard Rosenthol <lrosenth@adobe.com>",
-	"Dave Kozma <dkozma@adobe.com>",
+    "Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
+    "Eric Scouten <scouten@adobe.com>",
+    "Leonard Rosenthol <lrosenth@adobe.com>",
+    "Dave Kozma <dkozma@adobe.com>",
+    "Dylan Ross <dyross@adobe.com>"
 ]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa"
@@ -75,16 +76,16 @@ bytes = "1.4.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.28", default-features = false, features = [
-	"serde",
-	"wasmbind",
+    "serde",
+    "wasmbind",
 ] }
 ciborium = "0.2.0"
 config = { version = "0.14.0", default-features = false, features = [
-	"json",
-	"json5",
-	"toml",
-	"ron",
-	"ini",
+    "json",
+    "json5",
+    "toml",
+    "ron",
+    "ini",
 ] }
 conv = "0.3.3"
 coset = "0.3.1"
@@ -111,7 +112,7 @@ range-set = "0.0.11"
 rasn-ocsp = "0.17.2"
 rasn-pkix = "0.17.2"
 rasn = "0.17.2"
-riff = "1.0.1"
+riff = "2.0.0"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
@@ -134,8 +135,8 @@ zip = { version = "0.6.6", default-features = false }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
 image = { version = "0.24.7", default-features = false, features = [
-	"jpeg",
-	"png",
+    "jpeg",
+    "png",
 ], optional = true }
 instant = "0.1.12"
 openssl = { version = "0.10.61", features = ["vendored"], optional = true }
@@ -154,18 +155,18 @@ spki = "0.6.0"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
-	"Crypto",
-	"SubtleCrypto",
-	"CryptoKey",
-	"Window",
-	"WorkerGlobalScope",
+    "Crypto",
+    "SubtleCrypto",
+    "CryptoKey",
+    "Window",
+    "WorkerGlobalScope",
 ] }
 
 [dev-dependencies]
 anyhow = "1.0.40"
 mockall = "0.11.2"
 c2pa = { path = ".", features = [
-	"unstable_api",
+    "unstable_api",
 ] } # allow integration tests to use the new API
 glob = "0.3.1"
 jumbf = "0.4.0"
