@@ -1356,7 +1356,6 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
-        println!("store_bytes.len() = {}", store_bytes.len());
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -1460,12 +1459,6 @@ impl CAIWriter for BmffIO {
         let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         let size = stream_len(output_stream)?;
-        println!("output_stream.size: {}", size);
-        println!("start: {}", start);
-        println!("end: {}", end);
-        println!("new_c2pa_box_size = {}", new_c2pa_box_size);
-        println!("offset_adjust = {}", offset_adjust);
-
         output_stream.rewind()?;
         build_bmff_tree(
             output_stream,
