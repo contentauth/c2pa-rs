@@ -57,6 +57,14 @@ build-release-mac-universal: build-release-mac-arm build-release-mac-x86
 build-release-linux:
 	cargo build --release
 
+# Docker and cross-rs are required to run this command.
+build-release-linux-aarch64-musl:
+	cross build --release --target=aarch64-unknown-linux-musl
+
+# Docker and cross-rs are required to run this command.
+build-release-linux-x86_64-musl:
+	cross build --release --target=x86_64-unknown-linux-musl
+
 # Builds and packages a zip for c2patool for each platform
 ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal c2patool-package
