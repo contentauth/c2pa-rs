@@ -64,13 +64,8 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Cargo clippy
-        uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features --all-targets -- -D warnings
-        env:
-          RUST_BACKTRACE: "1"
+      - name: Run Clippy
+        run: cargo clippy --all-features --all-targets -- -Dwarnings
 
   cargo_fmt:
     name: Enforce Rust code format
