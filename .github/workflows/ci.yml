@@ -60,6 +60,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      
+      - name: Debug which branch we have
+        run: git branch -v
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
