@@ -126,13 +126,24 @@ rustup update
 The tool's command-line syntax is:
 
 ```
-c2patool [trust] [PATH] [OPTIONS]
+c2patool [OPTIONS] <PATH> [COMMAND]
 ```
 
 Where:
-- `trust` is an optional subcommand to [enable trust support](#configuring-trust-support) for certificates on a "known certificate list." With this sub-command, several additional options are available.
-- `PATH` is the (relative or absolute) file path to the asset to read or embed a manifest into.
 - `OPTIONS` is one or more of the command-line options described in following table.
+- `<PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
+- `[COMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
+
+### Subcommands
+
+The tool supports the following subcommands:
+- `trust` [configures trust support](#configuring-trust-support) for certificates on a "known certificate list." With this subcommand, several additional options are available.
+- `fragment` [adds a manifest to fragmented BMFF content]().  With this subcommand, one additional option is available.
+- `help` displays command line help information.
+
+### Options
+
+The following options are available with any (or no) subcommand.  Additional options are available with each subcommand.
 
 | CLI&nbsp;option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Short version | Argument | Description |
 |-----|----|----|----|
@@ -309,6 +320,8 @@ Enable trust support by using the `trust` subcommand, as follows:
 c2patool [path] trust [OPTIONS]
 ```
 
+### Additional options
+
 Several additional CLI options are available with the `trust` sub-command to specify the location of files containing the trust anchors list or known certificate list, as described in the following table. You can also use environment variables to specify these values.
 
 <div class="trust-table" markdown="1">
@@ -367,6 +380,36 @@ c2patool sample/C.jpg trust \
 ```
 
 **Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
+
+## Adding a manifest to fragmented BMFF content
+
+The ISO base media file format (BMFF) is a container file format that defines a structure for files that contain time-based multimedia data such as video and audio.
+
+Add a manifest to a fragmented BMFF file by using the `fragment` subcommand, as follows:
+
+```
+c2patool <PATH | PATTERN> fragment [--fragments_glob]
+```
+
+Where `<PATTERN>` is a [glob pattern](https://en.wikipedia.org/wiki/Glob_(programming)).
+
+For example, to add manifest to a video file:
+
+```
+c2patool -m test2.json -o  /1080p_out \
+  /Downloads/1080p/avc1/init.mp4 \ 
+  fragment --fragments_glob "seg-*[0-9].m4s"
+```
+
+Or to verify a manifest and fragments:
+```
+c2patool  /Downloads/1080p_out/avc1/init.mp4 \
+  fragment --fragments_glob "seg-*[0-9].m4s"
+```
+
+### Additional option
+
+The `--fragments_glob` option is only available with the `fragment` subcommand and specifies the glob pattern to find the fragments of the asset. The path is automatically set to be the same as the "init" segment, so the pattern must match only segment file names, not full paths.
 
 ## Nightly builds
 
