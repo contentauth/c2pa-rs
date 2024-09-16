@@ -147,6 +147,8 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
     }
 }
 
+// We only construct one per invocation, not worth shrinking this.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
@@ -264,46 +266,44 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 
     let mut enable_trust_checks = false;
 
-    match &args.command {
-        Some(Commands::Trust {
-            trust_anchors,
-            allowed_list,
-            trust_config,
-        }) => {
-            if let Some(trust_list) = &trust_anchors {
-                let data = load_trust_resource(trust_list)?;
-                debug!("Using trust anchors from {:?}", trust_list);
-                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-                let setting = ta.replace("replacement_val", &replacement_val);
+    if let Some(Commands::Trust {
+        trust_anchors,
+        allowed_list,
+        trust_config,
+    }) = &args.command
+    {
+        if let Some(trust_list) = &trust_anchors {
+            let data = load_trust_resource(trust_list)?;
+            debug!("Using trust anchors from {:?}", trust_list);
+            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+            let setting = ta.replace("replacement_val", &replacement_val);
 
-                c2pa::settings::load_settings_from_str(&setting, "json")?;
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
 
-                enable_trust_checks = true;
-            }
-
-            if let Some(allowed_list) = &allowed_list {
-                let data = load_trust_resource(allowed_list)?;
-                debug!("Using allowed list from {:?}", allowed_list);
-                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-                let setting = al.replace("replacement_val", &replacement_val);
-
-                c2pa::settings::load_settings_from_str(&setting, "json")?;
-
-                enable_trust_checks = true;
-            }
-
-            if let Some(trust_config) = &trust_config {
-                let data = load_trust_resource(trust_config)?;
-                debug!("Using trust config from {:?}", trust_config);
-                let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-                let setting = tc.replace("replacement_val", &replacement_val);
-
-                c2pa::settings::load_settings_from_str(&setting, "json")?;
-
-                enable_trust_checks = true;
-            }
+            enable_trust_checks = true;
         }
-        _ => {}
+
+        if let Some(allowed_list) = &allowed_list {
+            let data = load_trust_resource(allowed_list)?;
+            debug!("Using allowed list from {:?}", allowed_list);
+            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+            let setting = al.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
+
+        if let Some(trust_config) = &trust_config {
+            let data = load_trust_resource(trust_config)?;
+            debug!("Using trust config from {:?}", trust_config);
+            let replacement_val = serde_json::Value::String(data).to_string(); // escape string
+            let setting = tc.replace("replacement_val", &replacement_val);
+
+            c2pa::settings::load_settings_from_str(&setting, "json")?;
+
+            enable_trust_checks = true;
+        }
     }
 
     // if any trust setting is provided enable the trust checks
@@ -327,9 +327,9 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 fn sign_fragmented(
     manifest: &mut Manifest,
     signer: &dyn Signer,
-    init_pattern: &PathBuf,
+    init_pattern: &Path,
     frag_pattern: &PathBuf,
-    output_path: &PathBuf,
+    output_path: &Path,
 ) -> Result<()> {
     // search folders for init segments
     let ip = init_pattern.to_str().ok_or(c2pa::Error::OtherError(
@@ -370,7 +370,7 @@ fn sign_fragmented(
     Ok(())
 }
 
-fn verify_fragmented(init_pattern: &PathBuf, frag_pattern: &PathBuf) -> Result<Vec<ManifestStore>> {
+fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<ManifestStore>> {
     let mut stores = Vec::new();
 
     let ip = init_pattern
@@ -446,11 +446,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let is_fragment = if let Some(Commands::Fragment { fragments_glob: _ }) = &args.command {
-        true
-    } else {
-        false
-    };
+    let is_fragment = matches!(
+        &args.command,
+        Some(Commands::Fragment { fragments_glob: _ })
+    );
 
     // make sure path is not a glob when not fragmented
     if !args.path.is_file() && !is_fragment {
@@ -666,27 +665,21 @@ fn main() -> Result<()> {
             "{}",
             ManifestStoreReport::from_file(&args.path).map_err(special_errs)?
         )
-    } else {
-        if let Some(Commands::Fragment { fragments_glob }) = &args.command {
-            if let Some(fg) = &fragments_glob {
-                let stores = verify_fragmented(&args.path, fg)?;
-                if stores.len() == 1 {
-                    println!("{}", stores[0]);
-                } else {
-                    println!("{} Init manifests validated", stores.len());
-                }
-            } else {
-                println!(
-                    "{}",
-                    ManifestStore::from_file(&args.path).map_err(special_errs)?
-                )
-            }
+    } else if let Some(Commands::Fragment {
+        fragments_glob: Some(fg),
+    }) = &args.command
+    {
+        let stores = verify_fragmented(&args.path, fg)?;
+        if stores.len() == 1 {
+            println!("{}", stores[0]);
         } else {
-            println!(
-                "{}",
-                ManifestStore::from_file(&args.path).map_err(special_errs)?
-            )
+            println!("{} Init manifests validated", stores.len());
         }
+    } else {
+        println!(
+            "{}",
+            ManifestStore::from_file(&args.path).map_err(special_errs)?
+        )
     }
 
     Ok(())
