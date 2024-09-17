@@ -150,6 +150,7 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
@@ -259,10 +260,10 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
 }
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
-    let ta = r#"{"trust": { "trust_anchors": replacement_val } }"#;
-    let al = r#"{"trust": { "allowed_list": replacement_val } }"#;
-    let tc = r#"{"trust": { "trust_config": replacement_val } }"#;
-    let vs = r#"{"verify": { "verify_after_sign": replacement_val } }"#;
+    const TA: &str = r#"{"trust": { "trust_anchors": replacement_val } }"#;
+    const AL: &str = r#"{"trust": { "allowed_list": replacement_val } }"#;
+    const TC: &str = r#"{"trust": { "trust_config": replacement_val } }"#;
+    const VS: &str = r#"{"verify": { "verify_after_sign": replacement_val } }"#;
 
     let mut enable_trust_checks = false;
 
@@ -276,7 +277,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             let data = load_trust_resource(trust_list)?;
             debug!("Using trust anchors from {:?}", trust_list);
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = ta.replace("replacement_val", &replacement_val);
+            let setting = TA.replace("replacement_val", &replacement_val);
 
             c2pa::settings::load_settings_from_str(&setting, "json")?;
 
@@ -287,7 +288,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             let data = load_trust_resource(allowed_list)?;
             debug!("Using allowed list from {:?}", allowed_list);
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = al.replace("replacement_val", &replacement_val);
+            let setting = AL.replace("replacement_val", &replacement_val);
 
             c2pa::settings::load_settings_from_str(&setting, "json")?;
 
@@ -298,7 +299,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             let data = load_trust_resource(trust_config)?;
             debug!("Using trust config from {:?}", trust_config);
             let replacement_val = serde_json::Value::String(data).to_string(); // escape string
-            let setting = tc.replace("replacement_val", &replacement_val);
+            let setting = TC.replace("replacement_val", &replacement_val);
 
             c2pa::settings::load_settings_from_str(&setting, "json")?;
 
@@ -316,7 +317,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     // enable or disable verification after signing
     {
         let replacement_val = serde_json::Value::Bool(!args.no_signing_verify).to_string();
-        let setting = vs.replace("replacement_val", &replacement_val);
+        let setting = VS.replace("replacement_val", &replacement_val);
 
         c2pa::settings::load_settings_from_str(&setting, "json")?;
     }
@@ -600,6 +601,7 @@ fn main() -> Result<()> {
                     bail!("Missing extension output");
                 }
 
+                #[allow(deprecated)] // todo: remove when we can
                 manifest
                     .embed(&args.path, &output, signer.as_ref())
                     .context("embedding manifest")?;
@@ -717,6 +719,7 @@ pub mod tests {
             .signer()
             .expect("get_signer");
 
+        #[allow(deprecated)] // todo: remove when we can
         let _result = manifest
             .embed(SOURCE_PATH, OUTPUT_PATH, signer.as_ref())
             .expect("embed");

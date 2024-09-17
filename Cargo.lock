@@ -661,16 +661,16 @@ checksum = "8318a53db07bb3f8dca91a600466bdb3f2eaadeedfdbcf02e1accbad9271ba50"
 
 [[package]]
 name = "c2pa"
-version = "0.34.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a58cfe2a1fb0ff7a770dea52bcda16dbfd2b218019b6b56a2d496facee72b35"
+checksum = "7a0c71405a74ec53ac2c991820423a143b4904aebc1ab42973f2c80b7bf6cf4f"
 dependencies = [
  "asn1-rs",
  "async-generic",
  "async-recursion",
  "async-trait",
  "atree",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bcder",
  "byteorder",
  "byteordered",
@@ -3171,9 +3171,9 @@ dependencies = [
 
 [[package]]
 name = "riff"
-version = "1.0.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9b1a3d5f46d53f4a3478e2be4a5a5ce5108ea58b100dcd139830eae7f79a3a1"
+checksum = "3c601484456988d75017d86700d3743b949c21cdc7399f940c75e34680d185c5"
 
 [[package]]
 name = "ring"
