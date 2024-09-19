@@ -53,33 +53,40 @@ struct ID3V2Header {
 }
 
 impl ID3V2Header {
-    pub fn read_header(reader: &mut dyn CAIRead) -> Result<ID3V2Header> {
+    pub fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
         let mut header = [0; 10];
         reader.read_exact(&mut header).map_err(Error::IoError)?;
 
-        if &header[0..3] != b"ID3" {
-            return Err(Error::UnsupportedType);
+        if &header[0..3] == b"ID3" {
+            let (version_major, version_minor) = (header[3], header[4]);
+            if !(2..=4).contains(&version_major) {
+                return Err(Error::UnsupportedType);
+            }
+
+            let flags = header[5];
+
+            let mut size_reader = Cursor::new(&header[6..10]);
+            let encoded_tag_size = size_reader
+                .read_u32::<BigEndian>()
+                .map_err(|_err| Error::InvalidAsset("could not read mp3 tag size".to_string()))?;
+            let tag_size = ID3V2Header::decode_tag_size(encoded_tag_size);
+
+            return Ok(Some(ID3V2Header {
+                _version_major: version_major,
+                _version_minor: version_minor,
+                _flags: flags,
+                tag_size,
+            }));
         }
 
-        let (version_major, version_minor) = (header[3], header[4]);
-        if !(2..=4).contains(&version_major) {
-            return Err(Error::UnsupportedType);
+        // If no ID3 tag is found, check for MP3 frame sync word
+        if ID3V2Header::is_mp3_frame_sync(&header) {
+            // Return None to indicate no ID3 header, but valid MP3
+            return Ok(None);
         }
 
-        let flags = header[5];
-
-        let mut size_reader = Cursor::new(&header[6..10]);
-        let encoded_tag_size = size_reader
-            .read_u32::<BigEndian>()
-            .map_err(|_err| Error::InvalidAsset("could not read mp3 tag size".to_string()))?;
-        let tag_size = ID3V2Header::decode_tag_size(encoded_tag_size);
-
-        Ok(ID3V2Header {
-            _version_major: version_major,
-            _version_minor: version_minor,
-            _flags: flags,
-            tag_size,
-        })
+        // If neither ID3 header nor MP3 frame sync is found, return error
+        Err(Error::UnsupportedType)
     }
 
     pub fn get_size(&self) -> u32 {
@@ -88,6 +95,11 @@ impl ID3V2Header {
 
     fn decode_tag_size(n: u32) -> u32 {
         n & 0xff | (n & 0xff00) >> 1 | (n & 0xff0000) >> 2 | (n & 0xff000000) >> 3
+    }
+
+    fn is_mp3_frame_sync(header: &[u8]) -> bool {
+        // Check for MPEG audio frame sync word (first 11 bits 1)
+        header[0] == 0xff && (header[1] & 0xe0 == 0xe0)
     }
 }
 
@@ -112,7 +124,9 @@ fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         if manifests.len() == 1 {
             input_stream.rewind().ok()?;
 
-            let tag_bytes = input_stream.read_to_vec(header.get_size() as u64).ok()?;
+            let tag_bytes = input_stream
+                .read_to_vec(header.map_or(0, |h| h.get_size()) as u64)
+                .ok()?;
 
             let pos = memmem::find(&tag_bytes, &manifests[0])?;
 
@@ -235,7 +249,7 @@ impl RemoteRefEmbed for Mp3IO {
                     .write_to(writer, Version::Id3v24)
                     .map_err(|_e| Error::EmbeddingError)?;
 
-                source_stream.seek(SeekFrom::Start(header.get_size() as u64))?;
+                source_stream.seek(SeekFrom::Start(header.map_or(0, |h| h.get_size()) as u64))?;
                 std::io::copy(source_stream, output_stream)?;
 
                 Ok(())
@@ -399,7 +413,7 @@ impl CAIWriter for Mp3IO {
             .map_err(|_e| Error::EmbeddingError)?;
 
         // skip past old ID3V2
-        input_stream.seek(SeekFrom::Start(header.get_size() as u64))?;
+        input_stream.seek(SeekFrom::Start(header.map_or(0, |h| h.get_size()) as u64))?;
 
         // copy source data to output
         std::io::copy(input_stream, output_stream)?;
