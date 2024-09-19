@@ -20,7 +20,7 @@ use crate::{hashed_uri::HashedUri, Result};
 /// to adjust its content based on other assertions within the
 /// overall Manifest.
 #[async_trait::async_trait]
-pub trait DynamicAssertion: Debug {
+pub trait DynamicAssertion: Debug + Send + Sync {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions
