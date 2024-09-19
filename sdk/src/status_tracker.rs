@@ -69,7 +69,7 @@ impl LogItem {
     }
 }
 
-pub trait StatusTracker {
+pub trait StatusTracker: Send {
     // should we stop on the first error
     fn stop_on_error(&self) -> bool;
 
