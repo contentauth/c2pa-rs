@@ -103,8 +103,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
