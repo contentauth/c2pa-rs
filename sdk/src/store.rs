@@ -1396,7 +1396,8 @@ impl Store {
     }
 
     // wake the ingredients and validate
-    #[async_recursion(?Send)]
+    #[cfg_attr(target_arch = "wasm32", async_recursion(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_recursion)]
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
@@ -1442,7 +1443,7 @@ impl Store {
                     }
 
                     let check_ingredient_trust: bool =
-                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                        get_settings_value("verify.check_ingredient_trust")?;
 
                     // verify the ingredient claim
                     Claim::verify_claim_async(
