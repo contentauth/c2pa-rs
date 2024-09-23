@@ -127,7 +127,7 @@ thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.5.2"
 uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
-x509-parser = "0.15.1"
+x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
 zip = { version = "0.6.6", default-features = false }
 
