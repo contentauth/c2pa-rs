@@ -273,12 +273,22 @@ impl std::fmt::Debug for Reader {
 
 #[test]
 #[cfg(feature = "file_io")]
-fn test_reader_from_file() -> Result<()> {
-    let reader =
-        Reader::from_file("/Users/gpeacock/Downloads/exp-ps-26.0-fiile-exp-E-uri-CA-open.jpg")?;
-    //let reader = Reader::from_file("tests/fixtures/CAE-uri-CA.jpg")?;
-    println!("{reader}");
-    assert!(reader.validation_status().is_none());
+fn test_reader_from_file_no_manifest() -> Result<()> {
+    let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+    assert!(matches!(result, Err(Error::JumbfNotFound)));
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+fn test_reader_from_file_validation_err() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+    assert!(reader.validation_status().is_some());
+    assert_eq!(
+        reader.validation_status().unwrap()[0].code(),
+        crate::validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
     Ok(())
 }
 
@@ -288,6 +298,7 @@ fn test_reader_from_file() -> Result<()> {
 fn test_reader_from_file_nested_errors() -> Result<()> {
     let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
     println!("{reader}");
-    assert!(reader.validation_status().is_none());
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
     Ok(())
 }
