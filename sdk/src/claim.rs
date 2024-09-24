@@ -44,8 +44,8 @@ use crate::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CREDENTIALS,
-            DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, to_absolute_uri, to_databox_uri,
+            ASSERTIONS, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -207,10 +207,6 @@ pub struct Claim {
     #[serde(skip_deserializing, skip_serializing)]
     ingredients_store: HashMap<String, Vec<Claim>>,
 
-    // internal scratch objects
-    #[serde(skip_deserializing, skip_serializing)]
-    box_prefix: String, // where in JUMBF hierarchy should this claim exist
-
     #[serde(skip_deserializing, skip_serializing)]
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
@@ -325,7 +321,6 @@ impl Claim {
 
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
-            box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -360,7 +355,6 @@ impl Claim {
     pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
-            box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -426,7 +420,8 @@ impl Claim {
 
     // Add link to the signature box for this claim.
     fn add_signature_box_link(&mut self) {
-        self.signature = format!("{}={}", self.box_prefix, jumbf::labels::SIGNATURE);
+        // full path to signature box
+        self.signature = self.signature_uri();
     }
 
     ///  set signature of the claim
@@ -1230,30 +1225,35 @@ impl Claim {
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
+            let assertion_absolute_uri = if assertion.is_relative_url() {
+                to_absolute_uri(claim.label(), &assertion.url())
+            } else {
+                assertion.url()
+            };
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {
                     if !vec_compare(ca.hash(), &assertion.hash()) {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hash does not match assertion data: {}", assertion.url()),
                             "verify_internal"
                         )
                         .error(Error::HashMismatch(format!(
                             "Assertion hash failure: {}",
-                            assertion.url()
+                            assertion_absolute_uri.clone(),
                         )))
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
                             Some(Error::HashMismatch(format!(
                                 "Assertion hash failure: {}",
-                                assertion.url()
+                                assertion_absolute_uri.clone(),
                             ))),
                         )?;
                     } else {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hashed uri matched: {}", assertion.url()),
                             "verify_internal"
                         )
@@ -1263,18 +1263,18 @@ impl Claim {
                 }
                 None => {
                     let log_item = log_item!(
-                        assertion.url(),
+                        assertion_absolute_uri.clone(),
                         format!("cannot find matching assertion: {}", assertion.url()),
                         "verify_internal"
                     )
                     .error(Error::AssertionMissing {
-                        url: assertion.url(),
+                        url: assertion_absolute_uri.clone(),
                     })
                     .validation_status(validation_status::ASSERTION_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::AssertionMissing {
-                            url: assertion.url(),
+                            url: assertion_absolute_uri.clone(),
                         }),
                     )?;
                 }
