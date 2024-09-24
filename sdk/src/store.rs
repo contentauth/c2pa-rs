@@ -4906,7 +4906,7 @@ pub mod tests {
 
     #[test]
     fn test_display() {
-        let ap = fixture_path("CA.jpg");
+        let ap = fixture_path("2error.jpg");
         let mut report = DetailedStatusTracker::new();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         let _errors = report_split_errors(report.get_log_mut());

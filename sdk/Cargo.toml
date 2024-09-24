@@ -94,7 +94,7 @@ ed25519-dalek = "2.1.1"
 fast-xml = "0.23.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
-id3 = "=1.12.0"
+id3 = "=1.14.0"
 img-parts = "0.3.0"
 jfifdump = "0.5.1"
 log = "0.4.8"
@@ -102,16 +102,15 @@ lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.1"
 multibase = "0.9.0"
-multihash = "0.11.4"
 mp4 = "0.13.0"
 pem = "3.0.2"
 png_pong = "0.9.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
-rasn-ocsp = "0.12.5"
-rasn-pkix = "0.12.5"
-rasn = "0.12.5"
+rasn-ocsp = "0.17.2"
+rasn-pkix = "0.17.2"
+rasn = "0.17.2"
 riff = "2.0.0"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
@@ -121,13 +120,14 @@ serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.4.0"
 serde-transcode = "1.1.1"
+sha1 = "0.10.6"
 sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.5.2"
 uuid = { version = "1.7.0", features = ["serde", "v4", "js"] }
-x509-parser = "0.15.1"
+x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
 zip = { version = "0.6.6", default-features = false }
 
@@ -151,7 +151,7 @@ js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
 rsa = { version = "0.9.6", features = ["sha2"] }
 serde-wasm-bindgen = "0.5.0"
-spki = "0.6.0"
+spki = "0.7.3"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
