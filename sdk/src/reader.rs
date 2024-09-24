@@ -270,3 +270,24 @@ impl std::fmt::Debug for Reader {
         f.write_str(&report.to_string())
     }
 }
+
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_from_file() -> Result<()> {
+    let reader =
+        Reader::from_file("/Users/gpeacock/Downloads/exp-ps-26.0-fiile-exp-E-uri-CA-open.jpg")?;
+    //let reader = Reader::from_file("tests/fixtures/CAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert!(reader.validation_status().is_none());
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_from_file_nested_errors() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert!(reader.validation_status().is_none());
+    Ok(())
+}

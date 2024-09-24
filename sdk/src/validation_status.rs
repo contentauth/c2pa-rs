@@ -176,9 +176,33 @@ pub fn status_for_store(
 
         // This closure returns true if the URI references the store's active manifest.
         let is_active_manifest = |uri: Option<&str>| {
-            uri.filter(|uri| jumbf::labels::manifest_label_from_uri(uri) == active_manifest)
-                .is_some()
+            uri.map_or(false, |uri| {
+                jumbf::labels::manifest_label_from_uri(uri) == active_manifest
+            })
         };
+
+        // Convert any relative manifest urls found in ingredient validation statuses to absolute.
+        let make_absolute =
+            |active_manifest: Option<crate::hashed_uri::HashedUri>,
+             validation_status: Option<Vec<ValidationStatus>>| {
+                validation_status.map(|mut statuses| {
+                    if let Some(label) = active_manifest
+                        .map(|m| m.url())
+                        .and_then(|uri| jumbf::labels::manifest_label_from_uri(&uri))
+                    {
+                        for status in &mut statuses {
+                            if let Some(url) = &status.url {
+                                if url.starts_with("self#jumbf") {
+                                    // Some are just labels (i.e. "Cose_Sign1")
+                                    status.url =
+                                        Some(dbg!(jumbf::labels::to_absolute_uri(&label, url)));
+                                }
+                            }
+                        }
+                    }
+                    statuses
+                })
+            };
 
         // We only need to do the more detailed filtering if there are any status
         // reports that reference ingredients.
@@ -187,22 +211,22 @@ pub fn status_for_store(
             .any(|s| !is_active_manifest(s.url.as_deref()))
         {
             // Collect all the ValidationStatus records from all the ingredients in the store.
-            let ingredient_statuses: Vec<ValidationStatus> = claim
-                .ingredient_assertions()
+            let ingredient_statuses: Vec<ValidationStatus> = store
+                .claims()
                 .iter()
+                .flat_map(|c| c.ingredient_assertions())
                 .filter_map(|a| Ingredient::from_assertion(a).ok())
-                .filter_map(|i| i.validation_status)
-                .flat_map(|x| x.into_iter())
+                .filter_map(|i| make_absolute(i.c2pa_manifest, i.validation_status))
+                .flatten()
                 .collect();
 
-            // Filter to only contain the active statuses and nested statuses not found in active.
+            // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
             return statuses
-                .iter()
+                .into_iter()
                 .filter(|s| {
                     is_active_manifest(s.url.as_deref())
-                        || !ingredient_statuses.iter().any(|i| s == &i)
+                        || !ingredient_statuses.iter().any(|i| i == s)
                 })
-                .map(|s| s.to_owned())
                 .collect();
         }
     }
