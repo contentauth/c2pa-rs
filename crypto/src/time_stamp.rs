@@ -132,8 +132,6 @@ fn time_stamp_request_http(
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)?;
 
-    let body_reader = std::io::Cursor::new(body);
-
     let mut req = ureq::post(url);
 
     if let Some(headers) = headers {
@@ -144,7 +142,7 @@ fn time_stamp_request_http(
 
     let response = req
         .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
-        .send(body_reader)
+        .send_bytes(&body)
         .map_err(|_err| Error::CoseTimeStampGeneration)?;
 
     if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
