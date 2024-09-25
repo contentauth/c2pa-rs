@@ -751,13 +751,12 @@ impl Ingredient {
                                 .verify_from_path(path, &mut validation_log)
                                 .map(|_| store)
                         })
-                        .map_err(|e| {
+                        .inspect_err(|e| {
                             // add a log entry for the error so we act like verify
                             validation_log.log_silent(
                                 log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(&e),
+                                    .set_error(e),
                             );
-                            e
                         }),
                     Some(manifest_bytes),
                 )
@@ -884,13 +883,12 @@ impl Ingredient {
             };
 
             (
-                result.map_err(|e| {
+                result.inspect_err(|e| {
                     // add a log entry for the error so we act like verify
                     validation_log.log_silent(
                         log_item!("asset", "error loading file", "Ingredient::from_file")
-                            .set_error(&e),
+                            .set_error(e),
                     );
-                    e
                 }),
                 Some(manifest_bytes),
             )
