@@ -450,7 +450,7 @@ pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
 }
 
 pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
-    use sha1::{Digest, Sha1};
+    use sha1::Sha1;
 
     // create a Sha1 object
     let mut hasher = Sha1::new();
