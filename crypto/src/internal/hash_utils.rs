@@ -11,20 +11,27 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use multihash::Sha2_256;
+use sha2::{Digest, Sha256};
 
 /// Return a SHA-256 hash of array of bytes.
 pub(crate) fn hash_sha256(data: &[u8]) -> Vec<u8> {
-    let mh = Sha2_256::digest(data);
-    let digest = mh.digest();
-
-    digest.to_vec()
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().to_vec()
 }
 
 /// Return a SHA-1 hash of array of bytes.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn hash_sha1(data: &[u8]) -> Vec<u8> {
-    let mh = multihash::Sha1::digest(data);
-    let digest = mh.digest();
-    digest.to_vec()
+    use sha1::Sha1;
+
+    // create a Sha1 object
+    let mut hasher = Sha1::new();
+
+    // process input message
+    hasher.update(data);
+
+    // acquire hash digest in the form of GenericArray,
+    // which in this case is equivalent to [u8; 20]
+    hasher.finalize().to_vec()
 }

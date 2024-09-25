@@ -214,7 +214,7 @@ pub(crate) fn check_cert(
 
             let (_i, (ha_alg, mgf_ai)) = seq
                 .parse(|i| {
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -222,7 +222,7 @@ pub(crate) fn check_cert(
                     let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
                         .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -242,14 +242,15 @@ pub(crate) fn check_cert(
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             let (_i, mgf_ai_params_algorithm) =
-                Any::from_der(&mgf_ai_parameters.content).map_err(|_| Error::CoseInvalidCert)?;
+                <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
+                    .map_err(|_| Error::CoseInvalidCert)?;
 
             let mgf_ai_params_algorithm = mgf_ai_params_algorithm
                 .as_oid()
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             // must be the same
-            if ha_alg.algorithm != mgf_ai_params_algorithm {
+            if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",

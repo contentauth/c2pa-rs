@@ -146,7 +146,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             let request_list = vec![ocsp_req];
 
             let tbs_request = rasn_ocsp::TbsRequest {
-                version: rasn_ocsp::Version::parse_bytes(b"0", 16)?,
+                version: rasn_ocsp::Version::from(0u8),
                 requestor_name: None,
                 request_list,
                 request_extensions: None,
