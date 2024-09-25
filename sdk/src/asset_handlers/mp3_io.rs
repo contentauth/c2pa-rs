@@ -100,7 +100,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         reader: input_stream,
     };
 
-    if let Ok(tag) = Tag::read_from(reader) {
+    if let Ok(tag) = Tag::read_from2(reader) {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
@@ -133,7 +133,7 @@ impl CAIReader for Mp3IO {
 
         let mut manifest: Option<Vec<u8>> = None;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
@@ -152,7 +152,7 @@ impl CAIReader for Mp3IO {
     fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
         input_stream.rewind().ok()?;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for frame in tag.frames() {
                 if let Content::Private(private) = frame.content() {
                     if &private.owner_identifier == "XMP" {
@@ -198,7 +198,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let reader = CAIReadWrapper {
                     reader: source_stream,
                 };
-                if let Ok(tag) = Tag::read_from(reader) {
+                if let Ok(tag) = Tag::read_from2(reader) {
                     for f in tag.frames() {
                         match f.content() {
                             Content::Private(private) => {
@@ -222,8 +222,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let frame = Frame::with_content(
                     "PRIV",
                     Content::Private(Private {
-                        // Null-terminated
-                        owner_identifier: "XMP\0".to_owned(),
+                        owner_identifier: "XMP".to_owned(),
                         private_data: xmp.into_bytes(),
                     }),
                 );
@@ -358,7 +357,7 @@ impl CAIWriter for Mp3IO {
             reader: input_stream,
         };
 
-        if let Ok(tag) = Tag::read_from(reader) {
+        if let Ok(tag) = Tag::read_from2(reader) {
             for f in tag.frames() {
                 match f.content() {
                     // remove existing manifest keeping existing frames

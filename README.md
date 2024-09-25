@@ -44,7 +44,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The library requires **Rust version 1.74.0** or newer.
+The library requires **Rust version 1.76.0** or newer.
 
 ### Supported platforms
 

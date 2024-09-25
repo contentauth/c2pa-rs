@@ -30,7 +30,7 @@ pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3
 // Trait for supply configuration and handling of trust lists and EKU configuration store
 //
 // `RefUnwindSafe` + `UnwindSafe` were added to ensure `Store` is unwind safe and to preserve
-// backwards compatbility.
+// backwards compatibility.
 pub(crate) trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
     fn new() -> Self
     where
@@ -88,7 +88,7 @@ pub(crate) fn has_allowed_oid<'a>(
     let mut last_oid = None;
     if eku.other.iter().any(|v| {
         allowed_ekus.iter().any(|oid| {
-            if oid == v {
+            if oid.to_id_string() == v.to_id_string() {
                 last_oid = Some(oid);
                 true
             } else {
