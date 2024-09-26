@@ -27,12 +27,13 @@ use tempfile::Builder;
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
         hash_utils::{vec_compare, HashRange},
+        io_utils::stream_len,
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -287,7 +288,7 @@ fn skip_bytes_to<R: Read + Seek + ?Sized>(reader: &mut R, pos: u64) -> Result<u6
     Ok(pos)
 }
 
-fn write_c2pa_box<W: Write>(
+pub(crate) fn write_c2pa_box<W: Write>(
     w: &mut W,
     data: &[u8],
     is_manifest: bool,
@@ -435,12 +436,15 @@ fn get_top_level_boxes(
     tl_boxes
 }
 
-pub fn bmff_to_jumbf_exclusions(
-    reader: &mut dyn CAIRead,
+pub fn bmff_to_jumbf_exclusions<R>(
+    reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
-) -> Result<Vec<HashRange>> {
-    let size = reader.seek(SeekFrom::End(0))?;
+) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let size = stream_len(reader)?;
     reader.rewind()?;
 
     // create root node
@@ -507,11 +511,7 @@ pub fn bmff_to_jumbf_exclusions(
                     let desired_flags = u32::from_be_bytes(temp_bytes);
 
                     if let Some(box_flags) = box_info.flags {
-                        let exact = if let Some(is_exact) = bmff_exclusion.exact {
-                            is_exact
-                        } else {
-                            true
-                        };
+                        let exact = bmff_exclusion.exact.unwrap_or(true);
 
                         if exact {
                             if desired_flags != box_flags {
@@ -943,7 +943,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     while current < end {
         // Get box header.
         let header = BoxHeaderLite::read(reader)
-            .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {}", err)))?;
 
         // Break if size zero BoxHeader
         let s = header.size;
@@ -1109,15 +1109,17 @@ fn get_uuid_token(
     None
 }
 
+#[allow(dead_code)]
 pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
     pub bmff_merkle: Vec<BmffMerkleMap>,
+    pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
     pub box_infos: Vec<BoxInfoLite>,
     pub xmp: Option<String>,
 }
 
 pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
-    let size = reader.seek(SeekFrom::End(0))?;
+    let size = stream_len(reader)?;
     reader.rewind()?;
 
     // create root node
@@ -1142,6 +1144,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let mut xmp: Option<String> = None;
     let mut _first_aux_uuid = 0;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
+    let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
 
     // grab top level (for now) C2PA box
     if let Some(uuid_list) = bmff_map.get("/uuid") {
@@ -1206,20 +1209,17 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
                             let mut merkle = vec![0u8; data_len as usize];
                             reader.read_exact(&mut merkle)?;
 
-                            // strip trailing zeros
-                            loop {
-                                if !merkle.is_empty() && merkle[merkle.len() - 1] == 0 {
-                                    merkle.pop();
-                                }
-
-                                if merkle.is_empty() || merkle[merkle.len() - 1] != 0 {
-                                    break;
-                                }
-                            }
-
-                            // find uuid from uuid list
-                            let mm: BmffMerkleMap = serde_cbor::from_slice(&merkle)?;
+                            // use this method since it will strip trailing zeros padding if there
+                            let mut deserializer =
+                                serde_cbor::de::Deserializer::from_slice(&merkle);
+                            let mm: BmffMerkleMap =
+                                serde::Deserialize::deserialize(&mut deserializer)?;
                             merkle_boxes.push(mm);
+                            merkle_box_infos.push(BoxInfoLite {
+                                path: box_info.data.path.clone(),
+                                offset: box_info.data.offset,
+                                size: box_info.data.size,
+                            });
                         }
                     } else if vec_compare(&XMP_UUID, uuid) {
                         let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
@@ -1246,6 +1246,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     Ok(C2PABmffBoxes {
         manifest_bytes: output,
         bmff_merkle: merkle_boxes,
+        bmff_merkle_box_infos: merkle_box_infos,
         box_infos,
         xmp,
     })
@@ -1290,7 +1291,7 @@ impl AssetIO for BmffIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1312,7 +1313,7 @@ impl AssetIO for BmffIO {
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn new(asset_type: &str) -> Self
@@ -1352,7 +1353,7 @@ impl CAIWriter for BmffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let size = input_stream.seek(SeekFrom::End(0))?;
+        let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
         // create root node
@@ -1457,7 +1458,7 @@ impl CAIWriter for BmffIO {
         let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
         let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        let size = output_stream.seek(SeekFrom::End(0))?;
+        let size = stream_len(output_stream)?;
         output_stream.rewind()?;
         build_bmff_tree(
             output_stream,
@@ -1490,7 +1491,7 @@ impl CAIWriter for BmffIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        let size = input_stream.seek(SeekFrom::End(0))?;
+        let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
         // create root node
@@ -1574,7 +1575,7 @@ impl CAIWriter for BmffIO {
         let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
         let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        let size = output_stream.seek(SeekFrom::End(0))?;
+        let size = stream_len(output_stream)?;
         output_stream.rewind()?;
         build_bmff_tree(
             output_stream,
@@ -1602,7 +1603,7 @@ impl AssetPatch for BmffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
-        let size = asset.seek(SeekFrom::End(0))?;
+        let size = stream_len(&mut asset)?;
         asset.rewind()?;
 
         // create root node
@@ -1717,7 +1718,7 @@ impl RemoteRefEmbed for BmffIO {
                     }
                 };
 
-                let size = input_stream.seek(SeekFrom::End(0))?;
+                let size = stream_len(input_stream)?;
                 input_stream.rewind()?;
 
                 // create root node
@@ -1821,7 +1822,7 @@ impl RemoteRefEmbed for BmffIO {
                 let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
                 let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-                let size = output_stream.seek(SeekFrom::End(0))?;
+                let size = stream_len(output_stream)?;
                 output_stream.rewind()?;
                 build_bmff_tree(
                     output_stream,

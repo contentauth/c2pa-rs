@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    fmt,
+    fmt, fs,
     io::{Cursor, Read, Seek, Write},
     path::Path,
 };
@@ -33,7 +33,7 @@ impl fmt::Display for HashBlockObjectType {
         write!(f, "{self:?}")
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct HashObjectPositions {
     pub offset: usize, // offset from beginning of file to the beginning of object
     pub length: usize, // length of object
@@ -140,6 +140,7 @@ pub trait CAIWriter: Sync + Send {
     ) -> Result<()>;
 }
 
+#[allow(dead_code)]
 pub trait AssetIO: Sync + Send {
     // Create instance of AssetIO handler.  The extension type is passed in so
     // that format specific customizations can be used during manifest embedding
@@ -259,20 +260,28 @@ pub trait ComposedManifestRef {
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }
 
-/// Utility function to rename or copy a temp file to a permanent location.
+/// Utility function to rename a file or, if the provided paths are on separate mounting points,
+/// move a file from a temporary location to its final location.
 ///
-/// If the rename is not possible, due to cross volume references & etc, it will copy instead.
-pub fn rename_or_copy<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>
+/// If the rename is not possible due to cross volume references, the file will be copied to the
+/// final and then the temp file we be deleted.
+pub fn rename_or_move<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    // clear temp flag for Windows
+    // Clear temp flag for Windows.
     let (_, path) = temp_file
         .keep()
         .map_err(|e| crate::Error::OtherError(Box::new(e)))?;
 
-    std::fs::rename(&path, asset_path.as_ref())
-        // if rename fails, try to copy in case we are on different volumes
-        .or_else(|_| std::fs::copy(&path, asset_path).and(Ok(())))
+    // Move the temp_file to the asset's final path.
+    fs::rename(&path, asset_path.as_ref())
+        // Attempt to copy the file instead if the file's final location is on a different volume.
+        .or_else(|_| {
+            fs::copy(&path, asset_path).map(|_| ()).and_then(|_| {
+                // Remove the temporary file.
+                fs::remove_file(path)
+            })
+        })
         .map_err(crate::Error::IoError)
 }

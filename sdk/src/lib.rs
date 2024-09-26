@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(warnings)]
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
@@ -20,20 +19,22 @@
 //! This library supports reading, creating and embedding C2PA data
 //! with a variety of asset types.
 //!
-//! We have a new experimental Builder/Reader API that will eventually replace
+//! Some functionality requires you to enable specific crate features,
+//! as noted in the documentation.
+//!
+//! The library has a new experimental Builder/Reader API that will eventually replace
 //! the existing methods of reading and writing C2PA data.
 //! The new API focuses on stream support and can do more with fewer methods.
 //! It will be supported in all language bindings and build environments.
-//! To try these out, you need to enable the `unstable_api` feature.
-//!
-//! To read with file based methods, you must add the `file_io` dependency to your Cargo.toml.
-//! For example:
+//! To use the new API, you must enable the `unstable_api` feature, for example:
 //!
 //! ```text
-//! c2pa = {version="0.32.0", features=["file_io"]}
+//! c2pa = {version="0.32.0", features=["unstable_api"]}
 //! ```
 //!
 //! # Example: Reading a ManifestStore
+//!
+//! This example requires the `unstable_api` feature to be enabled.
 //!
 //! ```
 //! # use c2pa::Result;
@@ -55,6 +56,8 @@
 //! ```
 //!
 //! # Example: Adding a Manifest to a file
+//!
+//! This example requires the `unstable_api` feature to be enabled.
 //!
 //! ```
 //! # use c2pa::Result;
@@ -110,6 +113,7 @@ pub mod validation_status;
 pub mod wasm;
 
 // Public exports
+pub use assertions::Relationship;
 #[cfg(feature = "v1_api")]
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
@@ -117,11 +121,12 @@ pub use builder::{Builder, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use error::{Error, Result};
+pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]
 pub use ingredient::{DefaultOptions, IngredientOptions};
-pub use manifest::Manifest;
+pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 #[cfg(feature = "v1_api")]
 pub use manifest_store::ManifestStore;
@@ -129,7 +134,7 @@ pub use manifest_store::ManifestStore;
 pub use manifest_store_report::ManifestStoreReport;
 #[cfg(feature = "unstable_api")]
 pub use reader::Reader;
-pub use resource_store::ResourceRef;
+pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
 pub use signing_alg::SigningAlg;
 pub use utils::mime::format_from_path;
@@ -147,6 +152,7 @@ pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod cose_validator;
 pub(crate) mod error;
+pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
 #[allow(dead_code)]

@@ -12,24 +12,31 @@
 // each license.
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
-use id3::{frame::EncapsulatedObject, *};
+use id3::{
+    frame::{EncapsulatedObject, Private},
+    *,
+};
 use memchr::memmem;
 use tempfile::Builder;
 
 use crate::{
     asset_io::{
-        rename_or_copy, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
         CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed,
+        RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
@@ -93,7 +100,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         reader: input_stream,
     };
 
-    if let Ok(tag) = Tag::read_from(reader) {
+    if let Ok(tag) = Tag::read_from2(reader) {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
@@ -122,9 +129,11 @@ pub struct Mp3IO {
 
 impl CAIReader for Mp3IO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
+
         let mut manifest: Option<Vec<u8>> = None;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
@@ -140,9 +149,100 @@ impl CAIReader for Mp3IO {
         manifest.ok_or(Error::JumbfNotFound)
     }
 
-    // Get XMP block
-    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        input_stream.rewind().ok()?;
+
+        if let Ok(tag) = Tag::read_from2(input_stream) {
+            for frame in tag.frames() {
+                if let Content::Private(private) = frame.content() {
+                    if &private.owner_identifier == "XMP" {
+                        return String::from_utf8(private.private_data.clone()).ok();
+                    }
+                }
+            }
+        }
+
         None
+    }
+}
+
+impl RemoteRefEmbed for Mp3IO {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
+        match &embed_ref {
+            RemoteRefEmbedType::Xmp(_) => {
+                let mut input_stream = File::open(asset_path)?;
+                let mut output_stream = Cursor::new(Vec::new());
+                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+                fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn embed_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        match embed_ref {
+            RemoteRefEmbedType::Xmp(url) => {
+                source_stream.rewind()?;
+
+                let header = ID3V2Header::read_header(source_stream)?;
+                source_stream.rewind()?;
+
+                let mut out_tag = Tag::new();
+
+                let reader = CAIReadWrapper {
+                    reader: source_stream,
+                };
+                if let Ok(tag) = Tag::read_from2(reader) {
+                    for f in tag.frames() {
+                        match f.content() {
+                            Content::Private(private) => {
+                                if &private.owner_identifier != "XMP" {
+                                    out_tag.add_frame(f.clone());
+                                }
+                            }
+                            _ => {
+                                out_tag.add_frame(f.clone());
+                            }
+                        }
+                    }
+                }
+
+                let xmp = xmp_inmemory_utils::add_provenance(
+                    &self
+                        .read_xmp(source_stream)
+                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                    &url,
+                )?;
+                let frame = Frame::with_content(
+                    "PRIV",
+                    Content::Private(Private {
+                        owner_identifier: "XMP".to_owned(),
+                        private_data: xmp.into_bytes(),
+                    }),
+                );
+
+                out_tag.add_frame(frame);
+
+                let writer = CAIReadWriteWrapper {
+                    reader_writer: output_stream,
+                };
+                out_tag
+                    .write_to(writer, Version::Id3v24)
+                    .map_err(|_e| Error::EmbeddingError)?;
+
+                source_stream.seek(SeekFrom::Start(header.get_size() as u64))?;
+                std::io::copy(source_stream, output_stream)?;
+
+                Ok(())
+            }
+            _ => Err(Error::UnsupportedType),
+        }
     }
 }
 
@@ -213,7 +313,7 @@ impl AssetIO for Mp3IO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        rename_or_copy(temp_file, asset_path)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -230,7 +330,7 @@ impl AssetIO for Mp3IO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        None
+        Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -245,6 +345,8 @@ impl CAIWriter for Mp3IO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
+        input_stream.rewind()?;
+
         let header = ID3V2Header::read_header(input_stream)?;
         input_stream.rewind()?;
 
@@ -255,7 +357,7 @@ impl CAIWriter for Mp3IO {
             reader: input_stream,
         };
 
-        if let Ok(tag) = Tag::read_from(reader) {
+        if let Ok(tag) = Tag::read_from2(reader) {
             for f in tag.frames() {
                 match f.content() {
                     // remove existing manifest keeping existing frames
@@ -341,7 +443,7 @@ impl CAIWriter for Mp3IO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = output_stream.seek(SeekFrom::End(0))?;
+        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
@@ -470,5 +572,27 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_remote_ref() -> Result<()> {
+        let mp3_io = Mp3IO::new("mp3");
+
+        let mut stream = File::open(fixture_path("sample1.mp3"))?;
+        assert!(mp3_io.read_xmp(&mut stream).is_none());
+        stream.rewind()?;
+
+        let mut output_stream1 = Cursor::new(Vec::new());
+        mp3_io.embed_reference_to_stream(
+            &mut stream,
+            &mut output_stream1,
+            RemoteRefEmbedType::Xmp("Test".to_owned()),
+        )?;
+        output_stream1.rewind()?;
+
+        let xmp = mp3_io.read_xmp(&mut output_stream1);
+        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>".to_owned()));
+
+        Ok(())
     }
 }

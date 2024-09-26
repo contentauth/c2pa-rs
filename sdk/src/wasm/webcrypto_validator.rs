@@ -14,44 +14,13 @@
 use std::convert::TryFrom;
 
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
-use rsa::{BigUint, PaddingScheme, PublicKey, RsaPublicKey};
-use sha2::{Sha256, Sha384, Sha512};
-use spki::SubjectPublicKeyInfo;
+use spki::SubjectPublicKeyInfoRef;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
-use crate::{
-    utils::hash_utils::hash_by_alg, wasm::context::WindowOrWorker, Error, Result, SigningAlg,
-};
-
-pub struct RsaHashedImportParams {
-    name: String,
-    hash: String,
-}
-
-impl RsaHashedImportParams {
-    pub fn new(name: &str, hash: &str) -> Self {
-        RsaHashedImportParams {
-            name: name.to_owned(),
-            hash: hash.to_owned(),
-        }
-    }
-
-    pub fn as_js_object(&self) -> Object {
-        let obj = Object::new();
-        Reflect::set(&obj, &"name".into(), &self.name.clone().into()).expect("not valid name");
-
-        let inner_obj = Object::new();
-        Reflect::set(&inner_obj, &"name".into(), &self.hash.clone().into())
-            .expect("not valid name");
-
-        Reflect::set(&obj, &"hash".into(), &inner_obj).expect("not valid name");
-
-        obj
-    }
-}
+use crate::{wasm::context::WindowOrWorker, Error, Result, SigningAlg};
 
 pub struct EcKeyImportParams {
     name: String,
@@ -138,28 +107,12 @@ async fn crypto_is_verified(
 
 // Conversion utility from num-bigint::BigUint (used by x509_parser)
 // to num-bigint-dig::BigUint (used by rsa)
-fn biguint_val(ber_object: &BerObject) -> BigUint {
+fn biguint_val(ber_object: &BerObject) -> rsa::BigUint {
     ber_object
         .as_biguint()
         .map(|x| x.to_u32_digits())
-        .map(BigUint::new)
+        .map(rsa::BigUint::new)
         .unwrap_or_default()
-}
-
-fn pss_padding_from_hash(hash: &str, salt_len: &u32) -> Result<PaddingScheme> {
-    let salt_len = usize::try_from(salt_len.clone())
-        .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-    let rng = rand::thread_rng();
-
-    match hash {
-        "SHA-256" => Ok(PaddingScheme::new_pss_with_salt::<Sha256, _>(rng, salt_len)),
-        "SHA-384" => Ok(PaddingScheme::new_pss_with_salt::<Sha384, _>(rng, salt_len)),
-        "SHA-512" => Ok(PaddingScheme::new_pss_with_salt::<Sha512, _>(rng, salt_len)),
-        &_ => Err(Error::WasmRsaKeyImport(format!(
-            "Invalid PSS hash supplied for padding: {}",
-            hash
-        ))),
-    }
 }
 
 // Validate an Ed25519 signature for the provided data.  The pkey must
@@ -192,11 +145,16 @@ fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> 
 pub(crate) async fn async_validate(
     algo: String,
     hash: String,
-    salt_len: u32,
+    _salt_len: u32,
     pkey: Vec<u8>,
     sig: Vec<u8>,
     data: Vec<u8>,
 ) -> Result<bool> {
+    use rsa::{
+        sha2::{Sha256, Sha384, Sha512},
+        RsaPublicKey,
+    };
+
     let context = WindowOrWorker::new();
     let subtle_crypto = context?.subtle_crypto()?;
     let sig_array_buf = data_as_array_buffer(&sig);
@@ -204,50 +162,107 @@ pub(crate) async fn async_validate(
 
     match algo.as_ref() {
         "RSASSA-PKCS1-v1_5" => {
+            use rsa::{pkcs1v15::Signature, signature::Verifier};
+
             // used for certificate validation
-            // Create Key
-            let algorithm = RsaHashedImportParams::new(&algo, &hash).as_js_object();
-            let key_array_buf = data_as_array_buffer(&pkey);
-            let usages = Array::new();
-            usages.push(&"verify".into());
-
-            let promise = subtle_crypto
-                .import_key_with_object("spki", &key_array_buf, &algorithm, true, &usages)
-                .map_err(|_err| Error::WasmKey)?;
-            let crypto_key: CryptoKey = JsFuture::from(promise)
-                .await
-                .map_err(|_err| Error::WasmKey)?
-                .into();
-            web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
-
-            // Create verifier
-            crypto_is_verified(
-                &subtle_crypto,
-                &algorithm,
-                &crypto_key,
-                &sig_array_buf,
-                &data_array_buf,
-            )
-            .await
-        }
-        "RSA-PSS" => {
-            let spki = SubjectPublicKeyInfo::try_from(pkey.as_ref())
+            let spki = SubjectPublicKeyInfoRef::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-            let (_, seq) = parse_ber_sequence(spki.subject_public_key)
+
+            let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-            // We need to normalize this from SHA-256 (the format WebCrypto uses) to sha256
-            // (the format the util function expects) so that it maps correctly
-            let normalized_hash = hash.clone().replace("-", "").to_lowercase();
-            let hashed_data = hash_by_alg(&normalized_hash, &data, None);
+
             let modulus = biguint_val(&seq[0]);
             let exp = biguint_val(&seq[1]);
             let public_key = RsaPublicKey::new(modulus, exp)
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-            let padding = pss_padding_from_hash(&hash, &salt_len)?;
-            let result = public_key.verify(padding, &hashed_data, &sig);
+            let normalized_hash = hash.clone().replace("-", "").to_lowercase();
+
+            let result = match normalized_hash.as_ref() {
+                "sha256" => {
+                    let vk = rsa::pkcs1v15::VerifyingKey::<Sha256>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                "sha384" => {
+                    let vk = rsa::pkcs1v15::VerifyingKey::<Sha384>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                "sha512" => {
+                    let vk = rsa::pkcs1v15::VerifyingKey::<Sha512>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                _ => return Err(Error::UnknownAlgorithm),
+            };
 
             match result {
-                Ok(()) => Ok(true),
+                Ok(()) => {
+                    web_sys::console::debug_1(&"RSA validation success:".into());
+                    Ok(true)
+                }
+                Err(err) => {
+                    web_sys::console::debug_2(
+                        &"RSA validation failed:".into(),
+                        &err.to_string().into(),
+                    );
+                    Ok(false)
+                }
+            }
+        }
+        "RSA-PSS" => {
+            use rsa::{pss::Signature, signature::Verifier};
+
+            let spki = SubjectPublicKeyInfoRef::try_from(pkey.as_ref())
+                .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
+
+            let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
+                .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
+
+            // We need to normalize this from SHA-256 (the format WebCrypto uses) to sha256
+            // (the format the util function expects) so that it maps correctly
+            let normalized_hash = hash.clone().replace("-", "").to_lowercase();
+            let modulus = biguint_val(&seq[0]);
+            let exp = biguint_val(&seq[1]);
+            let public_key = RsaPublicKey::new(modulus, exp)
+                .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
+
+            let result = match normalized_hash.as_ref() {
+                "sha256" => {
+                    let vk = rsa::pss::VerifyingKey::<Sha256>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                "sha384" => {
+                    let vk = rsa::pss::VerifyingKey::<Sha384>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                "sha512" => {
+                    let vk = rsa::pss::VerifyingKey::<Sha512>::new(public_key);
+                    let signature: Signature = sig.as_slice().try_into().map_err(|_e| {
+                        Error::WasmRsaKeyImport("could no process RSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                _ => return Err(Error::UnknownAlgorithm),
+            };
+
+            match result {
+                Ok(()) => {
+                    web_sys::console::debug_1(&"RSA-PSS validation success:".into());
+                    Ok(true)
+                }
                 Err(err) => {
                     web_sys::console::debug_2(
                         &"RSA-PSS validation failed:".into(),
