@@ -36,6 +36,9 @@ pub struct Exif {
 }
 
 impl Exif {
+    // A label for our assertion, use reverse domain name syntax
+    pub const LABEL: &'static str = labels::EXIF;
+
     pub fn new() -> Self {
         Self {
             object_context: Some(json!({
@@ -90,7 +93,7 @@ impl Exif {
                 v.push(value);
                 self
             }
-            None => self.insert(&key, &Vec::from([value]))?,
+            None => self.insert(&key, Vec::from([value]))?,
         })
     }
 

@@ -15,6 +15,7 @@
 use std::path::Path;
 use std::{collections::HashMap, fmt};
 
+use async_generic::async_generic;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -28,10 +29,13 @@ use crate::{
     assertions::{
         self,
         labels::{self, CLAIM},
-        AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
-    cose_validator::{get_signing_info, verify_cose, verify_cose_async},
+    cose_validator::{
+        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
+        verify_cose, verify_cose_async,
+    },
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -40,8 +44,8 @@ use crate::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CREDENTIALS,
-            DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, to_absolute_uri, to_databox_uri,
+            ASSERTIONS, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -74,6 +78,8 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    #[cfg(feature = "file_io")]
+    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 // helper struct to allow arbitrary order for assertions stored in jumbf.  The instance is
@@ -201,10 +207,6 @@ pub struct Claim {
     #[serde(skip_deserializing, skip_serializing)]
     ingredients_store: HashMap<String, Vec<Claim>>,
 
-    // internal scratch objects
-    #[serde(skip_deserializing, skip_serializing)]
-    box_prefix: String, // where in JUMBF hierarchy should this claim exist
-
     #[serde(skip_deserializing, skip_serializing)]
     signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
@@ -253,6 +255,9 @@ pub struct Claim {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     claim_generator_hints: Option<HashMap<String, Value>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Vec<Metadata>>,
 
     #[serde(skip_deserializing, skip_serializing)]
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
@@ -316,7 +321,6 @@ impl Claim {
 
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
-            box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -341,6 +345,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -350,7 +355,6 @@ impl Claim {
     pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
-            box_prefix: "self#jumbf".to_string(),
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -375,6 +379,7 @@ impl Claim {
 
             update_manifest: false,
             data_boxes: Vec::new(),
+            metadata: None,
         }
     }
 
@@ -415,7 +420,8 @@ impl Claim {
 
     // Add link to the signature box for this claim.
     fn add_signature_box_link(&mut self) {
-        self.signature = format!("{}={}", self.box_prefix, jumbf::labels::SIGNATURE);
+        // full path to signature box
+        self.signature = self.signature_uri();
     }
 
     ///  set signature of the claim
@@ -532,6 +538,18 @@ impl Claim {
 
     pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
         self.claim_generator_info.as_deref()
+    }
+
+    pub fn add_claim_metadata(&mut self, md: Metadata) -> &mut Self {
+        match self.metadata.as_mut() {
+            Some(md_vec) => md_vec.push(md),
+            None => self.metadata = Some([md].to_vec()),
+        }
+        self
+    }
+
+    pub fn metadata(&self) -> Option<&[Metadata]> {
+        self.metadata.as_deref()
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -716,15 +734,8 @@ impl Claim {
         &self.data_boxes
     }
 
-    pub fn find_databox(&self, uri: &str) -> Option<&DataBox> {
-        self.data_boxes
-            .iter()
-            .find(|(h, _d)| h.url() == uri)
-            .map(|(_sh, data_box)| data_box)
-    }
-
     /// Load known VC with optional salt
-    pub(crate) fn put_data_box(
+    pub(crate) fn put_databox(
         &mut self,
         label: &str,
         databox_cbor: &[u8],
@@ -748,16 +759,16 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_data_box(&self, uri: &str) -> Option<&DataBox> {
+    pub fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
         // normalize uri
-        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(uri) {
+        let normalized_uri = if let Some(manifest) = manifest_label_from_uri(&hr.url()) {
             if manifest != self.label() {
                 return None;
             }
-            uri.to_owned()
+            hr.url()
         } else {
             // make a full path
-            if let Some(box_name) = box_name_from_uri(uri) {
+            if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
                 return None;
@@ -765,7 +776,7 @@ impl Claim {
         };
 
         self.data_boxes.iter().find_map(|x| {
-            if x.0.url() == normalized_uri {
+            if x.0.url() == normalized_uri && vec_compare(&x.0.hash(), &hr.hash()) {
                 Some(&x.1)
             } else {
                 None
@@ -862,7 +873,7 @@ impl Claim {
     // Patch an existing assertion with new contents.
     //
     // `replace_with` should match in name and size of an existing assertion.
-    fn update_assertion<MatchFn, PatchFn>(
+    pub(crate) fn update_assertion<MatchFn, PatchFn>(
         &mut self,
         replace_with: Assertion,
         match_fn: MatchFn,
@@ -913,6 +924,10 @@ impl Claim {
 
         // Replace existing hash with newly-calculated hash.
         f.update_hash(target_hash.to_vec());
+
+        // clear original since content has changed
+        self.clear_data();
+
         Ok(())
     }
 
@@ -1009,12 +1024,17 @@ impl Claim {
     }
 
     /// Return information about the signature
+    #[async_generic]
     pub fn signature_info(&self) -> Option<ValidationInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
         let mut validation_log = OneShotStatusTracker::new();
 
-        Some(get_signing_info(sig, &data, &mut validation_log))
+        if _sync {
+            Some(get_signing_info(sig, &data, &mut validation_log))
+        } else {
+            Some(get_signing_info_async(sig, &data, &mut validation_log).await)
+        }
     }
 
     /// Verify claim signature, assertion store and asset hashes
@@ -1024,13 +1044,14 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        cert_check: bool,
         th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
-        let claim_data = claim.data()?;
+        let data = claim.data()?;
 
         // make sure signature manifest if present points to this manifest
         let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
@@ -1053,15 +1074,12 @@ impl Claim {
             validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
         }
 
-        let verified = verify_cose_async(
-            sig,
-            claim_data,
-            additional_bytes,
-            !is_provenance,
-            th,
-            validation_log,
-        )
-        .await;
+        // check certificate revocation
+        check_ocsp_status_async(&sig, &data, th, validation_log).await?;
+
+        let verified =
+            verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
+
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
@@ -1072,6 +1090,7 @@ impl Claim {
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
+        cert_check: bool,
         th: &dyn TrustHandlerConfig,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
@@ -1101,14 +1120,10 @@ impl Claim {
             return Err(Error::ClaimDecoding);
         };
 
-        let verified = verify_cose(
-            sig,
-            data,
-            &additional_bytes,
-            !is_provenance,
-            th,
-            validation_log,
-        );
+        // check certificate revocation
+        check_ocsp_status(sig, data, th, validation_log)?;
+
+        let verified = verify_cose(sig, data, &additional_bytes, cert_check, th, validation_log);
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -1161,9 +1176,8 @@ impl Claim {
                     "claim signature is not valid",
                     "verify_internal"
                 )
-                .error(parse_err)
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH);
-                validation_log.log(log_item, Some(Error::CoseSignature))?;
+                .error(parse_err);
+                validation_log.log(log_item, None)?;
             }
         };
 
@@ -1211,30 +1225,35 @@ impl Claim {
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
+            let assertion_absolute_uri = if assertion.is_relative_url() {
+                to_absolute_uri(claim.label(), &assertion.url())
+            } else {
+                assertion.url()
+            };
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {
                     if !vec_compare(ca.hash(), &assertion.hash()) {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hash does not match assertion data: {}", assertion.url()),
                             "verify_internal"
                         )
                         .error(Error::HashMismatch(format!(
                             "Assertion hash failure: {}",
-                            assertion.url()
+                            assertion_absolute_uri.clone(),
                         )))
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
                             Some(Error::HashMismatch(format!(
                                 "Assertion hash failure: {}",
-                                assertion.url()
+                                assertion_absolute_uri.clone(),
                             ))),
                         )?;
                     } else {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hashed uri matched: {}", assertion.url()),
                             "verify_internal"
                         )
@@ -1244,18 +1263,18 @@ impl Claim {
                 }
                 None => {
                     let log_item = log_item!(
-                        assertion.url(),
+                        assertion_absolute_uri.clone(),
                         format!("cannot find matching assertion: {}", assertion.url()),
                         "verify_internal"
                     )
                     .error(Error::AssertionMissing {
-                        url: assertion.url(),
+                        url: assertion_absolute_uri.clone(),
                     })
                     .validation_status(validation_status::ASSERTION_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::AssertionMissing {
-                            url: assertion.url(),
+                            url: assertion_absolute_uri.clone(),
                         }),
                     )?;
                 }
@@ -1357,6 +1376,13 @@ impl Claim {
                             .verify_stream_segment(
                                 *initseg_data,
                                 *fragment_data,
+                                Some(claim.alg()),
+                            ),
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
+                            .verify_stream_segments(
+                                *initseg_data,
+                                fragment_paths,
                                 Some(claim.alg()),
                             ),
                     };
@@ -1617,6 +1643,10 @@ impl Claim {
             Some(ref ob) => Ok(ob.clone()),
             None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
+    }
+
+    pub(crate) fn clear_data(&mut self) {
+        self.original_bytes = None;
     }
 
     /// Create claim from binary data (not including assertions).

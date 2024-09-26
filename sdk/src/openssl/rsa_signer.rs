@@ -44,6 +44,10 @@ impl RsaSigner {
     // production use since there is no caching in the SDK and fetching is expensive. This is behind the
     // feature flag 'psxxx_ocsp_stapling_experimental'
     fn update_ocsp(&self) {
+        // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
+        // don't make this pub or pub(crate) without finding a way to ensure that
+        // precondition.
+
         // do we need an update
         let now = chrono::offset::Utc::now();
 
@@ -54,7 +58,7 @@ impl RsaSigner {
         if now > next_update {
             #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
             {
-                if let Ok(certs) = self.certs() {
+                if let Ok(certs) = self.certs_internal() {
                     if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
                         self.ocsp_size.set(ocsp_rsp.len());
                         let mut validation_log =
@@ -71,6 +75,21 @@ impl RsaSigner {
             }
         }
     }
+
+    fn certs_internal(&self) -> Result<Vec<Vec<u8>>> {
+        // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
+        // don't make this pub or pub(crate) without finding a way to ensure that
+        // precondition.
+
+        let mut certs: Vec<Vec<u8>> = Vec::new();
+
+        for c in &self.signcerts {
+            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            certs.push(cert);
+        }
+
+        Ok(certs)
+    }
 }
 
 impl ConfigurableSigner for RsaSigner {
@@ -80,8 +99,17 @@ impl ConfigurableSigner for RsaSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
+
+        // make sure cert chains are in order
+        if !check_chain_order(&signcerts) {
+            return Err(Error::BadParam(
+                "certificate chain is not in correct order".to_string(),
+            ));
+        }
 
         // rebuild RSA keys to eliminate incompatible values
         let n = rsa.n().to_owned().map_err(wrap_openssl_err)?;
@@ -115,13 +143,6 @@ impl ConfigurableSigner for RsaSigner {
         let new_rsa = builder.build();
 
         let pkey = PKey::from_rsa(new_rsa).map_err(wrap_openssl_err)?;
-
-        // make sure cert chains are in order
-        if !check_chain_order(&signcerts) {
-            return Err(Error::BadParam(
-                "certificate chain is not in correct order".to_string(),
-            ));
-        }
 
         let signer = RsaSigner {
             signcerts,
@@ -192,14 +213,8 @@ impl Signer for RsaSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let mut certs: Vec<Vec<u8>> = Vec::new();
-
-        for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
-            certs.push(cert);
-        }
-
-        Ok(certs)
+        let _openssl = super::OpenSslMutex::acquire()?;
+        self.certs_internal()
     }
 
     fn alg(&self) -> SigningAlg {
@@ -211,6 +226,8 @@ impl Signer for RsaSigner {
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
+        let _openssl = super::OpenSslMutex::acquire().ok()?;
+
         // update OCSP if needed
         self.update_ocsp();
 
