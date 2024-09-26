@@ -34,6 +34,42 @@ pub trait Signer {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
@@ -41,9 +77,18 @@ pub trait Signer {
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
     }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
 }
 
 /// Trait to allow loading of signing credential from external sources
+#[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
 pub(crate) trait ConfigurableSigner: Signer + Sized {
     /// Create signer form credential files
     #[cfg(feature = "file_io")]
@@ -77,8 +122,8 @@ use async_trait::async_trait;
 /// This trait exists to allow the signature mechanism to be extended.
 ///
 /// Use this when the implementation is asynchronous.
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
 pub trait AsyncSigner: Sync {
     /// Returns a new byte array which is a signature over the original.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
@@ -99,12 +144,107 @@ pub trait AsyncSigner: Sync {
         None
     }
 
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        // NOTE: This is currently synchronous, but may become
+        // async in the future.
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(
+                    crate::time_stamp::default_rfc3161_request_async(&url, headers, &body, message)
+                        .await,
+                );
+            }
+        }
+        None
+    }
+
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
     /// By pre-querying the value for a your signing cert the value can
     /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
+    }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncSigner {
+    /// Returns a new byte array which is a signature over the original.
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE structure directly.
+    /// Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
     }
 }
 

@@ -18,7 +18,7 @@ use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::{labels, Actor, Metadata},
+    assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
     error::Result,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
@@ -90,7 +90,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 /// the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -104,12 +104,16 @@ pub struct Action {
     software_agent: Option<SoftwareAgent>,
 
     /// A semicolon-delimited list of the parts of the resource that were changed since the previous event history.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed: Option<String>,
+
+    /// A list of the regions of interest of the resource that were changed.
     ///
     /// If not present, presumed to be undefined.
     /// When tracking changes and the scope of the changed components is unknown,
     /// it should be assumed that anything might have changed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    changed: Option<String>,
+    changes: Option<Vec<RegionOfInterest>>,
 
     /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
     #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
@@ -152,7 +156,7 @@ impl Action {
         matches!(
             self.software_agent,
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
-        )
+        ) || self.changes.is_some() // only defined for v2
     }
 
     /// Returns the label for this action.
@@ -184,6 +188,11 @@ impl Action {
     /// (output) resource.
     pub fn instance_id(&self) -> Option<&str> {
         self.instance_id.as_deref()
+    }
+
+    /// Returns the regions of interest that changed].
+    pub fn changes(&self) -> Option<&[RegionOfInterest]> {
+        self.changes.as_deref()
     }
 
     /// Returns the additional parameters for this action.
@@ -309,6 +318,19 @@ impl Action {
         self.reason = Some(reason.into());
         self
     }
+
+    /// Adds a region of interest that changed.
+    pub fn add_change(mut self, region_of_interest: RegionOfInterest) -> Self {
+        match &mut self.changes {
+            Some(changes) => {
+                changes.push(region_of_interest);
+            }
+            _ => {
+                self.changes = Some(vec![region_of_interest]);
+            }
+        }
+        self
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
@@ -353,7 +375,7 @@ impl ActionTemplate {
 /// other information such as what software performed the action.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
     /// A list of [`Action`]s.
@@ -486,8 +508,11 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertion::{Assertion, AssertionData},
-        assertions::metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+        assertion::AssertionData,
+        assertions::{
+            metadata::{c2pa_source::GENERATOR_REE, DataSource, ReviewRating},
+            region_of_interest::{Range, RangeType, Time, TimeType},
+        },
         hashed_uri::HashedUri,
     };
 
@@ -536,7 +561,26 @@ pub mod tests {
                     .set_parameter("name".to_owned(), "gaussian blur")
                     .unwrap()
                     .set_when("2015-06-26T16:43:23+0200")
-                    .set_source_type("digsrctype:algorithmicMedia"),
+                    .set_source_type("digsrctype:algorithmicMedia")
+                    .add_change(RegionOfInterest {
+                        region: vec![Range {
+                            range_type: RangeType::Temporal,
+                            shape: None,
+                            time: Some(Time {
+                                time_type: TimeType::Npt,
+                                start: None,
+                                end: None,
+                            }),
+                            frame: None,
+                            text: None,
+                        }],
+                        name: None,
+                        identifier: None,
+                        region_type: None,
+                        role: None,
+                        description: None,
+                        metadata: None,
+                    }),
             )
             .add_metadata(
                 Metadata::new()
@@ -548,7 +592,7 @@ pub mod tests {
         assert_eq!(original.actions.len(), 2);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
-        assert_eq!(assertion.label(), Actions::LABEL);
+        assert_eq!(assertion.label(), format!("{}.v2", Actions::LABEL));
 
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         assert_eq!(result.actions.len(), 2);
@@ -567,6 +611,7 @@ pub mod tests {
             result.actions[1].source_type().unwrap(),
             "digsrctype:algorithmicMedia"
         );
+        assert_eq!(result.actions[1].changes(), original.actions()[1].changes());
         assert_eq!(
             result.metadata.unwrap().date_time(),
             original.metadata.unwrap().date_time()
@@ -703,19 +748,19 @@ pub mod tests {
     fn test_json_v2_round_trip() {
         let json = serde_json::json!({
             "actions": [
-                  {
+                {
                     "action": "c2pa.edited",
                     "parameters": {
-                      "description": "gradient",
-                      "name": "any value"
+                        "description": "gradient",
+                        "name": "any value"
                     },
                     "softwareAgent": "TestApp"
-                  },
-                  {
+                },
+                {
                     "action": "c2pa.opened",
                     "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
-                      "description": "import"
+                        "description": "import"
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": {
@@ -723,10 +768,24 @@ pub mod tests {
                         "version": "1.0",
                         "something": "else"
                     },
-                  },
-                  {
+                },
+                {
                     "action": "com.joesphoto.filter",
-                  }
+                },
+                {
+                    "action": "c2pa.dubbed",
+                    "changes": [
+                        {
+                            "description": "translated to klingon",
+                            "region": [
+                                {
+                                    "type": "temporal",
+                                }
+                            ]
+                        }
+                    ]
+                }
+
             ],
             "templates": [
                 {
@@ -754,6 +813,24 @@ pub mod tests {
         assert_eq!(
             result.actions[0].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())
+        );
+        assert_eq!(
+            result.actions[3].changes().unwrap(),
+            &[RegionOfInterest {
+                description: Some("translated to klingon".to_owned()),
+                region: vec![Range {
+                    range_type: RangeType::Temporal,
+                    shape: None,
+                    time: None,
+                    frame: None,
+                    text: None
+                }],
+                name: None,
+                identifier: None,
+                region_type: None,
+                role: None,
+                metadata: None
+            }]
         );
     }
 }

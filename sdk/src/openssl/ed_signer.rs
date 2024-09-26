@@ -39,9 +39,11 @@ impl ConfigurableSigner for EdSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let certs_size = signcert.len();
-        let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
-        let pkey = PKey::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
+        let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
+        let pkey = PKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
 
         if alg != SigningAlg::Ed25519 {
             return Err(Error::UnsupportedType); // only ed25519 is supported by C2PA
@@ -67,8 +69,10 @@ impl ConfigurableSigner for EdSigner {
 
 impl Signer for EdSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let mut signer =
-            openssl::sign::Signer::new_without_digest(&self.pkey).map_err(wrap_openssl_err)?;
+            openssl::sign::Signer::new_without_digest(&self.pkey).map_err(Error::OpenSslError)?;
 
         let signed_data = signer.sign_oneshot_to_vec(data)?;
 
@@ -80,10 +84,12 @@ impl Signer for EdSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            let cert = c.to_der().map_err(Error::OpenSslError)?;
             certs.push(cert);
         }
 
@@ -99,16 +105,12 @@ impl Signer for EdSigner {
     }
 }
 
-fn wrap_openssl_err(err: openssl::error::ErrorStack) -> Error {
-    Error::OpenSslError(err)
-}
-
 #[cfg(test)]
 #[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
 
     #[test]
     fn ed25519_signer() {

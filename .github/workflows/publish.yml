@@ -58,7 +58,7 @@ jobs:
 
     - name: Update changelog
       run: |
-        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%d %B %Y_" && echo "" && (echo "$CHANGELOG" | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
+        (head -8 CHANGELOG.md && echo "## $VERSION" && date "+_%d %B %Y_" && echo "" && (echo "$CHANGELOG" | sed -E 's_\(#([0-9]+)\)_([#\1](https://github.com/contentauth/c2pa-rs/pull/\1)\)_') && echo "" && tail -n +9 CHANGELOG.md) > CHANGELOG.new.md
         mv CHANGELOG.new.md CHANGELOG.md
       env:
         VERSION: ${{ steps.set-version.outputs.version }}
@@ -88,9 +88,9 @@ jobs:
         commit_user_email: noreply@adobe.com
 
     - name: Ensure semantic versioning requirements are met
-      uses: obi1kenobi/cargo-semver-checks-action@v1
+      uses: obi1kenobi/cargo-semver-checks-action@v2
       with:
-        crate-name: c2pa
+        package: c2pa
 
     - name: Create release
       uses: ncipollo/release-action@v1

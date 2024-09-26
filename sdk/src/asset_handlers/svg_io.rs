@@ -26,6 +26,7 @@ use tempfile::Builder;
 
 use crate::{
     asset_io::{
+        rename_or_move,
         AssetIO,
         AssetPatch,
         CAIRead,
@@ -38,7 +39,7 @@ use crate::{
         RemoteRefEmbed,
     },
     error::{Error, Result},
-    utils::base64,
+    utils::{base64, io_utils::stream_len},
 };
 
 static SUPPORTED_TYPES: [&str; 8] = [
@@ -123,10 +124,7 @@ impl AssetIO for SvgIO {
         self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -150,10 +148,7 @@ impl AssetIO for SvgIO {
         self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
@@ -475,7 +470,7 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(input_stream.seek(SeekFrom::End(0))?)
+        let length = usize::value_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             - end;
         positions.push(HashObjectPositions {

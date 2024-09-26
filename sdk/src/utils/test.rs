@@ -13,29 +13,32 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::path::PathBuf;
 #[cfg(feature = "file_io")]
+use std::path::Path;
 use std::{
     io::{Cursor, Read, Write},
-    path::Path,
+    path::PathBuf,
 };
 
 use tempfile::TempDir;
 
+#[cfg(feature = "file_io")]
+use crate::create_signer;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
+    asset_io::CAIReadWrite,
     claim::Claim,
+    hash_utils::Hasher,
+    jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
     RemoteSigner, Result, Signer, SigningAlg,
 };
-#[cfg(feature = "file_io")]
-use crate::{
-    asset_io::CAIReadWrite, create_signer, hash_utils::Hasher,
-    jumbf_io::get_assetio_handler_from_path,
-};
 #[cfg(feature = "openssl_sign")]
-use crate::{openssl::RsaSigner, signer::ConfigurableSigner};
+use crate::{
+    openssl::{AsyncSignerAdapter, RsaSigner},
+    signer::ConfigurableSigner,
+};
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
 
@@ -222,29 +225,41 @@ pub fn temp_signer_file() -> RsaSigner {
         .expect("get_temp_signer")
 }
 
-/// Utility to create a test file with a placeholder for a manifest
 #[cfg(feature = "file_io")]
 pub fn write_jpeg_placeholder_file(
     placeholder: &[u8],
     input: &Path,
     output_file: &mut dyn CAIReadWrite,
-    mut hasher: Option<&mut Hasher>,
+    hasher: Option<&mut Hasher>,
 ) -> Result<usize> {
-    // get where we will put the data
     let mut f = std::fs::File::open(input).unwrap();
-    let jpeg_io = get_assetio_handler_from_path(input).unwrap();
+    write_jpeg_placeholder_stream(placeholder, "jpeg", &mut f, output_file, hasher)
+}
+
+/// Utility to create a test file with a placeholder for a manifest
+pub fn write_jpeg_placeholder_stream<R>(
+    placeholder: &[u8],
+    format: &str,
+    input: &mut R,
+    output_file: &mut dyn CAIReadWrite,
+    mut hasher: Option<&mut Hasher>,
+) -> Result<usize>
+where
+    R: Read + std::io::Seek + Send,
+{
+    let jpeg_io = get_assetio_handler(format).unwrap();
     let box_mapper = jpeg_io.asset_box_hash_ref().unwrap();
-    let boxes = box_mapper.get_box_map(&mut f).unwrap();
+    let boxes = box_mapper.get_box_map(input).unwrap();
     let sof = boxes.iter().find(|b| b.names[0] == "SOF0").unwrap();
 
     // build new asset with hole for new manifest
     let outbuf = Vec::new();
     let mut out_stream = Cursor::new(outbuf);
-    let mut input_file = std::fs::File::open(input).unwrap();
+    input.rewind().unwrap();
 
     // write before
     let mut before = vec![0u8; sof.range_start];
-    input_file.read_exact(before.as_mut_slice()).unwrap();
+    input.read_exact(before.as_mut_slice()).unwrap();
     if let Some(hasher) = hasher.as_deref_mut() {
         hasher.update(&before);
     }
@@ -255,7 +270,7 @@ pub fn write_jpeg_placeholder_file(
 
     // write bytes after
     let mut after_buf = Vec::new();
-    input_file.read_to_end(&mut after_buf).unwrap();
+    input.read_to_end(&mut after_buf).unwrap();
     if let Some(hasher) = hasher {
         hasher.update(&after_buf);
     }
@@ -284,6 +299,39 @@ impl crate::Signer for TestGoodSigner {
     fn reserve_size(&self) -> usize {
         1024
     }
+
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
+    }
+}
+
+pub(crate) struct AsyncTestGoodSigner {}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::AsyncSigner for AsyncTestGoodSigner {
+    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(b"not a valid signature".to_vec())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024
+    }
+
+    async fn send_timestamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
+    }
 }
 
 /// Create a [`Signer`] instance that can be used for testing purposes using ps256 alg.
@@ -291,7 +339,8 @@ impl crate::Signer for TestGoodSigner {
 /// # Returns
 ///
 /// Returns a boxed [`Signer`] instance.
-pub fn temp_signer() -> Box<dyn Signer> {
+#[cfg(test)]
+pub(crate) fn temp_signer() -> Box<dyn Signer> {
     #[cfg(feature = "openssl_sign")]
     {
         #![allow(clippy::expect_used)]
@@ -309,6 +358,22 @@ pub fn temp_signer() -> Box<dyn Signer> {
     #[cfg(not(feature = "openssl_sign"))]
     {
         Box::new(TestGoodSigner {})
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
+pub fn temp_async_signer() -> Box<dyn crate::signer::AsyncSigner> {
+    #[cfg(feature = "openssl_sign")]
+    {
+        Box::new(AsyncSignerAdapter::new(SigningAlg::Es256))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let sign_cert = include_str!("../../tests/fixtures/certs/es256.pub");
+        let pem_key = include_str!("../../tests/fixtures/certs/es256.pem");
+        let signer = WebCryptoSigner::new("es256", sign_cert, pem_key);
+        Box::new(signer)
     }
 }
 
@@ -352,7 +417,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             use std::io::{Seek, Write};
 
@@ -364,10 +429,116 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
             // fake sig
             Ok(sign_bytes.into_inner())
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let signer = crate::wasm::RsaWasmSignerAsync::new();
+
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+        }
     }
 
     fn reserve_size(&self) -> usize {
         10000
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WebCryptoSigner {
+    signing_alg: SigningAlg,
+    signing_alg_name: String,
+    certs: Vec<Vec<u8>>,
+    key: Vec<u8>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WebCryptoSigner {
+    pub fn new(alg: &str, cert: &str, key: &str) -> Self {
+        static START_CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----";
+        static END_CERTIFICATE: &str = "-----END CERTIFICATE-----";
+        static START_KEY: &str = "-----BEGIN PRIVATE KEY-----";
+        static END_KEY: &str = "-----END PRIVATE KEY-----";
+
+        let mut name = alg.to_owned().to_uppercase();
+        name.insert(2, '-');
+
+        let key = key
+            .replace("\n", "")
+            .replace(START_KEY, "")
+            .replace(END_KEY, "");
+        let key = crate::utils::base64::decode(&key).unwrap();
+
+        let certs = cert
+            .replace("\n", "")
+            .replace(START_CERTIFICATE, "")
+            .split(END_CERTIFICATE)
+            .map(|x| crate::utils::base64::decode(x).unwrap())
+            .collect();
+
+        Self {
+            signing_alg: alg.parse().unwrap(),
+            signing_alg_name: name,
+            certs,
+            key,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait::async_trait(?Send)]
+impl crate::signer::AsyncSigner for WebCryptoSigner {
+    fn alg(&self) -> SigningAlg {
+        self.signing_alg
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.certs.clone())
+    }
+
+    async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+        use js_sys::{Array, Object, Reflect, Uint8Array};
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::CryptoKey;
+
+        use crate::wasm::context::WindowOrWorker;
+        let context = WindowOrWorker::new().unwrap();
+        let crypto = context.subtle_crypto().unwrap();
+
+        let mut data = claim_bytes.clone();
+        let promise = crypto
+            .digest_with_str_and_u8_array("SHA-256", &mut data)
+            .unwrap();
+        let result = JsFuture::from(promise).await.unwrap();
+        let mut digest = Uint8Array::new(&result).to_vec();
+
+        let key = Uint8Array::new_with_length(self.key.len() as u32);
+        key.copy_from(&self.key);
+        let usages = Array::new();
+        usages.push(&"sign".into());
+        let alg = Object::new();
+        Reflect::set(&alg, &"name".into(), &"ECDSA".into()).unwrap();
+        Reflect::set(&alg, &"namedCurve".into(), &"P-256".into()).unwrap();
+
+        let promise = crypto
+            .import_key_with_object("pkcs8", &key, &alg, true, &usages)
+            .unwrap();
+        let key: CryptoKey = JsFuture::from(promise).await.unwrap().into();
+
+        let alg = Object::new();
+        Reflect::set(&alg, &"name".into(), &"ECDSA".into()).unwrap();
+        Reflect::set(&alg, &"hash".into(), &"SHA-256".into()).unwrap();
+        let promise = crypto
+            .sign_with_object_and_u8_array(&alg, &key, &mut digest)
+            .unwrap();
+        let result = JsFuture::from(promise).await.unwrap();
+        Ok(Uint8Array::new(&result).to_vec())
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
+
+    async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
     }
 }
 
@@ -378,6 +549,80 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
 /// Returns a boxed [`RemoteSigner`] instance.
 pub fn temp_remote_signer() -> Box<dyn RemoteSigner> {
     Box::new(TempRemoteSigner {})
+}
+
+/// Create an AsyncSigner that acts as a RemoteSigner
+struct TempAsyncRemoteSigner {
+    signer: TempRemoteSigner,
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
+    // this will not be called but requires an implementation
+    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
+        #[cfg(feature = "openssl_sign")]
+        {
+            let signer =
+                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+
+            // this would happen on some remote server
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+        }
+
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        {
+            use std::io::{Seek, Write};
+
+            let mut sign_bytes = std::io::Cursor::new(vec![0u8; self.reserve_size()]);
+
+            sign_bytes.rewind()?;
+            sign_bytes.write_all(&claim_bytes)?;
+
+            // fake sig
+            Ok(sign_bytes.into_inner())
+        }
+    }
+
+    // signer will return a COSE structure
+    fn direct_cose_handling(&self) -> bool {
+        true
+    }
+
+    fn alg(&self) -> SigningAlg {
+        SigningAlg::Ps256
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
+
+    fn reserve_size(&self) -> usize {
+        10000
+    }
+
+    async fn send_timestamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<crate::error::Result<Vec<u8>>> {
+        Some(Ok(Vec::new()))
+    }
+}
+
+/// Create a [`AsyncSigner`] that does it's own COSE handling for testing.
+///
+/// # Returns
+///
+/// Returns a boxed [`RemoteSigner`] instance.
+pub fn temp_async_remote_signer() -> Box<dyn crate::signer::AsyncSigner> {
+    Box::new(TempAsyncRemoteSigner {
+        signer: TempRemoteSigner {},
+    })
 }
 
 #[test]

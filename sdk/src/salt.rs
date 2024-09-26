@@ -11,10 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// The Saltgenerator trait always the caller to supply
-/// a funtion to generate a salt value used when hashing
+/// The SaltGenerator trait always the caller to supply
+/// a function to generate a salt value used when hashing
 /// data.  Providing a unique salt ensures a unique hash for
 /// a given data set.
+
 pub trait SaltGenerator {
     /// generate a salt vector
     fn generate_salt(&self) -> Option<Vec<u8>>;
@@ -59,13 +60,23 @@ impl SaltGenerator for DefaultSalt {
         {
             let mut salt = vec![0u8; self.salt_len];
             openssl::rand::rand_bytes(&mut salt).ok()?;
+
             Some(salt)
         }
-        #[cfg(not(feature = "openssl_sign"))]
+        #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
         {
-            use ring::rand::SecureRandom;
+            let salt = crate::wasm::util::get_random_values(self.salt_len).ok()?;
+
+            Some(salt)
+        }
+        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
+        {
+            use rand::prelude::*;
+
             let mut salt = vec![0u8; self.salt_len];
-            ring::rand::SystemRandom::new().fill(&mut salt).ok()?;
+            let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
+            rng.fill_bytes(&mut salt);
+
             Some(salt)
         }
     }

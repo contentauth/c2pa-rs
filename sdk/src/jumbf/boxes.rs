@@ -24,7 +24,6 @@
 
 use std::{
     any::Any,
-    convert::TryInto,
     ffi::CString,
     fmt,
     io::{Read, Result as IoResult, Seek, SeekFrom, Write},
@@ -788,7 +787,7 @@ pub const CAI_CLAIM_UUID: &str = "6332636C00110010800000AA00389B71"; // c2cl
 pub const CAI_SIGNATURE_UUID: &str = "6332637300110010800000AA00389B71"; // c2cs
 pub const CAI_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
 pub const CAI_EMBEDDED_FILE_DESCRIPTION_UUID: &str = "6266646200110010800000AA00389B71"; // bfdb
-pub const CAI_EMBEDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"; // bidb
+pub const CAI_EMBEDDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"; // bidb
 pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; // c2vc
 pub const CAI_UUID_ASSERTION_UUID: &str = "7575696400110010800000AA00389B71"; // uuid
 pub const CAI_DATABOXES_STORE_UUID: &str = "6332646200110010800000AA00389B71"; // c2db
@@ -1621,7 +1620,7 @@ impl BMFFBox for JUMBFEmbeddedFileContentBox {
     }
 
     fn box_uuid(&self) -> &'static str {
-        CAI_EMBEDED_FILE_DATA_UUID
+        CAI_EMBEDDED_FILE_DATA_UUID
     }
 
     fn box_payload_size(&self) -> IoResult<u32> {
@@ -1729,11 +1728,7 @@ impl JUMBFEmbeddedFileDescriptionBox {
             .position(|&c| c == b'\0')
             .unwrap_or(bytes.len());
 
-        if let Ok(r_str) = String::from_utf8(bytes[0..nul_range_end].to_vec()) {
-            r_str
-        } else {
-            String::new()
-        }
+        String::from_utf8(bytes[0..nul_range_end].to_vec()).unwrap_or_default()
     }
 
     pub fn media_type(&self) -> String {
@@ -2279,11 +2274,11 @@ impl BoxReader {
                 sbox.add_data_box(next_box);
             }
 
-            // if our current position is past the size, bail out...
-            if let Ok(p) = current_pos(reader) {
-                if p >= dest_pos {
-                    found = false;
-                }
+            // Error out if box reads past specified box len
+            match current_pos(reader).map_err(|_| JumbfParseError::InvalidBoxRange)? {
+                p if p == dest_pos => found = false,
+                p if p > dest_pos => return Err(JumbfParseError::InvalidJumbBox),
+                _ => continue,
             }
         }
 
@@ -2705,31 +2700,30 @@ pub mod tests {
     }
 
     // ANCHOR: DescriptionBox Reader
-    /*
-     #[test]
-     fn desc_box_reader() {
-         const JUMD_DESC: &str =
-             "000000256A756D62000000216A756D646332706100110010800000AA00389B7103633270612E763100";
-         let buffer = hex::decode(JUMD_DESC).expect("decode failed");
-         let mut buf_reader = Cursor::new(buffer);
+    #[test]
+    fn desc_box_reader() {
+        const JUMD_DESC: &str =
+            "000000226A756D620000001E6A756D646332706100110010800000AA00389B71036332706100";
+        let buffer = hex::decode(JUMD_DESC).expect("decode failed");
+        let mut buf_reader = Cursor::new(buffer);
 
-         let jumb_header = BoxReader::read_header(&mut buf_reader).unwrap();
-         assert_eq!(jumb_header.size, 0x25);
-         assert_eq!(jumb_header.name, BoxType::JumbBox);
+        let jumb_header = BoxReader::read_header(&mut buf_reader).unwrap();
+        assert_eq!(jumb_header.size, 0x22);
+        assert_eq!(jumb_header.name, BoxType::Jumb);
 
-         let jumd_header = BoxReader::read_header(&mut buf_reader).unwrap();
-         assert_eq!(jumd_header.size, 0x21);
-         assert_eq!(jumd_header.name, BoxType::JumdBox);
+        let jumd_header = BoxReader::read_header(&mut buf_reader).unwrap();
+        assert_eq!(jumd_header.size, 0x1e);
+        assert_eq!(jumd_header.name, BoxType::Jumd);
 
-         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
-         assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
-         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
-     }
-    */
+        let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
+        assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
+        assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
+    }
+
     // ANCHOR: JSON Content Box Reader
     #[test]
     fn json_box_reader() {
-        const JSON_BOX: &str ="0000005a6a756d620000002d6a756d646a736f6e00110010800000aa00389b7103633270612e6c6f636174696f6e2e62726f616400000000266a736f6e7b20226c6f636174696f6e223a202253616e204672616e636973636f227d";
+        const JSON_BOX: &str ="0000005b6a756d620000002d6a756d646a736f6e00110010800000aa00389b7103633270612e6c6f636174696f6e2e62726f616400000000266a736f6e7b20226c6f636174696f6e223a202253616e204672616e636973636f227d";
 
         let buffer = hex::decode(JSON_BOX).expect("decode failed");
         let mut buf_reader = Cursor::new(buffer);
@@ -2743,6 +2737,15 @@ pub mod tests {
         let json_box = super_box.data_box_as_json_box(0).unwrap();
         assert_eq!(json_box.box_uuid(), JUMBF_JSON_UUID);
         assert_eq!(json_box.json().len(), 30);
+    }
+
+    #[test]
+    fn test_bad_box_size() {
+        const JSON_BOX: &str ="0000005a6a756d620000002d6a756d646a736f6e00110010800000aa00389b7103633270612e6c6f636174696f6e2e62726f616400000000266a736f6e7b20226c6f636174696f6e223a202253616e204672616e636973636f227d";
+
+        let buffer = hex::decode(JSON_BOX).expect("decode failed");
+        let mut buf_reader = Cursor::new(buffer);
+        assert!(BoxReader::read_super_box(&mut buf_reader).is_err());
     }
 
     #[allow(dead_code)]

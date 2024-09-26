@@ -20,15 +20,12 @@ use std::{
 
 //use conv::ValueFrom;
 use log::warn;
-// multihash versions
-use multibase::{decode, encode};
-use multihash::{wrap, Code, Multihash, Sha2_256, Sha2_512, Sha3_256, Sha3_384, Sha3_512};
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{Error, Result};
+use crate::{utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
@@ -89,21 +86,6 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-/// Generate hash of type hash_type for supplied data array.  The
-/// hash_type are those specified in the multihash specification.  Currently
-/// we only support Sha2-256/512 or Sha2-256/512.
-/// Returns hash or None if incomptible type
-pub fn hash_by_type(hash_type: u8, data: &[u8]) -> Option<Multihash> {
-    match hash_type {
-        0x12 => Some(Sha2_256::digest(data)),
-        0x13 => Some(Sha2_512::digest(data)),
-        0x14 => Some(Sha3_512::digest(data)),
-        0x15 => Some(Sha3_384::digest(data)),
-        0x16 => Some(Sha3_256::digest(data)),
-        _ => None,
-    }
-}
-
 #[derive(Clone)]
 pub enum Hasher {
     SHA256(Sha256),
@@ -123,7 +105,7 @@ impl Hasher {
         }
     }
 
-    // comsume hasher and return the final digest
+    // consume hasher and return the final digest
     pub fn finalize(hasher_enum: Hasher) -> Vec<u8> {
         use Hasher::*;
         // return the hash
@@ -139,14 +121,14 @@ impl Hasher {
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, exclusions, true).unwrap_or_default()
 }
 
 // Return hash inclusive bytes for desired hashing algorithm.
 pub fn hash_by_alg_with_inclusions(alg: &str, data: &[u8], inclusions: Vec<HashRange>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
 
-    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or(Vec::new())
+    hash_stream_by_alg(alg, &mut reader, Some(inclusions), false).unwrap_or_default()
 }
 
 // Return hash bytes for asset using desired hashing algorithm.
@@ -232,8 +214,12 @@ where
         }
     };
 
-    let data_len = data.seek(SeekFrom::End(0))?;
+    let data_len = stream_len(data)?;
     data.rewind()?;
+
+    if data_len < 1 {
+        return Err(Error::OtherError("no data to hash".into()));
+    }
 
     let ranges = match hash_range {
         Some(mut hr) if !hr.is_empty() => {
@@ -423,7 +409,7 @@ pub fn verify_by_alg(
     vec_compare(hash, &data_hash)
 }
 
-// verify the hash using the specified alogrithm
+// verify the hash using the specified algorithm
 pub fn verify_asset_by_alg(
     alg: &str,
     hash: &[u8],
@@ -455,140 +441,26 @@ where
     }
 }
 
-/// Return a multihash (Sha256) of array of bytes
+/// Return a Sha256 hash of array of bytes
 #[allow(dead_code)]
-pub fn hash256(data: &[u8]) -> String {
-    let mh = Sha2_256::digest(data);
-    let digest = mh.digest();
-    let wrapped: Multihash = wrap(Code::Sha2_256, digest);
-
-    // Return Base-64 encoded hash.
-    encode(multibase::Base::Base64, wrapped.as_bytes())
+pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Hasher::SHA256(Sha256::new());
+    hasher.update(data);
+    Hasher::finalize(hasher)
 }
 
-/// Verify muiltihash against input data.  True if match,
-/// false if no match or unsupported.  The hash value should be
-/// be multibase encoded string.
-pub fn verify_hash(hash: &str, data: &[u8]) -> bool {
-    match decode(hash) {
-        Ok((_code, mh)) => {
-            if mh.len() < 2 {
-                return false;
-            }
+pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
+    use sha1::Sha1;
 
-            // multihash lead bytes
-            let hash_type = mh[0]; // hash type
-            let _hash_len = mh[1]; // hash data length
+    // create a Sha1 object
+    let mut hasher = Sha1::new();
 
-            // hash with the same algorithm as target
-            if let Some(data_hash) = hash_by_type(hash_type, data) {
-                vec_compare(data_hash.digest(), &mh.as_slice()[2..])
-            } else {
-                false
-            }
-        }
-        Err(_) => false,
-    }
-}
+    // process input message
+    hasher.update(data);
 
-// Fast implementation for Blake3 hashing that can handle large assets
-pub fn blake3_from_asset(path: &Path) -> Result<String> {
-    let mut data = File::open(path)?;
-    data.rewind()?;
-    let data_len = data.seek(SeekFrom::End(0))?;
-    data.rewind()?;
-
-    let mut hasher = blake3::Hasher::new();
-
-    let mut chunk_left = data_len;
-
-    if cfg!(feature = "no_interleaved_io") {
-        loop {
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-
-            data.read_exact(&mut chunk)?;
-
-            hasher.update(&chunk);
-
-            chunk_left -= chunk.len() as u64;
-            if chunk_left == 0 {
-                break;
-            }
-        }
-    } else {
-        let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-        data.read_exact(&mut chunk)?;
-
-        loop {
-            let (tx, rx) = std::sync::mpsc::channel();
-
-            chunk_left -= chunk.len() as u64;
-
-            std::thread::spawn(move || {
-                hasher.update(&chunk);
-                tx.send(hasher).unwrap_or_default();
-            });
-
-            // are we done
-            if chunk_left == 0 {
-                hasher = match rx.recv() {
-                    Ok(hasher) => hasher,
-                    Err(_) => return Err(Error::ThreadReceiveError),
-                };
-                break;
-            }
-
-            // read next chunk while we wait for hash
-            let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
-            data.read_exact(&mut next_chunk)?;
-
-            hasher = match rx.recv() {
-                Ok(hasher) => hasher,
-                Err(_) => return Err(Error::ThreadReceiveError),
-            };
-
-            chunk = next_chunk;
-        }
-    }
-
-    let hash = hasher.finalize();
-
-    Ok(hash.to_hex().as_str().to_owned())
-}
-
-/// Return the hash of data in the same hash format in_hash
-pub fn hash_as_source(in_hash: &str, data: &[u8]) -> Option<String> {
-    match decode(in_hash) {
-        Ok((code, mh)) => {
-            if mh.len() < 2 {
-                return None;
-            }
-
-            // multihash lead bytes
-            let hash_type = mh[0]; // hash type
-
-            // hash with the same algorithm as target
-            match hash_by_type(hash_type, data) {
-                Some(hash) => {
-                    let digest = hash.digest();
-
-                    let wrapped = match hash_type {
-                        0x12 => wrap(Code::Sha2_256, digest),
-                        0x13 => wrap(Code::Sha2_512, digest),
-                        0x14 => wrap(Code::Sha3_512, digest),
-                        0x15 => wrap(Code::Sha3_384, digest),
-                        0x16 => wrap(Code::Sha3_256, digest),
-                        _ => return None,
-                    };
-
-                    // Return encoded hash.
-                    Some(encode(code, wrapped.as_bytes()))
-                }
-                None => None,
-            }
-        }
-        Err(_) => None,
-    }
+    // acquire hash digest in the form of GenericArray,
+    // which in this case is equivalent to [u8; 20]
+    hasher.finalize().to_vec()
 }
 
 // Used by Merkle tree calculations to generate the pair wise hash

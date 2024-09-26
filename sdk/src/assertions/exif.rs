@@ -17,7 +17,11 @@ use std::collections::HashMap;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{assertions::labels, Assertion, AssertionBase, AssertionJson, Error, Result};
+use crate::{
+    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertions::labels,
+    Error, Result,
+};
 
 /// The EXIF assertion as defined in the C2PA spec section 17.13
 ///  See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_exif_information>
@@ -32,6 +36,9 @@ pub struct Exif {
 }
 
 impl Exif {
+    // A label for our assertion, use reverse domain name syntax
+    pub const LABEL: &'static str = labels::EXIF;
+
     pub fn new() -> Self {
         Self {
             object_context: Some(json!({
@@ -86,7 +93,7 @@ impl Exif {
                 v.push(value);
                 self
             }
-            None => self.insert(&key, &Vec::from([value]))?,
+            None => self.insert(&key, Vec::from([value]))?,
         })
     }
 

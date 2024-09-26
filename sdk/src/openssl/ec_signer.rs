@@ -17,15 +17,12 @@ use openssl::{
     pkey::{PKey, Private},
     x509::X509,
 };
-use x509_parser::der_parser::{
-    self,
-    der::{parse_der_integer, parse_der_sequence_defined_g},
-};
 
 use super::check_chain_order;
 use crate::{
-    error::{wrap_openssl_err, Error, Result},
+    error::{Error, Result},
     signer::ConfigurableSigner,
+    utils::sig_utils::der_to_p1363,
     Signer, SigningAlg,
 };
 
@@ -49,9 +46,11 @@ impl ConfigurableSigner for EcSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let certs_size = signcert.len();
-        let pkey = EcKey::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
-        let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
+        let pkey = EcKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
+        let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
@@ -73,7 +72,9 @@ impl ConfigurableSigner for EcSigner {
 
 impl Signer for EcSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let key = PKey::from_ec_key(self.pkey.clone()).map_err(wrap_openssl_err)?;
+        let _openssl = super::OpenSslMutex::acquire()?;
+
+        let key = PKey::from_ec_key(self.pkey.clone()).map_err(Error::OpenSslError)?;
 
         let mut signer = match self.alg {
             SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
@@ -82,8 +83,8 @@ impl Signer for EcSigner {
             _ => return Err(Error::UnsupportedType),
         };
 
-        signer.update(data).map_err(wrap_openssl_err)?;
-        let der_sig = signer.sign_to_vec().map_err(wrap_openssl_err)?;
+        signer.update(data).map_err(Error::OpenSslError)?;
+        let der_sig = signer.sign_to_vec().map_err(Error::OpenSslError)?;
 
         der_to_p1363(&der_sig, self.alg)
     }
@@ -93,10 +94,12 @@ impl Signer for EcSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            let cert = c.to_der().map_err(Error::OpenSslError)?;
             certs.push(cert);
         }
 
@@ -112,92 +115,13 @@ impl Signer for EcSigner {
     }
 }
 
-// C2PA use P1363 format for EC signatures so we must
-// convert from ASN.1 DER to IEEE P1363 format to verify.
-struct ECSigComps<'a> {
-    r: &'a [u8],
-    s: &'a [u8],
-}
-
-fn parse_ec_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
-    parse_der_sequence_defined_g(|content: &[u8], _| {
-        let (rem1, r) = parse_der_integer(content)?;
-        let (_rem2, s) = parse_der_integer(rem1)?;
-
-        Ok((
-            data,
-            ECSigComps {
-                r: r.as_slice()?,
-                s: s.as_slice()?,
-            },
-        ))
-    })(data)
-}
-
-fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
-    // P1363 format: r | s
-
-    let (_, p) = parse_ec_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
-
-    let mut r = extfmt::Hexlify(p.r).to_string();
-    let mut s = extfmt::Hexlify(p.s).to_string();
-
-    let sig_len: usize = match alg {
-        SigningAlg::Es256 => 64,
-        SigningAlg::Es384 => 96,
-        SigningAlg::Es512 => 132,
-        _ => return Err(Error::UnsupportedType),
-    };
-
-    // pad or truncate as needed
-    let rp = if r.len() > sig_len {
-        // truncate
-        let offset = r.len() - sig_len;
-        &r[offset..r.len()]
-    } else {
-        // pad
-        while r.len() != sig_len {
-            r.insert(0, '0');
-        }
-        r.as_ref()
-    };
-
-    let sp = if s.len() > sig_len {
-        // truncate
-        let offset = s.len() - sig_len;
-        &s[offset..s.len()]
-    } else {
-        // pad
-        while s.len() != sig_len {
-            s.insert(0, '0');
-        }
-        s.as_ref()
-    };
-
-    if rp.len() != sig_len || rp.len() != sp.len() {
-        return Err(Error::InvalidEcdsaSignature);
-    }
-
-    // merge r and s strings
-    let mut new_sig = rp.to_string();
-    new_sig.push_str(sp);
-
-    // convert back from hex string to byte array
-    (0..new_sig.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 #[cfg(feature = "file_io")]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{openssl::temp_signer, utils::test::fixture_path, SigningAlg};
+    use crate::{openssl::temp_signer, utils::test::fixture_path};
 
     #[test]
     fn es256_signer() {

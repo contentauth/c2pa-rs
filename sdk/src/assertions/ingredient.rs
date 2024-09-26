@@ -15,6 +15,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::AssetType;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, Metadata, ReviewRating},
@@ -64,6 +65,8 @@ pub struct Ingredient {
     pub description: Option<String>,
     #[serde(rename = "informational_URI", skip_serializing_if = "Option::is_none")]
     pub informational_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 impl Ingredient {
@@ -100,6 +103,7 @@ impl Ingredient {
             || self.data.is_some()
             || self.description.is_some()
             || self.informational_uri.is_some()
+            || self.data_types.is_some()
     }
 
     pub fn set_parent(mut self) -> Self {
@@ -124,7 +128,7 @@ impl Ingredient {
     }
 
     pub fn add_review(mut self, review: ReviewRating) -> Self {
-        let metadata = self.metadata.unwrap_or_else(Metadata::new);
+        let metadata = self.metadata.unwrap_or_default();
         self.metadata = Some(metadata.add_review(review));
         self
     }
@@ -175,7 +179,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertion::{AssertionCbor, AssertionData};
+    use crate::assertion::AssertionData;
 
     #[test]
     fn assertion_ingredient() {

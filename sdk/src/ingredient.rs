@@ -16,25 +16,33 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
+use async_generic::async_generic;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::utils::mime::extension_to_mime;
+#[cfg(doc)]
+use crate::Manifest;
 use crate::{
     assertion::{get_thumbnail_image_type, Assertion, AssertionBase},
-    assertions::{self, labels, Metadata, Relationship, Thumbnail},
+    assertions::{self, labels, AssetType, Metadata, Relationship, Thumbnail},
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     hashed_uri::HashedUri,
-    jumbf,
+    jumbf::{
+        self,
+        labels::{manifest_label_from_uri, to_assertion_uri},
+    },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
     store::Store,
-    utils::xmp_inmemory_utils::XmpInfo,
+    utils::{base64, xmp_inmemory_utils::XmpInfo},
     validation_status::{self, status_for_store, ValidationStatus},
 };
 
@@ -111,6 +119,10 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
+    /// Additional information about the data's type to the ingredient V2 structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_types: Option<Vec<AssetType>>,
+
     /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
     ///
     /// [`ManifestStore`]: crate::ManifestStore
@@ -184,6 +196,16 @@ impl Ingredient {
             format: format.into(),
             ..Default::default()
         }
+    }
+
+    // try to determine if this is a V2 ingredient
+    pub(crate) fn is_v2(&self) -> bool {
+        self.instance_id.is_none()
+            || self.data.is_some()
+            || self.description.is_some()
+            || self.informational_uri.is_some()
+            || self.relationship == Relationship::InputTo
+            || self.data_types.is_some()
     }
 
     /// Returns a user-displayable title for this ingredient.
@@ -262,8 +284,6 @@ impl Ingredient {
     /// if one exists.
     ///
     /// If `None`, the ingredient has no [`Manifest`]s.
-    ///
-    /// [`Manifest`]: crate::Manifest
     pub fn active_manifest(&self) -> Option<&str> {
         self.active_manifest.as_deref()
     }
@@ -297,6 +317,11 @@ impl Ingredient {
     /// Returns an informational uri for the ingredient if it exists.
     pub fn informational_uri(&self) -> Option<&str> {
         self.informational_uri.as_deref()
+    }
+
+    /// Returns an list AssetType info
+    pub fn data_types(&self) -> Option<&[AssetType]> {
+        self.data_types.as_deref()
     }
 
     /// Sets a human-readable title for this ingredient.
@@ -355,10 +380,6 @@ impl Ingredient {
 
     /// Sets the thumbnail from a ResourceRef.
     pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
-        // verify the resource referenced exists
-        if !self.resources.exists(&thumbnail.identifier) {
-            return Err(Error::NotFound);
-        };
         self.thumbnail = Some(thumbnail);
         Ok(self)
     }
@@ -379,6 +400,7 @@ impl Ingredient {
     /// This is only used for internally generated thumbnails - when
     /// reading thumbnails from files, we don't want to write these to file
     /// So this ensures they stay in memory unless written out.
+    #[deprecated(note = "Please use set_thumbnail instead", since = "0.28.0")]
     pub fn set_memory_thumbnail<S: Into<String>, B: Into<Vec<u8>>>(
         &mut self,
         format: S,
@@ -425,18 +447,17 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
-        // verify the resource referenced exists
-        if !self.resources.exists(&data_ref.identifier) {
-            return Err(Error::NotFound);
-        };
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        let base_id = self.instance_id().to_string();
-        self.manifest_data = Some(self.resources.add_with(&base_id, "c2pa", data)?);
+        let base_id = "manifest_data".to_string();
+        self.manifest_data = Some(
+            self.resources
+                .add_with(&base_id, "application/c2pa", data)?,
+        );
         Ok(self)
     }
 
@@ -459,6 +480,17 @@ impl Ingredient {
     /// Sets an informational uri if needed
     pub fn set_informational_uri<S: Into<String>>(&mut self, uri: S) -> &mut Self {
         self.informational_uri = Some(uri.into());
+        self
+    }
+
+    /// Add AssetType info for Ingredient
+    pub fn add_data_type(&mut self, data_type: AssetType) -> &mut Self {
+        if let Some(data_types) = self.data_types.as_mut() {
+            data_types.push(data_type);
+        } else {
+            self.data_types = Some([data_type].to_vec());
+        }
+
         self
     }
 
@@ -486,43 +518,16 @@ impl Ingredient {
             .unwrap_or_else(|| "".into())
             .to_lowercase();
 
-        let format = match extension.as_ref() {
-            "jpg" | "jpeg" => "image/jpeg",
-            "png" => "image/png",
-            "gif" => "image/gif",
-            "psd" => "image/vnd.adobe.photoshop",
-            "tiff" => "image/tiff",
-            "svg" => "image/svg+xml",
-            "ico" => "image/x-icon",
-            "bmp" => "image/bmp",
-            "webp" => "image/webp",
-            "dng" => "image/dng",
-            "heic" => "image/heic",
-            "heif" => "image/heif",
-            "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
-            "mp4" => "video/mp4",
-            "avif" => "image/avif",
-            "mov" | "qt" => "video/quicktime",
-            "m4a" => "audio/mp4",
-            "mid" | "rmi" => "audio/mid",
-            "mp3" => "audio/mpeg",
-            "wav" => "audio/vnd.wav",
-            "aif" | "aifc" | "aiff" => "audio/aiff",
-            "ogg" => "audio/ogg",
-            "pdf" => "application/pdf",
-            "ai" => "application/postscript",
-            _ => "application/octet-stream",
-        }
-        .to_owned();
+        let format = extension_to_mime(&extension)
+            .unwrap_or("application/octet-stream")
+            .to_owned();
         (title, extension, format)
     }
 
     /// Generates an `Ingredient` from a file path, including XMP info
     /// from the file if available.
     ///
-    /// This is used for making asset ingredients that should not load [`ManifestStore`]s.
-    ///
-    /// [`ManifestStore`]: crate::ManifestStore
+    /// This does not read c2pa_data in a file, it only reads XMP
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         // get required information from the file path
@@ -546,7 +551,8 @@ impl Ingredient {
         S: Into<String>,
     {
         let format = format.into();
-        // if we can open the file try tto get xmp info
+
+        // try to get xmp info, if this fails all XmpInfo fields will be None
         let xmp_info = XmpInfo::from_source(stream, &format);
 
         let id = if let Some(id) = xmp_info.instance_id {
@@ -569,7 +575,7 @@ impl Ingredient {
         &mut self,
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
-        validation_log: &mut impl StatusTracker,
+        validation_log: &impl StatusTracker,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -579,15 +585,39 @@ impl Ingredient {
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
                     if statuses.is_empty() {
-                        // search claim to find a claim thumbnail assertion without knowing the format
-                        if let Some(claim_assertion) = claim
-                            .claim_assertion_store()
+                        if let Some(hashed_uri) = claim
+                            .assertions()
                             .iter()
-                            .find(|ca| ca.label_raw().starts_with(labels::CLAIM_THUMBNAIL))
+                            .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
                         {
-                            let (format, image) =
-                                Self::thumbnail_from_assertion(claim_assertion.assertion());
-                            self.set_thumbnail(format, image)?;
+                            // We found a valid claim thumbnail so just reference it, we don't need to copy it
+                            let thumb_manifest = manifest_label_from_uri(&hashed_uri.url())
+                                .unwrap_or_else(|| claim.label().to_string());
+                            let uri =
+                                jumbf::labels::to_absolute_uri(&thumb_manifest, &hashed_uri.url());
+                            // Try to determine the format from the assertion label in the URL
+                            let format = hashed_uri
+                                .url()
+                                .rsplit_once('.')
+                                .map(|(_, ext)| format!("image/{}", ext))
+                                .unwrap_or_else(|| "image/jpeg".to_string()); // default to jpeg??
+                            let mut thumb = crate::resource_store::ResourceRef::new(format, &uri);
+                            // keep track of the alg and hash for reuse
+                            thumb.alg = hashed_uri.alg();
+                            let hash = base64::encode(&hashed_uri.hash());
+                            thumb.hash = Some(hash);
+                            self.set_thumbnail_ref(thumb)?;
+
+                            // add a resource to give clients access, but don't directly reference it.
+                            // this way a client can view the thumbnail without needing to load the manifest
+                            // but the the embedded thumbnail is still the primary reference
+                            let claim_assertion = store.get_claim_assertion_from_uri(&uri)?;
+                            let thumbnail = Thumbnail::from_assertion(claim_assertion.assertion())?;
+                            self.resources.add_uri(
+                                &uri,
+                                &thumbnail.content_type,
+                                thumbnail.data,
+                            )?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -721,13 +751,12 @@ impl Ingredient {
                                 .verify_from_path(path, &mut validation_log)
                                 .map(|_| store)
                         })
-                        .map_err(|e| {
+                        .inspect_err(|e| {
                             // add a log entry for the error so we act like verify
                             validation_log.log_silent(
                                 log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(&e),
+                                    .set_error(e),
                             );
-                            e
                         }),
                     Some(manifest_bytes),
                 )
@@ -736,7 +765,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         if ingredient.thumbnail.is_none() {
@@ -744,7 +773,6 @@ impl Ingredient {
                 ingredient.set_thumbnail(format, image)?;
             }
         }
-
         Ok(ingredient)
     }
 
@@ -762,51 +790,124 @@ impl Ingredient {
     /// This does not set title or hash
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
+        let ingredient = Self::from_stream_info(stream, format, "untitled");
+        stream.rewind()?;
+        ingredient.add_stream_internal(format, stream)
+    }
+
+    /// Create an Ingredient from JSON
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_str(json).map_err(Error::JsonError)
+    }
+
+    /// Adds a stream to an ingredient
+    ///
+    /// This allows you to predefine fields before adding the stream.
+    /// Sets manifest_data if the stream contains a manifest_store.
+    /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
+    /// Instance_id, document_id, and provenance will be overridden if found in the stream.
+    /// Format will be overridden only if it is the default (application/octet-stream).
+    #[cfg(feature = "unstable_api")]
+    #[async_generic()]
+    pub(crate) fn with_stream<S: Into<String>>(
+        mut self,
+        format: S,
+        stream: &mut dyn CAIRead,
+    ) -> Result<Self> {
+        let format = format.into();
+
+        // try to get xmp info, if this fails all XmpInfo fields will be None
+        let xmp_info = XmpInfo::from_source(stream, &format);
+
+        if let Some(id) = xmp_info.instance_id {
+            self.instance_id = Some(id);
+        };
+
+        if let Some(id) = xmp_info.document_id {
+            self.document_id = Some(id);
+        };
+
+        if let Some(provenance) = xmp_info.provenance {
+            self.provenance = Some(provenance);
+        };
+
+        // only override format if it is the default
+        if self.format == "application/octet-stream" {
+            self.format = format.to_string();
+        };
+
+        // ensure we have an instance Id for v1 ingredients
+        if self.instance_id.is_none() {
+            self.instance_id = Some(default_instance_id());
+        };
+
         stream.rewind()?;
 
+        if _sync {
+            self.add_stream_internal(&format, stream)
+        } else {
+            self.add_stream_internal_async(&format, stream).await
+        }
+    }
+
+    // Internal implementation to avoid code bloat.
+    #[async_generic()]
+    fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut validation_log = DetailedStatusTracker::new();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match load_jumbf_from_stream(format, stream) {
-            Ok(manifest_bytes) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    Store::from_jumbf(&manifest_bytes, &mut validation_log)
-                        .and_then(|mut store| {
-                            // verify the store
-                            //todo, change this when we have a stream version of verify
-                            let mut buf: Vec<u8> = Vec::new();
-                            stream.rewind()?;
-                            stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-                            store
-                                .verify_from_buffer(&buf, format, &mut validation_log)
-                                .map(|_| store)
-                        })
-                        .map_err(|e| {
-                            // add a log entry for the error so we act like verify
-                            validation_log.log_silent(
-                                log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(&e),
-                            );
-                            e
-                        }),
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
+        let jumbf_stream = load_jumbf_from_stream(format, stream);
+
+        // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
+        let (result, manifest_bytes) = if let Ok(manifest_bytes) = jumbf_stream {
+            let jumbf_store = Store::from_jumbf(&manifest_bytes, &mut validation_log);
+            let result = if let Ok(mut store) = jumbf_store {
+                if _sync {
+                    match store.verify_from_stream(stream, format, &mut validation_log) {
+                        Ok(_) => Ok(store),
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    match store
+                        .verify_from_stream_async(stream, format, &mut validation_log)
+                        .await
+                    {
+                        Ok(_) => Ok(store),
+                        Err(err) => Err(err),
+                    }
+                }
+            } else {
+                // This will always be Err in this situation
+                #[allow(clippy::unwrap_used)]
+                Err(jumbf_store.unwrap_err())
+            };
+
+            (
+                result.inspect_err(|e| {
+                    // add a log entry for the error so we act like verify
+                    validation_log.log_silent(
+                        log_item!("asset", "error loading file", "Ingredient::from_file")
+                            .set_error(e),
+                    );
+                }),
+                Some(manifest_bytes),
+            )
+        } else {
+            // This will always be Err in this situation
+            #[allow(clippy::unwrap_used)]
+            (Err(jumbf_stream.unwrap_err()), None)
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        if ingredient.thumbnail.is_none() {
+        if self.thumbnail.is_none() {
             stream.rewind()?;
             match crate::utils::thumbnail::make_thumbnail_from_stream(format, stream) {
                 Ok((format, image)) => {
-                    ingredient.set_thumbnail(format, image)?;
+                    self.set_thumbnail(format, image)?;
                 }
                 Err(err) => {
                     log::warn!("Could not create thumbnail. {err}");
@@ -814,7 +915,7 @@ impl Ingredient {
             }
         }
 
-        Ok(ingredient)
+        Ok(self)
     }
 
     /// Creates an `Ingredient` from a memory buffer (async version).
@@ -871,7 +972,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &mut validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -913,26 +1014,7 @@ impl Ingredient {
 
         let active_manifest = ingredient_assertion
             .c2pa_manifest
-            .and_then(|hash_url| jumbf::labels::manifest_label_from_uri(&hash_url.url()));
-
-        let thumbnail = ingredient_assertion.thumbnail.and_then(|hashed_uri| {
-            // This could be a relative or absolute thumbnail reference to another manifest
-            let target_label = match jumbf::labels::manifest_label_from_uri(&hashed_uri.url()) {
-                Some(label) => label,           // use the manifest from the thumbnail uri
-                None => claim_label.to_owned(), // relative so use the whole url from the thumbnail assertion
-            };
-            match store.get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_label) {
-                Some(assertion) => Some(Self::thumbnail_from_assertion(assertion)),
-                None => {
-                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new(validation_status::ASSERTION_MISSING.to_string())
-                            .set_url(hashed_uri.url()),
-                    );
-                    None
-                }
-            }
-        });
+            .and_then(|hash_url| manifest_label_from_uri(&hash_url.url()));
 
         debug!(
             "Adding Ingredient {} {:?}",
@@ -948,19 +1030,59 @@ impl Ingredient {
                 .unwrap_or_else(default_instance_id),
         );
         ingredient.document_id = ingredient_assertion.document_id;
+        ingredient.resources.set_label(claim_label); // set the label for relative paths
 
         #[cfg(feature = "file_io")]
         if let Some(base_path) = resource_path {
             ingredient.resources_mut().set_base_path(base_path)
         }
 
-        if let Some((format, image)) = thumbnail {
-            ingredient.set_thumbnail(format, image)?;
-        }
+        if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
+            // This could be a relative or absolute thumbnail reference to another manifest
+            let target_claim_label = match manifest_label_from_uri(&hashed_uri.url()) {
+                Some(label) => label,           // use the manifest from the thumbnail uri
+                None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
+            };
+            let maybe_resource_ref = match hashed_uri.url() {
+                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
+                    // if this is a claim thumbnail, then use the label from the thumbnail uri
+                    store
+                        .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
+                        .map(|assertion| {
+                            let (format, image) = Self::thumbnail_from_assertion(assertion);
+                            ingredient
+                                .resources
+                                .add_uri(&hashed_uri.url(), &format, image)
+                        })
+                }
+                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                    .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
+                    .map(|data_box| {
+                        ingredient.resources.add_uri(
+                            &hashed_uri.url(),
+                            &data_box.format,
+                            data_box.data.clone(),
+                        )
+                    }),
+                _ => None,
+            };
+            match maybe_resource_ref {
+                Some(data_ref) => {
+                    ingredient.thumbnail = Some(data_ref?);
+                }
+                None => {
+                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                    validation_status.push(
+                        ValidationStatus::new(validation_status::ASSERTION_MISSING.to_string())
+                            .set_url(hashed_uri.url()),
+                    );
+                }
+            }
+        };
 
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let data_box = store
-                .get_data_box_from_uri_and_claim(&data_uri.url(), claim_label)
+                .get_data_box_from_uri_and_claim(data_uri, claim_label)
                 .ok_or_else(|| {
                     error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                     Error::AssertionMissing {
@@ -968,13 +1090,12 @@ impl Ingredient {
                     }
                 })?;
 
-            let id_base = ingredient.instance_id().to_owned();
-            let mut data_ref = ingredient.resources_mut().add_with(
-                &id_base,
+            let mut data_ref = ingredient.resources_mut().add_uri(
+                &data_uri.url(),
                 &data_box.format,
                 data_box.data.clone(),
             )?;
-            data_ref.data_types = data_box.data_types.clone();
+            data_ref.data_types.clone_from(&data_box.data_types);
             ingredient.set_data_ref(data_ref)?;
         }
 
@@ -986,6 +1107,7 @@ impl Ingredient {
         ingredient.metadata = ingredient_assertion.metadata;
         ingredient.description = ingredient_assertion.description;
         ingredient.informational_uri = ingredient_assertion.informational_uri;
+        ingredient.data_types = ingredient_assertion.data_types;
         Ok(ingredient)
     }
 
@@ -994,8 +1116,17 @@ impl Ingredient {
         &self,
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
+        resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
     ) -> Result<HashedUri> {
         let mut thumbnail = None;
+        // for Builder model, ingredient resources may be in the manifest
+        let get_resource = |id: &str| {
+            self.resources.get(id).or_else(|_| {
+                resources
+                    .ok_or_else(|| Error::NotFound)
+                    .and_then(|r| r.get(id))
+            })
+        };
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
@@ -1011,14 +1142,14 @@ impl Ingredient {
                     true => redactions.as_ref().map(|redactions| {
                         redactions
                             .iter()
-                            .map(|r| jumbf::labels::to_assertion_uri(&manifest_label, r))
+                            .map(|r| to_assertion_uri(&manifest_label, r))
                             .collect()
                     }),
                     false => None,
                 };
 
                 // get the c2pa manifest bytes
-                let manifest_data = self.resources.get(&resource_ref.identifier)?;
+                let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store = Store::load_ingredient_to_claim(
@@ -1053,12 +1184,9 @@ impl Ingredient {
                                         .map(|t| {
                                             // convert ingredient uris to absolute when adding them
                                             // since this uri references a different manifest
-                                            let assertion_label =
-                                                jumbf::labels::assertion_label_from_uri(&t.url())
-                                                    .unwrap_or_default();
-                                            let url = jumbf::labels::to_assertion_uri(
+                                            let url = jumbf::labels::to_absolute_uri(
                                                 &manifest_label,
-                                                &assertion_label,
+                                                &t.url(),
                                             );
                                             HashedUri::new(url, t.alg(), &t.hash())
                                         });
@@ -1083,17 +1211,44 @@ impl Ingredient {
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            let data = self.thumbnail_bytes()?;
-            let hash_url = claim.add_assertion(&Thumbnail::new(
-                &labels::add_thumbnail_format(labels::INGREDIENT_THUMBNAIL, &thumb_ref.format),
-                data.into_owned(),
-            ))?;
+            let hash_url = match manifest_label_from_uri(&thumb_ref.identifier) {
+                Some(_) => {
+                    let hash = match thumb_ref.hash.as_ref() {
+                        Some(h) => base64::decode(h)
+                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?,
+                        None => return Err(Error::BadParam("hash is missing".to_string())), /* todo: add hash missing error */
+                    };
+                    HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
+                }
+                None => {
+                    let data = match self.thumbnail.as_ref() {
+                        Some(thumbnail) => get_resource(&thumbnail.identifier),
+                        None => Err(Error::NotFound),
+                    }?;
+                    if self.is_v2() {
+                        // v2 ingredients use databoxes for thumbnails
+                        claim.add_databox(
+                            &thumb_ref.format,
+                            data.into_owned(),
+                            thumb_ref.data_types.clone(),
+                        )?
+                    } else {
+                        claim.add_assertion(&Thumbnail::new(
+                            &labels::add_thumbnail_format(
+                                labels::INGREDIENT_THUMBNAIL,
+                                &thumb_ref.format,
+                            ),
+                            data.into_owned(),
+                        ))?
+                    }
+                }
+            };
             thumbnail = Some(hash_url);
         }
 
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let box_data = self.resources.get(&data_ref.identifier)?;
+            let box_data = get_resource(&data_ref.identifier)?;
             let hash_url = claim.add_databox(
                 &data_ref.format,
                 box_data.into_owned(),
@@ -1120,15 +1275,23 @@ impl Ingredient {
 
         let mut ingredient_assertion = assertions::Ingredient::new_v2(&self.title, &self.format);
         ingredient_assertion.instance_id = instance_id;
-        ingredient_assertion.document_id = self.document_id.to_owned();
+        self.document_id
+            .clone_into(&mut ingredient_assertion.document_id);
         ingredient_assertion.c2pa_manifest = c2pa_manifest;
         ingredient_assertion.relationship = self.relationship.clone();
         ingredient_assertion.thumbnail = thumbnail;
-        ingredient_assertion.metadata = self.metadata.clone();
-        ingredient_assertion.validation_status = self.validation_status.clone();
+        ingredient_assertion.metadata.clone_from(&self.metadata);
+        ingredient_assertion
+            .validation_status
+            .clone_from(&self.validation_status);
         ingredient_assertion.data = data;
-        ingredient_assertion.description = self.description.clone();
-        ingredient_assertion.informational_uri = self.informational_uri.clone();
+        ingredient_assertion
+            .description
+            .clone_from(&self.description);
+        ingredient_assertion
+            .informational_uri
+            .clone_from(&self.informational_uri);
+        ingredient_assertion.data_types.clone_from(&self.data_types);
         claim.add_assertion(&ingredient_assertion)
     }
 
@@ -1206,7 +1369,7 @@ impl Ingredient {
         };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &mut validation_log)?;
+        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1297,8 +1460,6 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::assertions::Metadata;
-
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1558,7 +1719,12 @@ mod tests_file_io {
         println!("ingredient = {ingredient}");
         assert_eq!(&ingredient.title, MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
-        assert!(ingredient.thumbnail().is_some()); // we don't generate this thumbnail
+        assert!(ingredient.thumbnail_ref().is_some()); // we don't generate this thumbnail
+        assert!(ingredient
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("self#jumbf="));
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.metadata().is_none());
     }
@@ -1604,16 +1770,15 @@ mod tests_file_io {
             }
         }
 
-        let ap = fixture_path(MANIFEST_JPEG);
+        let ap = fixture_path(NO_MANIFEST_JPEG);
         let ingredient = Ingredient::from_file_with_options(ap, &MyOptions {}).expect("from_file");
         stats(&ingredient);
 
-        println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "MyTitle");
         assert_eq!(ingredient.format(), "image/jpeg");
-        assert!(ingredient.hash().is_some());
-        assert!(ingredient.thumbnail().is_some()); // always generated
-        assert!(ingredient.manifest_data().is_some());
+        assert_eq!(ingredient.hash(), Some("1234568abcdef"));
+        assert_eq!(ingredient.thumbnail_ref().unwrap().format, "image/foo"); // always generated
+        assert!(ingredient.manifest_data().is_none());
         assert!(ingredient.metadata().is_none());
     }
 
@@ -1648,7 +1813,7 @@ mod tests_file_io {
             .validation_status()
             .unwrap()
             .iter()
-            .any(|s| s.code() == validation_status::CLAIM_SIGNATURE_MISMATCH));
+            .any(|s| s.code() == validation_status::TIMESTAMP_MISMATCH));
     }
 
     #[test]
@@ -1676,7 +1841,7 @@ mod tests_file_io {
     fn test_jpg_nested() {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
-        println!("ingredient = {ingredient}");
+        // println!("ingredient = {ingredient}");
         assert!(ingredient.validation_status().is_none());
         assert!(ingredient.manifest_data().is_some());
     }
@@ -1700,24 +1865,25 @@ mod tests_file_io {
         let ap = fixture_path("CA.jpg");
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("../target/tmp/ingredient");
-        let mut ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
+        let ingredient = Ingredient::from_file_with_folder(ap, folder).expect("from_file");
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.validation_status(), None);
 
-        // verify we can't set references that don't exist
+        // verify ingredient thumbnail is an absolute url reference to a claim thumbnail
         assert!(ingredient
-            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
-            .is_err());
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .contains(labels::JPEG_CLAIM_THUMBNAIL));
+
+        // verify  manifest_data exists
+        assert!(ingredient.manifest_data_ref().is_some());
+        assert_eq!(ingredient.thumbnail_ref().unwrap().format, "image/jpeg");
         assert!(ingredient
-            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
-            .is_err());
-        // verify we can set a references that do exist
-        assert!(ingredient
-            .set_thumbnail_ref(ResourceRef::new("Foo", "bar"))
-            .is_err());
-        assert!(ingredient
-            .set_manifest_data_ref(ResourceRef::new("Foo", "bar"))
-            .is_err());
+            .thumbnail_ref()
+            .unwrap()
+            .identifier
+            .starts_with("self#jumbf="));
     }
 
     #[test]
@@ -1727,22 +1893,19 @@ mod tests_file_io {
         folder.push("tests/fixtures");
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient.resources.set_base_path(folder);
-        // verify we can't set a references that don't exist
-        assert!(ingredient
-            .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
-            .is_err());
+
         assert!(ingredient.thumbnail_ref().is_none());
-        assert!(ingredient
-            .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
-            .is_err());
+        // assert!(ingredient
+        //     .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
+        //     .is_err());
         assert!(ingredient.manifest_data_ref().is_none());
-        // verify we can set a references that do exist
+        // verify we can set a reference
         assert!(ingredient
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))
             .is_ok());
         assert!(ingredient.thumbnail_ref().is_some());
         assert!(ingredient
-            .set_manifest_data_ref(ResourceRef::new("c2pa", "cloud_manifest.c2pa"))
+            .set_manifest_data_ref(ResourceRef::new("application/c2pa", "cloud_manifest.c2pa"))
             .is_ok());
         assert!(ingredient.manifest_data_ref().is_some());
     }
@@ -1789,7 +1952,7 @@ mod tests_file_io {
     fn test_input_to_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        let mut ingredient = Ingredient::new_v2("title", "format");
         ingredient.resources.set_base_path(folder);
         //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];

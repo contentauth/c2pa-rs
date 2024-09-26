@@ -27,8 +27,17 @@ impl RsaValidator {
 
 impl CoseValidator for RsaValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let rsa = Rsa::public_key_from_der(pkey)?;
-        let pkey = PKey::from_rsa(rsa)?;
+
+        // rebuild RSA keys to eliminate incompatible values
+        let n = rsa.n().to_owned()?;
+        let e = rsa.e().to_owned()?;
+
+        let new_rsa = Rsa::from_public_components(n, e)?;
+
+        let pkey = PKey::from_rsa(new_rsa)?;
 
         let mut verifier = match self.alg {
             SigningAlg::Ps256 => {
@@ -61,10 +70,48 @@ impl CoseValidator for RsaValidator {
     }
 }
 
+pub struct RsaLegacyValidator {
+    alg: String,
+}
+
+impl RsaLegacyValidator {
+    pub fn new(alg: &str) -> Self {
+        RsaLegacyValidator {
+            alg: alg.to_string(),
+        }
+    }
+}
+
+impl CoseValidator for RsaLegacyValidator {
+    fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+        let rsa = Rsa::public_key_from_der(pkey)?;
+
+        // rebuild RSA keys to eliminate incompatible values
+        let n = rsa.n().to_owned()?;
+        let e = rsa.e().to_owned()?;
+
+        let new_rsa = Rsa::from_public_components(n, e)?;
+
+        let pkey = PKey::from_rsa(new_rsa)?;
+
+        let mut verifier = match self.alg.as_ref() {
+            "sha1" => openssl::sign::Verifier::new(MessageDigest::sha1(), &pkey)?,
+            "rsa256" => openssl::sign::Verifier::new(MessageDigest::sha256(), &pkey)?,
+            "rsa384" => openssl::sign::Verifier::new(MessageDigest::sha384(), &pkey)?,
+            "rsa512" => openssl::sign::Verifier::new(MessageDigest::sha512(), &pkey)?,
+            _ => return Err(Error::UnsupportedType),
+        };
+
+        verifier
+            .verify_oneshot(sig, data)
+            .map_err(|_err| Error::CoseSignature)
+    }
+}
+
 #[allow(unused_imports)]
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
 
     use super::*;
     use crate::{signer::ConfigurableSigner, Signer, SigningAlg};

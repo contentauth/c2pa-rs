@@ -27,6 +27,8 @@ impl EdValidator {
 
 impl CoseValidator for EdValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+        let _openssl = super::OpenSslMutex::acquire()?;
+
         let public_key = PKey::public_key_from_der(pkey).map_err(|_err| Error::CoseSignature)?;
 
         let mut verifier = openssl::sign::Verifier::new_without_digest(&public_key)
@@ -44,7 +46,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{openssl::temp_signer, utils::test::fixture_path, Signer, SigningAlg};
+    use crate::{openssl::temp_signer, utils::test::fixture_path, Signer};
 
     #[test]
     fn sign_and_validate() {

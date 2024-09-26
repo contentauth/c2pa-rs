@@ -1,0 +1,64 @@
+{
+  "active_manifest": "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3",
+  "manifests": {
+    "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3": {
+      "claim_generator": "make_test_images/0.33.1 c2pa-rs/0.33.1",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.33.1"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.33.1"
+        }
+      ],
+      "title": "C.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:22704d84-c37f-4733-a207-56c4c2e67b1a",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "name": "John Doe",
+                "@type": "Person"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": "Make Test Images 0.33.1",
+                "parameters": {
+                  "name": "gradient"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-08-06T21:53:37+00:00"
+      },
+      "label": "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3"
+    }
+  }
+}
