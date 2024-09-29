@@ -62,7 +62,7 @@ jobs:
           #      an English-language sentence, except (as noted earlier) that
           #      the trailing period must be omitted.
           #    * Any acronyms such as JSON or YAML should be capitalized as per
-          #      commonusage in English-language sentences.
+          #      common usage in English-language sentences.
           #
           # After you edit the PR title, this task will run again and the
           # warning should go away if you have made acceptable changes.
