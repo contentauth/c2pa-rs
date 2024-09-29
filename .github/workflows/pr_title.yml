@@ -1,0 +1,102 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  title_cc_validation:
+    name: Conventional commits validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # If this step fails, please expand this step for more information.
+          #
+          # You will need to revise this pull request's title to
+          # match the "summary" (first) line of a Conventional Commit message.
+          # This enables us to automatically generate a meaningful changelog.
+          #
+          # The summary line (and thus the PR title) must have this exact format
+          # (including punctuation):
+          #
+          #     type(scope): description
+          #
+          # `type` describes the nature of changes you are making. This project
+          # requires the type to be one of these exact names:
+          #
+          #    * fix
+          #    * feat (will cause a minor version bump)
+          #    * chore (will be omitted from changelog)
+          #
+          # `scope` describes where the change is made. This project allows
+          # the scope to be omitted, but if it is present, it must be one of
+          # these exact names:
+          #
+          #    * sdk (The primary C2PA Rust SDK)
+          #    * export_schema
+          #    * make_test_images
+          #
+          # If `scope` is omitted, the parenthesis must also be omitted.
+          #
+          # `description` is a short human-readable summary of the changes being made.
+          #
+          # This project enforces a few rules over and above the Conventional
+          # Commits definition of `description`:
+          #
+          #    * The `description` must be non-empty.
+          #    * The `description` must start with a capital letter or number.
+          #      (Do not start `description` with a lower-case word.)
+          #    * The `description` must not end with a period.
+          #
+          # This project does not currently enforce the following items, but
+          # we ask that you observe the following preferences in `description`:
+          #
+          #    * The entire description should be written and capitalized as
+          #      an English-language sentence, except (as noted earlier) that
+          #      the trailing period must be omitted.
+          #    * Any acronyms such as JSON or YAML should be capitalized as per
+          #      commonusage in English-language sentences.
+          #
+          # After you edit the PR title, this task will run again and the
+          # warning should go away if you have made acceptable changes.
+          #
+          # For more information on Conventional Commits, please see:
+          #
+          #    https://www.conventionalcommits.org/en/v1.0.0/
+          #
+          # ------------ (end of message) ------------
+
+          if echo "$PR_TITLE" | grep -E '^chore(\(.*\))?: release '; then
+            echo "Exception / OK: chore release pattern"
+            exit 0;
+          fi
+
+          if echo "$PR_TITLE" | grep -E '^chore(\(deps\))?: bump '; then
+            echo "Exception / OK: Dependabot update pattern"
+            exit 0;
+          fi
+
+          echo "Installing commitlint-rs. Please wait 30-40 seconds ..."
+          cargo install --quiet commitlint-rs
+          set -e
+
+          echo  
+          echo  
+          echo --- commitlint results for PR title \"$PR_TITLE\" ---
+          echo  
+
+          # Workaround for https://github.com/KeisukeYamashita/commitlint-rs/issues/355
+          if echo "$PR_TITLE" | grep -E "^[a-z]+\(.*\): "; then
+            echo "$PR_TITLE" | commitlint -g .commitlintrc.yml
+          else
+            echo "$PR_TITLE" | commitlint -g .commitlintrc.no-scope.yml
+          fi
+
+          echo "✅ PR title matches all enforced rules."
