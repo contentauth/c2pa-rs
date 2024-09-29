@@ -42,3 +42,4 @@ rules:
       - fix
       - feat
       - chore
+      - update

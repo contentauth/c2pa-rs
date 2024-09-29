@@ -27,6 +27,7 @@ commit_parsers = [
   { message = "^fix", group = "fixed" },
   { message = "^security", group = "security" },
   { message = "^chore", group = "chore" },
+  { message = "^update", group = "updated dependencies" },
   { message = "^.*", group = "other" },
 ]
 
