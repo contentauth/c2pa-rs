@@ -33,3 +33,4 @@ rules:
       - feat
       - chore
       - update
+      - doc
