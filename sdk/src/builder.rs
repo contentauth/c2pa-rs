@@ -1308,6 +1308,7 @@ mod tests {
             "sample1.avif",
             "sample1.heic",
             "sample1.heif",
+            "sample1.m4a",
             "video1.mp4",
             "cloud_manifest.c2pa",
         ];
