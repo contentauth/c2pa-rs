@@ -165,6 +165,7 @@ fn compare_json_values(
         (val1, val2) if val1 != val2 => {
             if !(path.ends_with(".instance_id")
                 || path.ends_with(".instanceId")
+                || path.ends_with(".identifier")
                 || path.ends_with(".time")
                 || path.contains(".hash")
                 || path.contains("claim_generator")  // changes with every version (todo: get more specific)

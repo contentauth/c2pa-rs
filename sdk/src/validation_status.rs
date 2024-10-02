@@ -194,8 +194,7 @@ pub fn status_for_store(
                             if let Some(url) = &status.url {
                                 if url.starts_with("self#jumbf") {
                                     // Some are just labels (i.e. "Cose_Sign1")
-                                    status.url =
-                                        Some(dbg!(jumbf::labels::to_absolute_uri(&label, url)));
+                                    status.url = Some(jumbf::labels::to_absolute_uri(&label, url));
                                 }
                             }
                         }

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     claim::ClaimAssetData,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::base64,
@@ -89,22 +89,41 @@ impl ManifestStore {
     // writes a resource identified uri to the given stream
     pub fn get_resource(&self, uri: &str, stream: impl Write + Read + Seek + Send) -> Result<u64> {
         // get the manifest referenced by the uri, or the active one if None
-        let manifest = match manifest_label_from_uri(uri) {
-            Some(label) => self.get(&label),
-            None => self.get_active(),
+        // add logic to search for local or absolute uri identifiers
+        let (manifest, label) = match manifest_label_from_uri(uri) {
+            Some(label) => (self.get(&label), label),
+            None => (
+                self.get_active(),
+                self.active_label().unwrap_or_default().to_string(),
+            ),
         };
+        let relative_uri = to_relative_uri(uri);
+        let absolute_uri = to_absolute_uri(&label, uri);
+
         if let Some(manifest) = manifest {
-            let mut resources = manifest.resources();
-            if !resources.exists(uri) {
-                // also search ingredients to support Reader model
-                for ingredient in manifest.ingredients() {
-                    if ingredient.resources().exists(uri) {
-                        resources = ingredient.resources();
-                        break;
+            let find_resource = |uri: &str| -> Result<&crate::ResourceStore> {
+                let mut resources = manifest.resources();
+                if !resources.exists(uri) {
+                    // also search ingredients resources to support Reader model
+                    for ingredient in manifest.ingredients() {
+                        if ingredient.resources().exists(uri) {
+                            resources = ingredient.resources();
+                            return Ok(resources);
+                        }
                     }
+                } else {
+                    return Ok(resources);
                 }
+                Err(Error::ResourceNotFound(uri.to_owned()))
+            };
+            let result = find_resource(&relative_uri);
+            match result {
+                Ok(resource) => resource.write_stream(&relative_uri, stream),
+                Err(_) => match find_resource(&absolute_uri) {
+                    Ok(resource) => resource.write_stream(&absolute_uri, stream),
+                    Err(e) => Err(e),
+                },
             }
-            resources.write_stream(uri, stream)
         } else {
             Err(Error::ResourceNotFound(uri.to_owned()))
         }

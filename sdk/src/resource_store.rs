@@ -32,7 +32,7 @@ use crate::{
     assertions::{labels, AssetType},
     claim::Claim,
     hashed_uri::HashedUri,
-    jumbf::labels::assertion_label_from_uri,
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri},
     Error, Result,
 };
 
@@ -75,8 +75,9 @@ impl UriOrResource {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
                 let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
+                let url = to_absolute_uri(claim.label(), &h.url());
                 let resource_ref =
-                    resources.add_with(&h.url(), &data_box.format, data_box.data.clone())?;
+                    resources.add_with(&url, &data_box.format, data_box.data.clone())?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }
