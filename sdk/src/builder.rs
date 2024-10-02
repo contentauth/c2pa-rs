@@ -1596,4 +1596,205 @@ mod tests {
             "image/jpeg",
         );
     }
+
+    #[cfg(feature = "file_io")]
+    const MANIFEST_JSON: &str = r#"{
+        "claim_generator": "test",
+        "claim_generator_info": [
+            {
+                "name": "test",
+                "version": "1.0",
+                "icon": {
+                    "format": "image/svg+xml",
+                    "identifier": "sample1.svg"
+                }
+            }
+        ],
+        "metadata": [
+            {
+                "dateTime": "1985-04-12T23:20:50.52Z",
+                "my_metadata": "some custom response"
+            }
+        ],
+        "format" : "image/jpeg",
+        "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "IMG_0003.jpg"
+        },
+        "assertions": [
+            {
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.opened",
+                            "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                            "parameters": {
+                                "description": "import"
+                            },
+                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg+xml",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            },
+                            "changes": [
+                                {
+                                    "region" : [
+                                        {
+                                            "type" : "temporal",
+                                            "time" : {}
+                                        }
+                                    ],
+                                    "description": "lip synced area"
+                                }
+                            ]
+                        }
+                    ],
+                    "templates": [
+                        {
+                            "action": "c2pa.opened",
+                            "softwareAgent": {
+                                "name": "TestApp",
+                                "version": "1.0",
+                                "icon": {
+                                    "format": "image/svg+xml",
+                                    "identifier": "sample1.svg"
+                                },
+                                "something": "else"
+                            },
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "ingredients": [{
+            "title": "A.jpg",
+            "format": "image/jpeg",
+            "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+            "relationship": "parentOf",
+            "thumbnail": {
+                "format": "image/png",
+                "identifier": "exp-test1.png"
+            }
+        },
+        {
+            "title": "prompt",
+            "format": "text/plain",
+            "relationship": "inputTo",
+            "data": {
+                "format": "text/plain",
+                "identifier": "prompt.txt",
+                "data_types": [
+                    {
+                    "type": "c2pa.types.generator.prompt"
+                    }
+                ]
+            }
+        },
+        {
+            "title": "Custom AI Model",
+            "format": "application/octet-stream",
+            "relationship": "inputTo",
+            "data_types": [
+                {
+                    "type": "c2pa.types.model"
+                }
+            ]
+          }
+        ]
+    }"#;
+
+    #[test]
+    #[cfg(feature = "openssl_sign")]
+    /// tests and illustrates how to add assets to a non-file based manifest by using a stream
+    fn from_json_with_stream_full_resources() {
+        use crate::assertions::Relationship;
+
+        let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+        // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
+        builder
+            .add_resource("IMG_0003.jpg", Cursor::new(b"jpeg data"))
+            .unwrap()
+            .add_resource("sample1.svg", Cursor::new(b"svg data"))
+            .expect("add resource")
+            .add_resource("exp-test1.png", Cursor::new(b"png data"))
+            .expect("add_resource")
+            .add_resource("prompt.txt", Cursor::new(b"pirate with bird on shoulder"))
+            .expect("add_resource");
+
+        //println!("{builder}");
+
+        let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
+        // convert buffer to cursor with Read/Write/Seek capability
+        let mut input = Cursor::new(image.to_vec());
+
+        let signer = temp_signer();
+        // Embed a manifest using the signer.
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "jpeg", &mut input, &mut output)
+            .expect("builder sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        println!("reader = {reader}");
+        let m = reader.active_manifest().unwrap();
+
+        //println!("after = {m}");
+
+        assert!(m.thumbnail().is_some());
+        assert!(m.thumbnail_ref().is_some());
+        assert_eq!(m.thumbnail_ref().unwrap().format, "image/jpeg");
+        let id = m.thumbnail_ref().unwrap().identifier.as_str();
+        let mut thumbnail_data = Cursor::new(Vec::new());
+        reader.resource_to_stream(id, &mut thumbnail_data).unwrap();
+        assert_eq!(thumbnail_data.into_inner(), b"jpeg data");
+
+        assert_eq!(m.ingredients().len(), 3);
+        // Validate a prompt ingredient (with data field)
+        let prompt = &m.ingredients()[1];
+        assert_eq!(prompt.title(), "prompt");
+        assert_eq!(prompt.relationship(), &Relationship::InputTo);
+        assert!(prompt.data_ref().is_some());
+        assert_eq!(prompt.data_ref().unwrap().format, "text/plain");
+        let id = prompt.data_ref().unwrap().identifier.as_str();
+        let mut prompt_data = Cursor::new(Vec::new());
+        reader.resource_to_stream(id, &mut prompt_data).unwrap();
+        assert_eq!(prompt_data.into_inner(), b"pirate with bird on shoulder");
+
+        // Validate a custom AI model ingredient.
+        assert_eq!(m.ingredients()[2].title(), "Custom AI Model");
+        assert_eq!(m.ingredients()[2].relationship(), &Relationship::InputTo);
+        assert_eq!(
+            m.ingredients()[2].data_types().unwrap()[0].asset_type,
+            "c2pa.types.model"
+        );
+
+        // validate the claim_generator_info
+        let cgi = m.claim_generator_info.as_ref().unwrap();
+        assert_eq!(cgi[0].name, "test");
+        assert_eq!(cgi[0].version.as_ref().unwrap(), "1.0");
+        match cgi[0].icon().unwrap() {
+            crate::resource_store::UriOrResource::ResourceRef(resource) => {
+                assert_eq!(resource.format, "image/svg+xml");
+                let mut icon_data = Cursor::new(Vec::new());
+                reader
+                    .resource_to_stream(&resource.identifier, &mut icon_data)
+                    .unwrap();
+                assert_eq!(icon_data.into_inner(), b"svg data");
+            }
+            _ => unreachable!(),
+        }
+
+        // println!("{manifest_store}");
+    }
 }
