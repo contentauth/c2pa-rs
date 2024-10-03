@@ -941,7 +941,18 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
 
                 box_maps.push(bm);
             }
-            jfifdump::SegmentKind::Rst(_r) => (),
+            jfifdump::SegmentKind::Rst(r) => {
+                let bm = BoxMap {
+                    names: vec![format!("RST{}", r.nr)],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: seg.position,
+                    range_len: 0,
+                };
+
+                box_maps.push(bm);
+            }
             jfifdump::SegmentKind::Comment(_) => {
                 let bm = BoxMap {
                     names: vec!["COM".to_string()],
