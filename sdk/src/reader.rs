@@ -97,15 +97,28 @@ impl Reader {
         } else {
             Self::from_stream_async(&format, &mut file).await
         };
-        if let Err(Error::JumbfNotFound) = result {
-            // if not embedded or cloud, check for sidecar first and load if it exists
-            let potential_sidecar_path = path.with_extension("c2pa");
-            if potential_sidecar_path.exists() {
-                let manifest_data = read(potential_sidecar_path)?;
-                return Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file);
+        match result {
+            Err(Error::JumbfNotFound) => {
+                // if not embedded or cloud, check for sidecar first and load if it exists
+                let potential_sidecar_path = path.with_extension("c2pa");
+                if potential_sidecar_path.exists() {
+                    let manifest_data = read(potential_sidecar_path)?;
+                    if _sync {
+                        Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file)
+                    } else {
+                        Self::from_manifest_data_and_stream_async(
+                            &manifest_data,
+                            &format,
+                            &mut file,
+                        )
+                        .await
+                    }
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
             }
+            _ => result,
         }
-        result
     }
 
     /// Create a manifest store [`Reader`]` from a JSON string.
@@ -256,4 +269,36 @@ impl std::fmt::Debug for Reader {
             .map_err(|_| std::fmt::Error)?;
         f.write_str(&report.to_string())
     }
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_from_file_no_manifest() -> Result<()> {
+    let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+    assert!(matches!(result, Err(Error::JumbfNotFound)));
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+fn test_reader_from_file_validation_err() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+    assert!(reader.validation_status().is_some());
+    assert_eq!(
+        reader.validation_status().unwrap()[0].code(),
+        crate::validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_from_file_nested_errors() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
+    Ok(())
 }

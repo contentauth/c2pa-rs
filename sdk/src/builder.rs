@@ -21,25 +21,29 @@ use std::{
 use async_generic::async_generic;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 use crate::{
-    assertion::AssertionBase,
+    assertion::AssertionDecodeError,
     assertions::{
         labels, Actions, CreativeWork, DataHash, Exif, Metadata, SoftwareAgent, Thumbnail, User,
         UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
-    ingredient::Ingredient,
+    // manifest_definition::{AssertionData, AssertionDefinition, ManifestDefinition},
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner, ClaimGeneratorInfo, HashRange, Signer,
+    AsyncSigner,
+    ClaimGeneratorInfo,
+    HashRange,
+    Ingredient,
+    Signer,
 };
 
 /// Version of the Builder Archive file
@@ -124,10 +128,6 @@ pub struct AssertionDefinition {
     pub label: String,
     pub data: AssertionData,
 }
-
-use serde::de::DeserializeOwned;
-
-use crate::assertion::AssertionDecodeError;
 impl AssertionDefinition {
     pub(crate) fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
         match &self.data {
@@ -206,6 +206,7 @@ impl AssertionDefinition {
 /// ```
 #[skip_serializing_none]
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Builder {
     #[serde(flatten)]
     pub definition: ManifestDefinition,
@@ -232,6 +233,13 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
+    /// Creates a new builder.
+    /// # Returns
+    /// * A new [`Builder`].
+    pub fn new() -> Self {
+        Default::default()
+    }
+
     /// Creates a new builder from a JSON [`ManifestDefinition`] string.
     ///
     /// # Arguments
@@ -243,6 +251,15 @@ impl Builder {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
             ..Default::default()
         })
+    }
+
+    /// Sets the ClaimGeneratorInfo for this [`Builder`]
+    pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
+    where
+        I: Into<ClaimGeneratorInfo>,
+    {
+        self.definition.claim_generator_info = [claim_generator_info.into()].to_vec();
+        self
     }
 
     /// Sets the MIME format for this [`Builder`].
@@ -349,7 +366,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Adds an [`Ingredient`] to the manifest
+    /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
     /// # Arguments
     /// * `ingredient_json` - A JSON string representing the [`Ingredient`].
     /// * `format` - The format of the [`Ingredient`].
@@ -359,7 +376,7 @@ impl Builder {
     /// # Errors
     /// * If the [`Ingredient`] is not valid
     #[async_generic()]
-    pub fn add_ingredient<'a, T, R>(
+    pub fn add_ingredient_from_stream<'a, T, R>(
         &'a mut self,
         ingredient_json: T,
         format: &str,
@@ -378,6 +395,15 @@ impl Builder {
         self.definition.ingredients.push(ingredient);
         #[allow(clippy::unwrap_used)]
         Ok(self.definition.ingredients.last_mut().unwrap()) // ok since we just added it
+    }
+
+    /// Adds an [`Ingredient`] to the manifest from an existing Ingredient.
+    pub fn add_ingredient<I>(&mut self, ingredient: I) -> &mut Self
+    where
+        I: Into<Ingredient>,
+    {
+        self.definition.ingredients.push(ingredient.into());
+        self
     }
 
     /// Adds a resource to the manifest.
@@ -811,6 +837,8 @@ impl Builder {
             }
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
+        self.definition.format = format.to_string();
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
@@ -835,30 +863,19 @@ impl Builder {
         signer: &dyn AsyncSigner,
         data_hash: &DataHash,
         format: &str,
-        source: Option<&mut R>,
     ))]
-    pub fn sign_data_hashed_embeddable<R>(
+    pub fn sign_data_hashed_embeddable(
         &mut self,
         signer: &dyn Signer,
         data_hash: &DataHash,
         format: &str,
-        source: Option<&mut R>,
-    ) -> Result<Vec<u8>>
-    where
-        R: Read + Seek + Send,
-    {
-        let format = format_to_mime(format);
-        self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-
+    ) -> Result<Vec<u8>> {
         let mut store = self.to_store()?;
-        let source: Option<&mut dyn crate::CAIRead> = source.map(|s| s as &mut dyn crate::CAIRead);
         if _sync {
-            store.get_data_hashed_embeddable_manifest(data_hash, signer, &format, source)
+            store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None)
         } else {
             store
-                .get_data_hashed_embeddable_manifest_async(data_hash, signer, &format, source)
+                .get_data_hashed_embeddable_manifest_async(data_hash, signer, format, None)
                 .await
         }
     }
@@ -986,8 +1003,18 @@ impl Builder {
                 "Destination file already exists".to_string(),
             ));
         };
-        let mut dest = std::fs::File::create(dest)?;
+        if self.definition.title.is_none() {
+            if let Some(title) = dest.file_name() {
+                self.definition.title = Some(title.to_string_lossy().to_string());
+            }
+        }
 
+        let mut dest = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dest)?;
         self.sign(signer, &format, &mut source, &mut dest)
     }
 }
@@ -1006,6 +1033,7 @@ mod tests {
     use crate::{
         assertions::BoxHash,
         asset_handlers::jpeg_io::JpegIO,
+        hash_stream_by_alg,
         utils::test::{temp_signer, write_jpeg_placeholder_stream},
         Reader,
     };
@@ -1104,7 +1132,7 @@ mod tests {
         };
 
         builder
-            .add_ingredient(parent_json(), "image/jpeg", &mut image)
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut image)
             .unwrap();
 
         builder
@@ -1186,7 +1214,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(parent_json().to_string(), format, &mut source)
+            .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();
 
         builder
@@ -1294,7 +1322,7 @@ mod tests {
 
             let mut builder = Builder::from_json(&manifest_json()).unwrap();
             builder
-                .add_ingredient(parent_json(), format, &mut source)
+                .add_ingredient_from_stream(parent_json(), format, &mut source)
                 .unwrap();
 
             builder
@@ -1341,7 +1369,7 @@ mod tests {
 
         let mut builder = Builder::from_json(&manifest_json()).unwrap();
         builder
-            .add_ingredient(parent_json(), format, &mut source)
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
 
         builder
@@ -1438,15 +1466,15 @@ mod tests {
         let mut dh = DataHash::new("source_hash", "sha256");
         dh.exclusions = Some(exclusions);
 
-        // get the embeddable manifest, letting API do the hashing
+        // Hash the bytes excluding the manifest we inserted
         output_stream.rewind().unwrap();
+        let hash =
+            hash_stream_by_alg("sha256", &mut output_stream, dh.exclusions.clone(), true).unwrap();
+        dh.set_hash(hash);
+
+        // get the embeddable manifest, letting API do the hashing
         let signed_manifest: Vec<u8> = builder
-            .sign_data_hashed_embeddable(
-                signer.as_ref(),
-                &dh,
-                "image/jpeg",
-                Some(&mut output_stream),
-            )
+            .sign_data_hashed_embeddable(signer.as_ref(), &dh, "image/jpeg")
             .unwrap();
 
         use std::io::{Seek, SeekFrom, Write};

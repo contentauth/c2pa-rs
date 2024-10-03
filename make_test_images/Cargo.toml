@@ -1,10 +1,10 @@
 [package]
 name = "make_test_images"
-version = "0.33.3"
+version = "0.36.0"
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.74.0"
+rust-version = "1.76.0"
 
 [dependencies]
 anyhow = "1.0.40"

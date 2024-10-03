@@ -40,6 +40,7 @@ use crate::{
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
+    utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
     SigningAlg,
@@ -211,7 +212,7 @@ pub(crate) fn check_cert(
 
             let (_i, (ha_alg, mgf_ai)) = seq
                 .parse(|i| {
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -219,7 +220,7 @@ pub(crate) fn check_cert(
                     let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
                         .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -239,14 +240,15 @@ pub(crate) fn check_cert(
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             let (_i, mgf_ai_params_algorithm) =
-                Any::from_der(&mgf_ai_parameters.content).map_err(|_| Error::CoseInvalidCert)?;
+                <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
+                    .map_err(|_| Error::CoseInvalidCert)?;
 
             let mgf_ai_params_algorithm = mgf_ai_params_algorithm
                 .as_oid()
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             // must be the same
-            if ha_alg.algorithm != mgf_ai_params_algorithm {
+            if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",
@@ -919,6 +921,20 @@ fn check_trust(
     }
 }
 
+// test for unrecognized signatures
+fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(sig).is_ok() {
+                // expected P1363 format
+                return Err(Error::InvalidEcdsaSignature);
+            }
+        }
+        _ => (),
+    }
+    Ok(())
+}
+
 /// A wrapper containing information of the signing cert.
 pub(crate) struct CertInfo {
     /// The name of the identity the certificate is issued to.
@@ -1054,6 +1070,17 @@ pub(crate) async fn verify_cose_async(
         )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
@@ -1243,6 +1270,17 @@ pub(crate) fn verify_cose(
         )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by

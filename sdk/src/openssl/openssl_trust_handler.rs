@@ -261,9 +261,12 @@ pub(crate) fn verify_trust(
     let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
     let mut builder = openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
-
+    builder.set_flags(X509VerifyFlags::X509_STRICT).map_err(Error::OpenSslError)?;
+    
     let mut verify_param =
         openssl::x509::verify::X509VerifyParam::new().map_err(Error::OpenSslError)?;
+
+    verify_param.set_flags(X509VerifyFlags::X509_STRICT).map_err(Error::OpenSslError)?;
     if let Some(st) = signing_time_epoc {
         verify_param.set_time(st);
     } else {
@@ -271,6 +274,7 @@ pub(crate) fn verify_trust(
             .set_flags(X509VerifyFlags::NO_CHECK_TIME)
             .map_err(Error::OpenSslError)?;
     }
+     
     builder
         .set_param(&verify_param)
         .map_err(Error::OpenSslError)?;

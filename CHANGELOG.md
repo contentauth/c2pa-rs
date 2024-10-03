@@ -6,6 +6,36 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.36.0
+_23 September 2024_
+
+* (MINOR) ensures release bumps minor version ([#592](https://github.com/contentauth/c2pa-rs/pull/592))
+* fix: requires "StatusTracker" to implement "Send" ([#589](https://github.com/contentauth/c2pa-rs/pull/589))
+
+## 0.35.1
+_17 September 2024_
+
+* Fix error when trying to sign BMFF content with Builder. ([#582](https://github.com/contentauth/c2pa-rs/pull/582))
+
+## 0.35.0
+_12 September 2024_
+
+* upgrades to riff@2.0.0, preventing panic on invalid riff files ([#579](https://github.com/contentauth/c2pa-rs/pull/579))
+* EC signature DER support ([#581](https://github.com/contentauth/c2pa-rs/pull/581))
+* Update base64 requirement from 0.21.2 to 0.22.1 in /sdk ([#519](https://github.com/contentauth/c2pa-rs/pull/519))
+* (MINOR) Rust API enhancements and fixes. ([#575](https://github.com/contentauth/c2pa-rs/pull/575))
+* Fix GIF off by one with XMP ([#562](https://github.com/contentauth/c2pa-rs/pull/562))
+
+## 0.34.0
+_30 August 2024_
+
+* (MINOR) Fragmented BMFF media ([#572](https://github.com/contentauth/c2pa-rs/pull/572))
+
+## 0.33.4
+_29 August 2024_
+
+* Depend on url crate version 2.5.2 or newer ([#573](https://github.com/contentauth/c2pa-rs/pull/573))
+
 ## 0.33.3
 _17 August 2024_
 

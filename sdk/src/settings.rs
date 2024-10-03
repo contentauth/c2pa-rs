@@ -172,7 +172,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
-            verify_trust: false,
+            verify_trust: cfg!(test),
             ocsp_fetch: false,
             remote_manifest_fetch: true,
             check_ingredient_trust: true,

@@ -40,8 +40,8 @@ use crate::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            box_name_from_uri, manifest_label_from_uri, to_databox_uri, ASSERTIONS, CLAIM,
-            CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, to_absolute_uri, to_databox_uri,
+            ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -75,6 +75,8 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    #[cfg(feature = "file_io")]
+    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 #[derive(PartialEq, Debug, Eq, Clone)]
@@ -322,7 +324,7 @@ impl Serialize for Claim {
     }
 }
 
-fn map_cbor_to_type<'de, T: DeserializeOwned>(key: &str, mp: &serde_cbor::Value) -> Option<T> {
+fn map_cbor_to_type<T: DeserializeOwned>(key: &str, mp: &serde_cbor::Value) -> Option<T> {
     if let serde_cbor::Value::Map(m) = mp {
         let k = serde_cbor::Value::Text(key.to_string());
         let v = m.get(&k)?;
@@ -481,7 +483,7 @@ impl Claim {
 
             // make sure only V1 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().into_iter().all(|v| match v {
+                if !m.keys().all(|v| match v {
                     serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
                     _ => false,
                 }) {
@@ -494,11 +496,8 @@ impl Claim {
             let claim_generator: String =
                 map_cbor_to_type(CLAIM_GENERATOR_F, &claim_value).ok_or(Error::ClaimDecoding)?;
             let claim_generator_info: Vec<ClaimGeneratorInfo> =
-                if let Some(cgi) = map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value) {
-                    cgi
-                } else {
-                    Vec::new() // 1.0 compatibility
-                };
+                map_cbor_to_type(CLAIM_GENERATOR_INFO_F, &claim_value).unwrap_or_default();
+
             let signature: String =
                 map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(Error::ClaimDecoding)?;
             let assertions: Vec<HashedUri> =
@@ -573,7 +572,7 @@ impl Claim {
 
             // make sure only V2 fields are present
             if let serde_cbor::Value::Map(m) = &claim_value {
-                if !m.keys().into_iter().all(|v| match v {
+                if !m.keys().all(|v| match v {
                     serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
                     _ => false,
                 }) {
@@ -768,7 +767,7 @@ impl Claim {
 
         claim_map.serialize_field(SIGNATURE_F, &self.signature)?;
         claim_map.serialize_field(CREATED_ASSERTIONS_F, &self.created_assertions)?;
-        
+
         // serialize optional fields
         if let Some(ga) = &self.gathered_assertions {
             claim_map.serialize_field(GATHERED_ASSERTIONS_F, ga)?;
@@ -1709,30 +1708,35 @@ impl Claim {
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
         for assertion in claim.assertions() {
             let (label, instance) = Claim::assertion_label_from_link(&assertion.url());
+            let assertion_absolute_uri = if assertion.is_relative_url() {
+                to_absolute_uri(claim.label(), &assertion.url())
+            } else {
+                assertion.url()
+            };
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {
                     if !vec_compare(ca.hash(), &assertion.hash()) {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hash does not match assertion data: {}", assertion.url()),
                             "verify_internal"
                         )
                         .error(Error::HashMismatch(format!(
                             "Assertion hash failure: {}",
-                            assertion.url()
+                            assertion_absolute_uri.clone(),
                         )))
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
                             Some(Error::HashMismatch(format!(
                                 "Assertion hash failure: {}",
-                                assertion.url()
+                                assertion_absolute_uri.clone(),
                             ))),
                         )?;
                     } else {
                         let log_item = log_item!(
-                            assertion.url(),
+                            assertion_absolute_uri.clone(),
                             format!("hashed uri matched: {}", assertion.url()),
                             "verify_internal"
                         )
@@ -1742,18 +1746,18 @@ impl Claim {
                 }
                 None => {
                     let log_item = log_item!(
-                        assertion.url(),
+                        assertion_absolute_uri.clone(),
                         format!("cannot find matching assertion: {}", assertion.url()),
                         "verify_internal"
                     )
                     .error(Error::AssertionMissing {
-                        url: assertion.url(),
+                        url: assertion_absolute_uri.clone(),
                     })
                     .validation_status(validation_status::ASSERTION_MISSING);
                     validation_log.log(
                         log_item,
                         Some(Error::AssertionMissing {
-                            url: assertion.url(),
+                            url: assertion_absolute_uri.clone(),
                         }),
                     )?;
                 }
@@ -1855,6 +1859,13 @@ impl Claim {
                             .verify_stream_segment(
                                 *initseg_data,
                                 *fragment_data,
+                                Some(claim.alg()),
+                            ),
+                        #[cfg(feature = "file_io")]
+                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
+                            .verify_stream_segments(
+                                *initseg_data,
+                                fragment_paths,
                                 Some(claim.alg()),
                             ),
                     };
@@ -2130,7 +2141,7 @@ impl Claim {
         }
     }
 
-    fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         self.original_bytes = None;
     }
 

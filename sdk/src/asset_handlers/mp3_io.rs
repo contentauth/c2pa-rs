@@ -33,7 +33,10 @@ use crate::{
         RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{self, MIN_XMP},
+    utils::{
+        io_utils::stream_len,
+        xmp_inmemory_utils::{self, MIN_XMP},
+    },
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
@@ -97,7 +100,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         reader: input_stream,
     };
 
-    if let Ok(tag) = Tag::read_from(reader) {
+    if let Ok(tag) = Tag::read_from2(reader) {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
@@ -130,7 +133,7 @@ impl CAIReader for Mp3IO {
 
         let mut manifest: Option<Vec<u8>> = None;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
                 if eo.mime_type == GEOB_FRAME_MIME_TYPE {
                     match manifest {
@@ -149,7 +152,7 @@ impl CAIReader for Mp3IO {
     fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
         input_stream.rewind().ok()?;
 
-        if let Ok(tag) = Tag::read_from(input_stream) {
+        if let Ok(tag) = Tag::read_from2(input_stream) {
             for frame in tag.frames() {
                 if let Content::Private(private) = frame.content() {
                     if &private.owner_identifier == "XMP" {
@@ -195,7 +198,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let reader = CAIReadWrapper {
                     reader: source_stream,
                 };
-                if let Ok(tag) = Tag::read_from(reader) {
+                if let Ok(tag) = Tag::read_from2(reader) {
                     for f in tag.frames() {
                         match f.content() {
                             Content::Private(private) => {
@@ -219,8 +222,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let frame = Frame::with_content(
                     "PRIV",
                     Content::Private(Private {
-                        // Null-terminated
-                        owner_identifier: "XMP\0".to_owned(),
+                        owner_identifier: "XMP".to_owned(),
                         private_data: xmp.into_bytes(),
                     }),
                 );
@@ -355,7 +357,7 @@ impl CAIWriter for Mp3IO {
             reader: input_stream,
         };
 
-        if let Ok(tag) = Tag::read_from(reader) {
+        if let Ok(tag) = Tag::read_from2(reader) {
             for f in tag.frames() {
                 match f.content() {
                     // remove existing manifest keeping existing frames
@@ -441,7 +443,7 @@ impl CAIWriter for Mp3IO {
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             + u64::value_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let file_end = output_stream.seek(SeekFrom::End(0))?;
+        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::value_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
