@@ -20,6 +20,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
     error::Result,
+    hashed_uri::HashedUri,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo,
@@ -83,6 +84,20 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde()]
+pub struct ActionParameters {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ingredient: Option<HashedUri>, // v1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>, //v1
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ingredients: Option<Vec<HashedUri>>, // v2
+
+    #[serde(flatten)]
+    other: HashMap<String, Value>,
+}
+
 /// Defines a single action taken on an asset.
 ///
 /// An [`Action`] describes what took place on the asset, when it took place,
@@ -115,8 +130,9 @@ pub struct Action {
     #[serde(skip_serializing_if = "Option::is_none")]
     changes: Option<Vec<RegionOfInterest>>,
 
-    /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
-    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
+    /// This is NOT the instanceID in the spec
+    /// It is now deprecated but was previously used to map the action to an ingredient
+    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -138,6 +154,11 @@ pub struct Action {
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+
+    /// This is only used for pairing actions with an Ingredient it is not in the spec and not written to CBOR.
+    /// Set this to match the instance_id field of the ingredient you are pairing with.
+    #[serde(skip_serializing)]
+    ingredient_ids: Option<Vec<String>>,
 }
 
 impl Action {
@@ -210,6 +231,13 @@ impl Action {
         }
     }
 
+    pub fn get_parameter_mut(&mut self, key: &str) -> Option<&mut Value> {
+        match &mut self.parameters {
+            Some(parameters) => parameters.get_mut(key),
+            None => None,
+        }
+    }
+
     /// An array of the [`Actor`]s that undertook this action.
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
@@ -259,9 +287,18 @@ impl Action {
 
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
+    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
     pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
         self.instance_id = Some(id.into());
         self
+    }
+
+    // internal function to return any ingredients referenced by this action
+    pub(crate) fn ingredient_ids(&self) -> Option<Vec<String>> {
+        if self.ingredient_ids.is_none() && self.instance_id.is_some() {
+            return self.instance_id().map(|id| vec![id.to_string()]);
+        }
+        self.ingredient_ids.clone()
     }
 
     /// Sets the additional parameters for this action.
@@ -327,6 +364,19 @@ impl Action {
             }
             _ => {
                 self.changes = Some(vec![region_of_interest]);
+            }
+        }
+        self
+    }
+
+    /// Adds an ingredient id to the action.
+    pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Self {
+        match self.ingredient_ids {
+            Some(ref mut ingredient_ids) => {
+                ingredient_ids.push(ingredient_id.to_owned());
+            }
+            None => {
+                self.ingredient_ids = Some(vec![ingredient_id.to_owned()]);
             }
         }
         self
@@ -542,7 +592,7 @@ pub mod tests {
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
             .set_changed(Some(&["this", "that"].to_vec()))
-            .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
+            .add_ingredient_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
             .set_actors(Some(
                 &[Actor::new(
                     Some("Somebody"),
@@ -720,7 +770,7 @@ pub mod tests {
                   },
                   {
                     "action": "c2pa.opened",
-                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                    "ingredient_ids": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     "parameters": {
                       "description": "import"
                     },
@@ -732,11 +782,12 @@ pub mod tests {
                 "mytag": "myvalue"
             }
         });
-        let original = Actions::from_json_value(&json).expect("from json");
+        let mut original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         assert_eq!(result.label(), labels::ACTIONS);
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        original.actions[1].ingredient_ids = None; // remove this since it won't be in the result
         assert_eq!(original.actions, result.actions);
         assert_eq!(
             result.actions[0].software_agent().unwrap(),
@@ -749,16 +800,7 @@ pub mod tests {
         let json = serde_json::json!({
             "actions": [
                 {
-                    "action": "c2pa.edited",
-                    "parameters": {
-                        "description": "gradient",
-                        "name": "any value"
-                    },
-                    "softwareAgent": "TestApp"
-                },
-                {
                     "action": "c2pa.opened",
-                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
                         "description": "import"
                     },
@@ -768,6 +810,14 @@ pub mod tests {
                         "version": "1.0",
                         "something": "else"
                     },
+                },
+                {
+                    "action": "c2pa.edited",
+                    "parameters": {
+                        "description": "gradient",
+                        "name": "any value"
+                    },
+                    "softwareAgent": "TestApp"
                 },
                 {
                     "action": "com.joesphoto.filter",
@@ -803,15 +853,16 @@ pub mod tests {
                 "mytag": "myvalue"
             }
         });
-        let original = Actions::from_json_value(&json).expect("from json");
+        let mut original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(result.label(), "c2pa.actions.v2");
+        original.actions[0].instance_id = None; // remove this since it won't be in the result
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
         assert_eq!(
-            result.actions[0].software_agent().unwrap(),
+            result.actions[1].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())
         );
         assert_eq!(

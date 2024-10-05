@@ -666,38 +666,69 @@ impl Builder {
                         _ => return Err(Error::AssertionUnsupportedVersion),
                     };
 
-                    // fixup parameters field from instance_id to ingredient uri
-                    let needs_ingredient: Vec<(usize, crate::assertions::Action)> = actions
-                        .actions()
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, a)| {
-                            if a.instance_id().is_some()
-                                && a.get_parameter(ingredients_key).is_none()
-                            {
-                                Some((i, a.clone()))
-                            } else {
-                                None
+                    let mut updates = Vec::new();
+                    let mut index = 0;
+                    #[allow(clippy::explicit_counter_loop)]
+                    for action in actions.actions_mut() {
+                        let ingredient_ids = action.ingredient_ids();
+                        if let Some(ids) = ingredient_ids {
+                            let mut update = action.clone();
+                            let mut uris = Vec::new();
+                            for id in ids {
+                                if let Some(hash_url) = ingredient_map.get(&id) {
+                                    //updates.push((action_index, hash_url.clone()));
+                                    uris.push(hash_url.clone());
+                                } else {
+                                    return Err(Error::BadParam(format!(
+                                        "Action ingredient id not found: {id}"
+                                    )));
+                                }
                             }
-                        })
-                        .collect();
-
-                    for (index, action) in needs_ingredient {
-                        if let Some(id) = action.instance_id() {
-                            if let Some(hash_url) = ingredient_map.get(id) {
-                                let update = match ingredients_key {
-                                    "ingredient" => {
-                                        action.set_parameter(ingredients_key, hash_url.clone())
-                                    }
-                                    _ => {
-                                        // we only support on instanceId for actions, so only one ingredient on writing
-                                        action.set_parameter(ingredients_key, [hash_url.clone()])
-                                    }
-                                }?;
-                                actions = actions.update_action(index, update);
-                            }
+                            update = update.set_parameter(ingredients_key, uris)?;
+                            updates.push((index, update));
                         }
+                        index += 1;
                     }
+                    for update in updates {
+                        actions = actions.update_action(update.0, update.1);
+                    }
+
+                    // for action in actions.actions_mut() {
+                    //     if let Some(ids) = action.ingredient_ids() {
+                    //         let mut update = action.clone();
+                    //         let mut uris = Vec::new();
+                    //         for id in ids {
+                    //             if let Some(hash_url) = ingredient_map.get(&id) {
+                    //                 uris.push(hash_url.clone());
+                    //             } else {
+                    //                 return Err(Error::BadParam(format!(
+                    //                        "Action ingredient id not found: {id}")))
+                    //             }
+                    //         }
+                    //         update = update.set_parameter(ingredients_key, uris)?;
+                    //         actions.update_action(0, update);
+                    //     }
+                    // }
+
+                    // for (index, action) in needs_ingredient {
+                    //     if let Some(id) = action.instance_id() {
+                    //         if let Some(hash_url) = ingredient_map.get(id) {
+                    //             let mut update = match ingredients_key {
+                    //                 "ingredient" => {
+                    //                     action.set_parameter(ingredients_key, hash_url.clone())
+                    //                 }
+                    //                 _ => {
+                    //                     // we only support on instanceId for actions, so only one ingredient on writing
+                    //                     action.set_parameter(ingredients_key, [hash_url.clone()])
+                    //                 }
+                    //             }?;
+                    //             update.clear_instance_id(); // don't let this get written out
+                    //             actions = actions.update_action(index, update);
+                    //         } else {
+                    //             return Err(Error::MissingIngredient(id.to_string()));
+                    //         }
+                    //     }
+                    // }
 
                     if let Some(templates) = actions.templates.as_mut() {
                         for template in templates {
@@ -1679,6 +1710,7 @@ mod tests {
         "ingredients": [{
             "title": "A.jpg",
             "format": "image/jpeg",
+            "instance_id": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
             "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
             "relationship": "parentOf",
             "thumbnail": {

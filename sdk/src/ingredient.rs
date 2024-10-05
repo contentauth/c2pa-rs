@@ -819,9 +819,9 @@ impl Ingredient {
         // try to get xmp info, if this fails all XmpInfo fields will be None
         let xmp_info = XmpInfo::from_source(stream, &format);
 
-        if let Some(id) = xmp_info.instance_id {
-            self.instance_id = Some(id);
-        };
+        if self.instance_id.is_none() {
+            self.instance_id = xmp_info.instance_id;
+        }
 
         if let Some(id) = xmp_info.document_id {
             self.document_id = Some(id);
