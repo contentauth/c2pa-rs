@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.36.2](https://github.com/contentauth/c2pa-rs/compare/v0.36.1...v0.36.2)
+_07 October 2024_
+
+### Fixed
+
+* Empty change to trigger release-plz PR ([#616](https://github.com/contentauth/c2pa-rs/pull/616))
+
 ## 0.36.1
 _04 October 2024_
 
