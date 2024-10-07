@@ -270,3 +270,53 @@ impl std::fmt::Debug for Reader {
         f.write_str(&report.to_string())
     }
 }
+
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_from_file_no_manifest() -> Result<()> {
+    let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+    assert!(matches!(result, Err(Error::JumbfNotFound)));
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+fn test_reader_from_file_validation_err() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+    assert!(reader.validation_status().is_some());
+    assert_eq!(
+        reader.validation_status().unwrap()[0].code(),
+        crate::validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_from_file_nested_errors() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_nested_resource() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
+    let manifest = reader.active_manifest().unwrap();
+    let ingredient = manifest.ingredients().iter().next().unwrap();
+    let uri = ingredient.thumbnail_ref().unwrap().identifier.clone();
+    let mut stream = std::io::Cursor::new(Vec::new());
+    let bytes_written = reader.resource_to_stream(&uri, &mut stream)?;
+    assert_eq!(bytes_written, 41810);
+    Ok(())
+}

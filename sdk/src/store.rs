@@ -1382,7 +1382,8 @@ impl Store {
     }
 
     // wake the ingredients and validate
-    #[async_recursion(?Send)]
+    #[cfg_attr(target_arch = "wasm32", async_recursion(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_recursion)]
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
@@ -1428,7 +1429,7 @@ impl Store {
                     }
 
                     let check_ingredient_trust: bool =
-                        crate::settings::get_settings_value("verify.check_ingredient_trust")?;
+                        get_settings_value("verify.check_ingredient_trust")?;
 
                     // verify the ingredient claim
                     Claim::verify_claim_async(
@@ -3282,11 +3283,10 @@ impl Store {
 
                 Ok(store)
             })
-            .map_err(|e| {
+            .inspect_err(|e| {
                 validation_log.log_silent(
-                    log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
+                    log_item!("asset", "error loading file", "load_from_asset").set_error(e),
                 );
-                e
             })
     }
 
@@ -3296,11 +3296,10 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
-        Self::load_cai_from_memory(asset_type, data, validation_log).map_err(|e| {
+        Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
             validation_log.log_silent(
-                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(&e),
+                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(e),
             );
-            e
         })
     }
 

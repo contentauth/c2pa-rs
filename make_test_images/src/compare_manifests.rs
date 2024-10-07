@@ -183,7 +183,10 @@ fn compare_json_values(
                 || path.ends_with(".instanceId")
                 || path.ends_with(".time")
                 || path.contains(".hash")
-                || val1.is_string() && val2.is_string() && val1.to_string().contains(":urn:uuid:"))
+                || val1.is_string()
+                    && val2.is_string()
+                    && (val1.to_string().contains(":urn:uuid:")
+                        || val2.to_string().contains(":urn:uuid:")))
             {
                 if val2.is_null() {
                     issues.push(format!("Missing {}: {}", path, val1));

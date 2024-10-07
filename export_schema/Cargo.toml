@@ -1,10 +1,10 @@
 [package]
 name = "export_schema"
-version = "0.35.0"
+version = "0.36.1"
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
-rust-version = "1.74.0"
+rust-version = "1.76.0"
 
 [dependencies]
 anyhow = "1.0.40"
