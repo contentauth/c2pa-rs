@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.36.3](https://github.com/contentauth/c2pa-rs/compare/v0.36.2...v0.36.3)
+_07 October 2024_
+
+### Fixed
+
+* Changelog contained duplicate entries for 0.16.1 ([#618](https://github.com/contentauth/c2pa-rs/pull/618))
+
 ## [0.36.2](https://github.com/contentauth/c2pa-rs/compare/v0.36.1...v0.36.2)
 _07 October 2024_
 
