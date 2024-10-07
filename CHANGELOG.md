@@ -466,13 +466,6 @@ _22 February 2023_
 _19 December 2022_
 
 * Update xmp-toolkit from 0.6.0 to 1.0.0 ([#165](https://github.com/contentauth/c2pa-rs/pull/165))
-* Prepare 0.16.1 release
-* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
-* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
-
-## 0.16.1
-_19 December 2022_
-
 * Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
 * Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
 
