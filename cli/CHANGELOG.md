@@ -6,6 +6,10 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.10
+_07 October 2024_
+
+* Update c2ptool to use latest c2pa-rs ([contentauth/c2patool#258](https://github.com/contentauth/c2patool/pull/258))
 ## 0.9.9
 _17 September 2024_
 
