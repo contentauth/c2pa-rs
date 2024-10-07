@@ -1,0 +1,36 @@
+rules:
+  # Body may be empty
+  body-empty:
+    level: ignore
+
+  # Description must not be empty
+  description-empty:
+    level: error
+
+  # Description must start with a capital letter and must not end with a period or space
+  description-format:
+    level: error
+    format: ^[A-Z0-9].*[^. ]$
+
+  # Description should be <70 chars
+  description-max-length:
+    level: warning
+    length: 70
+
+  # Scope may be empty
+  scope-empty:
+    level: ignore
+
+  # Subject line should exist
+  subject-empty:
+    level: error
+
+  # Type must be one of these options
+  type:
+    level: error
+    options:
+      - fix
+      - feat
+      - chore
+      - update
+      - doc

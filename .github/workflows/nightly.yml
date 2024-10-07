@@ -1,14 +1,23 @@
-name: Nightly build
+name: Nightly branch
 
 on:  
   workflow_dispatch:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+  push:
+    branches:
+      - main
   schedule:
     - cron: "0 5 * * *" # 0500 UTC every day
 
 jobs:
-  # Create snapshot of main branch for nightly build
+  # Create snapshot of latest main or release branch for nightly build
   nightly-snapshot:
-    name: Create snapshot
+    name: Update nightly branch
     runs-on: ubuntu-latest
 
     steps:
@@ -16,106 +25,140 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        token: ${{ secrets.GH_ADMIN_COMMIT_TOKEN }}
+        token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-    - name: Set new proposed version
-      uses: paulhatch/semantic-version@v5.4.0
-      id: set-version
-      with:
-        tag_prefix: "v"
-        version_format: "${major}.${minor}.${patch}"
-        major_pattern: "(MAJOR)"
-        minor_pattern: "(MINOR)"
-    
-    - name: Add -nightly+(date)-(commit ID) prefix to version
-      id: set-nightly-version
-      run: |
-        echo version=${{ steps.set-version.outputs.version }}-nightly+`date +%F`-`git rev-parse --short HEAD` >> "$GITHUB_OUTPUT"
-
-    - name: Log new version & changelog
-      run: |
-        echo "Proposed new version: $VERSION"
-        echo "Nightly version: $NIGHTLY_VERSION"
+    - name: Choose base commit for nightly snapshot
+      id: choose-base
       env:
-        VERSION: ${{ steps.set-version.outputs.version }}
-        NIGHTLY_VERSION: ${{ steps.set-nightly-version.outputs.version }}
-
-    - name: Bump crate versions
+        GH_EVENT_NAME: ${{ github.event_name }}
       run: |
-        sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
-      env:
-        VERSION: ${{ steps.set-nightly-version.outputs.version }}
-    
+        echo "Event triggered by $GH_EVENT_NAME"
+        echo
+
+        echo "Listing branches on remote"
+        echo
+
+        git --no-pager branch --remote | sed 's|origin/||'
+
+        echo
+
+        git checkout -b nightly --track origin/nightly
+        OLD_BASE_COMMIT=$(git log nightly --skip=1 -n 1 --format=%H)
+
+        echo "Nightly commit ID is $OLD_BASE_COMMIT"
+
+        LATEST_RELEASE_PLZ=$(git --no-pager branch --format="%(refname:short)" --remote |
+          sed 's|origin/||' |
+          grep -E '^release-plz-20' |
+          sort -r |
+          head -n 1)
+
+        if [ -z "$LATEST_RELEASE_PLZ" ]; then
+
+          echo "No release-plz branch; using main"
+
+          if git show-ref --verify --quiet refs/heads/main; then
+            echo "Branch 'main' already exists locally"
+            git checkout main;
+          else
+            git checkout -b main --track origin/main;
+          fi
+
+          BASE_BRANCH=main;
+
+        else
+
+          echo "Found RP branch $LATEST_RELEASE_PLZ; comparing against main"
+
+          git checkout -b "$LATEST_RELEASE_PLZ" --track "origin/$LATEST_RELEASE_PLZ"
+
+          if git show-ref --verify --quiet refs/heads/main; then
+            echo "Branch 'main' already exists locally"
+            git checkout main;
+          else
+            git checkout -b main --track origin/main;
+          fi
+
+          export RP_TS=$(git log -1 --format=%cd --date=iso-strict $LATEST_RELEASE_PLZ)
+          export MAIN_TS=$(git log -1 --format=%cd --date=iso-strict main)
+
+          echo "Branch $LATEST_RELEASE_PLZ updated at $RP_TS"
+          echo "Branch main updated at $MAIN_TS"
+
+          if [[ "$RP_TS" > "$MAIN_TS" ]]; then
+            git checkout $LATEST_RELEASE_PLZ
+            BASE_BRANCH=$LATEST_RELEASE_PLZ;
+          else
+            git checkout main
+            BASE_BRANCH=main;
+          fi
+
+        fi
+
+        NEW_BASE_COMMIT=$(git log $BASE_BRANCH -n 1 --format=%H)
+
+        echo "Choosing base branch $BASE_BRANCH because it's newer"
+        echo "$BASE_BRANCH commit ID is $NEW_BASE_COMMIT"
+
+        if [[ "$OLD_BASE_COMMIT" == "$NEW_BASE_COMMIT" && "$GH_EVENT_NAME" == "pull_request" ]]; then
+          echo "Nightly already points to same base; leave unchanged";
+          echo "base-commit=skip" >> "$GITHUB_OUTPUT"
+          exit 0
+        elif [[ "$GH_EVENT_NAME" == "push" ]]; then
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+
+          echo Looking for non-chore commits since last tag
+          echo
+          git --no-pager log --pretty=format:"%s" $LATEST_TAG..HEAD | grep -v "^chore"
+          if [ $? -eq 0 ]; then
+            echo
+            echo "Found non-chore commits; expecting release-plz to create a new release branch."
+            echo "base-commit=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            echo "Push to main, but there are only chore commits since last tag."
+            echo "Not expecting a new release branch"
+            echo;
+          fi
+        fi
+
+        echo "Updating nightly base";
+        echo "base-commit=$NEW_BASE_COMMIT" >> "$GITHUB_OUTPUT"
+
     - name: Install Rust toolchain
+      if: ${{ steps.choose-base.outputs.base-commit != 'skip' }}
       uses: dtolnay/rust-toolchain@stable
       with:
         components: cargo
 
-    - name: Create or update Cargo.lock
+    - name: Add -nightly+(date)-(commit ID) prefix to crate versions
+      id: set-nightly-version
+      if: ${{ steps.choose-base.outputs.base-commit != 'skip' }}
       run: |
+        echo Force updating nightly branch to point to base branch
+        git branch -f nightly
+
+        export NIGHTLY_SUFFIX=$(echo -nightly+`date +%F`-`git rev-parse --short HEAD`)
+        echo Will add nightly suffix $NIGHTLY_SUFFIX
+
+        sed -i "s/^version = \"\\(.*\\)\"/version = \"\\1$NIGHTLY_SUFFIX\"/" sdk/Cargo.toml
+
         cargo update -w
         git add -f Cargo.lock
 
-    - name: Report differences for "prepare (release)" commit
-      run: git diff
+        echo
+        echo Proposed changes:
+        git status
+        git diff
 
     - name: Commit Cargo.toml and Cargo.lock
       uses: stefanzweifel/git-auto-commit-action@v5
       id: commit
+      if: ${{ steps.choose-base.outputs.base-commit != 'skip' }}
       with:
         branch: nightly
         push_options: '--force'
-        commit_message: Prepare ${{ steps.set-nightly-version.outputs.version }} release
+        commit_message: Prepare nightly release
         commit_user_name: Adobe CAI Team
         commit_user_email: noreply@adobe.com
         create_branch: true
-
-  tests:
-    name: Unit tests
-    runs-on: ${{ matrix.os }}
-    needs: nightly-snapshot
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: nightly
-        
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run unit tests (cross build)
-        run: cargo test --all-targets --all-features
-
-  test-direct-minimal-versions:
-    name: Unit tests with minimum versions of direct dependencies
-    runs-on: ${{ matrix.os }}
-    needs: nightly-snapshot
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: nightly
-        
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
-        run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features

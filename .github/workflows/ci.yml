@@ -1,14 +1,21 @@
 name: CI
 
-on:
+on:  
+  workflow_dispatch:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
-    branches: main
+    branches:
+      - main
+      - nightly
   schedule:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
 jobs:
-  tests-cargo:
+  tests:
     name: Unit tests
     runs-on: ${{ matrix.os }}
 
@@ -226,53 +233,3 @@ jobs:
         with:
           version: latest
           args: --all-targets --all-features
-
-  version_bump:
-    name: Ensure (MINOR) tag is used when making an API breaking change
-    # Change all of these steps to (MAJOR) after 1.0 release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Get latest existing tag
-        uses: WyriHaximus/github-action-get-previous-tag@v1
-        id: get-latest-tag
-
-      - name: Set new version
-        uses: paulhatch/semantic-version@v5.4.0
-        id: set-version
-        with:
-          tag_prefix: "v"
-          version_format: "${major}.${minor}.${patch}"
-          major_pattern: "(MAJOR)"
-          minor_pattern: "(MINOR)"
-
-      - name: Generate changelog since last tag
-        run: |
-          {
-            echo 'changelog<<EOF'
-            git log --format="* %s" ${{ steps.get-latest-tag.outputs.tag }}..HEAD | { grep -v "(IGNORE)" || :; }
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
-
-      - name: "Bump crate version (NOTE: Not pushed back to repo!)"
-        continue-on-error: true # If no change to crate version, ignore git commit error
-        run: |
-          sed -i "s/^version = \"[^\"]*\"$/version = \"$VERSION\"/;" sdk/Cargo.toml
-          git config user.email "nobody@example.com"
-          git config --global user.name "PR validation bot"
-          git add .
-          git commit -m "DO NOT PUSH BACK TO PR: Bump crate version"
-        env:
-          VERSION: ${{ steps.set-version.outputs.version }}
-
-      - name: If this step fails, change title of the PR to include (MINOR) tag
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          package: c2pa
