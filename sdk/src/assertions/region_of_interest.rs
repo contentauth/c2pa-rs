@@ -4,7 +4,6 @@
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
 
 use super::Metadata;
 
@@ -45,55 +44,72 @@ pub enum UnitType {
 /// A spatial range representing rectangle, circle, or a polygon.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
 pub struct Shape {
     /// The type of shape.
     #[serde(rename = "type")]
     pub shape_type: ShapeType,
     /// The type of unit for the shape range.
     pub unit: UnitType,
-    /// THe origin of the coordinate in the shape.
+    /// The origin of the coordinate in the shape.
     pub origin: Coordinate,
     /// The width for rectangles or diameter for circles.
     ///
     /// This field can be ignored for polygons.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
     /// The height of a rectnagle.
     ///
     /// This field can be ignored for circles and polygons.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<f64>,
     /// If the range is inside the shape.
     ///
     /// The default value is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub inside: Option<bool>,
     /// The vertices of the polygon.
     ///
     /// This field can be ignored for rectangles and circles.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub vertices: Option<Vec<Coordinate>>,
 }
 
-/// The type of time.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Normal Play Time (npt) as described in RFC 2326.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[serde(rename_all = "camelCase")]
-pub enum TimeType {
-    /// Times are described using Normal Play Time (npt) as described in RFC 2326.
-    #[default]
-    Npt,
+#[serde(tag = "type", rename = "npt")]
+pub struct Npt {
+    /// The start time or the start of the asset if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// The end time or the end of the asset if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+}
+
+/// "Wall Clock Time" using the Internet profile of ISO 8601 as described in RFC 3339.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(tag = "type", rename = "wall-clock")]
+pub struct WallClock {
+    /// The start time or the start of the asset if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// The end time or the end of the asset if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
 }
 
 /// A temporal range representing a starting time to an ending time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
-pub struct Time {
-    /// The type of time.
-    #[serde(rename = "type", default)]
-    pub time_type: TimeType,
-    /// The start time or the start of the asset if not present.
-    pub start: Option<String>,
-    /// The end time or the end of the asset if not present.
-    pub end: Option<String>,
+// TODO: workaround for https://github.com/serde-rs/serde/issues/2231
+#[serde(untagged)]
+pub enum Time {
+    /// Normal Play Time (npt) as described in RFC 2326.
+    Npt(Npt),
+    /// "Wall Clock Time" using the Internet profile of ISO 8601 as described in RFC 3339.
+    WallClock(WallClock),
 }
 
 /// A frame range representing starting and ending frames or pages.
@@ -105,8 +121,10 @@ pub struct Frame {
     /// The start of the frame or the end of the asset if not present.
     ///
     /// The first frame/page starts at 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<i32>,
     /// The end of the frame inclusive or the end of the asset if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<i32>,
 }
 
@@ -115,26 +133,27 @@ pub struct Frame {
 /// This is modeled after the W3C Web Annotation selector model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
 pub struct TextSelector {
     // TODO: can we provide more specific types?
     //
     /// Fragment identifier as per RFC3023 (XML) or ISO 32000-2 (PDF), Annex O.
     pub fragment: String,
     /// The start character offset or the start of the fragment if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<i32>,
     /// The end character offset or the end of the fragment if not present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<i32>,
 }
 
 /// One or two [`TextSelector`][TextSelector] identifiying the range to select.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
 pub struct TextSelectorRange {
     /// The start (or entire) text range.
     pub selector: TextSelector,
     /// The end of the text range.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<TextSelector>,
 }
 
@@ -144,6 +163,16 @@ pub struct TextSelectorRange {
 pub struct Text {
     /// The ranges of text to select.
     pub selectors: Vec<TextSelectorRange>,
+}
+
+/// A identified range representing a specific subset of content in the asset's file container.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub struct Item {
+    /// The container-specific term used to identify items, such as "track_id" for MP4 or "item_ID" for HEIF.
+    pub identifier: String,
+    /// The value of the identifier, e.g. a value of "2" for an identifier of "track_id" would imply track 2 of the asset.
+    pub value: String,
 }
 
 /// The type of range for the region of interest.
@@ -159,6 +188,8 @@ pub enum RangeType {
     Frame,
     /// A textual range, see [`Text`] for more details.
     Textual,
+    /// A identified range, see [`Item`] for more details.
+    Identified,
 }
 
 // TODO: this can be much more idiomatic with an enum, but then it wouldn't line up with spec
@@ -166,19 +197,25 @@ pub enum RangeType {
 /// A spatial, temporal, frame, or textual range describing the region of interest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
 pub struct Range {
     /// The type of range of interest.
     #[serde(rename = "type")]
     pub range_type: RangeType,
     /// A spatial range.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shape: Option<Shape>,
     /// A temporal range.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<Time>,
     /// A frame range.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub frame: Option<Frame>,
     /// A textual range.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<Text>,
+    /// A identified range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<Item>,
 }
 
 /// A role describing the region.
@@ -221,27 +258,32 @@ pub enum Role {
 /// [`Metadata::region_of_interest`][crate::assertions::Metadata::region_of_interest].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[skip_serializing_none]
 pub struct RegionOfInterest {
     /// A range describing the region of interest for the specific asset.
     pub region: Vec<Range>,
     /// A free-text string representing a human-readable name for the region which might be used in a user interface.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// A free-text string representing a machine-readable, unique to this assertion, identifier for the region.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
     /// A value from a controlled vocabulary such as <https://cv.iptc.org/newscodes/imageregiontype/> or an entity-specific
     /// value (e.g., com.litware.newType) that represents the type of thing(s) depicted by a region.
     ///
     /// Note this field serializes/deserializes into the name `type`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "type")]
     pub region_type: Option<String>,
     /// A value from our controlled vocabulary or an entity-specific value (e.g., com.litware.coolArea) that represents
     /// the role of a region among other regions.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
     /// A free-text string.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     // If we didn't have a box, `Metadata` would recursively use `RegionOfInterest` causing an infinite size error.
     //
     /// Additional information about the asset.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Box<Metadata>>,
 }
