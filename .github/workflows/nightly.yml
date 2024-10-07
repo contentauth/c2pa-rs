@@ -56,7 +56,14 @@ jobs:
         if [ -z "$LATEST_RELEASE_PLZ" ]; then
 
           echo "No release-plz branch; using main"
-          git checkout -b main --track main
+
+          if git show-ref --verify --quiet refs/heads/main; then
+            echo "Branch 'main' already exists locally"
+            git checkout main;
+          else
+            git checkout -b main --track origin/main;
+          fi
+
           BASE_BRANCH=main;
 
         else
@@ -66,7 +73,8 @@ jobs:
           git checkout -b "$LATEST_RELEASE_PLZ" --track "origin/$LATEST_RELEASE_PLZ"
 
           if git show-ref --verify --quiet refs/heads/main; then
-            echo "Branch 'main' already exists locally";
+            echo "Branch 'main' already exists locally"
+            git checkout main;
           else
             git checkout -b main --track origin/main;
           fi
