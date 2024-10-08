@@ -39,18 +39,18 @@ pub struct Reader {
 }
 
 impl Reader {
-    /// Create a manifest store Reader from a stream.
+    /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     /// # Arguments
-    /// * `format` - The format of the stream.
-    /// * `stream` - The stream to read from.
+    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
     /// # Returns
-    /// A reader for the manifest store.
+    /// A Reader for the manifest store.
     /// # Errors
-    /// If the stream is not a valid manifest store.
-    /// validation status should be checked for non severe errors
+    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
+    /// This example reads from a memory buffer and prints out the JSON manifest data. 
     /// ```no_run
-    /// use std::io::Cursor;
+    /// use std::io::Cursor; 
     ///
     /// use c2pa::Reader;
     /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
@@ -71,22 +71,21 @@ impl Reader {
     }
 
     #[cfg(feature = "file_io")]
-    /// Create a manifest store Reader from a file.
+    /// Create a manifest store [`Reader`] from a file.
+    /// If the fetch_remote_manifests feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
     /// # Arguments
     /// * `path` - The path to the file.
     /// # Returns
     /// A reader for the manifest store.
     /// # Errors
-    /// If the file is not a valid manifest store.
-    /// validation status should be checked for non severe errors.
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
+    /// This example 
     /// ```no_run
     /// use c2pa::Reader;
     /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
     /// ```
-    /// # Note
-    /// If the file does not have a manifest store, the function will check for a sidecar manifest
-    /// with the same name and a .c2pa extension.
     #[async_generic()]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
@@ -121,30 +120,29 @@ impl Reader {
         }
     }
 
-    /// Create a manifest store [`Reader`]` from a JSON string.
+    /// Create a manifest store [`Reader`] from a JSON string.
     /// # Arguments
     /// * `json` - A Json String containing a manifest store definition.
     /// # Returns
     /// A [`Reader`]` for the manifest store.
-    /// # Note
-    /// This should only be used for testing
-    /// Any referenced resources will not be available
+    /// # WARNING
+    /// This function is for use in testing. Don't use it in any implementation.
     pub fn from_json(json: &str) -> Result<Reader> {
         let manifest_store = serde_json::from_str(json)?;
         Ok(Reader { manifest_store })
     }
 
-    /// Create a manifest store [`Reader`] from existing c2pa_data and a stream
-    /// You can use this to validate a remote manifest or a sidecar manifest
+    /// Create a manifest store [`Reader`] from existing c2pa_data and a stream.
+    /// You can use this to validate a remote manifest or a sidecar manifest.
     /// # Arguments
-    /// * `c2pa_data` - The c2pa data (a manifest store in JUMBF format)
-    /// * `format` - The format of the stream
-    /// * `stream` - The stream to verify the store against
+    /// * `c2pa_data` - A C2PA manifest store in JUMBF format.
+    /// * `format` - The format of the stream.
+    /// * `stream` - The stream to verify the store against.
     /// # Returns
     /// A [`Reader`] for the manifest store
     /// # Errors
-    /// If the c2pa_data is not valid, or severe errors occur in validation
-    /// validation status should be checked for non severe errors
+    /// If the c2pa_data is not valid, or severe errors occur in validation.
+    /// Check validation status for non-severe errors.
     #[async_generic()]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
@@ -182,10 +180,11 @@ impl Reader {
     }
 
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
+    /// Call this method to check for validation errors.
     ///
-    /// This validation report only includes error statuses on applied to the active manifest.
-    /// And error statuses for ingredients that are not already reported by the ingredient status.
-    /// The uri field can be used to identify the associated manifest.
+    /// This validation report only includes error statuses applied to the active manifest
+    /// and error statuses for ingredients that are not already reported by the ingredient status.
+    /// Use the [`ValidationStatus`] `url` method to identify the associated manifest; this can be useful when a validation error does not refer to the active manifest.
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
@@ -193,42 +192,42 @@ impl Reader {
     /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
     /// let status = reader.validation_status();
     /// ```
-    /// # Note
-    /// The validation status should be checked for validation errors.
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
         self.manifest_store.validation_status()
     }
 
-    /// Return the active [`Manifest`] if it exists.
+    /// Return the active [`Manifest`], or `None` if there's no active manifest.
     pub fn active_manifest(&self) -> Option<&Manifest> {
         self.manifest_store.get_active()
     }
 
-    /// Return the active [`Manifest`] label if one exists.
+    /// Return the active [`Manifest`], or `None` if there's no active manifest.
     pub fn active_label(&self) -> Option<&str> {
         self.manifest_store.active_label()
     }
 
-    /// Returns an iterator over [`Manifest`][Manifest]s.
+    /// Returns an iterator over a collection of [`Manifest`] structs.
     pub fn iter_manifests(&self) -> impl Iterator<Item = &Manifest> + '_ {
         self.manifest_store.manifests().values()
     }
 
-    /// Return a [`Manifest`] for a given label if it exists.
+    /// Given a label, return the associated [`Manifest`], if it exists.
     /// # Arguments
-    /// * `label` - The label of the requested [`Manifest`]
+    /// * `label` - The label of the requested [`Manifest`].
     pub fn get_manifest(&self, label: &str) -> Option<&Manifest> {
         self.manifest_store.get(label)
     }
 
     /// Write a resource identified by URI to the given stream.
+    /// Use this function, for example, to get a thumbnail or icon image and write it to a stream.
     /// # Arguments
     /// * `uri` - The URI of the resource to write (from an identifier field).
     /// * `stream` - The stream to write to.
     /// # Returns
     /// The number of bytes written.
     /// # Errors
-    /// If the resource does not exist.
+    /// Returns [`Error`] if the resource does not exist.
+    /// 
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
@@ -238,6 +237,7 @@ impl Reader {
     /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
     /// let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
     /// ```
+    /// TODO: Fix the example to not read from a file.
     pub fn resource_to_stream(
         &self,
         uri: &str,
@@ -257,12 +257,14 @@ impl Default for Reader {
     }
 }
 
+/// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.json().as_str())
     }
 }
 
+/// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = ManifestStoreReport::from_store(self.manifest_store.store())
