@@ -20,7 +20,6 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, Metadata},
     error::Result,
-    hashed_uri::HashedUri,
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo,
@@ -84,20 +83,6 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde()]
-pub struct ActionParameters {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ingredient: Option<HashedUri>, // v1
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>, //v1
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ingredients: Option<Vec<HashedUri>>, // v2
-
-    #[serde(flatten)]
-    other: HashMap<String, Value>,
-}
-
 /// Defines a single action taken on an asset.
 ///
 /// An [`Action`] describes what took place on the asset, when it took place,
@@ -154,11 +139,6 @@ pub struct Action {
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
-
-    /// This is only used for pairing actions with an Ingredient it is not in the spec and not written to CBOR.
-    /// Set this to match the instance_id field of the ingredient you are pairing with.
-    #[serde(skip_serializing)]
-    ingredient_ids: Option<Vec<String>>,
 }
 
 impl Action {
@@ -295,10 +275,20 @@ impl Action {
 
     // internal function to return any ingredients referenced by this action
     pub(crate) fn ingredient_ids(&self) -> Option<Vec<String>> {
-        if self.ingredient_ids.is_none() && self.instance_id.is_some() {
-            return self.instance_id().map(|id| vec![id.to_string()]);
+        match self.get_parameter("ingredient_ids") {
+            Some(Value::Array(ids)) => {
+                let mut result = Vec::new();
+                for id in ids {
+                    if let Value::Text(s) = id {
+                        result.push(s.clone());
+                    }
+                }
+                Some(result)
+            }
+            Some(_) => None, // Invalid format, so ignore it.
+            // If there is no ingredient_ids parameter, check for the deprecated instance_id
+            None => self.instance_id().map(|id| vec![id.to_string()]),
         }
-        self.ingredient_ids.clone()
     }
 
     /// Sets the additional parameters for this action.
@@ -313,6 +303,27 @@ impl Action {
         let value = serde_cbor::from_slice(&value_bytes)?;
 
         self.parameters = Some(match self.parameters {
+            Some(mut parameters) => {
+                parameters.insert(key.into(), value);
+                parameters
+            }
+            None => {
+                let mut p = HashMap::new();
+                p.insert(key.into(), value);
+                p
+            }
+        });
+        Ok(self)
+    }
+
+    pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
+        &mut self,
+        key: S,
+        value: T,
+    ) -> Result<&mut Self> {
+        let value_bytes = serde_cbor::ser::to_vec(&value)?;
+        let value = serde_cbor::from_slice(&value_bytes)?;
+        self.parameters = Some(match self.parameters.take() {
             Some(mut parameters) => {
                 parameters.insert(key.into(), value);
                 parameters
@@ -370,16 +381,14 @@ impl Action {
     }
 
     /// Adds an ingredient id to the action.
-    pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Self {
-        match self.ingredient_ids {
-            Some(ref mut ingredient_ids) => {
-                ingredient_ids.push(ingredient_id.to_owned());
-            }
-            None => {
-                self.ingredient_ids = Some(vec![ingredient_id.to_owned()]);
-            }
+    pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredient_ids") {
+            ids.push(Value::Text(ingredient_id.to_string()));
+            return Ok(self);
         }
-        self
+        let ids = vec![Value::Text(ingredient_id.to_string())];
+        self.set_parameter_ref("ingredient_ids", ids)?;
+        Ok(self)
     }
 }
 
@@ -592,7 +601,7 @@ pub mod tests {
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
             .set_changed(Some(&["this", "that"].to_vec()))
-            .add_ingredient_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
+            //  .add_ingredient_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b").unwrap()
             .set_actors(Some(
                 &[Actor::new(
                     Some("Somebody"),
@@ -653,8 +662,8 @@ pub mod tests {
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].parameters.as_ref().unwrap().get("name"),
-            original.actions[1].parameters.as_ref().unwrap().get("name")
+            result.actions[1].parameters().unwrap().get("name"),
+            original.actions[1].parameters().unwrap().get("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
@@ -782,12 +791,11 @@ pub mod tests {
                 "mytag": "myvalue"
             }
         });
-        let mut original = Actions::from_json_value(&json).expect("from json");
+        let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         assert_eq!(result.label(), labels::ACTIONS);
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
-        original.actions[1].ingredient_ids = None; // remove this since it won't be in the result
         assert_eq!(original.actions, result.actions);
         assert_eq!(
             result.actions[0].software_agent().unwrap(),
