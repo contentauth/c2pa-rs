@@ -1580,39 +1580,47 @@ impl Store {
         // sort blocks by offset
         block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
 
-        // generate default data hash that excludes jumbf block
-        // find the first jumbf block (ours are always in order)
-        // find the first block after the jumbf blocks
-        let mut block_start: usize = 0;
-        let mut block_end: usize = 0;
-        let mut found_jumbf = false;
+        // Setup to assume fragmented CAI blocks
+        let mut exclusions = Vec::<(usize, usize)>::new();
         for item in block_locations {
             // find start of jumbf
-            if !found_jumbf && item.htype == HashBlockObjectType::Cai {
-                block_start = item.offset;
-                found_jumbf = true;
-            }
-
-            // find start of block after jumbf blocks
-            if found_jumbf && item.htype == HashBlockObjectType::Cai {
-                block_end = item.offset + item.length;
+            if item.htype == HashBlockObjectType::Cai {
+                // Make sure we have a valid range
+                if item.offset <= (item.offset + item.length) {
+                    // If we are calculating hashes, avoid adding an
+                    // exclusion if the CAI block is beyond the end of the
+                    // stream.  Some asset handlers will inject a
+                    // placeholder for the CAI block at the end of the
+                    // stream before the stream itself has the block.
+                    if !calc_hashes || (item.offset + item.length) as u64 <= stream_len {
+                        let mut exclusion = (item.offset, item.offset + item.length);
+                        // Setup to de-fragment sections that are contiguous but may have
+                        // been listed as separate
+                        if let Some(last_exclusion) = exclusions.last() {
+                            // If the last exclusion ends where this one starts,
+                            // merge them
+                            if last_exclusion.1 == exclusion.0 {
+                                exclusion.0 = last_exclusion.0;
+                                exclusions.pop();
+                            }
+                        }
+                        exclusions.push(exclusion);
+                    }
+                }
             }
         }
 
-        if found_jumbf {
+        if !exclusions.is_empty() {
             // add exclusion hash for bytes before and after jumbf
             let mut dh = DataHash::new("jumbf manifest", alg);
+            for exclusion in &exclusions {
+                if exclusion.1 > exclusion.0 {
+                    dh.add_exclusion(HashRange::new(exclusion.0, exclusion.1 - exclusion.0));
+                }
+            }
 
             if calc_hashes {
-                if block_end > block_start && (block_end as u64) <= stream_len {
-                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
-                }
-
-                // this check is only valid on the final sized asset
-                //
-                // a case may occur where there is no existing manifest in the stream and the
-                // asset handler creates a placeholder beyond the length of the stream
-                if block_end as u64 > stream_len + (block_end - block_start) as u64 {
+                if exclusions.iter().any(|x| x.1 as u64 > stream_len) {
                     return Err(Error::BadParam(
                         "data hash exclusions out of range".to_string(),
                     ));
@@ -1620,10 +1628,6 @@ impl Store {
 
                 dh.gen_hash_from_stream(stream)?;
             } else {
-                if block_end > block_start {
-                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
-                }
-
                 match alg {
                     "sha256" => dh.set_hash([0u8; 32].to_vec()),
                     "sha384" => dh.set_hash([0u8; 48].to_vec()),
@@ -5606,6 +5610,65 @@ pub mod tests {
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_generate_data_hashes_for_stream_multiple_exclusions() {
+        // Setup the test data
+        let mut data = vec![0u8; 100];
+        // And wrap in a cursor to treat it like a stream for the API
+        let mut stream = Cursor::new(&mut data);
+        let alg = "sha256";
+
+        // Return a total of three blocked locations, all of which report they are
+        // CAI blocks, which should be excluded from the data hash
+        let mut block_locations = vec![
+            HashObjectPositions {
+                offset: 0,
+                length: 42,
+                htype: HashBlockObjectType::Cai,
+            },
+            // This one and the next one should be merged into a single exclusion
+            HashObjectPositions {
+                offset: 80,
+                length: 10,
+                htype: HashBlockObjectType::Cai,
+            },
+            HashObjectPositions {
+                offset: 90,
+                length: 10,
+                htype: HashBlockObjectType::Cai,
+            },
+        ];
+        let calc_hashes = true;
+
+        // Generate the data hash
+        let data_hash_result = Store::generate_data_hashes_for_stream(
+            &mut stream,
+            alg,
+            &mut block_locations,
+            calc_hashes,
+        );
+        // Which should have executed without issue
+        assert!(data_hash_result.is_ok());
+        // Grab the actual data hash object
+        let data_hash = data_hash_result.unwrap();
+
+        // Which should have a single entry
+        assert_eq!(1, data_hash.len());
+        let data_hash_0 = &data_hash[0];
+        // And it should have exclusions specified
+        assert!(data_hash_0.exclusions.is_some());
+        // Grab the exclusions
+        let exclusions = data_hash_0.exclusions.as_ref().unwrap();
+        // Should be a totale of 2 exclusions to catch the de-fragmented data
+        assert_eq!(2, exclusions.len());
+        // And the first exclusion should match what we specified
+        assert_eq!(0, exclusions[0].start());
+        assert_eq!(42, exclusions[0].length());
+        // And the second exclusion should be the last two blocks
+        assert_eq!(80, exclusions[1].start());
+        assert_eq!(20, exclusions[1].length());
     }
 
     #[test]
