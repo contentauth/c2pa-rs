@@ -5615,7 +5615,7 @@ pub mod tests {
     #[test]
     fn test_generate_data_hashes_for_stream_multiple_exclusions() {
         // Setup the test data
-        let mut data= vec![0u8; 100];
+        let mut data = vec![0u8; 100];
         // And wrap in a cursor to treat it like a stream for the API
         let mut stream = Cursor::new(&mut data);
         let alg = "sha256";
@@ -5643,8 +5643,12 @@ pub mod tests {
         let calc_hashes = true;
 
         // Generate the data hash
-        let data_hash_result =
-            Store::generate_data_hashes_for_stream(&mut stream, alg, &mut block_locations, calc_hashes);
+        let data_hash_result = Store::generate_data_hashes_for_stream(
+            &mut stream,
+            alg,
+            &mut block_locations,
+            calc_hashes,
+        );
         // Which should have executed without issue
         assert!(data_hash_result.is_ok());
         // Grab the actual data hash object
