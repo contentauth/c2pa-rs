@@ -1,7 +1,7 @@
 {
-  "active_manifest": "contentauth:urn:uuid:a64c3647-f5c9-4786-8f0c-2536b864a701",
+  "active_manifest": "contentauth:urn:uuid:df2431a9-92b3-4cae-af72-8e10e5c9916a",
   "manifests": {
-    "contentauth:urn:uuid:a64c3647-f5c9-4786-8f0c-2536b864a701": {
+    "contentauth:urn:uuid:df2431a9-92b3-4cae-af72-8e10e5c9916a": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -13,24 +13,31 @@
           "version": "0.36.1"
         }
       ],
-      "title": "CICACACA.jpg",
+      "title": "CAE-uri-CA.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:e4fba062-cd8a-4171-90fd-a39d20fb02ed",
+      "instance_id": "xmp:iid:4c2bf18e-1c23-4e40-a694-ef1a5335c6e6",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:a64c3647-f5c9-4786-8f0c-2536b864a701/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:df2431a9-92b3-4cae-af72-8e10e5c9916a/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [
         {
-          "title": "CA.jpg",
+          "title": "E-uri-CA.jpg",
           "format": "image/jpeg",
-          "instance_id": "xmp:iid:23d43f2c-ad29-4a69-ab77-0de417ca9aa7",
+          "instance_id": "xmp:iid:cfcb602a-ad6b-4e91-908b-fce371a00aee",
           "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
           },
           "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737"
+          "active_manifest": "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737",
+          "validation_status": [
+            {
+              "code": "assertion.hashedURI.mismatch",
+              "url": "self#jumbf=/c2pa/contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737/c2pa.assertions/c2pa.actions",
+              "explanation": "hash does not match assertion data: self#jumbf=c2pa.assertions/c2pa.actions"
+            }
+          ]
         }
       ],
       "assertions": [
@@ -64,41 +71,13 @@
                 "action": "c2pa.placed",
                 "parameters": {
                   "ingredient_ids": [
-                    "xmp:iid:23d43f2c-ad29-4a69-ab77-0de417ca9aa7"
+                    "xmp:iid:cfcb602a-ad6b-4e91-908b-fce371a00aee"
                   ],
                   "ingredient": [
                     {
                       "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "pCRc0JdZu4sdL5S+RGv3L+X7XL5j7ElqlRRkLHq8cOs="
+                      "hash": "JdDgOYkEszN5PycbSLo7BUOg2nk4HzHACbnyZpv0HwQ="
                     }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient_ids": [
-                    "xmp:iid:23d43f2c-ad29-4a69-ab77-0de417ca9aa7"
-                  ],
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "pCRc0JdZu4sdL5S+RGv3L+X7XL5j7ElqlRRkLHq8cOs="
-                    }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "pCRc0JdZu4sdL5S+RGv3L+X7XL5j7ElqlRRkLHq8cOs="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp:iid:23d43f2c-ad29-4a69-ab77-0de417ca9aa7"
                   ]
                 }
               },
@@ -113,9 +92,9 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:51+00:00"
+        "time": "2024-10-08T22:56:52+00:00"
       },
-      "label": "contentauth:urn:uuid:a64c3647-f5c9-4786-8f0c-2536b864a701"
+      "label": "contentauth:urn:uuid:df2431a9-92b3-4cae-af72-8e10e5c9916a"
     },
     "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
@@ -171,21 +150,21 @@
               {
                 "action": "c2pa.opened",
                 "parameters": {
-                  "ingredient_ids": [
-                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
-                  ],
                   "ingredient": [
                     {
                       "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
                       "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
                     }
+                  ],
+                  "ingredient_ids": [
+                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
                   ]
                 }
               },
               {
                 "action": "c2pa.color_adjustments",
                 "parameters": {
-                  "name": "brightnesscontrast"
+                  "name": "brightnessdeadbeef"
                 }
               }
             ]

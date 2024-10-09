@@ -91,6 +91,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -118,6 +119,7 @@ pub struct Action {
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
     #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
+    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids` instead")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -187,7 +189,9 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
+    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids` instead")]
     pub fn instance_id(&self) -> Option<&str> {
+        #[allow(deprecated)]
         self.instance_id.as_deref()
     }
 
@@ -269,7 +273,8 @@ impl Action {
     /// modified (output) resource.
     #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
     pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
-        self.instance_id = Some(id.into());
+        #[allow(clippy::unwrap_used)]
+        self.add_ingredient_id(&id.into()).unwrap(); // Supporting deprecated feature.
         self
     }
 
@@ -287,7 +292,8 @@ impl Action {
             }
             Some(_) => None, // Invalid format, so ignore it.
             // If there is no ingredient_ids parameter, check for the deprecated instance_id
-            None => self.instance_id().map(|id| vec![id.to_string()]),
+            #[allow(deprecated)]
+            None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
         }
     }
 
@@ -779,9 +785,9 @@ pub mod tests {
                   },
                   {
                     "action": "c2pa.opened",
-                    "ingredient_ids": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     "parameters": {
-                      "description": "import"
+                      "description": "import",
+                      "ingredient_ids": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",
@@ -861,12 +867,11 @@ pub mod tests {
                 "mytag": "myvalue"
             }
         });
-        let mut original = Actions::from_json_value(&json).expect("from json");
+        let original = Actions::from_json_value(&json).expect("from json");
         let assertion = original.to_assertion().expect("build_assertion");
         let result = Actions::from_assertion(&assertion).expect("extract_assertion");
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
         assert_eq!(result.label(), "c2pa.actions.v2");
-        original.actions[0].instance_id = None; // remove this since it won't be in the result
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
         assert_eq!(
