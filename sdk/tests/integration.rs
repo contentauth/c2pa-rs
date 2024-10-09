@@ -21,12 +21,11 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions},
         create_signer,
         settings::load_settings_from_str,
-        Error, Ingredient, Manifest, ManifestPatchCallback, ManifestStore, Result, Signer,
-        SigningAlg,
+        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer, SigningAlg,
     };
     use tempfile::tempdir;
 
-    const GENERATOR: &str = "app";
+    //const GENERATOR: &str = "app";
 
     // prevent tests from polluting the results of each other because of Rust unit test concurrency
     static PROTECT: std::sync::Mutex<u32> = std::sync::Mutex::new(1);
@@ -110,14 +109,17 @@ mod integration_1 {
             Some(String::from_utf8_lossy(config).to_string()),
         )?;
 
+        let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
-        let mut manifest = Manifest::new(GENERATOR.to_owned());
+        let mut builder = Builder::new();
+        builder.set_claim_generator_info(generator);
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
         // add a parent ingredient
-        let parent = Ingredient::from_file(&parent_path)?;
+        let mut parent = Ingredient::from_file(&parent_path)?;
+        parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
@@ -127,7 +129,7 @@ mod integration_1 {
         );
 
         // set the parent ingredient
-        manifest.set_parent(parent)?;
+        builder.add_ingredient(parent);
 
         actions = actions.add_action(
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
@@ -144,21 +146,21 @@ mod integration_1 {
             // could add other parameters for position and size here
         );
 
-        manifest.add_ingredient(ingredient);
+        builder.add_ingredient(ingredient);
 
-        manifest.add_assertion(&actions)?;
+        builder.add_assertion(Actions::LABEL, &actions)?;
 
         // sign and embed into the target file
         let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file(&output_path)?;
+        let reader = Reader::from_file(&output_path)?;
 
-        println!("{manifest_store}");
+        println!("{reader}");
 
-        assert!(manifest_store.get_active().is_some());
-        if let Some(manifest) = manifest_store.get_active() {
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.ingredients().len(), 2);
         } else {
@@ -184,23 +186,63 @@ mod integration_1 {
 
         let json = std::fs::read_to_string(manifest_path)?;
 
-        let mut manifest = Manifest::from_json(&json)?;
-        manifest.with_base_path(fixture_path.canonicalize()?)?;
+        let mut builder = Builder::from_json(&json)?;
+        builder.base_path = Some(fixture_path.canonicalize()?);
 
         // sign and embed into the target file
         let signer = get_temp_signer();
-        manifest.embed(&parent_path, &output_path, signer.as_ref())?;
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let manifest_store = ManifestStore::from_file(&output_path)?;
+        let reader = Reader::from_file(&output_path)?;
 
-        println!("{manifest_store}");
+        println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
 
-        assert!(manifest_store.get_active().is_some());
-        if let Some(manifest) = manifest_store.get_active() {
+        assert!(reader.active_manifest().is_some());
+        if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.ingredients().len(), 2);
+        } else {
+            panic!("no manifest in store");
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_embed_bmff_manifest() -> Result<()> {
+        // set up parent and destination paths
+        let dir = tempdir()?;
+        let output_path = dir.path().join("test_bmff.heic");
+
+        let mut fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        fixture_path.push("tests/fixtures");
+
+        let mut parent_path = fixture_path.clone();
+        parent_path.push("sample1.heic");
+        let mut manifest_path = fixture_path.clone();
+        manifest_path.push("simple_manifest.json");
+
+        let json = std::fs::read_to_string(manifest_path)?;
+
+        let mut builder = Builder::from_json(&json)?;
+        builder.base_path = Some(fixture_path.canonicalize()?);
+
+        // sign and embed into the target file
+        let signer = get_temp_signer();
+        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+
+        // read our new file with embedded manifest
+        let reader = Reader::from_file(&output_path)?;
+
+        println!("{reader}");
+        // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
+
+        assert!(reader.active_manifest().is_some());
+        assert_eq!(reader.validation_status(), None);
+        if let Some(manifest) = reader.active_manifest() {
+            assert!(manifest.title().is_some());
         } else {
             panic!("no manifest in store");
         }
@@ -210,6 +252,8 @@ mod integration_1 {
     struct PlacedCallback {
         path: String,
     }
+
+    use c2pa::{Error, Manifest, ManifestPatchCallback};
 
     impl ManifestPatchCallback for PlacedCallback {
         fn patch_manifest(&self, manifest_store: &[u8]) -> Result<Vec<u8>> {

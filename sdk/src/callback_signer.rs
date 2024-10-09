@@ -88,6 +88,38 @@ impl CallbackSigner {
         self.context = context;
         self
     }
+
+    /// Sign data using an Ed25519 private key.
+    /// This static function is provided for testing with [`CallbackSigner`].
+    /// For a released product the private key should be stored securely.
+    /// The signing should be done in a secure environment.
+    /// The private key should not be exposed to the client.
+    /// Example: (only for testing)
+    /// ```
+    /// use c2pa::{CallbackSigner, SigningAlg};
+    ///
+    /// const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+    /// const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+    ///
+    /// let ed_signer =
+    ///     |_context: *const _, data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
+    /// let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
+    /// ```
+    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
+        use ed25519_dalek::{Signature, Signer, SigningKey};
+        use pem::parse;
+
+        // Parse the PEM data to get the private key
+        let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
+        // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
+        let key_bytes = &pem.contents()[16..];
+        let signing_key =
+            SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
+        // Sign the data
+        let signature: Signature = signing_key.sign(data);
+
+        Ok(signature.to_bytes().to_vec())
+    }
 }
 
 // This default is only intended for struct completion, do not use on its own.

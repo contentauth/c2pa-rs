@@ -19,6 +19,9 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "file_io")]
 use crate::error::Error;
@@ -29,6 +32,8 @@ use crate::{
 };
 
 /// A reader for the manifest store.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Reader {
     pub(crate) manifest_store: ManifestStore,
 }
@@ -82,20 +87,38 @@ impl Reader {
     /// # Note
     /// If the file does not have a manifest store, the function will check for a sidecar manifest
     /// with the same name and a .c2pa extension.
+    #[async_generic()]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         let path = path.as_ref();
         let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
-        let result = Self::from_stream(&format, &mut file);
-        if let Err(Error::JumbfNotFound) = result {
-            // if not embedded or cloud, check for sidecar first and load if it exists
-            let potential_sidecar_path = path.with_extension("c2pa");
-            if potential_sidecar_path.exists() {
-                let manifest_data = read(potential_sidecar_path)?;
-                return Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file);
+        let result = if _sync {
+            Self::from_stream(&format, &mut file)
+        } else {
+            Self::from_stream_async(&format, &mut file).await
+        };
+        match result {
+            Err(Error::JumbfNotFound) => {
+                // if not embedded or cloud, check for sidecar first and load if it exists
+                let potential_sidecar_path = path.with_extension("c2pa");
+                if potential_sidecar_path.exists() {
+                    let manifest_data = read(potential_sidecar_path)?;
+                    if _sync {
+                        Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file)
+                    } else {
+                        Self::from_manifest_data_and_stream_async(
+                            &manifest_data,
+                            &format,
+                            &mut file,
+                        )
+                        .await
+                    }
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
             }
+            _ => result,
         }
-        result
     }
 
     /// Create a manifest store [`Reader`]` from a JSON string.
@@ -246,4 +269,54 @@ impl std::fmt::Debug for Reader {
             .map_err(|_| std::fmt::Error)?;
         f.write_str(&report.to_string())
     }
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_from_file_no_manifest() -> Result<()> {
+    let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+    assert!(matches!(result, Err(Error::JumbfNotFound)));
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+fn test_reader_from_file_validation_err() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+    assert!(reader.validation_status().is_some());
+    assert_eq!(
+        reader.validation_status().unwrap()[0].code(),
+        crate::validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_from_file_nested_errors() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_nested_resource() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    assert_eq!(reader.manifest_store.manifests().len(), 3);
+    let manifest = reader.active_manifest().unwrap();
+    let ingredient = manifest.ingredients().iter().next().unwrap();
+    let uri = ingredient.thumbnail_ref().unwrap().identifier.clone();
+    let mut stream = std::io::Cursor::new(Vec::new());
+    let bytes_written = reader.resource_to_stream(&uri, &mut stream)?;
+    assert_eq!(bytes_written, 41810);
+    Ok(())
 }

@@ -170,6 +170,27 @@ impl ManifestStoreReport {
         Self::from_store_with_log(&store, &validation_log)
     }
 
+    #[cfg(feature = "file_io")]
+    pub fn from_fragments<P: AsRef<Path>>(
+        path: P,
+        fragments: &Vec<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
+            .ok_or(crate::Error::UnsupportedType)?;
+
+        let mut init_segment = std::fs::File::open(path.as_ref())?;
+
+        let store = Store::load_from_file_and_fragments(
+            &asset_type,
+            &mut init_segment,
+            fragments,
+            true,
+            &mut validation_log,
+        )?;
+        Self::from_store_with_log(&store, &validation_log)
+    }
+
     /// create a json string representation of this structure, omitting binaries
     fn to_json(&self) -> String {
         let mut json = serde_json::to_string_pretty(self).unwrap_or_else(|e| e.to_string());
