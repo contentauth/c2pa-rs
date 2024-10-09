@@ -40,6 +40,7 @@ use crate::{
     status_tracker::{log_item, StatusTracker},
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
+    utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
     SigningAlg,
@@ -51,14 +52,16 @@ use crate::{
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 pub(crate) const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
+pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
+
 pub(crate) const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
 pub(crate) const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
 pub(crate) const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
 pub(crate) const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
@@ -209,7 +212,7 @@ pub(crate) fn check_cert(
 
             let (_i, (ha_alg, mgf_ai)) = seq
                 .parse(|i| {
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -217,7 +220,7 @@ pub(crate) fn check_cert(
                     let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
                         .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
 
-                    let (i, h) = Header::from_der(i)?;
+                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
                     if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
                         return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
                     }
@@ -237,14 +240,15 @@ pub(crate) fn check_cert(
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             let (_i, mgf_ai_params_algorithm) =
-                Any::from_der(&mgf_ai_parameters.content).map_err(|_| Error::CoseInvalidCert)?;
+                <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
+                    .map_err(|_| Error::CoseInvalidCert)?;
 
             let mgf_ai_params_algorithm = mgf_ai_params_algorithm
                 .as_oid()
                 .map_err(|_| Error::CoseInvalidCert)?;
 
             // must be the same
-            if ha_alg.algorithm != mgf_ai_params_algorithm {
+            if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
                 let log_item = log_item!(
                     "Cose_Sign1",
                     "certificate algorithm error",
@@ -689,6 +693,8 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
     }
 }
 
+#[allow(dead_code)]
+#[async_generic]
 pub(crate) fn check_ocsp_status(
     cose_bytes: &[u8],
     data: &[u8],
@@ -697,11 +703,15 @@ pub(crate) fn check_ocsp_status(
 ) -> Result<OcspData> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
-    let time_stamp_info = get_timestamp_info(&sign1, data);
-
     let mut result = Ok(OcspData::default());
 
     if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
+        let time_stamp_info = if _sync {
+            get_timestamp_info(&sign1, data)
+        } else {
+            get_timestamp_info_async(&sign1, data).await
+        };
+
         // check stapled OCSP response, must have timestamp
         if let Ok(tst_info) = &time_stamp_info {
             let signing_time = gt_to_datetime(tst_info.gen_time.clone());
@@ -731,6 +741,8 @@ pub(crate) fn check_ocsp_status(
                     if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
                         // fetch_ocsp_response(&certs) {
                         let ocsp_response_der = ocsp_der;
+
+                        let time_stamp_info = get_timestamp_info(&sign1, data);
 
                         let signing_time = match &time_stamp_info {
                             Ok(tst_info) => {
@@ -776,13 +788,20 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
 }
 
 // Note: this function is only used to get the display string and not for cert validation.
+#[async_generic]
 fn get_signing_time(
     sign1: &coset::CoseSign1,
     data: &[u8],
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
-    if let Ok(tst_info) = get_timestamp_info(sign1, data) {
+    let time_stamp_info = if _sync {
+        get_timestamp_info(sign1, data)
+    } else {
+        get_timestamp_info_async(sign1, data).await
+    };
+
+    if let Ok(tst_info) = time_stamp_info {
         Some(gt_to_datetime(tst_info.gen_time))
     } else {
         None
@@ -790,6 +809,7 @@ fn get_signing_time(
 }
 
 // return appropriate TstInfo if available
+#[async_generic]
 fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> {
     // parse the temp timestamp
     if let Some(t) = &sign1
@@ -805,8 +825,12 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
         })
     {
         let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos =
-            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?;
+        let tst_infos = if _sync {
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?
+        } else {
+            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, data, &sign1.protected)
+                .await?
+        };
 
         // there should only be one but consider handling more in the future since it is technically ok
         if !tst_infos.is_empty() {
@@ -816,12 +840,13 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
-#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], validation_log: &mut impl StatusTracker))]
+#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], signing_time_epoc: Option<i64>, validation_log: &mut impl StatusTracker))]
 #[allow(unused)]
 fn check_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
+    signing_time_epoc: Option<i64>,
     validation_log: &mut impl StatusTracker,
 ) -> Result<()> {
     // just return is trust checks are disabled or misconfigured
@@ -846,17 +871,17 @@ fn check_trust(
 
         #[cfg(feature = "openssl")]
         {
-            verify_trust(th, chain_der, cert_der)
+            verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
     } else {
         #[cfg(target_arch = "wasm32")]
         {
-            verify_trust_async(th, chain_der, cert_der).await
+            verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
 
         #[cfg(feature = "openssl")]
         {
-            verify_trust(th, chain_der, cert_der)
+            verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
         #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
@@ -896,6 +921,20 @@ fn check_trust(
     }
 }
 
+// test for unrecognized signatures
+fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(sig).is_ok() {
+                // expected P1363 format
+                return Err(Error::InvalidEcdsaSignature);
+            }
+        }
+        _ => (),
+    }
+    Ok(())
+}
+
 /// A wrapper containing information of the signing cert.
 pub(crate) struct CertInfo {
     /// The name of the identity the certificate is issued to.
@@ -919,6 +958,16 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
 }
 
+fn tst_info_result_to_timestamp(tst_info_res: &Result<TstInfo>) -> Option<i64> {
+    match &tst_info_res {
+        Ok(tst_info) => {
+            let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
+            Some(dt.timestamp())
+        }
+        Err(_) => None,
+    }
+}
+
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
@@ -928,7 +977,7 @@ pub(crate) async fn verify_cose_async(
     cose_bytes: Vec<u8>,
     data: Vec<u8>,
     additional_data: Vec<u8>,
-    signature_only: bool,
+    cert_check: bool,
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
@@ -960,11 +1009,13 @@ pub(crate) async fn verify_cose_async(
     // get the public key der
     let der_bytes = &certs[0];
 
+    let tst_info_res = get_timestamp_info_async(&sign1, &data).await;
+
     // verify cert matches requested algorithm
-    if !signature_only {
+    if cert_check {
         // verify certs
-        match get_timestamp_info(&sign1, &data) {
-            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(&tst_info))?,
+        match &tst_info_res {
+            Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
@@ -1000,15 +1051,36 @@ pub(crate) async fn verify_cose_async(
 
         // is the certificate trusted
         #[cfg(target_arch = "wasm32")]
-        check_trust_async(th, &certs[1..], der_bytes, validation_log).await?;
+        check_trust_async(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )
+        .await?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
-
-        // check certificate revocation
-        check_ocsp_status(&cose_bytes, &data, th, validation_log)?;
+        check_trust(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
@@ -1035,8 +1107,7 @@ pub(crate) async fn verify_cose_async(
         result.validated = true;
         result.alg = Some(alg);
 
-        // parse the temp time for now util we have TA
-        result.date = get_signing_time(&sign1, &data);
+        result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
         // return cert chain
         result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
@@ -1046,6 +1117,7 @@ pub(crate) async fn verify_cose_async(
 }
 
 #[allow(unused_variables)]
+#[async_generic]
 pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1056,23 +1128,31 @@ pub(crate) fn get_signing_info(
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log).and_then(|sign1| {
-        // get the public key der
-        let der_bytes = get_sign_cert(&sign1)?;
+    let sign1 = match get_cose_sign1(cose_bytes, data, validation_log) {
+        Ok(sign1) => {
+            // get the public key der
+            match get_sign_cert(&sign1) {
+                Ok(der_bytes) => {
+                    if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
+                        date = if _sync {
+                            get_signing_time(&sign1, data)
+                        } else {
+                            get_signing_time_async(&sign1, data).await
+                        };
+                        issuer_org = extract_subject_from_cert(&signcert).ok();
+                        cert_serial_number = Some(extract_serial_from_cert(&signcert));
+                        if let Ok(a) = get_signing_alg(&sign1) {
+                            alg = Some(a);
+                        }
+                    };
 
-        let _ = X509Certificate::from_der(&der_bytes).map(|(_rem, signcert)| {
-            date = get_signing_time(&sign1, data);
-            issuer_org = extract_subject_from_cert(&signcert).ok();
-            cert_serial_number = Some(extract_serial_from_cert(&signcert));
-            if let Ok(a) = get_signing_alg(&sign1) {
-                alg = Some(a);
+                    Ok(sign1)
+                }
+                Err(e) => Err(e),
             }
-
-            (_rem, signcert)
-        });
-
-        Ok(sign1)
-    });
+        }
+        Err(e) => Err(e),
+    };
 
     let certs = match sign1 {
         Ok(s) => match get_sign_certs(&s) {
@@ -1103,7 +1183,7 @@ pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
     additional_data: &[u8],
-    signature_only: bool,
+    cert_check: bool,
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
@@ -1137,11 +1217,11 @@ pub(crate) fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
-    let time_stamp_info = get_timestamp_info(&sign1, data);
+    let tst_info_res = get_timestamp_info(&sign1, data);
 
-    if !signature_only {
+    if cert_check {
         // verify certs
-        match &time_stamp_info {
+        match &tst_info_res {
             Ok(tst_info) => check_cert(der_bytes, th, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
@@ -1150,37 +1230,57 @@ pub(crate) fn verify_cose(
                     Error::CoseTimeStampMismatch => {
                         let log_item = log_item!(
                             "Cose_Sign1",
-                            "timestamp message imprint did not match",
+                            "timestamp did not match signed data",
                             "verify_cose"
                         )
                         .error(Error::CoseTimeStampMismatch)
                         .validation_status(validation_status::TIMESTAMP_MISMATCH);
                         validation_log.log(log_item, Some(Error::CoseTimeStampMismatch))?;
+                        return Err(Error::CoseTimeStampMismatch);
                     }
                     Error::CoseTimeStampValidity => {
-                        let log_item =
-                            log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
-                                .error(Error::CoseTimeStampValidity)
-                                .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
+                        let log_item = log_item!(
+                            "Cose_Sign1",
+                            "timestamp certificate outside of validity",
+                            "verify_cose"
+                        )
+                        .error(Error::CoseTimeStampValidity)
+                        .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
                         validation_log.log(log_item, Some(Error::CoseTimeStampValidity))?;
+                        return Err(Error::CoseTimeStampValidity);
                     }
                     _ => {
                         let log_item =
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
                         validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
+                        return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
             }
         }
 
         // is the certificate trusted
-        check_trust(th, &certs[1..], der_bytes, validation_log)?;
-
-        // check certificate revocation
-        check_ocsp_status(cose_bytes, data, th, validation_log)?;
+        check_trust(
+            th,
+            &certs[1..],
+            der_bytes,
+            tst_info_result_to_timestamp(&tst_info_res),
+            validation_log,
+        )?;
 
         // todo: check TSA certs against trust list
+    }
+
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by
@@ -1196,8 +1296,7 @@ pub(crate) fn verify_cose(
             result.validated = true;
             result.alg = Some(alg);
 
-            // parse the temp time for now util we have TA
-            result.date = get_signing_time(&sign1, data);
+            result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
             // return cert chain
             result.cert_chain = dump_cert_chain(&certs)?;
@@ -1216,7 +1315,7 @@ pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
     _additional_data: &[u8],
-    _signature_only: bool,
+    _cert_check: bool,
     _th: &dyn TrustHandlerConfig,
     _validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
