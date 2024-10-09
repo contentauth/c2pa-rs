@@ -5613,6 +5613,61 @@ pub mod tests {
     }
 
     #[test]
+    fn test_generate_data_hashes_for_stream_multiple_exclusions() {
+        // Setup the test data
+        let mut data= vec![0u8; 100];
+        // And wrap in a cursor to treat it like a stream for the API
+        let mut stream = Cursor::new(&mut data);
+        let alg = "sha256";
+
+        // Return a total of three blocked locations, all of which report they are
+        // CAI blocks, which should be excluded from the data hash
+        let mut block_locations = vec![
+            HashObjectPositions {
+                offset: 0,
+                length: 42,
+                htype: HashBlockObjectType::Cai,
+            },
+            // This one and the next one should be merged into a single exclusion
+            HashObjectPositions {
+                offset: 80,
+                length: 10,
+                htype: HashBlockObjectType::Cai,
+            },
+            HashObjectPositions {
+                offset: 90,
+                length: 10,
+                htype: HashBlockObjectType::Cai,
+            },
+        ];
+        let calc_hashes = true;
+
+        // Generate the data hash
+        let data_hash_result =
+            Store::generate_data_hashes_for_stream(&mut stream, alg, &mut block_locations, calc_hashes);
+        // Which should have executed without issue
+        assert!(data_hash_result.is_ok());
+        // Grab the actual data hash object
+        let data_hash = data_hash_result.unwrap();
+
+        // Which should have a single entry
+        assert_eq!(1, data_hash.len());
+        let data_hash_0 = &data_hash[0];
+        // And it should have exclusions specified
+        assert!(data_hash_0.exclusions.is_some());
+        // Grab the exclusions
+        let exclusions = data_hash_0.exclusions.as_ref().unwrap();
+        // Should be a totale of 2 exclusions to catch the de-fragmented data
+        assert_eq!(2, exclusions.len());
+        // And the first exclusion should match what we specified
+        assert_eq!(0, exclusions[0].start());
+        assert_eq!(42, exclusions[0].length());
+        // And the second exclusion should be the last two blocks
+        assert_eq!(80, exclusions[1].start());
+        assert_eq!(20, exclusions[1].length());
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest() {
         // test adding to actual image
