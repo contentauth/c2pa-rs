@@ -483,7 +483,6 @@ mod tests {
 
     #[test]
     fn test_with_no_box_hashes_after_c2pa() {
-        //cargo.exe test --package c2pa --lib -- assertions::box_hash::tests::test_with_no_box_hashes_after_c2pa --exact --show-output 
         // Algorithm to use
         let alg = "sha256";
         // Create a mock object
@@ -508,7 +507,7 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
-                }
+                },
             ])
         });
         // The data size must match what we return in the expectation
@@ -529,7 +528,6 @@ mod tests {
 
     #[test]
     fn test_with_no_box_hashes_before_c2pa() {
-        //cargo.exe test --package c2pa --lib -- assertions::box_hash::tests::test_with_no_box_hashes_before_c2pa --exact --show-output 
         // Algorithm to use
         let alg = "sha256";
         // Create a mock object
@@ -575,7 +573,6 @@ mod tests {
 
     #[test]
     fn test_with_no_box_hashes_before_and_after_c2pa() {
-        //cargo.exe test --package c2pa --lib -- assertions::box_hash::tests::test_with_no_box_hashes_before_c2pa --exact --show-output 
         // Algorithm to use
         let alg = "sha256";
         // Create a mock object
@@ -626,6 +623,5 @@ mod tests {
         assert_eq!(bh.boxes[0].names[0], "test");
         assert_eq!(bh.boxes[1].names[0], "C2PA");
         assert_eq!(bh.boxes[2].names[0], "test1");
-
     }
 }
