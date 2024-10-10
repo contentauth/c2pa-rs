@@ -304,7 +304,7 @@ impl MakeTestImages {
                     {
                         "action": "c2pa.opened",
                         "parameters": {
-                            "ingredient_ids": [&instance_id]
+                            "org.cai.ingredientIds": [&instance_id]
                         }
                     }
                 ));
@@ -389,7 +389,7 @@ impl MakeTestImages {
                     {
                         "action": "c2pa.placed",
                         "parameters": {
-                            "ingredient_ids": [&instance_id]
+                            "org.cai.ingredientIds": [&instance_id]
                         }
                     }
                 ));

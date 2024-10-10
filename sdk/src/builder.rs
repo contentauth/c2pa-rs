@@ -34,16 +34,11 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    // manifest_definition::{AssertionData, AssertionDefinition, ManifestDefinition},
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     salt::DefaultSalt,
     store::Store,
     utils::mime::format_to_mime,
-    AsyncSigner,
-    ClaimGeneratorInfo,
-    HashRange,
-    Ingredient,
-    Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, Ingredient, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -680,7 +675,7 @@ impl Builder {
                                     uris.push(hash_url.clone());
                                 } else {
                                     return Err(Error::BadParam(format!(
-                                        "Action ingredient id not found: {id}"
+                                        "Action ingredientId not found: {id}"
                                     )));
                                 }
                             }
@@ -692,43 +687,6 @@ impl Builder {
                     for update in updates {
                         actions = actions.update_action(update.0, update.1);
                     }
-
-                    // for action in actions.actions_mut() {
-                    //     if let Some(ids) = action.ingredient_ids() {
-                    //         let mut update = action.clone();
-                    //         let mut uris = Vec::new();
-                    //         for id in ids {
-                    //             if let Some(hash_url) = ingredient_map.get(&id) {
-                    //                 uris.push(hash_url.clone());
-                    //             } else {
-                    //                 return Err(Error::BadParam(format!(
-                    //                        "Action ingredient id not found: {id}")))
-                    //             }
-                    //         }
-                    //         update = update.set_parameter(ingredients_key, uris)?;
-                    //         actions.update_action(0, update);
-                    //     }
-                    // }
-
-                    // for (index, action) in needs_ingredient {
-                    //     if let Some(id) = action.instance_id() {
-                    //         if let Some(hash_url) = ingredient_map.get(id) {
-                    //             let mut update = match ingredients_key {
-                    //                 "ingredient" => {
-                    //                     action.set_parameter(ingredients_key, hash_url.clone())
-                    //                 }
-                    //                 _ => {
-                    //                     // we only support on instanceId for actions, so only one ingredient on writing
-                    //                     action.set_parameter(ingredients_key, [hash_url.clone()])
-                    //                 }
-                    //             }?;
-                    //             update.clear_instance_id(); // don't let this get written out
-                    //             actions = actions.update_action(index, update);
-                    //         } else {
-                    //             return Err(Error::MissingIngredient(id.to_string()));
-                    //         }
-                    //     }
-                    // }
 
                     if let Some(templates) = actions.templates.as_mut() {
                         for template in templates {

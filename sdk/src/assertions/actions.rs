@@ -26,6 +26,7 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
+pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
 /// Specification defined C2PA actions
 pub mod c2pa_action {
@@ -119,7 +120,7 @@ pub struct Action {
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
     #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
-    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -189,7 +190,7 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids` instead")]
+    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -278,9 +279,9 @@ impl Action {
         self
     }
 
-    // internal function to return any ingredients referenced by this action
-    pub(crate) fn ingredient_ids(&self) -> Option<Vec<String>> {
-        match self.get_parameter("ingredient_ids") {
+    // Internal function to return any ingredients referenced by this action.
+    pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
+        match self.get_parameter(CAI_INGREDIENT_IDS) {
             Some(Value::Array(ids)) => {
                 let mut result = Vec::new();
                 for id in ids {
@@ -291,7 +292,7 @@ impl Action {
                 Some(result)
             }
             Some(_) => None, // Invalid format, so ignore it.
-            // If there is no ingredient_ids parameter, check for the deprecated instance_id
+            // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
             #[allow(deprecated)]
             None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
         }
@@ -388,12 +389,12 @@ impl Action {
 
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
-        if let Some(Value::Array(ids)) = self.get_parameter_mut("ingredient_ids") {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut(CAI_INGREDIENT_IDS) {
             ids.push(Value::Text(ingredient_id.to_string()));
             return Ok(self);
         }
         let ids = vec![Value::Text(ingredient_id.to_string())];
-        self.set_parameter_ref("ingredient_ids", ids)?;
+        self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
         Ok(self)
     }
 }
@@ -787,7 +788,7 @@ pub mod tests {
                     "action": "c2pa.opened",
                     "parameters": {
                       "description": "import",
-                      "ingredient_ids": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
+                      "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",

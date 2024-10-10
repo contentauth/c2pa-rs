@@ -1,7 +1,7 @@
 {
-  "active_manifest": "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d",
+  "active_manifest": "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930",
   "manifests": {
-    "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d": {
+    "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -15,10 +15,10 @@
       ],
       "title": "CI.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:f18b9eb7-c4d2-4a9f-be1d-5488ddf2e897",
+      "instance_id": "xmp:iid:ad435f5e-5ba1-4aeb-9efb-17b87acf327c",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [
         {
@@ -69,7 +69,7 @@
                       "hash": "Ry7N1H84gGFozMUgt6lASoJvBABgdiUaaePLoDXOsbc="
                     }
                   ],
-                  "ingredient_ids": [
+                  "org.cai.ingredientIds": [
                     "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
                   ]
                 }
@@ -85,9 +85,9 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:48+00:00"
+        "time": "2024-10-10T22:42:37+00:00"
       },
-      "label": "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d"
+      "label": "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930"
     }
   }
 }

@@ -1,7 +1,7 @@
 {
-  "active_manifest": "contentauth:urn:uuid:935c99a5-e669-4a30-a482-3d87e25ca718",
+  "active_manifest": "contentauth:urn:uuid:c762791e-e7cb-4dd6-8473-2af569bddf39",
   "manifests": {
-    "contentauth:urn:uuid:5e6321a5-8e38-44b4-928f-739da7d964bd": {
+    "contentauth:urn:uuid:e4880caf-33de-48d6-8816-56f78a6edc43": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -13,14 +13,26 @@
           "version": "0.36.1"
         }
       ],
-      "title": "C.jpg",
+      "title": "CICA.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:8cbdca3c-5917-4f43-92f4-3a735da05e6f",
+      "instance_id": "xmp:iid:010cf983-3669-4a0c-93f4-a09a3023eb9e",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:5e6321a5-8e38-44b4-928f-739da7d964bd/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:e4880caf-33de-48d6-8816-56f78a6edc43/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
-      "ingredients": [],
+      "ingredients": [
+        {
+          "title": "CA.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:301cbe92-ce6d-4b26-85bc-be45a7d67918",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2"
+        }
+      ],
       "assertions": [
         {
           "label": "stds.schema-org.CreativeWork",
@@ -47,6 +59,23 @@
                   "name": "gradient"
                 },
                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:301cbe92-ce6d-4b26-85bc-be45a7d67918"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                      "hash": "P/G6UEBZ0cLIJewRRw61BXBGt2wWiPGtduzmLs8C/40="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.resized"
               }
             ]
           }
@@ -56,11 +85,455 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:47+00:00"
+        "time": "2024-10-10T22:42:39+00:00"
       },
-      "label": "contentauth:urn:uuid:5e6321a5-8e38-44b4-928f-739da7d964bd"
+      "label": "contentauth:urn:uuid:e4880caf-33de-48d6-8816-56f78a6edc43"
     },
-    "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d": {
+    "contentauth:urn:uuid:7aae25df-bad6-42de-8f2b-7d241ba0003b": {
+      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.36.1"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.36.1"
+        }
+      ],
+      "title": "CAI.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:7b575bbd-b3b9-427b-862d-361bbc2f045a",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:7aae25df-bad6-42de-8f2b-7d241ba0003b/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "parentOf"
+        },
+        {
+          "title": "I.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "instance_id": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient__1.jpeg"
+          },
+          "relationship": "componentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "name": "John Doe",
+                "@type": "Person"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.color_adjustments",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__1",
+                      "hash": "ZTS3dnK1g5HZFq4JywrJSrnm15EA6x/I6sdiCWMRkqo="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.resized"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-10-10T22:42:39+00:00"
+      },
+      "label": "contentauth:urn:uuid:7aae25df-bad6-42de-8f2b-7d241ba0003b"
+    },
+    "contentauth:urn:uuid:c762791e-e7cb-4dd6-8473-2af569bddf39": {
+      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.36.1"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.36.1"
+        }
+      ],
+      "title": "CAIAIIICAICIICAIICICA.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:3dec00d2-6df4-4fe7-9636-83e6df7c67da",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:c762791e-e7cb-4dd6-8473-2af569bddf39/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "parentOf"
+        },
+        {
+          "title": "C.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:9b33135f-54ea-4acc-bd52-0ccbbc3c98b6",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90"
+        },
+        {
+          "title": "I.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "instance_id": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient__1.jpeg"
+          },
+          "relationship": "componentOf"
+        },
+        {
+          "title": "CA.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:831bdfa2-99ef-4924-9941-9307b398950f",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2"
+        },
+        {
+          "title": "CI.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:e153d218-cb02-4ace-adc1-1f670d8845f4",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930"
+        },
+        {
+          "title": "CAI.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:97e2cf6d-7d0f-408b-a8aa-a505fff003c4",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:7aae25df-bad6-42de-8f2b-7d241ba0003b/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:7aae25df-bad6-42de-8f2b-7d241ba0003b"
+        },
+        {
+          "title": "CICA.jpg",
+          "format": "image/jpeg",
+          "instance_id": "xmp:iid:1d516760-e1b4-4c3d-b3aa-099734184294",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:e4880caf-33de-48d6-8816-56f78a6edc43/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+          },
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:e4880caf-33de-48d6-8816-56f78a6edc43"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "name": "John Doe",
+                "@type": "Person"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.color_adjustments",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:9b33135f-54ea-4acc-bd52-0ccbbc3c98b6"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__1",
+                      "hash": "W5Yn9iglNj2BV+Z4oNYIaoiuS/iOYqMdteo7dEylH6I="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__2",
+                      "hash": "bhyWMrp3pyXUHoo+OpRr/J6T0VYiTVffezxprab1nXQ="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__3",
+                      "hash": "bKegmkBMH69X/KoY1GVLoNpA2ozfzWE/0fOAWNgFgLo="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:831bdfa2-99ef-4924-9941-9307b398950f"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:e153d218-cb02-4ace-adc1-1f670d8845f4"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__4",
+                      "hash": "enVCdXPQDA+t+fQHox3ffIFpjn4hw50OTX7H/OKzTn4="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:97e2cf6d-7d0f-408b-a8aa-a505fff003c4"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__5",
+                      "hash": "Qdace3KtWSYDxSS2r0v2/BkXxbHoOkYVWAiCbbcYdOo="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:1d516760-e1b4-4c3d-b3aa-099734184294"
+                  ],
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__6",
+                      "hash": "kfISigrYjvkJaUvcnRA9Xy1iMfDwQ+mS9xq73MBz8E4="
+                    }
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.resized"
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-10-10T22:42:42+00:00"
+      },
+      "label": "contentauth:urn:uuid:c762791e-e7cb-4dd6-8473-2af569bddf39"
+    },
+    "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2": {
+      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
+      "claim_generator_info": [
+        {
+          "name": "make_test_images",
+          "version": "0.36.1"
+        },
+        {
+          "name": "c2pa-rs",
+          "version": "0.36.1"
+        }
+      ],
+      "title": "CA.jpg",
+      "format": "image/jpeg",
+      "instance_id": "xmp:iid:6a6b5d47-5799-47dc-b164-b9960d212de5",
+      "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+      },
+      "ingredients": [
+        {
+          "title": "A.jpg",
+          "format": "image/jpeg",
+          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
+          },
+          "relationship": "parentOf"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "stds.schema-org.CreativeWork",
+          "data": {
+            "@context": "http://schema.org/",
+            "@type": "CreativeWork",
+            "author": [
+              {
+                "name": "John Doe",
+                "@type": "Person"
+              }
+            ]
+          },
+          "kind": "Json"
+        },
+        {
+          "label": "c2pa.actions",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "parameters": {
+                  "ingredient": [
+                    {
+                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
+                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
+                    }
+                  ],
+                  "org.cai.ingredientIds": [
+                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
+                  ]
+                }
+              },
+              {
+                "action": "c2pa.color_adjustments",
+                "parameters": {
+                  "name": "brightnesscontrast"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "C2PA Test Signing Cert",
+        "cert_serial_number": "720724073027128164015125666832722375746636448153",
+        "time": "2024-10-10T22:42:36+00:00"
+      },
+      "label": "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2"
+    },
+    "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -74,10 +547,10 @@
       ],
       "title": "CI.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:f18b9eb7-c4d2-4a9f-be1d-5488ddf2e897",
+      "instance_id": "xmp:iid:ad435f5e-5ba1-4aeb-9efb-17b87acf327c",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [
         {
@@ -128,7 +601,7 @@
                       "hash": "Ry7N1H84gGFozMUgt6lASoJvBABgdiUaaePLoDXOsbc="
                     }
                   ],
-                  "ingredient_ids": [
+                  "org.cai.ingredientIds": [
                     "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
                   ]
                 }
@@ -144,11 +617,11 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:48+00:00"
+        "time": "2024-10-10T22:42:37+00:00"
       },
-      "label": "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d"
+      "label": "contentauth:urn:uuid:d0bd056e-61c0-465f-81e1-82cbb3154930"
     },
-    "contentauth:urn:uuid:5faa5997-96df-418b-8bd3-d74cefde8a24": {
+    "contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -160,220 +633,14 @@
           "version": "0.36.1"
         }
       ],
-      "title": "CAI.jpg",
+      "title": "C.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:aec09790-ad3a-494f-b279-651cb724bc64",
+      "instance_id": "xmp:iid:6aef2adf-688f-4045-a7e1-56b087eed896",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:5faa5997-96df-418b-8bd3-d74cefde8a24/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
-      "ingredients": [
-        {
-          "title": "A.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
-          },
-          "relationship": "parentOf"
-        },
-        {
-          "title": "I.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:8a00de7a-e694-43b2-a7e6-ed950421a21a",
-          "instance_id": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient__1.jpeg"
-          },
-          "relationship": "componentOf"
-        }
-      ],
-      "assertions": [
-        {
-          "label": "stds.schema-org.CreativeWork",
-          "data": {
-            "@context": "http://schema.org/",
-            "@type": "CreativeWork",
-            "author": [
-              {
-                "name": "John Doe",
-                "@type": "Person"
-              }
-            ]
-          },
-          "kind": "Json"
-        },
-        {
-          "label": "c2pa.actions",
-          "data": {
-            "actions": [
-              {
-                "action": "c2pa.opened",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.color_adjustments",
-                "parameters": {
-                  "name": "brightnesscontrast"
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__1",
-                      "hash": "ZTS3dnK1g5HZFq4JywrJSrnm15EA6x/I6sdiCWMRkqo="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.resized"
-              }
-            ]
-          }
-        }
-      ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:49+00:00"
-      },
-      "label": "contentauth:urn:uuid:5faa5997-96df-418b-8bd3-d74cefde8a24"
-    },
-    "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737": {
-      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
-      "claim_generator_info": [
-        {
-          "name": "make_test_images",
-          "version": "0.36.1"
-        },
-        {
-          "name": "c2pa-rs",
-          "version": "0.36.1"
-        }
-      ],
-      "title": "CA.jpg",
-      "format": "image/jpeg",
-      "instance_id": "xmp:iid:a04258f8-c4c0-4eb0-8950-eb3990f3ffc6",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-      },
-      "ingredients": [
-        {
-          "title": "A.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
-          },
-          "relationship": "parentOf"
-        }
-      ],
-      "assertions": [
-        {
-          "label": "stds.schema-org.CreativeWork",
-          "data": {
-            "@context": "http://schema.org/",
-            "@type": "CreativeWork",
-            "author": [
-              {
-                "name": "John Doe",
-                "@type": "Person"
-              }
-            ]
-          },
-          "kind": "Json"
-        },
-        {
-          "label": "c2pa.actions",
-          "data": {
-            "actions": [
-              {
-                "action": "c2pa.opened",
-                "parameters": {
-                  "ingredient_ids": [
-                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
-                  ],
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
-                    }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.color_adjustments",
-                "parameters": {
-                  "name": "brightnesscontrast"
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:47+00:00"
-      },
-      "label": "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737"
-    },
-    "contentauth:urn:uuid:07cf845e-f0ae-4ed0-b964-7fa6dcd27a9c": {
-      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
-      "claim_generator_info": [
-        {
-          "name": "make_test_images",
-          "version": "0.36.1"
-        },
-        {
-          "name": "c2pa-rs",
-          "version": "0.36.1"
-        }
-      ],
-      "title": "CICA.jpg",
-      "format": "image/jpeg",
-      "instance_id": "xmp:iid:2bfdb524-0ae9-4d39-b598-eadb73c2103a",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:07cf845e-f0ae-4ed0-b964-7fa6dcd27a9c/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-      },
-      "ingredients": [
-        {
-          "title": "CA.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:63274ae7-9c95-4324-83da-651546d22472",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737"
-        }
-      ],
+      "ingredients": [],
       "assertions": [
         {
           "label": "stds.schema-org.CreativeWork",
@@ -400,23 +667,6 @@
                   "name": "gradient"
                 },
                 "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient_ids": [
-                    "xmp:iid:63274ae7-9c95-4324-83da-651546d22472"
-                  ],
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "YePaS0FudHv5qnPvHGCsbnvgbxTz3ZtLiwnCWMAmhq8="
-                    }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.resized"
               }
             ]
           }
@@ -426,259 +676,9 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:50+00:00"
+        "time": "2024-10-10T22:42:36+00:00"
       },
-      "label": "contentauth:urn:uuid:07cf845e-f0ae-4ed0-b964-7fa6dcd27a9c"
-    },
-    "contentauth:urn:uuid:935c99a5-e669-4a30-a482-3d87e25ca718": {
-      "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
-      "claim_generator_info": [
-        {
-          "name": "make_test_images",
-          "version": "0.36.1"
-        },
-        {
-          "name": "c2pa-rs",
-          "version": "0.36.1"
-        }
-      ],
-      "title": "CAIAIIICAICIICAIICICA.jpg",
-      "format": "image/jpeg",
-      "instance_id": "xmp:iid:ae09d8d2-0113-4f63-98a2-b90eaf045789",
-      "thumbnail": {
-        "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:935c99a5-e669-4a30-a482-3d87e25ca718/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-      },
-      "ingredients": [
-        {
-          "title": "A.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "instance_id": "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
-          },
-          "relationship": "parentOf"
-        },
-        {
-          "title": "C.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:9786dd65-d696-4736-b9d5-73bd2197ed28",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:5e6321a5-8e38-44b4-928f-739da7d964bd/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:5e6321a5-8e38-44b4-928f-739da7d964bd"
-        },
-        {
-          "title": "I.jpg",
-          "format": "image/jpeg",
-          "document_id": "xmp.did:8a00de7a-e694-43b2-a7e6-ed950421a21a",
-          "instance_id": "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient__1.jpeg"
-          },
-          "relationship": "componentOf"
-        },
-        {
-          "title": "CA.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:e6378bb7-eaae-417b-abad-30adf6e35666",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:dc78d6ff-c364-4924-aba0-2029cf2de737"
-        },
-        {
-          "title": "CI.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:faf9d01e-b0b6-4598-9e7d-2ba0e59d1c52",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:c78bd36d-7fca-4727-91c4-4bc90cdbd48d"
-        },
-        {
-          "title": "CAI.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:6a7f4258-3981-4ea2-bf41-5102d3695014",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:5faa5997-96df-418b-8bd3-d74cefde8a24/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:5faa5997-96df-418b-8bd3-d74cefde8a24"
-        },
-        {
-          "title": "CICA.jpg",
-          "format": "image/jpeg",
-          "instance_id": "xmp:iid:90eeb681-9c3c-47e6-a858-fee4b233f276",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:07cf845e-f0ae-4ed0-b964-7fa6dcd27a9c/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
-          },
-          "relationship": "componentOf",
-          "active_manifest": "contentauth:urn:uuid:07cf845e-f0ae-4ed0-b964-7fa6dcd27a9c"
-        }
-      ],
-      "assertions": [
-        {
-          "label": "stds.schema-org.CreativeWork",
-          "data": {
-            "@context": "http://schema.org/",
-            "@type": "CreativeWork",
-            "author": [
-              {
-                "name": "John Doe",
-                "@type": "Person"
-              }
-            ]
-          },
-          "kind": "Json"
-        },
-        {
-          "label": "c2pa.actions",
-          "data": {
-            "actions": [
-              {
-                "action": "c2pa.opened",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.color_adjustments",
-                "parameters": {
-                  "name": "brightnesscontrast"
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient_ids": [
-                    "xmp:iid:9786dd65-d696-4736-b9d5-73bd2197ed28"
-                  ],
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__1",
-                      "hash": "limBlQQoQgyl7wSCAq7VFiTEsPYbBnSip0cjWBV8fK0="
-                    }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "5dNlxTKe4afGAicpJa1hF1R3mBZKE+Bl0xmh0McXuO4="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp.iid:813ee422-9736-4cdc-9be6-4e35ed8e41cb"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__2",
-                      "hash": "bhyWMrp3pyXUHoo+OpRr/J6T0VYiTVffezxprab1nXQ="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp.iid:8a00de7a-e694-43b2-a7e6-ed950421a21a"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient_ids": [
-                    "xmp:iid:e6378bb7-eaae-417b-abad-30adf6e35666"
-                  ],
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__3",
-                      "hash": "RWQ4eH8kpZ6hQYPMgfbdyLDiJreFfPmRp0vJApSkohU="
-                    }
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__4",
-                      "hash": "U7U4waKrTXjgnv5C/COO5ZKSBP9xIUusi9mCxa6gn4c="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp:iid:faf9d01e-b0b6-4598-9e7d-2ba0e59d1c52"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__5",
-                      "hash": "8/PrqZYaD70vNHAaIN6JFBI3D+uyAxQYYQ6LkqGWPg0="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp:iid:6a7f4258-3981-4ea2-bf41-5102d3695014"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.placed",
-                "parameters": {
-                  "ingredient": [
-                    {
-                      "url": "self#jumbf=c2pa.assertions/c2pa.ingredient__6",
-                      "hash": "efFmtZxzD6j13snwJhoGZlaDHOQarD6iof1X63BTO9U="
-                    }
-                  ],
-                  "ingredient_ids": [
-                    "xmp:iid:90eeb681-9c3c-47e6-a858-fee4b233f276"
-                  ]
-                }
-              },
-              {
-                "action": "c2pa.resized"
-              }
-            ]
-          }
-        }
-      ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-08T22:56:52+00:00"
-      },
-      "label": "contentauth:urn:uuid:935c99a5-e669-4a30-a482-3d87e25ca718"
+      "label": "contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90"
     }
   }
 }
