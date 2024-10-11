@@ -72,7 +72,7 @@ impl Reader {
 
     #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
-    /// If the fetch_remote_manifests feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
     /// # Arguments
     /// * `path` - The path to the file.
@@ -122,27 +122,27 @@ impl Reader {
 
     /// Create a manifest store [`Reader`] from a JSON string.
     /// # Arguments
-    /// * `json` - A Json String containing a manifest store definition.
+    /// * `json` - A JSON string containing a manifest store definition.
     /// # Returns
     /// A [`Reader`]` for the manifest store.
     /// # WARNING
-    /// This function is for use in testing. Don't use it in any implementation.
+    /// This function is intended for use in testing. Don't use it in an implementation.
     pub fn from_json(json: &str) -> Result<Reader> {
         let manifest_store = serde_json::from_str(json)?;
         Ok(Reader { manifest_store })
     }
 
-    /// Create a manifest store [`Reader`] from existing c2pa_data and a stream.
-    /// You can use this to validate a remote manifest or a sidecar manifest.
+    /// Create a manifest store [`Reader`] from existing `c2pa_data` and a stream.
+    /// Use this to validate a remote manifest or a sidecar manifest.
     /// # Arguments
     /// * `c2pa_data` - A C2PA manifest store in JUMBF format.
     /// * `format` - The format of the stream.
     /// * `stream` - The stream to verify the store against.
     /// # Returns
-    /// A [`Reader`] for the manifest store
+    /// A [`Reader`] for the manifest store.
     /// # Errors
-    /// If the c2pa_data is not valid, or severe errors occur in validation.
-    /// Check validation status for non-severe errors.
+    /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
+    /// You must check validation status for non-severe errors.
     #[async_generic()]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
