@@ -126,11 +126,18 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            #[cfg(feature = "openssl")]
+            #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
             trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
+            #[cfg(all(
+                not(feature = "openssl"),
+                not(target_os = "wasi"),
+                target_arch = "wasm32"
+            ))]
             trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+            #[cfg(any(
+                target_os = "wasi",
+                all(not(feature = "openssl"), not(target_arch = "wasm32"))
+            ))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
         };

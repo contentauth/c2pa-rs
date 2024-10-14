@@ -23,7 +23,10 @@ use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
-#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
+#[cfg(all(
+    not(target_os = "wasi"),
+    any(target_arch = "wasm32", feature = "openssl")
+))]
 use crate::cose_validator::{
     ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
     ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
@@ -361,7 +364,7 @@ fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chr
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(feature = "openssl", not(target_os = "wasi")))]
 fn get_local_validator(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
@@ -405,7 +408,7 @@ fn get_local_validator(
     Ok(validator)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<String> {
     if sig_alg.as_ref() == RSA_OID.as_bytes()
         || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
@@ -625,24 +628,24 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
 
             // verify signature of timestamp signature
             let validated_res: Result<bool> = if _sync {
-                #[cfg(feature = "openssl")]
+                #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
                 {
                     let validator = get_local_validator(sig_alg, hash_alg)?;
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
-                #[cfg(not(feature = "openssl"))]
+                #[cfg(any(not(feature = "openssl"), target_os = "wasi"))]
                 {
                     Ok(false)
                 }
             } else {
-                #[cfg(feature = "openssl")]
+                #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
                 {
                     let validator = get_local_validator(sig_alg, hash_alg)?;
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
-                #[cfg(target_arch = "wasm32")]
+                #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
                 {
                     let mut certificate_der = Vec::<u8>::new();
                     cert.encode_ref()
@@ -657,7 +660,10 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     .await
                 }
 
-                #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+                #[cfg(any(
+                    target_os = "wasi",
+                    all(not(feature = "openssl"), not(target_arch = "wasm32"))
+                ))]
                 {
                     Ok(false)
                 }

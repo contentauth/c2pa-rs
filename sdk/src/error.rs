@@ -285,7 +285,7 @@ pub enum Error {
     OpenSslMutexError,
 
     #[error(transparent)]
-    #[cfg(feature = "openssl")]
+    #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
     #[error(transparent)]

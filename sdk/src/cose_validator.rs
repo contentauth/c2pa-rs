@@ -28,9 +28,9 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(feature = "openssl")]
+#[cfg(all(feature = "openssl", not(target_os = "wasi")))]
 use crate::openssl::verify_trust;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 use crate::validator::{get_validator, CoseValidator};
 use crate::{
     asn1::rfc3161::TstInfo,
@@ -61,6 +61,7 @@ pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+#[cfg(not(target_os = "wasi"))]
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
@@ -862,29 +863,32 @@ fn check_trust(
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl"))]
+        #[cfg(any(not(feature = "openssl"), target_os = "wasi"))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
             ))
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
     } else {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         {
             verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(any(
+            target_os = "wasi",
+            all(not(feature = "openssl"), not(target_arch = "wasm32"))
+        ))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
@@ -1050,7 +1054,7 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         check_trust_async(
             th,
             &certs[1..],
@@ -1150,39 +1154,9 @@ pub(crate) fn get_signing_info(
                 }
                 Err(e) => Err(e),
             }
-<<<<<<< HEAD
         }
         Err(e) => Err(e),
     };
-=======
-
-            (_rem, signcert)
-        });
-
-        Ok(sign1)
-    });
-
-    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    {
-        ValidationInfo {
-            issuer_org,
-            date,
-            alg,
-            validated: false,
-            cert_chain: Vec::new(),
-            cert_serial_number,
-        }
-    }
-    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-    {
-        let certs = match sign1 {
-            Ok(s) => match get_sign_certs(&s) {
-                Ok(c) => dump_cert_chain(&c, None).unwrap_or_default(),
-                Err(_) => Vec::new(),
-            },
-            Err(_e) => Vec::new(),
-        };
->>>>>>> 50561fc (Add wasi compatibility.)
 
     let certs = match sign1 {
         Ok(s) => match get_sign_certs(&s) {
@@ -1208,13 +1182,8 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
-<<<<<<< HEAD
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn verify_cose(
-=======
 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-pub fn verify_cose(
->>>>>>> 50561fc (Add wasi compatibility.)
+pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
     additional_data: &[u8],
@@ -1345,13 +1314,8 @@ pub fn verify_cose(
     Ok(result)
 }
 
-<<<<<<< HEAD
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn verify_cose(
-=======
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub fn verify_cose(
->>>>>>> 50561fc (Add wasi compatibility.)
+pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
     _additional_data: &[u8],
