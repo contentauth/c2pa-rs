@@ -33,7 +33,7 @@ use crate::{
     error::{Error, Result},
     utils::{
         hash_utils::{vec_compare, HashRange},
-        io_utils::stream_len,
+        io_utils::{stream_len, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -437,7 +437,7 @@ fn get_top_level_boxes(
 }
 
 pub fn bmff_to_jumbf_exclusions<R>(
-    reader: &mut R,
+    mut reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
 ) -> Result<Vec<HashRange>>
@@ -535,8 +535,7 @@ where
                         skip_bytes_to(reader, box_start + data_map.offset as u64)?;
 
                         // match the data
-                        let mut buf = vec![0u8; data_map.value.len()];
-                        reader.read_exact(&mut buf)?;
+                        let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
                         // does not match so skip
                         if !vec_compare(&data_map.value, &buf) {
@@ -1118,7 +1117,7 @@ pub(crate) struct C2PABmffBoxes {
     pub xmp: Option<String>,
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+pub(crate) fn read_bmff_c2pa_boxes(mut reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
     reader.rewind()?;
 
@@ -1192,8 +1191,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
 
                             // read the manifest
                             if manifest_store_cnt == 0 {
-                                let mut manifest = vec![0u8; data_len as usize];
-                                reader.read_exact(&mut manifest)?;
+                                let manifest = reader.read_to_vec(data_len)?;
                                 output = Some(manifest);
 
                                 manifest_store_cnt += 1;
@@ -1206,8 +1204,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
                                 _first_aux_uuid = offset;
                             }
                         } else if vec_compare(&purpose, MERKLE.as_bytes()) {
-                            let mut merkle = vec![0u8; data_len as usize];
-                            reader.read_exact(&mut merkle)?;
+                            let merkle = reader.read_to_vec(data_len)?;
 
                             // use this method since it will strip trailing zeros padding if there
                             let mut deserializer =
@@ -1227,9 +1224,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
                         // set reader to start of box contents
                         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
-                        let mut xmp_vec = vec![0u8; data_len as usize];
-                        reader.read_exact(&mut xmp_vec)?;
-
+                        let xmp_vec = reader.read_to_vec(data_len)?;
                         if let Ok(xmp_string) = String::from_utf8(xmp_vec) {
                             xmp = Some(xmp_string);
                         }
