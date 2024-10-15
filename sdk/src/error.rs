@@ -297,7 +297,7 @@ pub enum Error {
     #[error("insufficient memory space for operation")]
     InsufficientMemory,
 
-    #[error("parameters our of range")]
+    #[error("parameters out of range")]
     OutOfRange,
 }
 
