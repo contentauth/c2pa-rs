@@ -13,7 +13,7 @@
 
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use crate::Result;
+use crate::{Error, Result};
 
 // Insert data at arbitrary location in a stream.
 // location is from the start of the source stream
@@ -52,4 +52,56 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     }
 
     Ok(len)
+}
+
+// Returns a new Vec first making sure it can hold the desired capacity.  Fill
+// with default value if provided
+pub(crate) fn safe_vec<T: Clone>(item_cnt: u64, init_with: Option<T>) -> Result<Vec<T>> {
+    let num_items = usize::try_from(item_cnt)?;
+
+    // make sure we can allocate vec
+    let mut output: Vec<T> = Vec::new();
+    output
+        .try_reserve_exact(num_items)
+        .map_err(|_e| Error::InsufficientMemory)?;
+
+    // fill if requested
+    if let Some(i) = init_with {
+        output.resize(num_items, i);
+    }
+
+    Ok(output)
+}
+
+pub trait ReaderUtils {
+    // Reads contents from a stream making sure if can be done and will fit within available memory
+    fn read_to_vec(&mut self, data_len: u64) -> Result<Vec<u8>>;
+}
+
+// Provide implementation for any object that support Read + Seek
+impl<R: Read + Seek> ReaderUtils for R {
+    fn read_to_vec(&mut self, data_len: u64) -> Result<Vec<u8>> {
+        let old_pos = self.stream_position()?;
+        let len = self.seek(SeekFrom::End(0))?;
+
+        // reset seek pointer
+        if old_pos != len {
+            self.seek(SeekFrom::Start(old_pos))?;
+        }
+
+        if old_pos
+            .checked_add(data_len)
+            .ok_or(Error::BadParam("file read out of range".into()))?
+            > len
+        {
+            return Err(Error::BadParam("read past file end".into()));
+        }
+
+        // make sure we can allocate vec
+        let mut output: Vec<u8> = safe_vec(data_len, None)?;
+
+        self.take(data_len).read_to_end(&mut output)?;
+
+        Ok(output)
+    }
 }

@@ -34,7 +34,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::stream_len,
+        io_utils::{stream_len, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -91,7 +91,7 @@ impl ID3V2Header {
     }
 }
 
-fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
+fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
     input_stream.rewind().ok()?;
     let header = ID3V2Header::read_header(input_stream).ok()?;
     input_stream.rewind().ok()?;
@@ -112,8 +112,7 @@ fn get_manifest_pos(input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         if manifests.len() == 1 {
             input_stream.rewind().ok()?;
 
-            let mut tag_bytes = vec![0u8; header.get_size() as usize];
-            input_stream.read_exact(tag_bytes.as_mut_slice()).ok()?;
+            let tag_bytes = input_stream.read_to_vec(header.get_size() as u64).ok()?;
 
             let pos = memmem::find(&tag_bytes, &manifests[0])?;
 
