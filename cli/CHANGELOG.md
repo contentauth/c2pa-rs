@@ -6,6 +6,10 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Do not manually edit this file. It will be automatically updated when a new release is published.
 
+## 0.9.11
+_16 October 2024_
+
+* Merge hardening bug fixes ([contentauth/c2patool#260](https://github.com/contentauth/c2patool/pull/260))
 ## 0.9.10
 _07 October 2024_
 
