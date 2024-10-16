@@ -1,0 +1,8 @@
+[package]
+name = "c2pa-codecs-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+afl = "0.15.10"
+c2pa-codecs = { path = ".." }
