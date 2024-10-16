@@ -48,6 +48,9 @@ pub struct CallbackSigner {
 
     /// The optional URL of a Time Stamping Authority.
     pub tsa_url: Option<String>,
+
+    /// If `true` the sign function is responsible for direct handling of the COSE structure.
+    pub direct_cose_handling: bool,
 }
 
 unsafe impl Send for CallbackSigner {}
@@ -132,6 +135,7 @@ impl Default for CallbackSigner {
             certs: Vec::new(),
             reserve_size: 10000,
             tsa_url: None,
+            direct_cose_handling: false,
         }
     }
 }
@@ -146,6 +150,10 @@ impl Signer for CallbackSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        if self.direct_cose_handling {
+            return Ok(Vec::new());
+        }
+
         let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
@@ -156,6 +164,10 @@ impl Signer for CallbackSigner {
 
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.direct_cose_handling
     }
 }
 
@@ -174,6 +186,10 @@ impl AsyncSigner for CallbackSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        if self.direct_cose_handling {
+            return Ok(Vec::new());
+        }
+
         let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
@@ -189,5 +205,22 @@ impl AsyncSigner for CallbackSigner {
     #[cfg(target_arch = "wasm32")]
     async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.direct_cose_handling
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::CallbackSigner;
+
+    #[cfg(test)]
+    fn test_callback() {
+        let mut signer =
+            CallbackSigner::new(|_, _| Ok(Vec::new()), crate::SigningAlg::Ps256, Vec::new());
+        signer.direct_cose_handling = true;
+        signer.reserve_size = 12448;
     }
 }
