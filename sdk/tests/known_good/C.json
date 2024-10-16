@@ -18,7 +18,7 @@
       "instance_id": "xmp:iid:22704d84-c37f-4733-a207-56c4c2e67b1a",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [],
       "assertions": [

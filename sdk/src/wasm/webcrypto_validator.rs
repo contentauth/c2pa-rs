@@ -14,7 +14,7 @@
 use std::convert::TryFrom;
 
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
-use spki::SubjectPublicKeyInfo;
+use spki::SubjectPublicKeyInfoRef;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
@@ -165,10 +165,12 @@ pub(crate) async fn async_validate(
             use rsa::{pkcs1v15::Signature, signature::Verifier};
 
             // used for certificate validation
-            let spki = SubjectPublicKeyInfo::try_from(pkey.as_ref())
+            let spki = SubjectPublicKeyInfoRef::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-            let (_, seq) = parse_ber_sequence(spki.subject_public_key)
+
+            let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
+
             let modulus = biguint_val(&seq[0]);
             let exp = biguint_val(&seq[1]);
             let public_key = RsaPublicKey::new(modulus, exp)
@@ -217,10 +219,12 @@ pub(crate) async fn async_validate(
         "RSA-PSS" => {
             use rsa::{pss::Signature, signature::Verifier};
 
-            let spki = SubjectPublicKeyInfo::try_from(pkey.as_ref())
+            let spki = SubjectPublicKeyInfoRef::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
-            let (_, seq) = parse_ber_sequence(spki.subject_public_key)
+
+            let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
+
             // We need to normalize this from SHA-256 (the format WebCrypto uses) to sha256
             // (the format the util function expects) so that it maps correctly
             let normalized_hash = hash.clone().replace("-", "").to_lowercase();

@@ -3374,11 +3374,10 @@ impl Store {
 
                 Ok(store)
             })
-            .map_err(|e| {
+            .inspect_err(|e| {
                 validation_log.log_silent(
-                    log_item!("asset", "error loading file", "load_from_asset").set_error(&e),
+                    log_item!("asset", "error loading file", "load_from_asset").set_error(e),
                 );
-                e
             })
     }
 
@@ -3388,11 +3387,10 @@ impl Store {
         validation_log: &mut impl StatusTracker,
     ) -> Result<Store> {
         // load jumbf if available
-        Self::load_cai_from_memory(asset_type, data, validation_log).map_err(|e| {
+        Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
             validation_log.log_silent(
-                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(&e),
+                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(e),
             );
-            e
         })
     }
 

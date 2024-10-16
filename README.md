@@ -44,7 +44,7 @@ We welcome contributions to this project.  For information on contributing, prov
 
 ## Requirements
 
-The library requires **Rust version 1.74.0** or newer.
+The library requires **Rust version 1.76.0** or newer.
 
 ### Supported platforms
 
@@ -83,7 +83,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.35.1"
+c2pa = "0.36.1"
 ```
 
 If you want to read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
@@ -102,7 +102,6 @@ The Rust library crate provides:
 * `file_io` enables manifest generation, signing via OpenSSL, and embedding manifests in various file formats.
 * `add_thumbnails` will generate thumbnails automatically for JPEG and PNG files. (no longer included with `file_io`)
 * `serialize_thumbnails` includes binary thumbnail data in the [Serde](https://serde.rs/) serialization output.
-* `xmp_write` enables updating XMP on embed with the `dcterms:provenance` field. (Requires [xmp_toolkit](https://crates.io/crates/xmp_toolkit).)
 * `no_interleaved_io` forces fully-synchronous I/O; otherwise, the library uses threaded I/O for some operations to improve performance.
 * `fetch_remote_manifests` enables the verification step to retrieve externally referenced manifest stores.  External manifests are only fetched if there is no embedded manifest store and no locally adjacent .c2pa manifest store file of the same name.
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
