@@ -326,21 +326,14 @@ pub mod tests {
                 .set_region_of_interest(RegionOfInterest {
                     region: vec![Range {
                         range_type: RangeType::Temporal,
-                        shape: None,
                         time: Some(Time {
                             time_type: TimeType::Npt,
                             start: None,
                             end: None,
                         }),
-                        frame: None,
-                        text: None,
+                        ..Default::default()
                     }],
-                    name: None,
-                    identifier: None,
-                    region_type: None,
-                    role: None,
-                    description: None,
-                    metadata: None,
+                    ..Default::default()
                 });
         original.insert("foo", test_value);
         println!("{:?}", &original);
