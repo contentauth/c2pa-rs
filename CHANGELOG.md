@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.37.0](https://github.com/contentauth/c2pa-rs/compare/v0.36.4...v0.37.0)
+_17 October 2024_
+
+### Fixed
+
+* Adds identified RangeType to region of interest ([#631](https://github.com/contentauth/c2pa-rs/pull/631))
+
 ## [0.36.4](https://github.com/contentauth/c2pa-rs/compare/v0.36.3...v0.36.4)
 _15 October 2024_
 
