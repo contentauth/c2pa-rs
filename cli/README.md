@@ -138,7 +138,7 @@ Where:
 
 The tool supports the following subcommands:
 - `trust` [configures trust support](#configuring-trust-support) for certificates on a "known certificate list." With this subcommand, several additional options are available.
-- `fragment` [adds a manifest to fragmented BMFF content]().  With this subcommand, one additional option is available.
+- `fragment` [adds a manifest to fragmented BMFF content](#adding-a-manifest-to-fragmented-bmff-content).  With this subcommand, one additional option is available.
 - `help` displays command line help information.
 
 ### Options
