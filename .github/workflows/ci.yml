@@ -16,22 +16,13 @@ on:
     - cron: "30 18 * * 1,4,6" # 1830 UTC every Monday, Thursday, Saturday
 
 jobs:
-  debug:
-    name: Debug context
-    runs-on: ubuntu-latest
-    steps:
-      - name: Debug context
-        env:
-          NAME: ${{ github.event.pull_request.user.login }}
-        run: |
-          echo github.event.pull_request.user.login = $NAME
-
   tests:
     name: Unit tests
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ${{ matrix.os }}
@@ -83,6 +74,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
@@ -108,6 +100,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
@@ -130,6 +123,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
@@ -159,6 +153,7 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
       github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test')
 
     runs-on: ubuntu-latest
