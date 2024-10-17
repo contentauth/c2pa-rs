@@ -16,6 +16,16 @@ on:
     - cron: "30 18 * * 1,4,6" # 1830 UTC every Monday, Thursday, Saturday
 
 jobs:
+  debug:
+    name: Debug context
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug context
+        env:
+          TYPE: ${{ github.event.action }}
+        run: |
+          echo github.event.action = $TYPE
+
   tests:
     name: Unit tests
     if: |
