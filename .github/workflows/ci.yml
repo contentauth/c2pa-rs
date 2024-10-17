@@ -22,9 +22,9 @@ jobs:
     steps:
       - name: Debug context
         env:
-          TYPE: ${{ github.event.action }}
+          NAME: ${{ github.event_name }}
         run: |
-          echo github.event.action = $TYPE
+          echo github.event_name = $NAME
 
   tests:
     name: Unit tests
