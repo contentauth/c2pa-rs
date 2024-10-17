@@ -1,12 +1,13 @@
 name: CI
 
-on:  
+on:
   workflow_dispatch:
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
+      - labeled
   push:
     branches:
       - main
@@ -17,6 +18,13 @@ on:
 jobs:
   tests:
     name: Unit tests
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -33,15 +41,42 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Run unit tests
-        run: cargo test --all-features --verbose
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: |
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.author_association == 'COLLABORATOR' ||
+          github.event.pull_request.author_association == 'MEMBER' ||
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
 
   tests-cross:
     name: Unit tests
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
 
     strategy:
@@ -75,6 +110,13 @@ jobs:
 
   tests-wasm:
     name: Unit tests (WASM)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
 
     steps:
@@ -93,6 +135,13 @@ jobs:
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -115,6 +164,13 @@ jobs:
 
   publish-preflight:
     name: Preflight crate publish
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -141,7 +197,15 @@ jobs:
 
   clippy_check:
     name: Clippy
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -159,12 +223,20 @@ jobs:
 
   cargo_fmt:
     name: Enforce Rust code format
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install stable toolchain
+      - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
@@ -174,7 +246,15 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -197,6 +277,13 @@ jobs:
 
   cargo-deny:
     name: License / vulnerability audit
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
 
     strategy:
@@ -220,12 +307,20 @@ jobs:
 
   unused_deps:
     name: Check for unused dependencies
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo-udeps
