@@ -1630,6 +1630,12 @@ mod tests {
                                     "identifier": "sample1.svg"
                                 },
                                 "something": "else"
+                            }
+                        },   
+                        {
+                            "action": "c2pa.dubbed",
+                            "softwareAgent": {
+                                "name": "Test Dubber"
                             },
                             "changes": [
                                 {
@@ -1637,6 +1643,13 @@ mod tests {
                                         {
                                             "type" : "temporal",
                                             "time" : {}
+                                        },
+                                        {
+                                            "type": "identified",
+                                            "item": {
+                                                "identifier": "https://bioportal.bioontology.org/ontologies/FMA",
+                                                "value": "lips"
+                                            }
                                         }
                                     ],
                                     "description": "lip synced area"
