@@ -180,8 +180,8 @@ fn compare_json_values(
         }
         (val1, val2) if val1 != val2 => {
             if !(path.ends_with(".instance_id")
-                || path.ends_with(".instanceId")
                 || path.ends_with(".time")
+                || path.contains(".parameters.org.cai.ingredientIds")
                 || path.contains(".hash")
                 || val1.is_string()
                     && val2.is_string()
