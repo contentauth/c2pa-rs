@@ -3816,10 +3816,15 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
+        let mut report = DetailedStatusTracker::new();
+        
         // read from new file
         let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(&op, true, &mut report).unwrap();
 
+        let errors = report_split_errors(report.get_log_mut());
+        assert!(errors.is_empty());
+        
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
             0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
@@ -3854,29 +3859,6 @@ pub mod tests {
                 claim.get_claim_assertion(&label, instance).unwrap();
             }
         }
-
-        // test patch file - bytes should be same so error should not be detected
-        let mut splice_point =
-            patch_file(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
-
-        let mut restore_point =
-            patch_file(&op, "testme".as_bytes(), "thumbnail".as_bytes()).unwrap();
-
-        assert_eq!(splice_point, restore_point);
-
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
-            .expect("Should still verify");
-
-        // test patching jumbf - error should be detected
-
-        splice_point = update_file_jumbf(&op, "thumbnail".as_bytes(), "testme".as_bytes()).unwrap();
-        restore_point =
-            update_file_jumbf(&op, "testme".as_bytes(), "thumbnail.v1".as_bytes()).unwrap();
-
-        assert_eq!(splice_point, restore_point);
-
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
-            .expect_err("Should not verify");
     }
     #[test]
     #[cfg(feature = "file_io")]

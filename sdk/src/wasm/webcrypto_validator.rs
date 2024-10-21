@@ -292,7 +292,8 @@ pub(crate) async fn async_validate(
                 .await
                 .map_err(|_| {
                     web_sys::console::debug_1(&"bad EC key".into());
-                    Error::CoseInvalidCert })?
+                    Error::CoseInvalidCert
+                })?
                 .into();
             web_sys::console::debug_2(&"CryptoKey".into(), &crypto_key);
 
