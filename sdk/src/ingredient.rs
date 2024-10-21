@@ -115,7 +115,7 @@ pub struct Ingredient {
 
     /// Any additional [`Metadata`] as defined in the C2PA spec.
     ///
-    /// [`Manifest`]: crate::Manifest
+    /// [`Metadata`]: crate::Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
@@ -155,7 +155,7 @@ impl Ingredient {
     /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
     /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use c2pa::Ingredient;
@@ -180,7 +180,7 @@ impl Ingredient {
     /// * `title` - A user-displayable name for this ingredient (often a filename).
     /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use c2pa::Ingredient;
