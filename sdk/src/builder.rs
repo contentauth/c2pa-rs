@@ -79,8 +79,8 @@ pub struct ManifestDefinition {
     #[serde(default = "default_instance_id")]
     pub instance_id: String,
 
-    /// An optional ResourceRef to an image.  Must be available when the manifest is signed.
-    /// Represents the state of the asset that was signed.
+    /// An optional ResourceRef to a thumbnail image that represents the asset that was signed.
+    /// Must be available when the manifest is signed.
     pub thumbnail: Option<ResourceRef>,
 
     /// A List of ingredients
@@ -115,8 +115,8 @@ fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
 
-/// Assertion data is almost always a JSON structure, but this allows for
-/// CBOR-specific data that can't be expressed in JSON.
+/// This allows the assertion to be expressed as CBOR or JSON.
+/// The default is CBOR unless you specify that an assertion should be JSON.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
@@ -242,7 +242,7 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
-    /// Creates a new Builder struct.
+    /// Creates a new [`Builder`] struct.
     /// # Returns
     /// * A new [`Builder`].
     pub fn new() -> Self {
