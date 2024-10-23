@@ -42,6 +42,7 @@ pub enum UnitType {
 }
 
 /// A spatial range representing rectangle, circle, or a polygon.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Shape {
@@ -89,6 +90,7 @@ pub struct Npt {
 
 /// "Wall Clock Time" using the Internet profile of ISO 8601 as described in RFC 3339.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[skip_serializing_none]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(tag = "type", rename = "wall-clock")]
 pub struct WallClock {
@@ -115,6 +117,7 @@ pub enum Time {
 /// A frame range representing starting and ending frames or pages.
 ///
 /// If both `start` and `end` are missing, the frame will span the entire asset.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Frame {
@@ -131,6 +134,7 @@ pub struct Frame {
 /// Selects a range of text via a fragment identifier.
 ///
 /// This is modeled after the W3C Web Annotation selector model.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct TextSelector {
@@ -147,6 +151,7 @@ pub struct TextSelector {
 }
 
 /// One or two [`TextSelector`][TextSelector] identifiying the range to select.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct TextSelectorRange {
@@ -165,7 +170,7 @@ pub struct Text {
     pub selectors: Vec<TextSelectorRange>,
 }
 
-/// A identified range representing a specific subset of content in the asset's file container.
+/// An identified range representing a specific subset of content in the asset's file container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Item {
@@ -176,45 +181,42 @@ pub struct Item {
 }
 
 /// The type of range for the region of interest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum RangeType {
     /// A spatial range, see [`Shape`] for more details.
     Spatial,
     /// A temporal range, see [`Time`] for more details.
+    #[default]
     Temporal,
     /// A spatial range, see [`Frame`] for more details.
     Frame,
     /// A textual range, see [`Text`] for more details.
     Textual,
-    /// A identified range, see [`Item`] for more details.
+    /// An identified range, see [`Item`] for more details.
     Identified,
 }
 
 // TODO: this can be much more idiomatic with an enum, but then it wouldn't line up with spec
 //
 /// A spatial, temporal, frame, or textual range describing the region of interest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[skip_serializing_none]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Range {
     /// The type of range of interest.
     #[serde(rename = "type")]
     pub range_type: RangeType,
     /// A spatial range.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub shape: Option<Shape>,
     /// A temporal range.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<Time>,
     /// A frame range.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub frame: Option<Frame>,
     /// A textual range.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<Text>,
-    /// A identified range.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// An item identifier.
     pub item: Option<Item>,
 }
 
@@ -256,7 +258,8 @@ pub enum Role {
 ///
 /// This struct can be used from [`Action::changes`][crate::assertions::Action::changes] or
 /// [`Metadata::region_of_interest`][crate::assertions::Metadata::region_of_interest].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[skip_serializing_none]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct RegionOfInterest {
     /// A range describing the region of interest for the specific asset.

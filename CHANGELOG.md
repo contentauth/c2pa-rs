@@ -4,7 +4,33 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
-Since version 0.36.1, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.37.0](https://github.com/contentauth/c2pa-rs/compare/v0.36.4...v0.37.0)
+_17 October 2024_
+
+### Fixed
+
+* Adds identified RangeType to region of interest ([#631](https://github.com/contentauth/c2pa-rs/pull/631))
+
+## [0.36.4](https://github.com/contentauth/c2pa-rs/compare/v0.36.3...v0.36.4)
+_15 October 2024_
+
+### Fixed
+
+* Harden SDK against attempting buffers that are too large ([#628](https://github.com/contentauth/c2pa-rs/pull/628))
+
+## [0.36.3](https://github.com/contentauth/c2pa-rs/compare/v0.36.2...v0.36.3)
+_07 October 2024_
+
+### Fixed
+
+* Changelog contained duplicate entries for 0.16.1 ([#618](https://github.com/contentauth/c2pa-rs/pull/618))
+
+## [0.36.2](https://github.com/contentauth/c2pa-rs/compare/v0.36.1...v0.36.2)
+_07 October 2024_
+
+* No-op change to start using release-plz to manage releases
 
 ## 0.36.1
 _04 October 2024_
@@ -461,13 +487,6 @@ _22 February 2023_
 _19 December 2022_
 
 * Update xmp-toolkit from 0.6.0 to 1.0.0 ([#165](https://github.com/contentauth/c2pa-rs/pull/165))
-* Prepare 0.16.1 release
-* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
-* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
-
-## 0.16.1
-_19 December 2022_
-
 * Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
 * Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
 
