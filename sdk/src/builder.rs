@@ -49,7 +49,7 @@ use crate::{
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
-/// Use a ManifestDefinition to define a manifest and to build a [`ManifestStore`].
+/// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
 /// used to define a claim that can be signed and embedded into a file.
 #[skip_serializing_none]
@@ -115,7 +115,7 @@ fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
 
-/// Assertion data is almost always a JSON structure, but this allows for 
+/// Assertion data is almost always a JSON structure, but this allows for
 /// CBOR-specific data that can't be expressed in JSON.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -216,12 +216,14 @@ impl AssertionDefinition {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct Builder {
     #[serde(flatten)]
+    /// A collection of ingredients and assertions used to define a claim that can be signed and embedded into a file.
+    /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
     /// Optional remote URL for the manifest
     pub remote_url: Option<String>,
 
-    // If true, the manifest store will not be embedded in the asset on sign
+    /// If true, the manifest store will not be embedded in the asset on sign
     pub no_embed: bool,
 
     /// Base path to search for resources.
@@ -319,7 +321,7 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     /// # Errors
     /// * Returns an [`Error`] if the thumbnail is not valid.
-  
+
     pub fn set_thumbnail<S, R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
     where
         S: Into<String>,
@@ -381,7 +383,7 @@ impl Builder {
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
     // TODO: Add example.
-    /// 
+    ///
     /// # Arguments
     /// * `ingredient_json` - A JSON string representing the [`Ingredient`].  This ingredient is merged  with the ingredient specified in the `stream` argument, and these values take precedence.
     /// * `format` - The format of the [`Ingredient`].
@@ -990,7 +992,7 @@ impl Builder {
     /// # Returns
     /// * The bytes of c2pa_manifest that was created.
     /// # Errors
-    /// * Returns an [`Error`] if the manifest cannot be signed.
+    /// * Returns an [`Error`] if the manifest cannot be signed or the destination file already exists.
     pub fn sign_file<S, D>(&mut self, signer: &dyn Signer, source: S, dest: D) -> Result<Vec<u8>>
     where
         S: AsRef<std::path::Path>,

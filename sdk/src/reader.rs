@@ -48,9 +48,9 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
-    /// This example reads from a memory buffer and prints out the JSON manifest data. 
+    /// This example reads from a memory buffer and prints out the JSON manifest data.
     /// ```no_run
-    /// use std::io::Cursor; 
+    /// use std::io::Cursor;
     ///
     /// use c2pa::Reader;
     /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
@@ -81,7 +81,7 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     /// # Example
-    /// This example 
+    /// This example
     /// ```no_run
     /// use c2pa::Reader;
     /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
@@ -124,7 +124,7 @@ impl Reader {
     /// # Arguments
     /// * `json` - A JSON string containing a manifest store definition.
     /// # Returns
-    /// A [`Reader`]` for the manifest store.
+    /// A [`Reader`] for the manifest store.
     /// # WARNING
     /// This function is intended for use in testing. Don't use it in an implementation.
     pub fn from_json(json: &str) -> Result<Reader> {
@@ -227,7 +227,7 @@ impl Reader {
     /// The number of bytes written.
     /// # Errors
     /// Returns [`Error`] if the resource does not exist.
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
