@@ -552,7 +552,7 @@ impl Ingredient {
     {
         let format = format.into();
 
-        // try to get xmp info, if this fails all XmpInfo fields will be None.
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
         let xmp_info = XmpInfo::from_source(stream, &format);
 
         let id = if let Some(id) = xmp_info.instance_id {
@@ -569,8 +569,8 @@ impl Ingredient {
         ingredient
     }
 
-    // utility method to set the validation status from store result and log
-    // also sets the thumbnail from the claim if valid and it exists
+    // Utility method to set the validation status from store result and log
+    // Also sets the thumbnail from the claim if valid and it exists
     fn update_validation_status(
         &mut self,
         result: Result<Store>,
