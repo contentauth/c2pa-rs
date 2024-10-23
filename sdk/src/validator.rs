@@ -14,7 +14,7 @@
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
-#[cfg(all(feature = "openssl", not(target_os = "wasi")))]
+#[cfg(feature = "openssl")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
 use crate::{Result, SigningAlg};
 
@@ -57,7 +57,7 @@ impl CoseValidator for DummyValidator {
 // • ED25519 Edwards Curve ED25519
 
 /// return validator for supported C2PA  algorithms
-#[cfg(all(feature = "openssl", not(target_os = "wasi")))]
+#[cfg(feature = "openssl")]
 pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
@@ -73,7 +73,7 @@ pub(crate) fn get_validator(alg: SigningAlg) -> Box<dyn CoseValidator> {
     }
 }
 
-#[cfg(any(target_os = "wasi", not(feature = "openssl")))]
+#[cfg(not(feature = "openssl"))]
 #[allow(dead_code)]
 pub(crate) fn get_validator(_alg: SigningAlg) -> Box<dyn CoseValidator> {
     Box::new(DummyValidator)

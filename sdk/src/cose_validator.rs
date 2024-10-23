@@ -28,7 +28,7 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(all(feature = "openssl", not(target_os = "wasi")))]
+#[cfg(feature = "openssl")]
 use crate::openssl::verify_trust;
 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 use crate::validator::{get_validator, CoseValidator};
@@ -61,7 +61,6 @@ pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
-#[cfg(not(target_os = "wasi"))]
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
@@ -863,14 +862,14 @@ fn check_trust(
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(any(not(feature = "openssl"), target_os = "wasi"))]
+        #[cfg(not(feature = "openssl"))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
             ))
         }
 
-        #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
+        #[cfg(feature = "openssl")]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
@@ -880,15 +879,15 @@ fn check_trust(
             verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
 
-        #[cfg(all(feature = "openssl", not(target_os = "wasi")))]
+        #[cfg(feature = "openssl")]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
-        #[cfg(any(
-            target_os = "wasi",
-            all(not(feature = "openssl"), not(target_arch = "wasm32"))
-        ))]
+        #[cfg(any(all(
+            not(feature = "openssl"),
+            any(not(target_arch = "wasm32"), target_os = "wasi")
+        )))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),

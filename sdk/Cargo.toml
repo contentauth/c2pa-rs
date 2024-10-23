@@ -136,13 +136,13 @@ uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
 instant = "0.1.12"
-openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
+openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.wasm32-wasi.dependencies]
 chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
