@@ -30,3 +30,8 @@ pub(crate) mod webpki_trust_handler;
 pub(crate) use webpki_trust_handler::verify_data;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) use webpki_trust_handler::WebTrustHandlerConfig;
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) mod wasicrypto_validator;
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) mod wasipki_trust_handler;

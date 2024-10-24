@@ -107,6 +107,7 @@ rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
 rasn = "0.18.0"
 riff = "2.0.0"
+ring = "0.17.8"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
