@@ -47,6 +47,9 @@ changelog_path = "./CHANGELOG.md"
 # of in the `sdk` folder (which would be the default).
 
 [[package]]
+name = "cawg-identity"
+
+[[package]]
 name = "export_schema"
 publish = false
 release = false

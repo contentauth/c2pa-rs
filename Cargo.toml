@@ -1,3 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["sdk", "export_schema", "make_test_images"]
+members = [
+    "cawg_identity",
+    "export_schema",
+    "make_test_images",
+    "sdk",
+]
