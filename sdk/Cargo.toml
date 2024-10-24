@@ -163,7 +163,7 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-mockall = "0.11.2"
+mockall = "0.13.0"
 c2pa = { path = ".", features = [
     "unstable_api",
 ] } # allow integration tests to use the new API
