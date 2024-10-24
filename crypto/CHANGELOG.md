@@ -6,6 +6,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.0...c2pa-crypto-v0.1.1)
+_24 October 2024_
+
+### Fixed
+
+* Tweak changelog format
+
 ## [0.1.0](https://github.com/contentauth/c2pa-rs/releases/tag/c2pa-crypto-v0.1.0)
 _24 October 2024_
 
