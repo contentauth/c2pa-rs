@@ -34,7 +34,7 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     ingredient::Ingredient,
-    jumbf,
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
@@ -576,7 +576,7 @@ impl Manifest {
 
         manifest.redactions = claim.redactions().map(|rs| {
             rs.iter()
-                .filter_map(|r| jumbf::labels::assertion_label_from_uri(r))
+                .filter_map(|r| assertion_label_from_uri(r))
                 .collect()
         });
 
@@ -591,14 +591,14 @@ impl Manifest {
             .iter()
             .map(|h| {
                 let alg = h.alg().or_else(|| Some(claim.alg().to_string()));
-                HashedUri::new(h.url(), alg, &h.hash())
+                let url = to_absolute_uri(claim.label(), &h.url());
+                HashedUri::new(url, alg, &h.hash())
             })
             .collect();
 
         for assertion in claim.assertions() {
-            let claim_assertion = store.get_claim_assertion_from_uri(
-                &jumbf::labels::to_absolute_uri(claim.label(), &assertion.url()),
-            )?;
+            let claim_assertion = store
+                .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))?;
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
@@ -649,7 +649,7 @@ impl Manifest {
                 }
                 base if base.starts_with(labels::INGREDIENT) => {
                     // note that we use the original label here, not the base label
-                    let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
+                    let assertion_uri = to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(
                         store,
                         manifest_label,
@@ -664,8 +664,8 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    let id = jumbf::labels::to_assertion_uri(claim.label(), label);
-                    let id = jumbf::labels::to_relative_uri(&id);
+                    let id = to_assertion_uri(claim.label(), label);
+                    //let id = jumbf::labels::to_relative_uri(&id);
                     manifest.thumbnail = Some(manifest.resources.add_uri(
                         &id,
                         &thumbnail.content_type,
@@ -1460,26 +1460,26 @@ impl std::fmt::Display for Manifest {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Holds information about a signature
 pub struct SignatureInfo {
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg: Option<SigningAlg>,
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 
-    /// The serial number of the certificate
+    /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_serial_number: Option<String>,
 
-    /// the time the signature was created
+    /// The time the signature was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
 
-    /// revocation status of the certificate
+    /// Revocation status of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revocation_status: Option<bool>,
 
-    /// the cert chain for this claim
+    /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
 }

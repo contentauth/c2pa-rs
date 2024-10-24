@@ -565,21 +565,14 @@ pub mod tests {
                     .add_change(RegionOfInterest {
                         region: vec![Range {
                             range_type: RangeType::Temporal,
-                            shape: None,
                             time: Some(Time {
                                 time_type: TimeType::Npt,
                                 start: None,
                                 end: None,
                             }),
-                            frame: None,
-                            text: None,
+                            ..Default::default()
                         }],
-                        name: None,
-                        identifier: None,
-                        region_type: None,
-                        role: None,
-                        description: None,
-                        metadata: None,
+                        ..Default::default()
                     }),
             )
             .add_metadata(
@@ -820,16 +813,9 @@ pub mod tests {
                 description: Some("translated to klingon".to_owned()),
                 region: vec![Range {
                     range_type: RangeType::Temporal,
-                    shape: None,
-                    time: None,
-                    frame: None,
-                    text: None
+                    ..Default::default()
                 }],
-                name: None,
-                identifier: None,
-                region_type: None,
-                role: None,
-                metadata: None
+                ..Default::default()
             }]
         );
     }
