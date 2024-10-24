@@ -1,8 +1,8 @@
-# Implementation of CAWG identity assertion core specification
+# Implementation of CAWG identity assertion specification
 
-[![CI](https://github.com/adobe/xmp-toolkit-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/scouten-adobe/cawg-identity-core/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/scouten-adobe/cawg-identity-core/graph/badge.svg?token=ThGK5CdTJ3)](https://codecov.io/gh/scouten-adobe/cawg-identity-core)
+[![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/cawg-identity.svg)](https://crates.io/crates/cawg-identity) [![docs.rs](https://img.shields.io/docsrs/cawg-identity)](https://docs.rs/cawg-identity/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-EXPERIMENTAL/EARLY implementation of the core of the [Creator Assertions Working Group identity assertion draft specification](https://creator-assertions.github.io/identity/).
+Implementation of the core of the [Creator Assertions Working Group identity assertion draft specification](https://creator-assertions.github.io/identity/).
 
 ## Contributions and feedback
 
@@ -31,8 +31,6 @@ The toolkit has been tested on the following operating systems:
 
 ## License
 
-The `cawg-identity-core` crate is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
+The `cawg-identity` crate is distributed under the terms of both the MIT license and the Apache License (Version 2.0).
 
-See [LICENSE-APACHE](./LICENSE-APACHE) and [LICENSE-MIT](./LICENSE-MIT).
-
-Note that some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
+Some components and dependent crates are licensed under different terms; please check the license terms for each crate and component for details.
