@@ -80,7 +80,7 @@ jobs:
             exit 0;
           fi
 
-          if echo "$PR_TITLE" | grep -E '^chore: release '; then
+          if echo "$PR_TITLE" | grep -E '^chore: release'; then
             echo "Exception / OK: chore release pattern"
             exit 0;
           fi
