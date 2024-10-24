@@ -42,7 +42,7 @@ async-trait = { version = "0.1.77" }
 base64 = "0.21.2"
 bcder = "0.7.3"
 bytes = "1.7.2"
-chrono = { version = "0.4.28", default-features = false, features = [
+chrono = { version = "0.4.38", default-features = false, features = [
 	"serde",
 	"wasmbind",
 ] }
