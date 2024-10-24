@@ -1,0 +1,274 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+use crate::{Result, SigningAlg};
+/// The `Signer` trait generates a cryptographic signature over a byte array.
+///
+/// This trait exists to allow the signature mechanism to be extended.
+pub trait Signer {
+    /// Returns a new byte array which is a signature over the original.
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each
+    /// certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(crate::time_stamp::default_rfc3161_request(
+                    &url, headers, &body, message,
+                ));
+            }
+        }
+        None
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// If this returns true the sign function is responsible for for direct
+    /// handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE
+    /// structure directly. Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
+}
+
+/// Trait to allow loading of signing credential from external sources
+#[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
+pub(crate) trait ConfigurableSigner: Signer + Sized {
+    /// Create signer form credential files
+    fn from_files<P: AsRef<std::path::Path>>(
+        signcert_path: P,
+        pkey_path: P,
+        alg: SigningAlg,
+        tsa_url: Option<String>,
+    ) -> Result<Self> {
+        use crate::Error;
+
+        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+
+        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
+    }
+
+    /// Create signer from credentials data
+    fn from_signcert_and_pkey(
+        signcert: &[u8],
+        pkey: &[u8],
+        alg: SigningAlg,
+        tsa_url: Option<String>,
+    ) -> Result<Self>;
+}
+
+use async_trait::async_trait;
+
+/// The `AsyncSigner` trait generates a cryptographic signature over a byte
+/// array.
+///
+/// This trait exists to allow the signature mechanism to be extended.
+///
+/// Use this when the implementation is asynchronous.
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+pub trait AsyncSigner: Sync {
+    /// Returns a new byte array which is a signature over the original.
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each
+    /// certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        // NOTE: This is currently synchronous, but may become
+        // async in the future.
+        if let Some(url) = self.time_authority_url() {
+            if let Ok(body) = self.timestamp_request_body(message) {
+                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                return Some(
+                    crate::time_stamp::default_rfc3161_request_async(&url, headers, &body, message)
+                        .await,
+                );
+            }
+        }
+        None
+    }
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// If this returns true the sign function is responsible for for direct
+    /// handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE
+    /// structure directly. Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait AsyncSigner {
+    /// Returns a new byte array which is a signature over the original.
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
+
+    /// Returns the algorithm of the Signer.
+    fn alg(&self) -> SigningAlg;
+
+    /// Returns the certificates as a Vec containing a Vec of DER bytes for each
+    /// certificate.
+    fn certs(&self) -> Result<Vec<Vec<u8>>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+
+    /// URL for time authority to time stamp the signature
+    fn time_authority_url(&self) -> Option<String> {
+        None
+    }
+
+    /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// That is provided by default.
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        None
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crate::time_stamp::default_rfc3161_message(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+
+    /// OCSP response for the signing cert if available
+    /// This is the only C2PA supported cert revocation method.
+    /// By pre-querying the value for a your signing cert the value can
+    /// be cached taking pressure off of the CA (recommended by C2PA spec)
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// If this returns true the sign function is responsible for for direct
+    /// handling of the COSE structure.
+    ///
+    /// This is useful for cases where the signer needs to handle the COSE
+    /// structure directly. Not recommended for general use.
+    fn direct_cose_handling(&self) -> bool {
+        false
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait RemoteSigner: Sync {
+    /// Returns the `CoseSign1` bytes signed by the [`RemoteSigner`].
+    ///
+    /// The size of returned `Vec` must match the value returned by
+    /// `reserve_size`. This data will be embedded in the JUMBF
+    /// `c2pa.signature` box of the manifest. `data` are the bytes of the
+    /// claim to be remotely signed.
+    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
+
+    /// Returns the size in bytes of the largest possible expected signature.
+    ///
+    /// Signing will fail if the result of the `sign` function is larger
+    /// than this value.
+    fn reserve_size(&self) -> usize;
+}
