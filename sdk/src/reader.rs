@@ -180,6 +180,45 @@ impl Reader {
         })
     }
 
+    /// Create a [`Reader`] from existing an initial segment and a fragment stream.
+    /// This would be used to load and validate fragmented MP4 files that span multiple separate asset files.
+    /// # Arguments
+    /// * `format` - The format of the stream.
+    /// * `stream` - The initial segment stream.
+    /// * `fragment` - The fragment stream.
+    /// # Returns
+    /// A [`Reader`] for the manifest store.
+    /// # Errors
+    /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
+    /// You must check validation status for non-severe errors.
+    #[async_generic()]
+    pub fn from_fragment(
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        mut fragment: impl Read + Seek + Send,
+    ) -> Result<Self> {
+        let mut validation_log = DetailedStatusTracker::new();
+        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
+        let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
+
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+                                                                                 // verify the store
+        if verify {
+            let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
+            if _sync {
+                // verify store and claims
+                Store::verify_store(&store, &mut fragment, &mut validation_log)
+            } else {
+                // verify store and claims
+                Store::verify_store_async(&store, &mut fragment, &mut validation_log).await
+            }?;
+        };
+
+        Ok(Self {
+            manifest_store: ManifestStore::from_store(store, &mut validation_log),
+        })
+    }
+
     #[cfg(feature = "file_io")]
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
     /// would be used to load and validate fragmented MP4 files that span

@@ -107,6 +107,12 @@ fn test_builder_fragmented() -> Result<()> {
                 let reader = Reader::from_fragmented_files(&output_init, &output_fragments)?;
                 //println!("reader: {}", reader);
                 assert_eq!(reader.validation_status(), None);
+
+                // test a single fragment
+                let init_segment = std::fs::File::open(output_init)?;
+                let fragment = std::fs::File::open(output_fragments[0].as_path())?;
+                let reader = Reader::from_fragment("video/mp4", init_segment, fragment)?;
+                assert_eq!(reader.validation_status(), None);
             }
             Err(e) => panic!("error = {e:?}"),
         }
