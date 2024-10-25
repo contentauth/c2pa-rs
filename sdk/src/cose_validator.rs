@@ -15,7 +15,6 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use backtrace::Backtrace;
 use ciborium::value::Value;
 use conv::*;
 use coset::{
@@ -1324,8 +1323,7 @@ pub(crate) fn verify_cose(
     _th: &dyn TrustHandlerConfig,
     _validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let bt = Backtrace::new();
-    println!("{:?}", bt);
+    panic!("Should not be called on wasm32-wasi");
     Err(Error::CoseVerifier)
 }
 
