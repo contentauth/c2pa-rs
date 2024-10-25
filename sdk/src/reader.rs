@@ -154,23 +154,43 @@ impl Reader {
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, &mut validation_log)?;
 
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+
         if _sync {
-            Store::verify_store(
-                &store,
-                &mut ClaimAssetData::Stream(&mut stream, format),
-                &mut validation_log,
-            )?;
+            if verify {
+                Store::verify_store(
+                    &store,
+                    &mut ClaimAssetData::Stream(&mut stream, format),
+                    &mut validation_log,
+                )?;
+            }
         } else {
-            Store::verify_store_async(
-                &store,
-                &mut ClaimAssetData::Stream(&mut stream, format),
-                &mut validation_log,
-            )
-            .await?;
+            if verify {
+                Store::verify_store_async(
+                    &store,
+                    &mut ClaimAssetData::Stream(&mut stream, format),
+                    &mut validation_log,
+                )
+                .await?;
+            }
         }
 
         Ok(Reader {
             manifest_store: ManifestStore::from_store(store, &validation_log),
+        })
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Loads a [`Reader`]` from an initial segment and fragments.  This
+    /// would be used to load and validate fragmented MP4 files that span
+    /// multiple separate asset files.
+    pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
+        path: P,
+        fragments: &Vec<std::path::PathBuf>,
+    ) -> Result<Reader> {
+        let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        Ok(Reader {
+            manifest_store: ManifestStore::from_fragments(path, fragments, verify)?,
         })
     }
 
