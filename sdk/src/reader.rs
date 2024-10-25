@@ -60,6 +60,7 @@ impl Reader {
     #[async_generic()]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        #[allow(deprecated)]
         let reader = if _sync {
             ManifestStore::from_stream(format, &mut stream, verify)
         } else {
@@ -215,7 +216,7 @@ impl Reader {
         };
 
         Ok(Self {
-            manifest_store: ManifestStore::from_store(store, &mut validation_log),
+            manifest_store: ManifestStore::from_store(store, &validation_log),
         })
     }
 
@@ -228,6 +229,7 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let verify = get_settings_value::<bool>("verify.verify_after_reading")?; // defaults to true
+        #[allow(deprecated)]
         Ok(Reader {
             manifest_store: ManifestStore::from_fragments(path, fragments, verify)?,
         })
@@ -306,6 +308,58 @@ impl Reader {
             .get_resource(uri, &mut stream)
             .map(|size| size as usize)
     }
+
+    /// Convert a URI to a file path. (todo: move this to utils)
+    fn uri_to_path(uri: &str, manifest_label: &str) -> String {
+        let mut path = uri.to_string();
+        if path.starts_with("self#jumbf=") {
+            // convert to a file path always including the manifest label
+            path = path.replace("self#jumbf=", "");
+            if path.starts_with("/c2pa/") {
+                path = path.replacen("/c2pa/", "", 1);
+            } else {
+                path = format!("{}/{path}", manifest_label);
+            }
+            path = path.replace([':'], "_");
+        }
+        path
+    }
+
+    /// Write all resources to a folder.
+    ///
+    ///
+    /// This function writes all resources to a folder.  
+    /// Resources are stored in sub-folders corresponding to manifest label.
+    /// Conversions ensure the file paths are valid.
+    ///
+    /// # Arguments
+    /// * `path` - The path to the folder to write to.
+    /// # Errors
+    /// Returns an [`Error`] if the resources cannot be written to the folder.
+    /// # Example
+    /// ```no_run
+    /// use c2pa::Reader;
+    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// reader.to_folder("path/to/folder").unwrap();
+    /// ```
+    #[cfg(feature = "file_io")]
+    pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(path.as_ref().join("manifest.json"), self.json())?;
+        for manifest in self.manifest_store.manifests().values() {
+            let resources = manifest.resources();
+            for (uri, data) in resources.resources() {
+                let id_path = Self::uri_to_path(uri, manifest.label().unwrap_or("unknown"));
+                let path = path.as_ref().join(id_path);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut file = std::fs::File::create(&path)?;
+                file.write_all(data)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for Reader {
@@ -379,5 +433,17 @@ fn test_reader_nested_resource() -> Result<()> {
     let mut stream = std::io::Cursor::new(Vec::new());
     let bytes_written = reader.resource_to_stream(&uri, &mut stream)?;
     assert_eq!(bytes_written, 41810);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "file_io")]
+#[allow(clippy::unwrap_used)]
+/// Test that the reader can validate a file with nested assertion errors
+fn test_reader_to_folder() -> Result<()> {
+    let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+    println!("{reader}");
+    assert_eq!(reader.validation_status(), None);
+    reader.to_folder("../target/reader_folder")?;
     Ok(())
 }
