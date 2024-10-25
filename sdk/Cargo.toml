@@ -70,6 +70,7 @@ async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
+backtrace = "0.3"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
