@@ -1,0 +1,23 @@
+[package]
+name = "cawg-identity"
+version = "0.1.1"
+description = "Implementation of CAWG identity assertion specification"
+authors = [
+    "Eric Scouten <scouten@adobe.com>",
+]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/c2pa-crypto"
+homepage = "https://creator-assertions.github.io/identity/"
+repository = "https://github.com/contentauth/c2pa-rs"
+readme = "README.md"
+keywords = ["identity"]
+categories = ["api-bindings"]
+edition = "2021"
+rust-version = "1.76.0"
+exclude = ["tests/fixtures"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
