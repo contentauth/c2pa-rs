@@ -9,10 +9,7 @@ rust-version = "1.76.0"
 [dependencies]
 anyhow = "1.0.40"
 c2pa = { path = "../sdk", default-features = false, features = [
-	"file_io",
-	"openssl_sign",
 	"unstable_api",
-	"file_io",
 ] }
 env_logger = "0.11"
 log = "0.4.8"

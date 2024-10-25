@@ -56,14 +56,6 @@ impl EcdsaParams {
     }
 }
 
-async fn crypto_is_verified(alg: &str, key: &[u8], sig: &[u8], data: &[u8]) -> Result<bool> {
-    let public_key = UnparsedPublicKey::new(alg, key);
-    match public_key.verify(data, sig) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
-}
-
 // Conversion utility from num-bigint::BigUint (used by x509_parser)
 // to num-bigint-dig::BigUint (used by rsa)
 fn biguint_val(ber_object: &BerObject) -> rsa::BigUint {
@@ -93,10 +85,12 @@ fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> 
             Err(_) => Ok(false),
         }
     } else {
+        /*
         web_sys::console::debug_2(
             &"Ed25519 public key incorrect length: ".into(),
             &pkey.len().to_string().into(),
         );
+        */
         Err(Error::CoseInvalidCert)
     }
 }
@@ -216,25 +210,31 @@ pub(crate) async fn async_validate(
 
             match result {
                 Ok(()) => {
-                    web_sys::console::debug_1(&"RSA-PSS validation success:".into());
+                    //web_sys::console::debug_1(&"RSA-PSS validation success:".into());
                     Ok(true)
                 }
                 Err(err) => {
+                    /*
                     web_sys::console::debug_2(
                         &"RSA-PSS validation failed:".into(),
                         &err.to_string().into(),
                     );
+                    */
                     Ok(false)
                 }
             }
         }
         "ECDSA" => {
-            let alg = match hash.as_ref() {
+            let alg: &dyn VerificationAlgorithm = match hash.as_ref() {
                 "SHA-256" => &signature::ECDSA_P256_SHA256_ASN1,
                 "SHA-384" => &signature::ECDSA_P384_SHA384_ASN1,
                 _ => return Err(Error::UnknownAlgorithm),
             };
-            crypto_is_verified(alg, &pkey, &sig, &data).await
+            let public_key = UnparsedPublicKey::new(alg, &sig);
+            match public_key.verify(&data, &sig) {
+                Ok(_) => Ok(true),
+                Err(_) => Ok(false),
+            }
         }
         "ED25519" => {
             use x509_parser::{prelude::*, public_key::PublicKey};

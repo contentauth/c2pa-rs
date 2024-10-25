@@ -30,7 +30,7 @@ use x509_parser::{
 
 #[cfg(feature = "openssl")]
 use crate::openssl::verify_trust;
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::validator::{get_validator, CoseValidator};
 use crate::{
     asn1::rfc3161::TstInfo,
@@ -44,6 +44,10 @@ use crate::{
     validation_status,
     validator::ValidationInfo,
     SigningAlg,
+};
+#[cfg(target_os = "wasi")]
+use crate::{
+    wasm::wasicrypto_validator::validate_async, wasm::wasipki_trust_handler::verify_trust_async,
 };
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use crate::{
@@ -874,7 +878,7 @@ fn check_trust(
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
     } else {
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        #[cfg(target_arch = "wasm32")]
         {
             verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
@@ -884,10 +888,7 @@ fn check_trust(
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
-        #[cfg(any(all(
-            not(feature = "openssl"),
-            any(not(target_arch = "wasm32"), target_os = "wasi")
-        )))]
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
@@ -1053,7 +1054,7 @@ pub(crate) async fn verify_cose_async(
         }
 
         // is the certificate trusted
-        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        #[cfg(target_arch = "wasm32")]
         check_trust_async(
             th,
             &certs[1..],
@@ -1181,7 +1182,7 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1313,7 +1314,7 @@ pub(crate) fn verify_cose(
     Ok(result)
 }
 
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
@@ -1325,7 +1326,7 @@ pub(crate) fn verify_cose(
     Err(Error::CoseVerifier)
 }
 
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_with_cert(
     validator: Box<dyn CoseValidator>,
     sig: &[u8],
@@ -1348,7 +1349,7 @@ fn validate_with_cert(
     }
 }
 
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[cfg(target_arch = "wasm32")]
 async fn validate_with_cert_async(
     signing_alg: SigningAlg,
     sig: &[u8],
@@ -1370,7 +1371,7 @@ async fn validate_with_cert_async(
     }
 }
 
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg(not(target_arch = "wasm32"))]
 async fn validate_with_cert_async(
     signing_alg: SigningAlg,
     sig: &[u8],

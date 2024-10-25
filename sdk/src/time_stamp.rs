@@ -23,10 +23,7 @@ use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
-#[cfg(any(
-    all(target_arch = "wasm32", not(target_os = "wasi")),
-    feature = "openssl"
-))]
+#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
 use crate::cose_validator::{
     ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
     ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
@@ -645,7 +642,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
-                #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+                #[cfg(target_arch = "wasm32")]
                 {
                     let mut certificate_der = Vec::<u8>::new();
                     cert.encode_ref()
@@ -660,10 +657,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     .await
                 }
 
-                #[cfg(all(
-                    not(feature = "openssl"),
-                    any(not(target_arch = "wasm32"), target_os = "wasi")
-                ))]
+                #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
                 {
                     Ok(false)
                 }

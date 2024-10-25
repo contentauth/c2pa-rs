@@ -10,6 +10,7 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
+
 #![deny(missing_docs)]
 
 //! The `create_signer` module provides a way to obtain a [`Signer`]
