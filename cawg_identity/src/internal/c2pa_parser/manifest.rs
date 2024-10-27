@@ -22,10 +22,6 @@ const UUID: &[u8; 16] = &hex!("63326d61 0011 0010 8000 00aa00389b71");
 pub(crate) struct Manifest<'a> {
     /// Parsed child boxes of C2PA Manifest
     sbox: SuperBox<'a>,
-
-    /// Raw JUMBF data
-    #[allow(dead_code)]
-    jumbf: &'a [u8],
 }
 
 impl<'a> Manifest<'a> {
@@ -43,10 +39,7 @@ impl<'a> Manifest<'a> {
             return None;
         }
 
-        Some(Self {
-            sbox,
-            jumbf: data_box.original,
-        })
+        Some(Self { sbox })
     }
 
     /// Returns the claim from this manifest.
