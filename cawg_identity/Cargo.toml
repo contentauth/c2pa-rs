@@ -1,16 +1,16 @@
 [package]
 name = "cawg-identity"
-version = "0.0.1"
+version = "0.1.1"
 description = "Rust SDK for CAWG (Creator Assertions Working Group) identity assertion"
 authors = [
     "Eric Scouten <scouten@adobe.com>",
 ]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/cawg-identity"
-homepage = "https://contentauthenticity.org"
+homepage = "https://creator-assertions.github.io/identity/"
 repository = "https://github.com/contentauth/c2pa-rs"
-readme = "../README.md"
-keywords = ["cawg", "identity"]
+readme = "README.md"
+keywords = ["identity"]
 categories = ["api-bindings"]
 edition = "2021"
 rust-version = "1.76.0"
