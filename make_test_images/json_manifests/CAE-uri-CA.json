@@ -1,7 +1,7 @@
 {
-  "active_manifest": "contentauth:urn:uuid:a5dc9189-1dbd-41d7-842d-b935de331547",
+  "active_manifest": "contentauth:urn:uuid:028a32b7-cad8-4b73-b816-d580db52258f",
   "manifests": {
-    "contentauth:urn:uuid:a5dc9189-1dbd-41d7-842d-b935de331547": {
+    "contentauth:urn:uuid:028a32b7-cad8-4b73-b816-d580db52258f": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
       "claim_generator_info": [
         {
@@ -13,24 +13,31 @@
           "version": "0.36.1"
         }
       ],
-      "title": "CACA.jpg",
+      "title": "CAE-uri-CA.jpg",
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:0492a949-e4e3-4d13-a893-e9a6462ba161",
+      "instance_id": "xmp:iid:2eb96009-0745-47da-a1b5-84fd65a78685",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:a5dc9189-1dbd-41d7-842d-b935de331547/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:028a32b7-cad8-4b73-b816-d580db52258f/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [
         {
-          "title": "CA.jpg",
+          "title": "E-uri-CA.jpg",
           "format": "image/jpeg",
-          "instance_id": "xmp:iid:f5528711-b891-44f9-80e7-38410fa3961f",
+          "instance_id": "xmp:iid:e6132f56-2972-4ea2-b871-cdef869f26f3",
           "thumbnail": {
             "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+            "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient.jpeg"
           },
-          "relationship": "parentOf",
-          "active_manifest": "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2"
+          "relationship": "componentOf",
+          "active_manifest": "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2",
+          "validation_status": [
+            {
+              "code": "assertion.hashedURI.mismatch",
+              "url": "self#jumbf=/c2pa/contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2/c2pa.assertions/c2pa.actions",
+              "explanation": "hash does not match assertion data: self#jumbf=c2pa.assertions/c2pa.actions"
+            }
+          ]
         }
       ],
       "assertions": [
@@ -53,24 +60,29 @@
           "data": {
             "actions": [
               {
-                "action": "c2pa.opened",
+                "action": "c2pa.created",
+                "softwareAgent": "Make Test Images 0.36.1",
                 "parameters": {
+                  "name": "gradient"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia"
+              },
+              {
+                "action": "c2pa.placed",
+                "parameters": {
+                  "org.cai.ingredientIds": [
+                    "xmp:iid:e6132f56-2972-4ea2-b871-cdef869f26f3"
+                  ],
                   "ingredient": [
                     {
                       "url": "self#jumbf=c2pa.assertions/c2pa.ingredient",
-                      "hash": "G0zapTTWE/Yl2k5m6rCHSeVDVwnRu0DUNPM9Xi4uEqg="
+                      "hash": "5c6Vujate3HDQz5jbg74iVo5cBveU+WysaLC0GKB9Z4="
                     }
-                  ],
-                  "org.cai.ingredientIds": [
-                    "xmp:iid:f5528711-b891-44f9-80e7-38410fa3961f"
                   ]
                 }
               },
               {
-                "action": "c2pa.color_adjustments",
-                "parameters": {
-                  "name": "brightnesscontrast"
-                }
+                "action": "c2pa.resized"
               }
             ]
           }
@@ -80,9 +92,9 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-10-10T22:42:37+00:00"
+        "time": "2024-10-10T22:42:41+00:00"
       },
-      "label": "contentauth:urn:uuid:a5dc9189-1dbd-41d7-842d-b935de331547"
+      "label": "contentauth:urn:uuid:028a32b7-cad8-4b73-b816-d580db52258f"
     },
     "contentauth:urn:uuid:89ba3c19-2ad4-445a-bb7d-bda815bad4c2": {
       "claim_generator": "make_test_images/0.36.1 c2pa-rs/0.36.1",
@@ -152,7 +164,7 @@
               {
                 "action": "c2pa.color_adjustments",
                 "parameters": {
-                  "name": "brightnesscontrast"
+                  "name": "brightnessdeadbeef"
                 }
               }
             ]
