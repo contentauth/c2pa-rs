@@ -26,6 +26,7 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 2;
+pub const CAI_INGREDIENT_IDS: &str = "org.cai.ingredientIds";
 
 /// Specification defined C2PA actions
 pub mod c2pa_action {
@@ -91,6 +92,7 @@ impl From<ClaimGeneratorInfo> for SoftwareAgent {
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Action {
     /// The label associated with this action. See ([`c2pa_action`]).
     action: String,
@@ -115,8 +117,10 @@ pub struct Action {
     #[serde(skip_serializing_if = "Option::is_none")]
     changes: Option<Vec<RegionOfInterest>>,
 
-    /// The value of the `xmpMM:InstanceID` property for the modified (output) resource.
-    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
+    /// This is NOT the instanceID in the spec
+    /// It is now deprecated but was previously used to map the action to an ingredient
+    #[serde(rename = "instanceId", skip_serializing)] // this should never be written to CBOR
+    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     instance_id: Option<String>,
 
     /// Additional parameters of the action. These vary by the type of action.
@@ -186,7 +190,9 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
+    #[deprecated(since = "0.37.0", note = "Use `org.cai.ingredientIds` instead")]
     pub fn instance_id(&self) -> Option<&str> {
+        #[allow(deprecated)]
         self.instance_id.as_deref()
     }
 
@@ -206,6 +212,13 @@ impl Action {
     pub fn get_parameter(&self, key: &str) -> Option<&Value> {
         match self.parameters.as_ref() {
             Some(parameters) => parameters.get(key),
+            None => None,
+        }
+    }
+
+    pub fn get_parameter_mut(&mut self, key: &str) -> Option<&mut Value> {
+        match &mut self.parameters {
+            Some(parameters) => parameters.get_mut(key),
             None => None,
         }
     }
@@ -259,9 +272,30 @@ impl Action {
 
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
+    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
     pub fn set_instance_id<S: Into<String>>(mut self, id: S) -> Self {
-        self.instance_id = Some(id.into());
+        #[allow(clippy::unwrap_used)]
+        self.add_ingredient_id(&id.into()).unwrap(); // Supporting deprecated feature.
         self
+    }
+
+    // Internal function to return any ingredients referenced by this action.
+    pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
+        match self.get_parameter(CAI_INGREDIENT_IDS) {
+            Some(Value::Array(ids)) => {
+                let mut result = Vec::new();
+                for id in ids {
+                    if let Value::Text(s) = id {
+                        result.push(s.clone());
+                    }
+                }
+                Some(result)
+            }
+            Some(_) => None, // Invalid format, so ignore it.
+            // If there is no org.cai.ingredientIds parameter, check for the deprecated instance_id
+            #[allow(deprecated)]
+            None => self.instance_id.as_ref().map(|id| vec![id.to_string()]),
+        }
     }
 
     /// Sets the additional parameters for this action.
@@ -276,6 +310,27 @@ impl Action {
         let value = serde_cbor::from_slice(&value_bytes)?;
 
         self.parameters = Some(match self.parameters {
+            Some(mut parameters) => {
+                parameters.insert(key.into(), value);
+                parameters
+            }
+            None => {
+                let mut p = HashMap::new();
+                p.insert(key.into(), value);
+                p
+            }
+        });
+        Ok(self)
+    }
+
+    pub(crate) fn set_parameter_ref<S: Into<String>, T: Serialize>(
+        &mut self,
+        key: S,
+        value: T,
+    ) -> Result<&mut Self> {
+        let value_bytes = serde_cbor::ser::to_vec(&value)?;
+        let value = serde_cbor::from_slice(&value_bytes)?;
+        self.parameters = Some(match self.parameters.take() {
             Some(mut parameters) => {
                 parameters.insert(key.into(), value);
                 parameters
@@ -330,6 +385,17 @@ impl Action {
             }
         }
         self
+    }
+
+    /// Adds an ingredient id to the action.
+    pub fn add_ingredient_id(&mut self, ingredient_id: &str) -> Result<&mut Self> {
+        if let Some(Value::Array(ids)) = self.get_parameter_mut(CAI_INGREDIENT_IDS) {
+            ids.push(Value::Text(ingredient_id.to_string()));
+            return Ok(self);
+        }
+        let ids = vec![Value::Text(ingredient_id.to_string())];
+        self.set_parameter_ref(CAI_INGREDIENT_IDS, ids)?;
+        Ok(self)
     }
 }
 
@@ -542,7 +608,7 @@ pub mod tests {
             .set_parameter("ingredient".to_owned(), make_hashed_uri1())
             .unwrap()
             .set_changed(Some(&["this", "that"].to_vec()))
-            .set_instance_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b")
+            //  .add_ingredient_id("xmp.iid:cb9f5498-bb58-4572-8043-8c369e6bfb9b").unwrap()
             .set_actors(Some(
                 &[Actor::new(
                     Some("Somebody"),
@@ -596,8 +662,8 @@ pub mod tests {
         );
         assert_eq!(result.actions[1].action(), original.actions[1].action());
         assert_eq!(
-            result.actions[1].parameters.as_ref().unwrap().get("name"),
-            original.actions[1].parameters.as_ref().unwrap().get("name")
+            result.actions[1].parameters().unwrap().get("name"),
+            original.actions[1].parameters().unwrap().get("name")
         );
         assert_eq!(result.actions[1].when(), original.actions[1].when());
         assert_eq!(
@@ -713,9 +779,9 @@ pub mod tests {
                   },
                   {
                     "action": "c2pa.opened",
-                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
-                      "description": "import"
+                      "description": "import",
+                      "org.cai.ingredientIds": ["xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d"],
                     },
                     "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
                     "softwareAgent": "TestApp 1.0",
@@ -742,16 +808,7 @@ pub mod tests {
         let json = serde_json::json!({
             "actions": [
                 {
-                    "action": "c2pa.edited",
-                    "parameters": {
-                        "description": "gradient",
-                        "name": "any value"
-                    },
-                    "softwareAgent": "TestApp"
-                },
-                {
                     "action": "c2pa.opened",
-                    "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
                     "parameters": {
                         "description": "import"
                     },
@@ -761,6 +818,14 @@ pub mod tests {
                         "version": "1.0",
                         "something": "else"
                     },
+                },
+                {
+                    "action": "c2pa.edited",
+                    "parameters": {
+                        "description": "gradient",
+                        "name": "any value"
+                    },
+                    "softwareAgent": "TestApp"
                 },
                 {
                     "action": "com.joesphoto.filter",
@@ -804,7 +869,7 @@ pub mod tests {
         assert_eq!(original.actions, result.actions);
         assert_eq!(original.templates, result.templates);
         assert_eq!(
-            result.actions[0].software_agent().unwrap(),
+            result.actions[1].software_agent().unwrap(),
             &SoftwareAgent::String("TestApp".to_string())
         );
         assert_eq!(

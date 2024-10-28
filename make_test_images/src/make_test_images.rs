@@ -303,7 +303,9 @@ impl MakeTestImages {
                 actions.push(json!(
                     {
                         "action": "c2pa.opened",
-                        "instanceId": &instance_id,
+                        "parameters": {
+                            "org.cai.ingredientIds": [&instance_id]
+                        }
                     }
                 ));
 
@@ -386,7 +388,9 @@ impl MakeTestImages {
                 actions.push(json!(
                     {
                         "action": "c2pa.placed",
-                        "instanceId": instance_id,
+                        "parameters": {
+                            "org.cai.ingredientIds": [&instance_id]
+                        }
                     }
                 ));
                 x += width as i64;
