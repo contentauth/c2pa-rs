@@ -1,21 +1,24 @@
 [package]
 name = "c2pa-crypto"
-version = "0.0.1"
-description = "(INTERNAL) Cryptography implementation for c2pa-rs crate"
+version = "0.1.2"
+description = "Cryptography internals for c2pa-rs crate"
 authors = [
-	"Maurice Fisher <mfisher@adobe.com>",
-	"Gavin Peacock <gpeacock@adobe.com>",
-	"Eric Scouten <scouten@adobe.com>",
-	"Leonard Rosenthol <lrosenth@adobe.com>",
-	"Dave Kozma <dkozma@adobe.com>",
+    "Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
+    "Eric Scouten <scouten@adobe.com>",
+    "Leonard Rosenthol <lrosenth@adobe.com>",
+    "Dave Kozma <dkozma@adobe.com>",
+    "Dylan Ross <dyross@adobe.com>"
 ]
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/c2pa-crypto"
 homepage = "https://contentauthenticity.org"
-repository = "https://github.com/contentauth/c2pa-crypto"
-readme = "../README.md"
+repository = "https://github.com/contentauth/c2pa-rs"
+readme = "README.md"
+keywords = ["metadata"]
+categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.74.0"
+rust-version = "1.76.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]

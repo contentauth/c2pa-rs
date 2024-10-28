@@ -850,6 +850,7 @@ impl Manifest {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, a)| {
+                            #[allow(deprecated)]
                             if a.instance_id().is_some()
                                 && a.get_parameter(ingredients_key).is_none()
                             {
@@ -861,6 +862,7 @@ impl Manifest {
                         .collect();
 
                     for (index, action) in needs_ingredient {
+                        #[allow(deprecated)]
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
                                 let update = match ingredients_key {

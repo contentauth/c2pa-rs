@@ -62,7 +62,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -196,8 +196,14 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Dry-run of crate publish
+      - name: Dry-run of crate publish (c2pa-rs)
         run: cargo publish -p c2pa --dry-run
+
+      - name: Dry-run of crate publish (c2pa-crypto)
+        run: cargo publish -p c2pa-crypto --dry-run
+
+      - name: Dry-run of crate publish (cawg-identity)
+        run: cargo publish -p cawg-identity --dry-run
 
   clippy_check:
     name: Clippy
@@ -274,7 +280,7 @@ jobs:
         # environment. The goal is to fail PR validation
         # if the subsequent release would result in a failed
         # documentation build on docs.rs.
-        run: cargo +nightly doc --all-features --no-deps
+        run: cargo +nightly doc --workspace --all-features --no-deps
         env:
           RUSTDOCFLAGS: --cfg docsrs
           DOCS_RS: 1
