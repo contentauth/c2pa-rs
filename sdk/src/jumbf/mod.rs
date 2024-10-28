@@ -13,5 +13,5 @@
 
 pub mod boxes;
 pub mod boxio;
-pub mod labels;
 pub mod jumbf_uri;
+pub mod labels;

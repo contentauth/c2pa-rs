@@ -18,40 +18,31 @@
 // "self#jumbf=/c2pa/contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90/c2pa.signature
 // "self#jumbf=c2pa.signature"
 
-use std::{fmt, str::FromStr, convert::TryFrom};
+use std::{convert::TryFrom, fmt, str::FromStr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JumbfUriError {
-    InvalidScheme,
-    InvvalidManifestLabel,
-    InvalidSectionLabel,
+    Prefix,
+    InvalidManifestLabel,
+    UnknownSection,
     InvalidPath,
 }
 
-pub enum UriType {
-    Manifest,
-    Assertion,
-    DataBox,
-    Credential,
-    Signature,
-}
-
-impl FromStr for UriType{
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<UriType, Self::Err> {
-        match input {
-            "c2pa.manifest"  => Ok(UriType::Manifest),
-            "c2pa.assertions" => Ok(UriType::Assertion),
-            "c2pa.databoxes" => Ok(UriType::DataBox),
-            "c2pa.credentials" => Ok(UriType::Credential),
-            "c2pa.signature" => Ok(UriType::Signature),
-            _   => Err(()),
+impl fmt::Display for JumbfUriError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            JumbfUriError::Prefix => write!(f, "Invalid JUMBF URI prefix"),
+            JumbfUriError::InvalidManifestLabel => write!(f, "Invalid manifest label"),
+            JumbfUriError::UnknownSection => write!(f, "Unknown section"),
+            JumbfUriError::InvalidPath => write!(f, "Invalid path"),
         }
     }
 }
 
+impl std::error::Error for JumbfUriError {}
 
+/// A JUMBF URI is a URI that is used to reference a specific item in a JUMBF manifest.
+/// The URI is formatted as `self#jumbf=<path>` where <path> may a manifest_label or relative.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JumbfUri {
     Manifest(String),
@@ -66,19 +57,20 @@ pub enum JumbfUri {
 }
 
 impl JumbfUri {
-    pub const JUMBF_PREFIX: &'static str = "self#jumbf";
-    pub const C2PA_PREFIX: &'static str = "c2pa";
     pub const C2PA_ASSERTIONS: &'static str = "c2pa.assertions";
     pub const C2PA_CREDENTIALS: &'static str = "c2pa.credentials";
-    pub const C2PA_SIGNATURE: &'static str = "c2pa.signature";
+    // deprecated
     pub const C2PA_DATABOXES: &'static str = "c2pa.databoxes";
+    pub const C2PA_PREFIX: &'static str = "c2pa";
+    pub const C2PA_SIGNATURE: &'static str = "c2pa.signature";
+    pub const JUMBF_PREFIX: &'static str = "self#jumbf";
 
     /// Parse a JUMBF URI.
     pub fn parse(uri: &str) -> Result<JumbfUri, JumbfUriError> {
         // first validate the JUMBF URI prefix.
         let uri_parts: Vec<&str> = uri.split('=').collect();
         if uri_parts.len() != 2 || uri_parts[0] != JumbfUri::JUMBF_PREFIX {
-            return Err(JumbfUriError::InvalidScheme);
+            return Err(JumbfUriError::Prefix);
         }
         // now validate the path portion of the URI.
         let parts: Vec<&str> = uri_parts[1].split('/').collect(); // split the path into parts
@@ -88,19 +80,23 @@ impl JumbfUri {
         }
 
         // Check if this is an absolute JUMBF URI.
-        if parts_count > 2 && parts[0].len() == 0 && parts[1] == JumbfUri::C2PA_PREFIX {
-            let manifest_label = parts[2].to_string(); 
+        if parts_count > 2 && parts[0].is_empty() && parts[1] == JumbfUri::C2PA_PREFIX {
+            let manifest_label = parts[2].to_string();
             // todo: Validate the format of the manifest label for spec consistency.
             if parts_count > 3 {
                 let section_label = parts[3].to_string();
-                let item_label = if parts_count > 4 {Some(parts[4].to_string())} else {None};
+                let item_label = if parts_count > 4 && !parts[4].is_empty() {
+                    Some(parts[4].to_string())
+                } else {
+                    None
+                };
                 if parts_count > 5 {
                     return Err(JumbfUriError::InvalidPath);
                 }
                 Ok(match section_label.as_str() {
                     JumbfUri::C2PA_ASSERTIONS => {
                         if let Some(item_label) = item_label {
-                            Self::Assertion(manifest_label,item_label)
+                            Self::Assertion(manifest_label, item_label)
                         } else {
                             return Err(JumbfUriError::InvalidPath);
                         }
@@ -125,14 +121,22 @@ impl JumbfUri {
                         }
                         Self::Signature(manifest_label)
                     }
-                    _ => return Err(JumbfUriError::InvalidSectionLabel),
+                    _ => return Err(JumbfUriError::UnknownSection),
                 })
             } else {
                 Ok(Self::Manifest(manifest_label))
             }
         } else {
-            let section_label = parts[0].to_string(); 
-            let item_label = if parts_count > 1 {Some(parts[1].to_string())} else {None};
+            // relative URIs
+            let section_label = parts[0].to_string();
+            let item_label = if parts_count > 1 && !parts[1].is_empty() {
+                Some(parts[1].to_string())
+            } else {
+                None
+            };
+            if parts_count > 2 {
+                return Err(JumbfUriError::InvalidPath);
+            }
             Ok(match section_label.as_str() {
                 JumbfUri::C2PA_ASSERTIONS => {
                     if let Some(item_label) = item_label {
@@ -161,30 +165,35 @@ impl JumbfUri {
                     }
                     Self::RelativeSignature
                 }
-                _ => return Err(JumbfUriError::InvalidSectionLabel),
+                _ => return Err(JumbfUriError::UnknownSection),
             })
-
         }
     }
 
     /// Try to parse a Jumbf URI.
     pub fn try_from_uri(uri: &str) -> Result<JumbfUri, JumbfUriError> {
-        JumbfUri::parse(uri) 
+        JumbfUri::parse(uri)
     }
 
     /// Create a Jumbf URI from a manifest label.
-    pub fn from_manifest<S:Into<String>>(manifest_label: S) -> JumbfUri {
+    pub fn from_manifest<S: Into<String>>(manifest_label: S) -> JumbfUri {
         JumbfUri::Manifest(manifest_label.into())
     }
 
     /// Create a Jumbf URI from an assertion label.
-    pub fn from_assertion<S, T>(manifest_label: S, assertion_label: T) -> JumbfUri 
-    where S: Into<String>, T: Into<String> {
+    pub fn from_assertion<S, T>(manifest_label: S, assertion_label: T) -> JumbfUri
+    where
+        S: Into<String>,
+        T: Into<String>,
+    {
         JumbfUri::Assertion(manifest_label.into(), assertion_label.into())
     }
 
-    pub fn from_data_box<S, T>(manifest_label: S, item_label:T) -> JumbfUri 
-    where S: Into<String>, T: Into<String> {
+    pub fn from_data_box<S, T>(manifest_label: S, item_label: T) -> JumbfUri
+    where
+        S: Into<String>,
+        T: Into<String>,
+    {
         JumbfUri::DataBox(manifest_label.into(), item_label.into())
     }
 
@@ -207,23 +216,31 @@ impl JumbfUri {
         }
     }
 
-     pub fn section_label(&self) -> Option<&str> {
+    pub fn section_label(&self) -> Option<&str> {
         match self {
-            JumbfUri::Assertion(_, label) => Some(label.as_str()),
-            JumbfUri::DataBox(_, label) => Some(label.as_str()),
-            JumbfUri::Credential(_, label) => Some(label.as_str()),
+            JumbfUri::Assertion(_, _) => Some(Self::C2PA_ASSERTIONS),
+            JumbfUri::DataBox(_, _) => Some(Self::C2PA_DATABOXES),
+            JumbfUri::Credential(_, _) => Some(Self::C2PA_CREDENTIALS),
+            JumbfUri::Signature(_) => Some(Self::C2PA_SIGNATURE),
+            JumbfUri::RelativeAssertion(_) => Some(Self::C2PA_ASSERTIONS),
+            JumbfUri::RelativeDataBox(_) => Some(Self::C2PA_DATABOXES),
+            JumbfUri::RelativeCredential(_) => Some(Self::C2PA_CREDENTIALS),
+            JumbfUri::RelativeSignature => Some(Self::C2PA_SIGNATURE),
             _ => None,
         }
-     }
+    }
 
-     pub fn item_label(&self) -> Option<&str> {
+    pub fn item_label(&self) -> Option<&str> {
         match self {
             JumbfUri::Assertion(_, label) => Some(label.as_str()),
             JumbfUri::DataBox(_, label) => Some(label.as_str()),
             JumbfUri::Credential(_, label) => Some(label.as_str()),
+            JumbfUri::RelativeAssertion(label) => Some(label.as_str()),
+            JumbfUri::RelativeDataBox(label) => Some(label.as_str()),
+            JumbfUri::RelativeCredential(label) => Some(label.as_str()),
             _ => None,
         }
-     }
+    }
 
     pub fn to_uri(&self) -> String {
         self.to_string()
@@ -235,18 +252,24 @@ impl JumbfUri {
             Self::DataBox(_, item_label) => Self::RelativeDataBox(item_label.to_owned()),
             Self::Credential(_, item_label) => Self::RelativeCredential(item_label.to_owned()),
             Self::Signature(_) => Self::RelativeSignature,
-            // Self::Manifest(_) => panic!("Invalid JumbfUri type"),
-            _ => self.to_owned()
+            // There is no RelativeManifest URI, so we return the original URI.
+            _ => self.to_owned(),
         }
     }
 
-    pub fn to_absolute<S:Into<String>>(&self, manifest_label: S) -> Self {
+    pub fn to_absolute<S: Into<String>>(&self, manifest_label: S) -> Self {
         match self {
-            Self::RelativeAssertion(item_label) => Self::Assertion(manifest_label.into(), item_label.to_owned()),
-            Self::RelativeDataBox(item_label) => Self::DataBox(manifest_label.into(), item_label.to_owned()),
-            Self::RelativeCredential(item_label) => Self::Credential(manifest_label.into(), item_label.to_owned()),
+            Self::RelativeAssertion(item_label) => {
+                Self::Assertion(manifest_label.into(), item_label.to_owned())
+            }
+            Self::RelativeDataBox(item_label) => {
+                Self::DataBox(manifest_label.into(), item_label.to_owned())
+            }
+            Self::RelativeCredential(item_label) => {
+                Self::Credential(manifest_label.into(), item_label.to_owned())
+            }
             Self::RelativeSignature => Self::Signature(manifest_label.into()),
-            _ => self.to_owned()
+            _ => self.to_owned(),
         }
     }
 
@@ -254,10 +277,9 @@ impl JumbfUri {
         self.to_relative().to_string()
     }
 
-    pub fn to_absolute_uri<S:Into<String>>(&self, manifest_label: S) -> String {
+    pub fn to_absolute_uri<S: Into<String>>(&self, manifest_label: S) -> String {
         self.to_absolute(manifest_label).to_string()
     }
-
 }
 
 impl TryFrom<&str> for JumbfUri {
@@ -276,16 +298,43 @@ impl fmt::Display for JumbfUri {
                 write!(f, "/{}/{}", Self::C2PA_PREFIX, manifest_label)?;
             }
             JumbfUri::Assertion(manifest_label, assertion_label) => {
-                write!(f, "/{}/{}/{}/{}", JumbfUri::C2PA_PREFIX, manifest_label, Self::C2PA_ASSERTIONS, assertion_label)?;
+                write!(
+                    f,
+                    "/{}/{}/{}/{}",
+                    JumbfUri::C2PA_PREFIX,
+                    manifest_label,
+                    Self::C2PA_ASSERTIONS,
+                    assertion_label
+                )?;
             }
             JumbfUri::DataBox(manifest_label, databox_label) => {
-                write!(f, "/{}/{}/{}/{}", JumbfUri::C2PA_PREFIX, manifest_label, Self::C2PA_DATABOXES, databox_label)?;
+                write!(
+                    f,
+                    "/{}/{}/{}/{}",
+                    JumbfUri::C2PA_PREFIX,
+                    manifest_label,
+                    Self::C2PA_DATABOXES,
+                    databox_label
+                )?;
             }
             JumbfUri::Credential(manifest_label, credential_label) => {
-                write!(f, "/{}/{}/{}/{}", JumbfUri::C2PA_PREFIX, manifest_label, Self::C2PA_CREDENTIALS, credential_label)?;
+                write!(
+                    f,
+                    "/{}/{}/{}/{}",
+                    JumbfUri::C2PA_PREFIX,
+                    manifest_label,
+                    Self::C2PA_CREDENTIALS,
+                    credential_label
+                )?;
             }
             JumbfUri::Signature(manifest_label) => {
-                write!(f, "/{}/{}", JumbfUri::C2PA_PREFIX, manifest_label)?;
+                write!(
+                    f,
+                    "/{}/{}/{}",
+                    JumbfUri::C2PA_PREFIX,
+                    manifest_label,
+                    Self::C2PA_SIGNATURE,
+                )?;
             }
             JumbfUri::RelativeAssertion(assertion_label) => {
                 write!(f, "{}/{}", Self::C2PA_ASSERTIONS, assertion_label)?;
@@ -313,6 +362,27 @@ pub mod tests {
     use super::*;
 
     #[test]
+    fn test_invaild_prefix() {
+        let uri = "foo=c2pa.assertions/c2pa.thumbnail.claim.jpeg";
+        let jumbf_uri = JumbfUri::parse(uri);
+        assert_eq!(jumbf_uri, Err(JumbfUriError::Prefix));
+    }
+
+    #[test]
+    fn test_invaild_section() {
+        let uri = "self#jumbf=my.thing/c2pa.thumbnail.claim.jpeg";
+        let jumbf_uri = JumbfUri::parse(uri);
+        assert_eq!(jumbf_uri, Err(JumbfUriError::UnknownSection));
+    }
+
+    #[test]
+    fn test_invaild_path() {
+        let uri = "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg/extra";
+        let jumbf_uri = JumbfUri::parse(uri);
+        assert_eq!(jumbf_uri, Err(JumbfUriError::InvalidPath));
+    }
+
+    #[test]
     fn test_absolute_jumbf_uri() {
         let uri = "self#jumbf=/c2pa/contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
         let jumbf_uri = JumbfUri::parse(uri).unwrap();
@@ -321,10 +391,7 @@ pub mod tests {
             Some("contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90")
         );
         assert_eq!(jumbf_uri.section_label(), Some("c2pa.assertions"));
-        assert_eq!(
-            jumbf_uri.item_label(),
-            Some("c2pa.thumbnail.claim.jpeg")
-        );
+        assert_eq!(jumbf_uri.item_label(), Some("c2pa.thumbnail.claim.jpeg"));
     }
 
     #[test]
@@ -333,10 +400,7 @@ pub mod tests {
         let jumbf_uri = JumbfUri::parse(uri).unwrap();
         assert_eq!(jumbf_uri.manifest_label(), None);
         assert_eq!(jumbf_uri.section_label(), Some("c2pa.assertions"));
-        assert_eq!(
-            jumbf_uri.item_label(),
-            Some("c2pa.thumbnail.claim.jpeg")
-        );
+        assert_eq!(jumbf_uri.item_label(), Some("c2pa.thumbnail.claim.jpeg"));
     }
 
     #[test]
@@ -348,10 +412,7 @@ pub mod tests {
             Some("contentauth:urn:uuid:e46d3d9f-deaf-46b1-8cff-9dc9cd637f90")
         );
         assert_eq!(jumbf_uri.section_label(), Some("c2pa.assertions"));
-        assert_eq!(
-            jumbf_uri.item_label(),
-            Some("c2pa.thumbnail.claim.jpeg")
-        );
+        assert_eq!(jumbf_uri.item_label(), Some("c2pa.thumbnail.claim.jpeg"));
     }
 
     #[test]
