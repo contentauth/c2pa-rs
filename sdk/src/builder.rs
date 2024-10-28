@@ -588,7 +588,11 @@ impl Builder {
         let mut claim_generator_info = definition.claim_generator_info.clone();
         let metadata = definition.metadata.clone();
         // add the default claim generator info for this library
-        claim_generator_info.push(ClaimGeneratorInfo::default());
+        if claim_generator_info.is_empty() {
+            claim_generator_info.push(ClaimGeneratorInfo::default());
+        }
+
+        claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
         // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
