@@ -1323,7 +1323,6 @@ pub(crate) fn verify_cose(
     _th: &dyn TrustHandlerConfig,
     _validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    panic!("Should not be called on wasm32-wasi");
     Err(Error::CoseVerifier)
 }
 

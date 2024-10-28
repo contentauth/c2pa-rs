@@ -187,7 +187,7 @@ impl TrustHandlerConfig for WasiTrustHandlerConfig {
 
 fn find_allowed_eku<'a>(
     cert_der: &'a [u8],
-    allowed_ekus: &'a Vec<asn1_rs::Oid<'a>>,
+    allowed_ekus: &'a [asn1_rs::Oid<'a>],
 ) -> Option<&'a asn1_rs::Oid<'a>> {
     if let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) {
         if let Ok(Some(eku)) = cert.extended_key_usage() {
@@ -343,7 +343,7 @@ pub(crate) async fn verify_data(
         )
         .await
     } else {
-        return Err(Error::BadParam("unknown alg processing cert".to_string()));
+        Err(Error::BadParam("unknown alg processing cert".to_string()))
     }
 }
 // convert der signatures to P1363 format: r | s
@@ -548,13 +548,8 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::*;
-
     use super::*;
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
+    #[test]
     async fn test_trust_store() {
         let mut th = WasiTrustHandlerConfig::new();
         th.clear();
@@ -617,9 +612,7 @@ pub mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
+    #[test]
     async fn test_broken_trust_chain() {
         let mut th = WasiTrustHandlerConfig::new();
         th.clear();

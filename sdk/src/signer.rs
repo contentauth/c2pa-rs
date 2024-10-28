@@ -65,6 +65,7 @@ pub trait Signer {
         }
         None
     }
+    //TODO: Implement for wasi
     #[cfg(target_arch = "wasm32")]
     fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None

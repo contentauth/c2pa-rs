@@ -16,45 +16,8 @@ use std::convert::TryFrom;
 use ring::signature::{self, UnparsedPublicKey, VerificationAlgorithm};
 use spki::SubjectPublicKeyInfoRef;
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
-/*
-use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{CryptoKey, SubtleCrypto};
-*/
 
-//use crate::{wasm::context::WindowOrWorker, Error, Result, SigningAlg};
 use crate::{Error, Result, SigningAlg};
-
-pub struct EcKeyImportParams {
-    name: String,
-    named_curve: String,
-    hash: String,
-}
-
-impl EcKeyImportParams {
-    pub fn new(name: &str, hash: &str, named_curve: &str) -> Self {
-        EcKeyImportParams {
-            name: name.to_owned(),
-            named_curve: named_curve.to_owned(),
-            hash: hash.to_owned(),
-        }
-    }
-}
-
-pub struct EcdsaParams {
-    name: String,
-    hash: String,
-}
-
-impl EcdsaParams {
-    pub fn new(name: &str, hash: &str) -> Self {
-        EcdsaParams {
-            name: name.to_owned(),
-            hash: hash.to_owned(),
-        }
-    }
-}
 
 // Conversion utility from num-bigint::BigUint (used by x509_parser)
 // to num-bigint-dig::BigUint (used by rsa)
@@ -116,7 +79,7 @@ pub(crate) async fn async_validate(
             let spki = SubjectPublicKeyInfoRef::try_from(pkey.as_ref())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
 
-            let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
+            let (_, seq) = parse_ber_sequence(spki.subject_public_key.raw_bytes())
                 .map_err(|err| Error::WasmRsaKeyImport(err.to_string()))?;
 
             let modulus = biguint_val(&seq[0]);
@@ -386,18 +349,9 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::*;
-
     use super::*;
     use crate::SigningAlg;
 
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
     async fn test_async_verify_rsa_pss() {
         // PS signatures
         let sig_bytes = include_bytes!("../../tests/fixtures/sig_ps256.data");
@@ -411,9 +365,6 @@ pub mod tests {
         assert_eq!(validated, true);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
     async fn test_async_verify_ecdsa() {
         // EC signatures
         let sig_es384_bytes = include_bytes!("../../tests/fixtures/sig_es384.data");
@@ -462,9 +413,6 @@ pub mod tests {
         assert_eq!(validated, true);
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
     #[ignore]
     async fn test_async_verify_bad() {
         let sig_bytes = include_bytes!("../../tests/fixtures/sig_ps256.data");
