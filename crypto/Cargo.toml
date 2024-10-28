@@ -30,6 +30,7 @@ default = []
 openssl = ["dep:openssl"]
 openssl_ffi_mutex = []
 psxxx_ocsp_stapling_experimental = []
+json_schema = ["dep:schemars"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -63,6 +64,7 @@ rand_chacha = "0.3.1"
 rasn-ocsp = "0.12.5"
 rasn-pkix = "0.12.5"
 rasn = "0.12.5"
+schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 serde_cbor = "0.11.1"

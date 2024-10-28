@@ -25,9 +25,7 @@ use serde::{Deserialize, Serialize};
 /// > be generated using one of the digital signature algorithms and
 /// > key types listed as described in this section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-// #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-// ^^ [scouten 2024-07-11]: Will we eventually need this? Interesting boundary
-// condition.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 pub enum SigningAlg {
     /// ECDSA with SHA-256
     Es256,

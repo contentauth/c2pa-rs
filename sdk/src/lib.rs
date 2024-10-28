@@ -136,7 +136,6 @@ pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
-pub use signing_alg::SigningAlg;
 pub use utils::mime::format_from_path;
 
 // Internal modules
@@ -172,7 +171,6 @@ pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
-pub(crate) mod signing_alg;
 pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
@@ -182,3 +180,5 @@ pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 
 pub(crate) mod validator;
+
+pub use c2pa_crypto::SigningAlg;
