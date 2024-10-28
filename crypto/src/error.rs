@@ -11,23 +11,26 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// #![deny(missing_docs)] (we'll turn this on once fully documented)
+#![deny(missing_docs)]
 
 use thiserror::Error;
 
-/// `Error` enumerates errors returned by most C2PA toolkit operations.
+/// `Error` enumerates errors returned by most c2pa-crypto operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// An invalid parameter was provided.
     #[error("bad parameter: {0}")]
     BadParam(String),
 
+    /// A feature is not yet implemented.
     #[error("feature implementation incomplete")]
     NotImplemented(String),
 
     /// The COSE Sign1 structure can not be parsed.
     #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
     InvalidCoseSignature {
+        /// Error from coset parser.
         coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
                                         * coset::CoseError does not implement std::Error::error
                                         * and can't because coset is nostd. */
@@ -38,6 +41,7 @@ pub enum Error {
     #[error("COSE signature algorithm is not supported")]
     CoseSignatureAlgorithmNotSupported,
 
+    /// Could not find a verification key.
     #[error("COSE could not find verification key")]
     CoseMissingKey,
 
@@ -45,21 +49,27 @@ pub enum Error {
     #[error("could not find signing certificate chain in COSE signature")]
     CoseX5ChainMissing,
 
+    /// The certificate contained an invalid certificate.
     #[error("COSE error parsing certificate")]
     CoseInvalidCert,
 
+    /// The COSE signature was invalid.
     #[error("COSE signature invalid")]
     CoseSignature,
 
+    /// An error occurred in the COSE verifier.
     #[error("COSE verifier failure")]
     CoseVerifier,
 
+    /// The COSE certificate has expired.
     #[error("COSE certificate has expired")]
     CoseCertExpiration,
 
+    /// The COSE certificate was revoked.
     #[error("COSE certificate has been revoked")]
     CoseCertRevoked,
 
+    /// The COSE certificate was not trusted.
     #[error("COSE certificate not trusted")]
     CoseCertUntrusted,
 
@@ -67,6 +77,7 @@ pub enum Error {
     #[error("COSE time stamp could not be parsed")]
     CoseInvalidTimeStamp,
 
+    /// The COSE time stamp uses an expired certificate.
     #[error("COSE time stamp had expired cert")]
     CoseTimeStampValidity,
 
@@ -78,64 +89,80 @@ pub enum Error {
     #[error("could not generate a trusted time stamp")]
     CoseTimeStampGeneration,
 
+    /// Timestamp uses unrecognized signature.
     #[error("COSE TimeStamp Authority failure")]
     CoseTimeStampAuthority,
 
+    /// The signature box was not large enough for the COSE signature.
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
 
+    /// The signer does not contain any signing certificates.
     #[error("COSE Signer does not contain signing certificate")]
     CoseNoCerts,
 
+    /// Error in WASM verifier.
     #[error("WASM verifier error")]
     WasmVerifier,
 
+    /// Could not process RSA signature.
     #[error("WASM RSA-PSS key import error: {0}")]
     WasmRsaKeyImport(String),
 
+    /// WASM crypto key error.
     #[error("WASM crypto key error")]
     WasmKey,
 
+    /// WASM called from incorrect context.
     #[error("WASM not called from window or worker global scope")]
     WasmInvalidContext,
 
+    /// Failed to load WASM crypto library.
     #[error("WASM could not load crypto library")]
     WasmNoCrypto,
 
+    /// Stopped because an error was logged.
     #[error("stopped because of logged error")]
     LogStop,
 
+    /// The requested item was not found.
     #[error("not found")]
     NotFound,
 
+    /// The type is unsupported.
     #[error("type is unsupported")]
     UnsupportedType,
 
-    /// Could not parse ECDSA signature. (Only appears when using WASM web
-    /// crypto.)
+    /// Could not parse ECDSA signature.
     #[error("could not parse ECDSA signature")]
     InvalidEcdsaSignature,
 
+    /// An unrecognized algorithm was specified.
     #[error("unknown algorithm")]
     UnknownAlgorithm,
 
-    // --- third-party errors ---
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-
-    #[error(transparent)]
-    CborError(#[from] serde_cbor::Error),
-
+    /// Could not acquire OpenSSL mutex.
     #[error("could not acquire OpenSSL FFI mutex")]
     OpenSslMutexError,
 
+    // --- third-party errors ---
+    /// An I/O error occurred.
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
+    /// An error parsing or generating CBOR occurred.
+    #[error(transparent)]
+    CborError(#[from] serde_cbor::Error),
+
+    /// An error occurred in OpenSSL.
     #[error(transparent)]
     #[cfg(feature = "openssl")]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
+    /// An error occurred from a dependent crate.
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-/// A specialized `Result` type for C2PA toolkit operations.
+/// A specialized `Result` type for c2pa-crypto operations.
 pub type Result<T> = std::result::Result<T, Error>;
