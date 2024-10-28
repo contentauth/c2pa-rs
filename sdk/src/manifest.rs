@@ -850,6 +850,7 @@ impl Manifest {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, a)| {
+                            #[allow(deprecated)]
                             if a.instance_id().is_some()
                                 && a.get_parameter(ingredients_key).is_none()
                             {
@@ -861,6 +862,7 @@ impl Manifest {
                         .collect();
 
                     for (index, action) in needs_ingredient {
+                        #[allow(deprecated)]
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
                                 let update = match ingredients_key {
@@ -1460,26 +1462,26 @@ impl std::fmt::Display for Manifest {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Holds information about a signature
 pub struct SignatureInfo {
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg: Option<SigningAlg>,
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 
-    /// The serial number of the certificate
+    /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_serial_number: Option<String>,
 
-    /// the time the signature was created
+    /// The time the signature was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
 
-    /// revocation status of the certificate
+    /// Revocation status of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revocation_status: Option<bool>,
 
-    /// the cert chain for this claim
+    /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
 }

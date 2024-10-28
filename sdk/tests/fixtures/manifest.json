@@ -73,6 +73,7 @@
     "ingredients": [{
         "title": "A.jpg",
         "format": "image/jpeg",
+        "instance_id": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
         "document_id": "xmp.did:813ee422-9736-4cdc-9be6-4e35ed8e41cb",
         "relationship": "parentOf",
         "thumbnail": {

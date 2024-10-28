@@ -40,7 +40,7 @@ For some informal development and ussage notes, see [2024_API_NOTES.md](https://
 
 ### Contributions and feedback
 
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-js/blob/main/CONTRIBUTING.md).
+We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).
 
 ## Requirements
 
