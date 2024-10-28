@@ -48,7 +48,7 @@ use crate::{
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-/// An `Ingredient` is any external asset that has been used in the creation of an image.
+/// An `Ingredient` is any external asset that has been used in the creation of an asset.
 pub struct Ingredient {
     /// A human-readable title, generally source filename.
     title: String,
@@ -72,7 +72,7 @@ pub struct Ingredient {
 
     /// A thumbnail image capturing the visual state at the time of import.
     ///
-    /// A tuple of thumbnail MIME format (i.e. `image/jpeg`) and binary bits of the image.
+    /// A tuple of thumbnail MIME format (for example `image/jpeg`) and binary bits of the image.
     #[serde(skip_serializing_if = "Option::is_none")]
     thumbnail: Option<ResourceRef>,
 
@@ -115,7 +115,7 @@ pub struct Ingredient {
 
     /// Any additional [`Metadata`] as defined in the C2PA spec.
     ///
-    /// [`Manifest`]: crate::Manifest
+    /// [`Metadata`]: crate::Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<Metadata>,
 
@@ -152,10 +152,10 @@ impl Ingredient {
     /// # Arguments
     ///
     /// * `title` - A user-displayable name for this ingredient (often a filename).
-    /// * `format` - The MIME media type of the ingredient - i.e. `image/jpeg`.
+    /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
     /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use c2pa::Ingredient;
@@ -178,9 +178,9 @@ impl Ingredient {
     /// # Arguments
     ///
     /// * `title` - A user-displayable name for this ingredient (often a filename).
-    /// * `format` - The MIME media type of the ingredient - i.e. `image/jpeg`.
+    /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
     ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use c2pa::Ingredient;
@@ -230,7 +230,7 @@ impl Ingredient {
         self.instance_id.as_deref().unwrap_or("")
     }
 
-    /// Returns the provenance uri if available.
+    /// Returns the provenance URI if available.
     pub fn provenance(&self) -> Option<&str> {
         self.provenance.as_deref()
     }
@@ -240,7 +240,7 @@ impl Ingredient {
         self.thumbnail.as_ref()
     }
 
-    /// Returns thumbnail tuple Some((format, bytes)) or None
+    /// Returns thumbnail tuple Some((format, bytes)) or None.
     pub fn thumbnail(&self) -> Option<(&str, Cow<Vec<u8>>)> {
         self.thumbnail
             .as_ref()
@@ -255,7 +255,7 @@ impl Ingredient {
         }
     }
 
-    /// Returns an optional hash to uniquely identify this asset
+    /// Returns an optional hash to uniquely identify this asset.
     pub fn hash(&self) -> Option<&str> {
         self.hash.as_deref()
     }
@@ -280,7 +280,7 @@ impl Ingredient {
         self.metadata.as_ref()
     }
 
-    /// Returns the label for the active [`Manifest`] in this ingredient
+    /// Returns the label for the active [`Manifest`] in this ingredient,
     /// if one exists.
     ///
     /// If `None`, the ingredient has no [`Manifest`]s.
@@ -319,7 +319,7 @@ impl Ingredient {
         self.informational_uri.as_deref()
     }
 
-    /// Returns an list AssetType info
+    /// Returns an list AssetType info.
     pub fn data_types(&self) -> Option<&[AssetType]> {
         self.data_types.as_deref()
     }
@@ -363,7 +363,7 @@ impl Ingredient {
     /// Identifies this ingredient as the parent.
     ///
     /// Only one ingredient should be flagged as a parent.
-    /// Use Manifest.set_parent to ensure this is the only parent ingredient
+    /// Use Manifest.set_parent to ensure this is the only parent ingredient.
     pub fn set_is_parent(&mut self) -> &mut Self {
         self.relationship = Relationship::ParentOf;
         self
@@ -372,7 +372,7 @@ impl Ingredient {
     /// Set the ingredient Relationship status.
     ///
     /// Only one ingredient should be set as a parentOf.
-    /// Use Manifest.set_parent to ensure this is the only parent ingredient
+    /// Use Manifest.set_parent to ensure this is the only parent ingredient.
     pub fn set_relationship(&mut self, relationship: Relationship) -> &mut Self {
         self.relationship = relationship;
         self
@@ -395,7 +395,7 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Sets the thumbnail format and image data only in memory
+    /// Sets the thumbnail format and image data only in memory.
     ///
     /// This is only used for internally generated thumbnails - when
     /// reading thumbnails from files, we don't want to write these to file
@@ -445,13 +445,13 @@ impl Ingredient {
         self
     }
 
-    /// Sets a reference to Manifest C2PA data
+    /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
-    /// Sets the Manifest C2PA data for this ingredient with bytes
+    /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
@@ -461,7 +461,7 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Sets a reference to Ingredient data
+    /// Sets a reference to Ingredient data.
     pub fn set_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
         // verify the resource referenced exists
         if !self.resources.exists(&data_ref.identifier) {
@@ -471,19 +471,19 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Sets a detailed description for this ingredient
+    /// Sets a detailed description for this ingredient.
     pub fn set_description<S: Into<String>>(&mut self, description: S) -> &mut Self {
         self.description = Some(description.into());
         self
     }
 
-    /// Sets an informational uri if needed
+    /// Sets an informational URI if needed.
     pub fn set_informational_uri<S: Into<String>>(&mut self, uri: S) -> &mut Self {
         self.informational_uri = Some(uri.into());
         self
     }
 
-    /// Add AssetType info for Ingredient
+    /// Add AssetType info for Ingredient.
     pub fn add_data_type(&mut self, data_type: AssetType) -> &mut Self {
         if let Some(data_types) = self.data_types.as_mut() {
             data_types.push(data_type);
@@ -494,12 +494,12 @@ impl Ingredient {
         self
     }
 
-    /// Return an immutable reference to the ingredient resources
+    /// Return an immutable reference to the ingredient resources.
     pub fn resources(&self) -> &ResourceStore {
         &self.resources
     }
 
-    /// Return an mutable reference to the ingredient resources
+    /// Return an mutable reference to the ingredient resources.
     pub fn resources_mut(&mut self) -> &mut ResourceStore {
         &mut self.resources
     }
@@ -527,13 +527,13 @@ impl Ingredient {
     /// Generates an `Ingredient` from a file path, including XMP info
     /// from the file if available.
     ///
-    /// This does not read c2pa_data in a file, it only reads XMP
+    /// This does not read c2pa_data in a file, it only reads XMP.
     #[cfg(feature = "file_io")]
     pub fn from_file_info<P: AsRef<Path>>(path: P) -> Self {
         // get required information from the file path
         let (title, _, format) = Self::get_path_info(path.as_ref());
 
-        // if we can open the file try tto get xmp info
+        // if we can open the file try to get xmp info
         match std::fs::File::open(path).map_err(Error::IoError) {
             Ok(mut file) => Self::from_stream_info(&mut file, &format, &title),
             Err(_) => Self {
@@ -544,7 +544,7 @@ impl Ingredient {
         }
     }
 
-    /// Generates an `Ingredient` from a stream, including XMP info
+    /// Generates an `Ingredient` from a stream, including XMP info.
     pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
     where
         F: Into<String>,
@@ -552,7 +552,7 @@ impl Ingredient {
     {
         let format = format.into();
 
-        // try to get xmp info, if this fails all XmpInfo fields will be None
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
         let xmp_info = XmpInfo::from_source(stream, &format);
 
         let id = if let Some(id) = xmp_info.instance_id {
@@ -569,8 +569,8 @@ impl Ingredient {
         ingredient
     }
 
-    // utility method to set the validation status from store result and log
-    // also sets the thumbnail from the claim if valid and it exists
+    // Utility method to set the validation status from store result and log
+    // Also sets the thumbnail from the claim if valid and it exists
     fn update_validation_status(
         &mut self,
         result: Result<Store>,
@@ -778,8 +778,8 @@ impl Ingredient {
 
     /// Creates an `Ingredient` from a memory buffer.
     ///
-    /// This does not set title or hash
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    /// This does not set title or hash.
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_memory(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream(format, &mut stream)
@@ -787,20 +787,20 @@ impl Ingredient {
 
     /// Creates an `Ingredient` from a stream.
     ///
-    /// This does not set title or hash
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    /// This does not set title or hash.
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
         ingredient.add_stream_internal(format, stream)
     }
 
-    /// Create an Ingredient from JSON
+    /// Create an Ingredient from JSON.
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(Error::JsonError)
     }
 
-    /// Adds a stream to an ingredient
+    /// Adds a stream to an ingredient.
     ///
     /// This allows you to predefine fields before adding the stream.
     /// Sets manifest_data if the stream contains a manifest_store.
@@ -819,9 +819,9 @@ impl Ingredient {
         // try to get xmp info, if this fails all XmpInfo fields will be None
         let xmp_info = XmpInfo::from_source(stream, &format);
 
-        if let Some(id) = xmp_info.instance_id {
-            self.instance_id = Some(id);
-        };
+        if self.instance_id.is_none() {
+            self.instance_id = xmp_info.instance_id;
+        }
 
         if let Some(id) = xmp_info.document_id {
             self.document_id = Some(id);
@@ -920,8 +920,8 @@ impl Ingredient {
 
     /// Creates an `Ingredient` from a memory buffer (async version).
     ///
-    /// This does not set title or hash
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    /// This does not set title or hash.
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream_async(format, &mut stream).await
@@ -929,8 +929,8 @@ impl Ingredient {
 
     /// Creates an `Ingredient` from a stream (async version).
     ///
-    /// This does not set title or hash
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest
+    /// This does not set title or hash.
+    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -992,7 +992,7 @@ impl Ingredient {
     }
 
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
-    /// claim_label identifies the claim for relative paths
+    /// claim_label identifies the claim for relative paths.
     pub(crate) fn from_ingredient_uri(
         store: &Store,
         claim_label: &str,
@@ -1111,7 +1111,7 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Converts a higher level Ingredient into the appropriate components in a claim
+    /// Converts a higher level Ingredient into the appropriate components in a claim.
     pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
@@ -1295,9 +1295,9 @@ impl Ingredient {
         claim.add_assertion(&ingredient_assertion)
     }
 
-    /// Setting a base path will make the ingredient use resource files instead of memory buffers
+    /// Setting a base path will make the ingredient use resource files instead of memory buffers.
     ///
-    /// The files will be relative to the given base path
+    /// The files will be relative to the given base path.
     #[cfg(feature = "file_io")]
     pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
         std::fs::create_dir_all(&base_path)?;
@@ -1305,7 +1305,7 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes.
     ///
     /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
     /// ```
@@ -1335,7 +1335,7 @@ impl Ingredient {
         Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset.
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1405,19 +1405,19 @@ pub trait IngredientOptions {
         None
     }
 
-    /// Returns an optional hash value for the ingredient
+    /// Returns an optional hash value for the ingredient.
     ///
-    /// This can be used to test for duplicate ingredients or if a source file has changed.
+    /// Use the hash value to test for duplicate ingredients or if a source file has changed.
     /// If hash is_some() Manifest.add_ingredient will dedup matching hashes
     fn hash(&self, _path: &Path) -> Option<String> {
         None
     }
 
-    /// Returns an optional thumbnail image representing the asset
+    /// Returns an optional thumbnail image representing the asset.
     ///
-    /// The first value is the content type of the thumbnail, i.e. image/jpeg
-    /// The second value is bytes of the thumbnail image
-    /// The default is to have no thumbnail, so you must provide an override to have a thumbnail image
+    /// The first value is the content type of the thumbnail, for example `image/jpeg`.
+    /// The second value is bytes of the thumbnail image.
+    /// The default is no thumbnail, so you must provide an override to have a thumbnail image.
     fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
         #[cfg(feature = "add_thumbnails")]
         return crate::utils::thumbnail::make_thumbnail(_path).ok();
@@ -1425,17 +1425,17 @@ pub trait IngredientOptions {
         None
     }
 
-    /// Returns an optional folder path
+    /// Returns an optional folder path.
     ///
-    /// If Some, binary data will be stored in files in the given folder
+    /// If Some, binary data will be stored in files in the given folder.
     fn base_path(&self) -> Option<&Path> {
         None
     }
 }
 
-/// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails
+/// DefaultOptions returns None for Title and Hash and generates thumbnail for supported thumbnails.
 ///
-/// This can be use with Ingredient::from_file_with_options
+/// This can be use with `Ingredient::from_file_with_options`.
 #[cfg(feature = "file_io")]
 pub struct DefaultOptions {
     /// If Some, the ingredient will read/write binary assets using this folder.
