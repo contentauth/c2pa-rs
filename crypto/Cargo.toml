@@ -27,10 +27,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
+json_schema = ["dep:schemars"]
 openssl = ["dep:openssl"]
 openssl_ffi_mutex = []
 psxxx_ocsp_stapling_experimental = []
-json_schema = ["dep:schemars"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
