@@ -18,6 +18,7 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
+use async_generic::async_generic;
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     prelude::*,
@@ -31,7 +32,7 @@ use crate::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
     utils::base64,
-    wasm::webcrypto_validator::async_validate,
+    wasm::webcrypto_validator::validate_signature,
     SigningAlg,
 };
 
@@ -293,7 +294,8 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-pub(crate) async fn verify_data(
+#[async_generic]
+pub(crate) fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -333,15 +335,26 @@ pub(crate) async fn verify_data(
             sig
         };
 
-        async_validate(
-            algo,
-            hash,
-            salt_len,
-            certificate_public_key.raw.to_vec(),
-            adjusted_sig,
-            data,
-        )
-        .await
+        if _sync {
+            validate_signature(
+                algo,
+                hash,
+                salt_len,
+                certificate_public_key.raw.to_vec(),
+                adjusted_sig,
+                data,
+            )
+        } else {
+            validate_signature_async(
+                algo,
+                hash,
+                salt_len,
+                certificate_public_key.raw.to_vec(),
+                adjusted_sig,
+                data,
+            )
+            .await
+        }
     } else {
         return Err(Error::BadParam("unknown alg processing cert".to_string()));
     }

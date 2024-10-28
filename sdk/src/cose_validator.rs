@@ -1314,7 +1314,7 @@ pub(crate) fn verify_cose(
     Ok(result)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) fn verify_cose(
     _cose_bytes: &[u8],
     _data: &[u8],
