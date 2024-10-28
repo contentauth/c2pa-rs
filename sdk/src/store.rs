@@ -2092,7 +2092,7 @@ impl Store {
                 let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
                     .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
                 let da_size = da.reserve_size();
-                let preliminary_claim = PreliminaryClaim::new();
+                let preliminary_claim = PreliminaryClaim::default();
                 let da_data = da
                     .content(&label, Some(da_size), &preliminary_claim)
                     .await?;
