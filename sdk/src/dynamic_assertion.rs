@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![deny(missing_docs)]
+
 use std::{fmt::Debug, slice::Iter};
 
-//use ciborium::de;
 use crate::{hashed_uri::HashedUri, Result};
 
 /// A `DynamicAssertion` is an assertion that has the ability
@@ -61,23 +62,12 @@ pub trait DynamicAssertion: Debug + Send + Sync {
 
 /// Describes information from the preliminary C2PA Claim that may
 /// be helpful in constructing the final content of a [`DynamicAssertion`].
-#[non_exhaustive]
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct PreliminaryClaim {
     assertion_uris: Vec<HashedUri>,
 }
 
 impl PreliminaryClaim {
-    pub fn new() -> Self {
-        Self {
-            assertion_uris: Vec::new(),
-        }
-    }
-
-    pub fn add_assertion_uri(&mut self, uri: HashedUri) {
-        self.assertion_uris.push(uri);
-    }
-
     /// Return an iterator over the assertions in this Claim.
     pub fn assertions(&self) -> Iter<HashedUri> {
         self.assertion_uris.iter()
