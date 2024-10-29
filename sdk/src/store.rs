@@ -85,7 +85,6 @@ pub struct Store {
     label: String,
     provenance_path: Option<String>,
     trust_handler: Box<dyn TrustHandlerConfig>,
-    dynamic_assertions: Vec<Box<dyn DynamicAssertion>>,
 }
 
 struct ManifestInfo<'a> {
@@ -136,7 +135,7 @@ impl Store {
             #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
-            dynamic_assertions: Vec::new(),
+            //dynamic_assertions: Vec::new(),
         };
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
@@ -239,16 +238,6 @@ impl Store {
         } else {
             Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or_default()
         }
-    }
-
-    /// get a list of dynamic assertions
-    fn dynamic_assertions(&mut self) -> &Vec<Box<dyn DynamicAssertion>> {
-        &self.dynamic_assertions
-    }
-
-    /// Add a dynamic assertion to the store.
-    pub fn add_dynamic_assertion(&mut self, dynamic_assertion: Box<dyn DynamicAssertion>) {
-        self.dynamic_assertions.push(dynamic_assertion);
     }
 
     /// Add a new Claim to this Store. The function
@@ -2055,13 +2044,16 @@ impl Store {
     }
 
     /// Inserts placeholders for dynamic assertions to be updated later.
-    fn add_dynamic_assertion_placeholders(&mut self) -> Result<Vec<HashedUri>> {
-        if self.dynamic_assertions.is_empty() {
+    fn add_dynamic_assertion_placeholders(
+        &mut self,
+        dyn_assertions: &[Box<dyn DynamicAssertion>],
+    ) -> Result<Vec<HashedUri>> {
+        if dyn_assertions.is_empty() {
             return Ok(Vec::new());
         }
         // two passes since we are accessing two fields in self
         let mut assertions = Vec::new();
-        for da in self.dynamic_assertions().iter() {
+        for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size();
             let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
@@ -2078,8 +2070,13 @@ impl Store {
 
     /// Write the dynamic assertions to the manifest.
     #[async_generic()]
-    fn write_dynamic_assertions(&mut self, _da_uris: &[HashedUri]) -> Result<bool> {
-        if self.dynamic_assertions.is_empty() {
+    #[allow(unused_variables)]
+    fn write_dynamic_assertions(
+        &mut self,
+        dyn_assertions: &[Box<dyn DynamicAssertion>],
+        dyn_uris: &[HashedUri],
+    ) -> Result<bool> {
+        if dyn_assertions.is_empty() {
             return Ok(false);
         }
         if _sync {
@@ -2088,7 +2085,7 @@ impl Store {
             ))
         } else {
             let mut assertions = Vec::new();
-            for (da, uri) in self.dynamic_assertions.iter().zip(_da_uris.iter()) {
+            for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
                 let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
                     .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
                 let da_size = da.reserve_size();
@@ -2218,6 +2215,7 @@ impl Store {
     /// on return, the stream will contain the new manifest signed with signer
     /// This directly modifies the asset in stream, backup stream first if you need to preserve it.
     /// This can also handle remote signing if direct_cose_handling() is true.
+    #[allow(unused_variables)]
     #[async_generic(async_signature(
         &mut self,
         format: &str,
@@ -2232,7 +2230,8 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
-        let da_uris = self.add_dynamic_assertion_placeholders()?;
+        let dynamic_assertions = signer.dynamic_assertions();
+        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
@@ -2245,10 +2244,17 @@ impl Store {
             signer.reserve_size(),
         )?;
 
+        // Now add the dynamic assertions and update the JUMBF.
         if _sync {
-            self.write_dynamic_assertions(&da_uris)?;
+            if !dynamic_assertions.is_empty() {
+                self.write_dynamic_assertions(&dynamic_assertions, &da_uris)?;
+            }
         } else {
-            if self.write_dynamic_assertions_async(&da_uris).await? {
+            if !dynamic_assertions.is_empty()
+                && self
+                    .write_dynamic_assertions_async(&dynamic_assertions, &da_uris)
+                    .await?
+            {
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
                 match pc.remote_manifest() {
                     RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
@@ -5956,10 +5962,9 @@ pub mod tests {
     }
 
     #[actix::test]
+    #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
-
-        use crate::utils::test::temp_async_signer;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -5996,6 +6001,66 @@ pub mod tests {
             }
         }
 
+        /// This is an async signer wrapped around a local temp signer,
+        /// that implements the dynamic assertion trait.
+        struct DynamicSigner {
+            alg: SigningAlg,
+            certs: Vec<Vec<u8>>,
+            reserve_size: usize,
+            tsa_url: Option<String>,
+            ocsp_val: Option<Vec<u8>>,
+        }
+
+        impl DynamicSigner {
+            fn new() -> Self {
+                let signer = temp_signer();
+                DynamicSigner {
+                    alg: signer.alg(),
+                    certs: signer.certs().unwrap_or_default(),
+                    reserve_size: signer.reserve_size(),
+                    tsa_url: signer.time_authority_url(),
+                    ocsp_val: signer.ocsp_val(),
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl crate::AsyncSigner for DynamicSigner {
+            async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+                let signer = temp_signer();
+                signer.sign(&data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.alg
+            }
+
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+                let mut output: Vec<Vec<u8>> = Vec::new();
+                for v in &self.certs {
+                    output.push(v.clone());
+                }
+                Ok(output)
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.reserve_size
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                self.tsa_url.clone()
+            }
+
+            async fn ocsp_val(&self) -> Option<Vec<u8>> {
+                self.ocsp_val.clone()
+            }
+
+            // Returns our dynamic assertion here.
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
@@ -6006,17 +6071,15 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_async_signer();
+        let signer = DynamicSigner::new();
 
-        let da = TestDynamicAssertion {};
-        store.add_dynamic_assertion(Box::new(da));
         store.commit_claim(claim1).unwrap();
 
         let mut result: Vec<u8> = Vec::new();
         let mut result_stream = Cursor::new(result);
 
         store
-            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, signer.as_ref())
+            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, &signer)
             .await
             .unwrap();
 
