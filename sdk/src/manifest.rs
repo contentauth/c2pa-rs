@@ -1231,7 +1231,7 @@ impl Manifest {
     #[cfg(feature = "file_io")]
     #[deprecated(
         since = "0.35.0",
-        note = "use Builder.sign file with cose_handling enabled."
+        note = "use Builder.sign_file with cose_handling enabled signer."
     )]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
@@ -1251,6 +1251,7 @@ impl Manifest {
 
     /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
+    #[deprecated(since = "0.35.0", note = "use Builder.sign_fragmented_files.")]
     pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         asset_path: P,
@@ -1414,6 +1415,7 @@ impl Manifest {
     /// expect that it has not been placed into an output asset and has not
     /// been signed.  Use embed_placed_manifest to insert into the asset
     /// referenced by input_stream
+    #[deprecated(since = "0.35.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn get_placed_manifest(
         &mut self,
         reserve_size: usize,
@@ -1433,6 +1435,7 @@ impl Manifest {
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
     /// the manifest is signed.  
+    #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,
@@ -2145,16 +2148,16 @@ pub(crate) mod tests {
             .await
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes_async("jpeg", &output.into_inner(), true)
-                .await
-                .expect("from_bytes");
+        output.set_position(0);
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             "EmbedStream"
         );
         #[cfg(feature = "add_thumbnails")]
-        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+        assert!(reader.active_manifest().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 
