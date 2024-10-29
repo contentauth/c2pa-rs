@@ -23,21 +23,21 @@ pub(crate) mod util;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) mod webcrypto_validator;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub use webcrypto_validator::validate_async;
+pub use webcrypto_validator::{validate, validate_async};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) mod webpki_trust_handler;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) use webpki_trust_handler::verify_data;
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) use webpki_trust_handler::WebTrustHandlerConfig;
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) use webpki_trust_handler::{verify_data, verify_data_async};
 
 #[cfg(target_os = "wasi")]
 pub(crate) mod wasicrypto_validator;
 #[cfg(target_os = "wasi")]
-pub use wasicrypto_validator::validate_async;
+pub use wasicrypto_validator::{validate, validate_async};
 #[cfg(target_os = "wasi")]
 pub(crate) mod wasipki_trust_handler;
 #[cfg(target_os = "wasi")]
-pub(crate) use wasipki_trust_handler::verify_data;
-#[cfg(target_os = "wasi")]
 pub(crate) use wasipki_trust_handler::WasiTrustHandlerConfig;
+#[cfg(target_os = "wasi")]
+pub(crate) use wasipki_trust_handler::{verify_data, verify_data_async};

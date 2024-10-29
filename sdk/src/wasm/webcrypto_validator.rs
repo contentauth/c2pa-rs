@@ -15,8 +15,7 @@ use std::convert::TryFrom;
 
 use async_generic::async_generic;
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
-use ring::signature::{self, UnparsedPublicKey, VerificationAlgorithm};
-use spki::SubjectPublicKeyInfoRef;
+use spki::{DecodePublicKey, SubjectPublicKeyInfoRef};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
@@ -158,11 +157,6 @@ pub(crate) fn validate_signature(
         RsaPublicKey,
     };
 
-    let context = WindowOrWorker::new();
-    let subtle_crypto = context?.subtle_crypto()?;
-    let sig_array_buf = data_as_array_buffer(&sig);
-    let data_array_buf = data_as_array_buffer(&data);
-
     match algo.as_ref() {
         "RSASSA-PKCS1-v1_5" => {
             use rsa::{pkcs1v15::Signature, signature::Verifier};
@@ -276,20 +270,55 @@ pub(crate) fn validate_signature(
             }
         }
         "ECDSA" => {
-            // Create Key
-            let named_curve = match hash.as_ref() {
-                "SHA-256" => "P-256".to_string(),
-                "SHA-384" => "P-384".to_string(),
-                "SHA-512" => "P-521".to_string(),
-                _ => return Err(Error::UnsupportedType),
-            };
             if _sync {
-                let public_key = UnparsedPublicKey::new(alg, &sig);
-                match public_key.verify(&data, &sig) {
+                use ecdsa::{signature::Verifier as EcdsaVerifier, Signature as EcdsaSignature};
+                use p256::ecdsa::VerifyingKey as P256VerifyingKey;
+                use p384::ecdsa::VerifyingKey as P384VerifyingKey;
+                let result = match hash.as_ref() {
+                    "SHA-256" => {
+                        let vk = P256VerifyingKey::from_public_key_der(&pkey).map_err(|_| {
+                            Error::WasmRsaKeyImport("Invalid P-256 key".to_string())
+                        })?;
+                        let signature = EcdsaSignature::from_slice(&sig).map_err(|_| {
+                            Error::WasmRsaKeyImport("Invalid ECDSA signature".to_string())
+                        })?;
+                        vk.verify(&data, &signature)
+                    }
+                    "SHA-384" => {
+                        let vk = P384VerifyingKey::from_public_key_der(&pkey).map_err(|_| {
+                            Error::WasmRsaKeyImport("Invalid P-384 key".to_string())
+                        })?;
+                        let signature = EcdsaSignature::from_slice(&sig).map_err(|_| {
+                            Error::WasmRsaKeyImport("Invalid ECDSA signature".to_string())
+                        })?;
+                        vk.verify(&data, &signature)
+                    }
+                    _ => return Err(Error::UnknownAlgorithm),
+                };
+
+                match result {
                     Ok(_) => Ok(true),
-                    Err(_) => Ok(false),
+                    Err(err) => {
+                        web_sys::console::debug_2(
+                            &"ECDSA validation failed:".into(),
+                            &err.to_string().into(),
+                        );
+                        Ok(false)
+                    }
                 }
             } else {
+                let context = WindowOrWorker::new();
+                let subtle_crypto = context?.subtle_crypto()?;
+                let sig_array_buf = data_as_array_buffer(&sig);
+                let data_array_buf = data_as_array_buffer(&data);
+
+                // Create Key
+                let named_curve = match hash.as_ref() {
+                    "SHA-256" => "P-256".to_string(),
+                    "SHA-384" => "P-384".to_string(),
+                    "SHA-512" => "P-521".to_string(),
+                    _ => return Err(Error::UnsupportedType),
+                };
                 let mut algorithm =
                     EcKeyImportParams::new(&algo, &hash, &named_curve).as_js_object();
                 let key_array_buf = data_as_array_buffer(&pkey);
@@ -566,6 +595,40 @@ pub mod tests {
         let validated = validate_async(SigningAlg::Ps256, sig_bytes, data_bytes, key_bytes)
             .await
             .unwrap();
+
+        assert_eq!(validated, true);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[wasm_bindgen_test]
+    fn test_verify_ecdsa() {
+        // EC signatures
+        let sig_es384_bytes = include_bytes!("../../tests/fixtures/sig_es384.data");
+        let data_es384_bytes = include_bytes!("../../tests/fixtures/data_es384.data");
+        let key_es384_bytes = include_bytes!("../../tests/fixtures/key_es384.data");
+
+        let validated = validate(
+            SigningAlg::Es384,
+            sig_es384_bytes,
+            data_es384_bytes,
+            key_es384_bytes,
+        )
+        .unwrap();
+
+        assert_eq!(validated, true);
+
+        let sig_es256_bytes = include_bytes!("../../tests/fixtures/sig_es256.data");
+        let data_es256_bytes = include_bytes!("../../tests/fixtures/data_es256.data");
+        let key_es256_bytes = include_bytes!("../../tests/fixtures/key_es256.data");
+
+        let validated = validate(
+            SigningAlg::Es256,
+            sig_es256_bytes,
+            data_es256_bytes,
+            key_es256_bytes,
+        )
+        .unwrap();
 
         assert_eq!(validated, true);
     }

@@ -70,7 +70,6 @@ async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
-backtrace = "0.3"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
@@ -108,7 +107,6 @@ rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
 rasn = "0.18.0"
 riff = "2.0.0"
-ring = "0.17.8"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
@@ -123,8 +121,8 @@ tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.5.2"
-x509-parser = "0.16.0"
 x509-certificate = "0.23.1"
+x509-parser = "0.16.0"
 zip = { version = "0.6.6", default-features = false }
 
 
@@ -136,6 +134,9 @@ chrono = { version = "0.4.38", default-features = false, features = [
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+ecdsa = "0.16.9"
+p256 = "0.13.2"
+p384 = "0.13.0"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
 
@@ -164,6 +165,8 @@ getrandom = { version = "0.2.7", features = ["js"] }
 instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
+# Set correct feature for ring, used by x509-certificate
+ring = { version = "0.17.8", features = ["wasm32_unknown_unknown_js"]}
 serde-wasm-bindgen = "0.5.0"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
@@ -186,7 +189,7 @@ jumbf = "0.4.0"
 
 
 [target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dev-dependencies]
-wasm-bindgen-test = "0.3.31"
+wasm-bindgen-test = "0.3.45"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 actix = "0.13.1"

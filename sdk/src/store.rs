@@ -131,7 +131,7 @@ impl Store {
             #[cfg(target_os = "wasi")]
             trust_handler: Box::new(crate::wasm::WasiTrustHandlerConfig::new()),
             #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-            trust_handler: Box::new(crate::wasm::WasiTrustHandlerConfig::new()),
+            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
             #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,

@@ -47,11 +47,13 @@ use crate::{
 };
 #[cfg(target_os = "wasi")]
 use crate::{
-    wasm::wasicrypto_validator::validate_async, wasm::wasipki_trust_handler::verify_trust_async,
+    wasm::wasicrypto_validator::{validate, validate_async},
+    wasm::wasipki_trust_handler::{verify_trust, verify_trust_async},
 };
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use crate::{
-    wasm::webcrypto_validator::validate_async, wasm::webpki_trust_handler::verify_trust_async,
+    wasm::webcrypto_validator::{validate, validate_async},
+    wasm::webpki_trust_handler::{verify_trust, verify_trust_async},
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -866,16 +868,16 @@ fn check_trust(
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl"))]
+        #[cfg(any(feature = "openssl", target_arch = "wasm32"))]
+        {
+            verify_trust(th, chain_der, cert_der, signing_time_epoc)
+        }
+
+        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
             ))
-        }
-
-        #[cfg(feature = "openssl")]
-        {
-            verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
     } else {
         #[cfg(target_arch = "wasm32")]
@@ -1182,7 +1184,6 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1191,7 +1192,7 @@ pub(crate) fn verify_cose(
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+    let mut sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
         Ok(a) => a,
@@ -1209,8 +1210,6 @@ pub(crate) fn verify_cose(
             return Err(Error::CoseSignatureAlgorithmNotSupported);
         }
     };
-
-    let validator = get_validator(alg);
 
     // build result structure
     let mut result = ValidationInfo::default();
@@ -1289,11 +1288,50 @@ pub(crate) fn verify_cose(
 
     // Check the signature, which needs to have the same `additional_data` provided, by
     // providing a closure that can do the verify operation.
-    sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let validator = get_validator(alg);
+
+        sign1.verify_signature(additional_data, |sig, verify_data| -> Result<()> {
+            if let Ok(CertInfo {
+                subject,
+                serial_number,
+            }) = validate_with_cert(validator, sig, verify_data, der_bytes)
+            {
+                result.issuer_org = Some(subject);
+                result.cert_serial_number = Some(serial_number);
+                result.validated = true;
+                result.alg = Some(alg);
+
+                result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
+
+                // return cert chain
+                result.cert_chain = dump_cert_chain(&certs)?;
+
+                result.revocation_status = Some(true);
+            }
+            // Note: not adding validation_log entry here since caller will supply claim specific info to log
+            Ok(())
+        })?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        sign1.payload = Some(data.to_vec()); // restore payload
+
+        let p_header = sign1.protected.clone();
+
+        let tbs = sig_structure_data(
+            coset::SignatureContext::CoseSign1,
+            p_header,
+            None,
+            additional_data,
+            sign1.payload.as_ref().unwrap_or(&vec![]),
+        ); // get "to be signed" bytes
+
         if let Ok(CertInfo {
             subject,
             serial_number,
-        }) = validate_with_cert(validator, sig, verify_data, der_bytes)
+        }) = validate_with_cert(alg, &sign1.signature, &tbs, der_bytes)
         {
             result.issuer_org = Some(subject);
             result.cert_serial_number = Some(serial_number);
@@ -1303,27 +1341,11 @@ pub(crate) fn verify_cose(
             result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
 
             // return cert chain
-            result.cert_chain = dump_cert_chain(&certs)?;
-
-            result.revocation_status = Some(true);
+            result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
         }
-        // Note: not adding validation_log entry here since caller will supply claim specific info to log
-        Ok(())
-    })?;
+    }
 
     Ok(result)
-}
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) fn verify_cose(
-    _cose_bytes: &[u8],
-    _data: &[u8],
-    _additional_data: &[u8],
-    _cert_check: bool,
-    _th: &dyn TrustHandlerConfig,
-    _validation_log: &mut impl StatusTracker,
-) -> Result<ValidationInfo> {
-    Err(Error::CoseVerifier)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1350,7 +1372,8 @@ fn validate_with_cert(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn validate_with_cert_async(
+#[async_generic]
+fn validate_with_cert(
     signing_alg: SigningAlg,
     sig: &[u8],
     data: &[u8],
@@ -1361,13 +1384,24 @@ async fn validate_with_cert_async(
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
-    if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(CertInfo {
-            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
-            serial_number: extract_serial_from_cert(&signcert),
-        })
+    if _sync {
+        if validate(signing_alg, sig, data, pk_der)? {
+            Ok(CertInfo {
+                subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+                serial_number: extract_serial_from_cert(&signcert),
+            })
+        } else {
+            Err(Error::CoseSignature)
+        }
     } else {
-        Err(Error::CoseSignature)
+        if validate_async(signing_alg, sig, data, pk_der).await? {
+            Ok(CertInfo {
+                subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+                serial_number: extract_serial_from_cert(&signcert),
+            })
+        } else {
+            Err(Error::CoseSignature)
+        }
     }
 }
 

@@ -18,6 +18,7 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
+use async_generic::async_generic;
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     prelude::*,
@@ -31,7 +32,7 @@ use crate::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
     utils::base64,
-    wasm::wasicrypto_validator::async_validate,
+    wasm::wasicrypto_validator::validate_signature,
     SigningAlg,
 };
 
@@ -293,7 +294,8 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-pub(crate) async fn verify_data(
+#[async_generic]
+pub(crate) fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
@@ -333,7 +335,7 @@ pub(crate) async fn verify_data(
             sig
         };
 
-        async_validate(
+        validate_signature(
             algo,
             hash,
             salt_len,
@@ -341,7 +343,6 @@ pub(crate) async fn verify_data(
             adjusted_sig,
             data,
         )
-        .await
     } else {
         Err(Error::BadParam("unknown alg processing cert".to_string()))
     }
@@ -421,7 +422,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     }
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
+fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     use x509_parser::prelude::*;
 
     let chain_length = certs.len();
@@ -439,7 +440,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
 
         let sig_alg = cert_signing_alg(&current_cert);
 
-        let result = verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await;
+        let result = verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec());
 
         // keep going as long as it validate
         match result {
@@ -454,11 +455,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     Ok(())
 }
 
-async fn on_trust_list(
-    th: &dyn TrustHandlerConfig,
-    certs: &[Vec<u8>],
-    ee_der: &[u8],
-) -> Result<bool> {
+fn on_trust_list(th: &dyn TrustHandlerConfig, certs: &[Vec<u8>], ee_der: &[u8]) -> Result<bool> {
     use x509_parser::prelude::*;
 
     // check the cert against the allowed list first
@@ -480,7 +477,7 @@ async fn on_trust_list(
     };
 
     // make sure chain is in the correct order and valid
-    check_chain_order(&full_chain).await?;
+    check_chain_order(&full_chain)?;
 
     // build anchors and check against trust anchors,
     let mut anchors: Vec<X509Certificate> = Vec::new();
@@ -510,8 +507,7 @@ async fn on_trust_list(
                 X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result =
-                    verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec()).await;
+                let result = verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec());
 
                 match result {
                     Ok(b) => {
@@ -530,7 +526,8 @@ async fn on_trust_list(
 }
 
 // verify certificate and trust chain
-pub(crate) async fn verify_trust_async(
+#[async_generic]
+pub(crate) fn verify_trust(
     th: &dyn TrustHandlerConfig,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
@@ -539,7 +536,7 @@ pub(crate) async fn verify_trust_async(
     // check configured EKUs against end-entity cert
     find_allowed_eku(cert_der, &th.get_auxillary_ekus()).ok_or(Error::CoseCertUntrusted)?;
 
-    on_trust_list(th, chain_der, cert_der).await
+    on_trust_list(th, chain_der, cert_der)
 }
 
 #[cfg(test)]

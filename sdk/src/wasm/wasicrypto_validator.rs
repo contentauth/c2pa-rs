@@ -13,8 +13,8 @@
 
 use std::convert::TryFrom;
 
-use ring::signature::{self, UnparsedPublicKey, VerificationAlgorithm};
-use spki::SubjectPublicKeyInfoRef;
+use async_generic::async_generic;
+use spki::{DecodePublicKey, SubjectPublicKeyInfoRef};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
 use crate::{Error, Result, SigningAlg};
@@ -58,7 +58,7 @@ fn ed25519_validate(sig: Vec<u8>, data: Vec<u8>, pkey: Vec<u8>) -> Result<bool> 
     }
 }
 
-pub(crate) async fn async_validate(
+pub(crate) fn validate_signature(
     algo: String,
     hash: String,
     _salt_len: u32,
@@ -188,15 +188,40 @@ pub(crate) async fn async_validate(
             }
         }
         "ECDSA" => {
-            let alg: &dyn VerificationAlgorithm = match hash.as_ref() {
-                "SHA-256" => &signature::ECDSA_P256_SHA256_ASN1,
-                "SHA-384" => &signature::ECDSA_P384_SHA384_ASN1,
+            use ecdsa::{signature::Verifier as EcdsaVerifier, Signature as EcdsaSignature};
+            use p256::ecdsa::VerifyingKey as P256VerifyingKey;
+            use p384::ecdsa::VerifyingKey as P384VerifyingKey;
+            let result = match hash.as_ref() {
+                "SHA-256" => {
+                    let vk = P256VerifyingKey::from_public_key_der(&pkey)
+                        .map_err(|_| Error::WasmRsaKeyImport("Invalid P-256 key".to_string()))?;
+                    let signature = EcdsaSignature::from_slice(&sig).map_err(|_| {
+                        Error::WasmRsaKeyImport("Invalid ECDSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
+                "SHA-384" => {
+                    let vk = P384VerifyingKey::from_public_key_der(&pkey)
+                        .map_err(|_| Error::WasmRsaKeyImport("Invalid P-384 key".to_string()))?;
+                    let signature = EcdsaSignature::from_slice(&sig).map_err(|_| {
+                        Error::WasmRsaKeyImport("Invalid ECDSA signature".to_string())
+                    })?;
+                    vk.verify(&data, &signature)
+                }
                 _ => return Err(Error::UnknownAlgorithm),
             };
-            let public_key = UnparsedPublicKey::new(alg, &sig);
-            match public_key.verify(&data, &sig) {
+
+            match result {
                 Ok(_) => Ok(true),
-                Err(_) => Ok(false),
+                Err(err) => {
+                    /*
+                    web_sys::console::debug_2(
+                        &"ECDSA validation failed:".into(),
+                        &err.to_string().into(),
+                    );
+                    */
+                    Ok(false)
+                }
             }
         }
         "ED25519" => {
@@ -228,45 +253,37 @@ pub(crate) async fn async_validate(
 }
 
 // This interface is called from CoseValidator. RSA validation not supported here.
-pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
+#[async_generic]
+pub fn validate(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
     //web_sys::console::debug_2(&"Validating with algorithm".into(), &alg.to_string().into());
 
     match alg {
-        SigningAlg::Ps256 => {
-            async_validate(
-                "RSA-PSS".to_string(),
-                "SHA-256".to_string(),
-                32,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        SigningAlg::Ps384 => {
-            async_validate(
-                "RSA-PSS".to_string(),
-                "SHA-384".to_string(),
-                48,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        SigningAlg::Ps512 => {
-            async_validate(
-                "RSA-PSS".to_string(),
-                "SHA-512".to_string(),
-                64,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
+        SigningAlg::Ps256 => validate_signature(
+            "RSA-PSS".to_string(),
+            "SHA-256".to_string(),
+            32,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
+        SigningAlg::Ps384 => validate_signature(
+            "RSA-PSS".to_string(),
+            "SHA-384".to_string(),
+            48,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
+        SigningAlg::Ps512 => validate_signature(
+            "RSA-PSS".to_string(),
+            "SHA-512".to_string(),
+            64,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
         // "rs256" => {
-        //     async_validate(
+        //     validate_signature(
         //         "RSASSA-PKCS1-v1_5".to_string(),
         //         "SHA-256".to_string(),
         //         0,
@@ -277,7 +294,7 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
         //     .await
         // }
         // "rs384" => {
-        //     async_validate(
+        //     validate_signature(
         //         "RSASSA-PKCS1-v1_5".to_string(),
         //         "SHA-384".to_string(),
         //         0,
@@ -288,7 +305,7 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
         //     .await
         // }
         // "rs512" => {
-        //     async_validate(
+        //     validate_signature(
         //         "RSASSA-PKCS1-v1_5".to_string(),
         //         "SHA-512".to_string(),
         //         0,
@@ -298,50 +315,38 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
         //     )
         //     .await
         // }
-        SigningAlg::Es256 => {
-            async_validate(
-                "ECDSA".to_string(),
-                "SHA-256".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        SigningAlg::Es384 => {
-            async_validate(
-                "ECDSA".to_string(),
-                "SHA-384".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        SigningAlg::Es512 => {
-            async_validate(
-                "ECDSA".to_string(),
-                "SHA-512".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
-        SigningAlg::Ed25519 => {
-            async_validate(
-                "ED25519".to_string(),
-                "SHA-512".to_string(),
-                0,
-                pkey.to_vec(),
-                sig.to_vec(),
-                data.to_vec(),
-            )
-            .await
-        }
+        SigningAlg::Es256 => validate_signature(
+            "ECDSA".to_string(),
+            "SHA-256".to_string(),
+            0,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
+        SigningAlg::Es384 => validate_signature(
+            "ECDSA".to_string(),
+            "SHA-384".to_string(),
+            0,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
+        SigningAlg::Es512 => validate_signature(
+            "ECDSA".to_string(),
+            "SHA-512".to_string(),
+            0,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
+        SigningAlg::Ed25519 => validate_signature(
+            "ED25519".to_string(),
+            "SHA-512".to_string(),
+            0,
+            pkey.to_vec(),
+            sig.to_vec(),
+            data.to_vec(),
+        ),
     }
 }
 

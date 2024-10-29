@@ -631,7 +631,21 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
                 }
 
-                #[cfg(not(feature = "openssl"))]
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mut certificate_der = Vec::<u8>::new();
+                    cert.encode_ref()
+                        .write_encoded(bcder::Mode::Der, &mut certificate_der)?;
+
+                    crate::wasm::verify_data(
+                        certificate_der,
+                        get_validator_type(sig_alg, hash_alg),
+                        sig_val.to_bytes().to_vec(),
+                        tbs,
+                    )
+                }
+
+                #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
                 {
                     Ok(false)
                 }
@@ -648,7 +662,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                     cert.encode_ref()
                         .write_encoded(bcder::Mode::Der, &mut certificate_der)?;
 
-                    crate::wasm::verify_data(
+                    crate::wasm::verify_data_async(
                         certificate_der,
                         get_validator_type(sig_alg, hash_alg),
                         sig_val.to_bytes().to_vec(),
