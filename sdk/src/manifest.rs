@@ -1435,7 +1435,7 @@ impl Manifest {
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
     /// the manifest is signed.  
-    #[deprecated(since = "0.35.0", note = "use Builder.sign with dynamic assertions.")]
+    #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,

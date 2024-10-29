@@ -181,7 +181,7 @@ impl Reader {
         })
     }
 
-    /// Create a [`Reader`] from existing an initial segment and a fragment stream.
+    /// Create a [`Reader`] from an initial segment and a fragment stream.
     /// This would be used to load and validate fragmented MP4 files that span multiple separate asset files.
     /// # Arguments
     /// * `format` - The format of the stream.

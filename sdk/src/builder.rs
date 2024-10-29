@@ -1004,7 +1004,10 @@ impl Builder {
         Ok(())
     }
 
-    /// Sign a set of fragmented BMFF files for DASH streaming.
+    /// Sign a set of fragmented BMFF files.
+    ///
+    /// Note: Currently this does not support files with existing C2PA manifest.
+    ///
     /// # Arguments
     /// * `signer` - The signer to use.
     /// * `asset_path` - The path to the primary asset file.
