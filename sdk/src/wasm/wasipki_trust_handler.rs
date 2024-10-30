@@ -32,19 +32,19 @@ use crate::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
     utils::base64,
-    wasm::webcrypto_validator::{validate_signature, validate_signature_async},
+    wasm::wasicrypto_validator::validate_signature,
     SigningAlg,
 };
 
-// Struct to handle verification of trust chains using WebPki
-pub(crate) struct WebTrustHandlerConfig {
+// Struct to handle verification of trust chains
+pub(crate) struct WasiTrustHandlerConfig {
     pub trust_anchors: Vec<Vec<u8>>,
     pub private_anchors: Vec<Vec<u8>>,
     allowed_cert_set: HashSet<String>,
     config_store: Vec<u8>,
 }
 
-impl std::fmt::Debug for WebTrustHandlerConfig {
+impl std::fmt::Debug for WasiTrustHandlerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -55,7 +55,7 @@ impl std::fmt::Debug for WebTrustHandlerConfig {
     }
 }
 
-impl WebTrustHandlerConfig {
+impl WasiTrustHandlerConfig {
     pub fn load_default_trust(&mut self) -> Result<()> {
         // load config store
         let config = include_bytes!("./store.cfg");
@@ -74,9 +74,9 @@ impl WebTrustHandlerConfig {
     }
 }
 
-impl TrustHandlerConfig for WebTrustHandlerConfig {
+impl TrustHandlerConfig for WasiTrustHandlerConfig {
     fn new() -> Self {
-        let mut th = WebTrustHandlerConfig {
+        let mut th = WasiTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
             allowed_cert_set: HashSet::new(),
@@ -188,7 +188,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
 
 fn find_allowed_eku<'a>(
     cert_der: &'a [u8],
-    allowed_ekus: &'a Vec<asn1_rs::Oid<'a>>,
+    allowed_ekus: &'a [asn1_rs::Oid<'a>],
 ) -> Option<&'a asn1_rs::Oid<'a>> {
     if let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) {
         if let Ok(Some(eku)) = cert.extended_key_usage() {
@@ -335,28 +335,16 @@ pub(crate) fn verify_data(
             sig
         };
 
-        if _sync {
-            validate_signature(
-                algo,
-                hash,
-                salt_len,
-                certificate_public_key.raw.to_vec(),
-                adjusted_sig,
-                data,
-            )
-        } else {
-            validate_signature_async(
-                algo,
-                hash,
-                salt_len,
-                certificate_public_key.raw.to_vec(),
-                adjusted_sig,
-                data,
-            )
-            .await
-        }
+        validate_signature(
+            algo,
+            hash,
+            salt_len,
+            certificate_public_key.raw.to_vec(),
+            adjusted_sig,
+            data,
+        )
     } else {
-        return Err(Error::BadParam("unknown alg processing cert".to_string()));
+        Err(Error::BadParam("unknown alg processing cert".to_string()))
     }
 }
 // convert der signatures to P1363 format: r | s
@@ -434,7 +422,6 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     }
 }
 
-#[async_generic]
 fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     use x509_parser::prelude::*;
 
@@ -453,13 +440,7 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
 
         let sig_alg = cert_signing_alg(&current_cert);
 
-        let result = {
-            if _sync {
-                verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec())
-            } else {
-                verify_data_async(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await
-            }
-        };
+        let result = verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec());
 
         // keep going as long as it validate
         match result {
@@ -474,7 +455,6 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     Ok(())
 }
 
-#[async_generic]
 fn on_trust_list(th: &dyn TrustHandlerConfig, certs: &[Vec<u8>], ee_der: &[u8]) -> Result<bool> {
     use x509_parser::prelude::*;
 
@@ -497,11 +477,7 @@ fn on_trust_list(th: &dyn TrustHandlerConfig, certs: &[Vec<u8>], ee_der: &[u8]) 
     };
 
     // make sure chain is in the correct order and valid
-    if _sync {
-        check_chain_order(&full_chain)?;
-    } else {
-        check_chain_order_async(&full_chain).await?;
-    }
+    check_chain_order(&full_chain)?;
 
     // build anchors and check against trust anchors,
     let mut anchors: Vec<X509Certificate> = Vec::new();
@@ -531,14 +507,7 @@ fn on_trust_list(th: &dyn TrustHandlerConfig, certs: &[Vec<u8>], ee_der: &[u8]) 
                 X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
-                let result = {
-                    if _sync {
-                        verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec())
-                    } else {
-                        verify_data_async(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec())
-                            .await
-                    }
-                };
+                let result = verify_data(anchor.clone(), sig_alg, sig.to_vec(), data.to_vec());
 
                 match result {
                     Ok(b) => {
@@ -567,11 +536,7 @@ pub(crate) fn verify_trust(
     // check configured EKUs against end-entity cert
     find_allowed_eku(cert_der, &th.get_auxillary_ekus()).ok_or(Error::CoseCertUntrusted)?;
 
-    if _sync {
-        on_trust_list(th, chain_der, cert_der)
-    } else {
-        on_trust_list_async(th, chain_der, cert_der).await
-    }
+    on_trust_list(th, chain_der, cert_der)
 }
 
 #[cfg(test)]
@@ -580,15 +545,10 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::*;
-
     use super::*;
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
+    #[test]
     async fn test_trust_store() {
-        let mut th = WebTrustHandlerConfig::new();
+        let mut th = WasiTrustHandlerConfig::new();
         th.clear();
 
         th.load_default_trust().unwrap();
@@ -649,11 +609,9 @@ pub mod tests {
         );
     }
 
-    #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[wasm_bindgen_test]
+    #[test]
     async fn test_broken_trust_chain() {
-        let mut th = WebTrustHandlerConfig::new();
+        let mut th = WasiTrustHandlerConfig::new();
         th.clear();
 
         th.load_default_trust().unwrap();

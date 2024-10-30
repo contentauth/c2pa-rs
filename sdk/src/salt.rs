@@ -63,13 +63,20 @@ impl SaltGenerator for DefaultSalt {
 
             Some(salt)
         }
-        #[cfg(all(not(feature = "openssl_sign"), target_arch = "wasm32"))]
+        #[cfg(all(
+            not(feature = "openssl_sign"),
+            target_arch = "wasm32",
+            not(target_os = "wasi")
+        ))]
         {
             let salt = crate::wasm::util::get_random_values(self.salt_len).ok()?;
 
             Some(salt)
         }
-        #[cfg(all(not(feature = "openssl_sign"), not(target_arch = "wasm32")))]
+        #[cfg(any(
+            target_os = "wasi",
+            all(not(feature = "openssl_sign"), not(target_arch = "wasm32"))
+        ))]
         {
             use rand::prelude::*;
 

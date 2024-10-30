@@ -1505,10 +1505,10 @@ pub(crate) mod tests {
 
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[allow(unused_imports)]
@@ -1979,7 +1979,10 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
@@ -2019,7 +2022,10 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
@@ -2052,7 +2058,10 @@ pub(crate) mod tests {
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     #[allow(deprecated)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
@@ -2122,7 +2131,10 @@ pub(crate) mod tests {
 
     #[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
     #[cfg_attr(feature = "openssl_sign", actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     async fn test_embed_from_memory_async() {
         use crate::{assertions::User, utils::test::temp_async_signer};
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
