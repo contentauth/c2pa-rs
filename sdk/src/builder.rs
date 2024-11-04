@@ -588,7 +588,7 @@ impl Builder {
             .join(" ");
 
         let mut claim = match definition.label.as_ref() {
-            Some(label) => Claim::new_with_user_guid(&claim_generator, &label.to_string(), 1),
+            Some(label) => Claim::new_with_user_guid(&claim_generator, &label.to_string(), 1)?,
             None => Claim::new(&claim_generator, definition.vendor.as_deref(), 1),
         };
 

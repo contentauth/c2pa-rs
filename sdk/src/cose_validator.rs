@@ -21,6 +21,8 @@ use coset::{
     iana::{self, EnumI64},
     sig_structure_data, Label, TaggedCborSerializable,
 };
+
+use serde_bytes::ByteBuf;
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},
     num_bigint::BigUint,
@@ -812,23 +814,34 @@ fn get_signing_time(
 #[async_generic]
 fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> {
     // parse the temp timestamp
-    if let Some(t) = &sign1
+    if let Some((t, v)) = &sign1
         .unprotected
         .rest
         .iter()
         .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("sigTst".to_string()) {
-                Some(x.1.clone())
+            if x.0 == Label::Text("sigTst2".to_string()) {
+                Some((x.1.clone(), 2))
+            } else if x.0 == Label::Text("sigTst".to_string()) {
+                Some((x.1.clone(), 1))
             } else {
                 None
             }
         })
     {
+        let buf;
+        let tbs = if *v == 1 {
+            data
+        } else {
+            let sig_data = ByteBuf::from(sign1.signature.clone());
+            buf = serde_cbor::to_vec(&sig_data)?;
+            buf.as_slice()
+        };
+
         let time_cbor = serde_cbor::to_vec(t)?;
         let tst_infos = if _sync {
-            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?
+            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, tbs, &sign1.protected)?
         } else {
-            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, data, &sign1.protected)
+            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, tbs, &sign1.protected)
                 .await?
         };
 
@@ -1219,6 +1232,17 @@ pub(crate) fn verify_cose(
 
     let tst_info_res = get_timestamp_info(&sign1, data);
 
+    // check signature format
+    if let Err(e) = check_sig(&sign1.signature, alg) {
+        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+            .error(Error::CoseSignatureAlgorithmNotSupported)
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
+
+        validation_log.log(log_item, Some(e))?;
+
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    }
+
     if cert_check {
         // verify certs
         match &tst_info_res {
@@ -1270,17 +1294,6 @@ pub(crate) fn verify_cose(
         )?;
 
         // todo: check TSA certs against trust list
-    }
-
-    // check signature format
-    if let Err(e) = check_sig(&sign1.signature, alg) {
-        let log_item = log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
-            .error(Error::CoseSignatureAlgorithmNotSupported)
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
-
-        validation_log.log(log_item, Some(e))?;
-
-        return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
 
     // Check the signature, which needs to have the same `additional_data` provided, by

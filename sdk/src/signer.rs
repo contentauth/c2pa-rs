@@ -53,6 +53,7 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
+    /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
     #[cfg(not(target_arch = "wasm32"))]
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {

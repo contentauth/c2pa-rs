@@ -14,6 +14,7 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
+pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{c2pa_action, Action, ActionTemplate, Actions, SoftwareAgent};
 
 mod bmff_hash;

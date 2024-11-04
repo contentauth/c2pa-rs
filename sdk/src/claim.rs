@@ -26,7 +26,11 @@ use crate::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
         AssertionBase, AssertionData,
     },
-    assertions::{self, AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata},
+    assertions::{
+        self,
+        labels::{ACTIONS, BMFF_HASH},
+        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
+    },
     asset_io::CAIRead,
     cose_validator::{
         check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
@@ -40,8 +44,8 @@ use crate::{
             CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            box_name_from_uri, manifest_label_from_uri, to_absolute_uri, to_databox_uri,
-            ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, manifest_label_to_parts, to_absolute_uri,
+            to_databox_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -65,6 +69,15 @@ use HashedUri as C2PAAssertion;
 
 const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
 const GH_UA: &str = "Sec-CH-UA";
+const C2PA_NAMESPACE_V2: &str = "urn:c2pa:";
+const C2PA_NAMESPACE_V1: &str = "urn:uuid";
+
+static V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
+    "stds.iptc",
+    "stds.iptc.photo-metadata",
+    "stds.exif",
+    "c2pa.endorsement",
+];
 
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
@@ -348,15 +361,36 @@ impl Claim {
     ) -> Self {
         let urn = Uuid::new_v4();
         let l = match vendor {
-            Some(v) => format!(
-                "{}:{}",
-                v.to_lowercase(),
-                urn.urn().encode_lower(&mut Uuid::encode_buffer())
-            ),
-            None => urn
-                .urn()
-                .encode_lower(&mut Uuid::encode_buffer())
-                .to_string(),
+            Some(v) => {
+                if claim_version == 1 {
+                    format!(
+                        "{}:{}:{}",
+                        v.to_lowercase(),
+                        C2PA_NAMESPACE_V1,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                } else {
+                    format!(
+                        "{}:{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer()),
+                        v.to_lowercase()
+                    )
+                }
+            }
+            None => {
+                if claim_version == 1 {
+                    urn.urn()
+                        .encode_lower(&mut Uuid::encode_buffer())
+                        .to_string()
+                } else {
+                    format!(
+                        "{}:{}",
+                        C2PA_NAMESPACE_V2,
+                        urn.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+                    )
+                }
+            }
         };
 
         Claim {
@@ -400,13 +434,32 @@ impl Claim {
         claim_generator: S,
         user_guid: S,
         claim_version: usize,
-    ) -> Self {
-        Claim {
+    ) -> Result<Self> {
+        let ug: String = user_guid.into();
+        let uuid =
+            Uuid::try_parse(&ug).map_err(|_e| Error::BadParam("invalid Claim GUID".into()))?;
+        match uuid.get_version() {
+            Some(v) if v == uuid::Version::Random => (),
+            _ => return Err(Error::BadParam("invalid Claim GUID".into())),
+        }
+        let label = if claim_version == 1 {
+            uuid.urn()
+                .encode_lower(&mut Uuid::encode_buffer())
+                .to_string()
+        } else {
+            format!(
+                "{}:{}",
+                C2PA_NAMESPACE_V2,
+                uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer())
+            )
+        };
+
+        Ok(Claim {
             remote_manifest: RemoteManifest::NoRemote,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
-            label: user_guid.into(), // todo figure out how to validate this
+            label,
             signature: "".to_string(),
 
             claim_generator: claim_generator.into(),
@@ -431,7 +484,7 @@ impl Claim {
             claim_version,
             created_assertions: Vec::new(),
             gathered_assertions: None,
-        }
+        })
     }
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
@@ -827,6 +880,18 @@ impl Claim {
         &self.label
     }
 
+    // Return vendor if part of manifest label
+    pub fn vendor(&self) -> Option<String> {
+        let mp = manifest_label_to_parts(&self.uri())?;
+        mp.vendor
+    }
+
+    // Return version if V2 claim and if part of manifest label
+    pub fn claim_instance_version(&self) -> Option<String> {
+        let mp = manifest_label_to_parts(&self.uri())?;
+        mp.version
+    }
+
     /// Return the JUMBF URI for this claim.
     pub fn uri(&self) -> String {
         jumbf::labels::to_manifest_uri(&self.label)
@@ -1096,10 +1161,45 @@ impl Claim {
     ) -> Result<C2PAAssertion> {
         // make sure the assertion is valid
         let assertion = assertion_builder.to_assertion()?;
+        let assertion_version = assertion.get_ver();
+        let assertion_label = assertion.label();
 
         // Update label if there are multiple instances of
         // the same claim type.
-        let as_label = self.make_assertion_instance_label(assertion.label().as_ref());
+        let as_label = self.make_assertion_instance_label(assertion_label.as_ref());
+
+        // check for deprecated assertions when using Claims > V1
+        if self.version() > 1 {
+            if assertion_label == ACTIONS {
+                // check for deprecated actions
+                if V2_DEPRECATED_ACTIONS.contains(&assertion.label().as_str()) {
+                    return Err(Error::VersionCompatibility(
+                        "action assertion has been deprecated".into(),
+                    ));
+                }
+
+                // check for actions V1
+                if assertion_version < 1 {
+                    return Err(Error::VersionCompatibility(
+                        "action assertion version too low".into(),
+                    ));
+                }
+            }
+
+            // version 1 BMFF hash is deprecated
+            if assertion_label == BMFF_HASH && assertion_version < 2 {
+                return Err(Error::VersionCompatibility(
+                    "BMFF hash assertion version too low".into(),
+                ));
+            }
+
+            // only allow deprecated assertions in created_assertion list
+            if V2_SPEC_DEPRECATED_ASSERTIONS.contains(&assertion.label().as_str()) {
+                return Err(Error::VersionCompatibility(
+                    "C2PA deprecated assertion should be added to gather_assertions".into(),
+                ));
+            }
+        }
 
         // Get salted hash of the assertion's contents.
         let salt = salt_generator.generate_salt();

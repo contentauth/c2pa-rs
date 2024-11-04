@@ -251,8 +251,8 @@ impl Assertion {
     // }
 
     // Return version string of known assertion if available
-    pub(crate) fn get_ver(&self) -> Option<usize> {
-        self.version
+    pub(crate) fn get_ver(&self) -> usize {
+        self.version.unwrap_or(1)
     }
 
     // pub fn check_version(&self, max_version: usize) -> AssertionDecodeResult<()> {
@@ -298,16 +298,12 @@ impl Assertion {
     /// Return the CAI label for this Assertion with version string if available
     pub(crate) fn label(&self) -> String {
         let base_label = self.label_root();
-        match self.get_ver() {
-            Some(v) => {
-                if v > 1 {
-                    // c2pa does not include v1 labels
-                    format!("{base_label}.v{v}")
-                } else {
-                    base_label
-                }
-            }
-            None => base_label,
+        let v = self.get_ver();
+        if v > 1 {
+            // c2pa does not include v1 labels
+            format!("{base_label}.v{v}")
+        } else {
+            base_label
         }
     }
 
@@ -641,8 +637,8 @@ pub mod tests {
         let a = Assertion::new(Actions::LABEL, Some(2), json);
         let a_no_ver = Assertion::new(Actions::LABEL, None, json2);
 
-        assert_eq!(a.get_ver().unwrap(), 2);
-        assert_eq!(a_no_ver.get_ver(), None);
+        assert_eq!(a.get_ver(), 2);
+        assert_eq!(a_no_ver.get_ver(), 1);
         assert_eq!(a.label(), format!("{}.{}", Actions::LABEL, "v2"));
         assert_eq!(a.label_root(), Actions::LABEL);
         assert_eq!(a_no_ver.label(), Actions::LABEL);

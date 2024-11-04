@@ -31,10 +31,10 @@ use crate::cose_validator::{
 };
 use crate::{
     asn1::{
-        rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+        rfc3161::{TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{
-            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_MESSAGE_DIGEST,
-            OID_SIGNING_TIME,
+            CertificateChoices::Certificate, ContentInfo, SignedData, OID_ID_SIGNED_DATA,
+            OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
         },
     },
     error::{Error, Result},
@@ -444,15 +444,39 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
     }
 }
 
+// Return timeStampToken used by sigTst2
+pub(crate) fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
+    let ts_resp = get_timestamp_response(ts).ok()?;
+
+    let tst = ts_resp.0.time_stamp_token?;
+    let mut tst_der = Vec::new();
+    tst.write_encoded(bcder::Mode::Der, &mut tst_der).ok()?;
+
+    if let Ok(ts) = Constructed::decode(tst_der.as_ref(), bcder::Mode::Der, |cons| {
+        cons.take_sequence(|cons| {
+            let content_type = crate::asn1::rfc5652::ContentType::take_from(cons)?;
+            let content = cons.take_constructed_if(bcder::Tag::CTX_0, |cons| cons.capture_all())?;
+
+            Ok(ContentInfo {
+                content_type,
+                content,
+            })
+        })
+    }) {
+        println!("{:?}", ts);
+    }
+
+    Some(tst_der)
+}
+
 // Returns TimeStamp token info if ts verifies against supplied data
 #[allow(unused_variables)]
 #[async_generic]
 pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
     let mut last_err = Error::CoseInvalidTimeStamp;
-    let ts_resp = get_timestamp_response(ts)?;
 
     // check for timestamp expiration during stamping
-    if let Ok(Some(sd)) = &ts_resp.signed_data() {
+    if let Ok(Some(sd)) = get_timestamp_signed_data(ts) {
         let certs = sd
             .certificates
             .clone()
@@ -501,7 +525,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             };
 
             // load unprotected TstInfo.  We will verify its contents below against signed values
-            let tst_opt = ts_resp.tst_info()?;
+            let tst_opt = get_tst_info_from_signed_data(&sd)?;
             let mut tst = tst_opt.ok_or(Error::CoseInvalidTimeStamp)?;
             let mi = &tst.message_imprint;
 
@@ -725,6 +749,54 @@ pub(crate) fn get_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse>
     );
 
     Ok(ts)
+}
+
+fn get_tst_info_from_signed_data(signed_data: &SignedData) -> Result<Option<TstInfo>> {
+    if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
+        if let Some(content) = &signed_data.content_info.content {
+            Ok(Some(
+                Constructed::decode(content.to_bytes(), bcder::Mode::Der, |cons| {
+                    TstInfo::take_from(cons)
+                })
+                .map_err(|_err| Error::CoseTimeStampGeneration)?,
+            ))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+// Get TimeStampResponse from DER TimeStampResp bytes or timeStampToken
+pub(crate) fn get_timestamp_signed_data(data: &[u8]) -> Result<Option<SignedData>> {
+    let tst = if let Ok(ts) = Constructed::decode(data, bcder::Mode::Der, |cons| {
+        TimeStampResp::take_from(cons)
+    }) {
+        ts.time_stamp_token
+    } else if let Ok(ts) = Constructed::decode(data, bcder::Mode::Der, |cons| {
+        TimeStampToken::take_opt_from(cons)
+    }) {
+        ts
+    } else {
+        return Err(Error::CoseInvalidTimeStamp);
+    };
+
+    if let Some(token) = &tst {
+        if token.content_type == OID_ID_SIGNED_DATA {
+            return Ok(Some(
+                token
+                    .content
+                    .clone()
+                    .decode(SignedData::take_from)
+                    .map_err(|_err| Error::CoseInvalidTimeStamp)?,
+            ));
+        } else {
+            Err(Error::CoseInvalidTimeStamp)
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]

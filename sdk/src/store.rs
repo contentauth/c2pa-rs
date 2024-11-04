@@ -505,14 +505,14 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size)
+                cose_sign(signer, &claim_bytes, box_size, claim.version())
             }
         } else {
             if signer.direct_cose_handling() {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size).await
+                cose_sign_async(signer, &claim_bytes, box_size, claim.version()).await
             }
         };
         match result {
@@ -1139,6 +1139,14 @@ impl Store {
                 .data_box_as_cbor_box(0)
                 .ok_or(Error::JumbfBoxNotFound)?;
             let mut claim = Claim::from_data(&cai_store_desc_box.label(), cbor_box.cbor())?;
+
+            // make sure box version label match the read Claim
+            if claim.version() > 1 {
+                match labels::version(&claim_box_ver) {
+                    Some(v) if claim.version() >= v => (),
+                    _ => return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxVersion)),
+                }
+            }
 
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
@@ -3513,6 +3521,15 @@ impl Store {
     ) -> Result<Store> {
         let mut report = OneShotStatusTracker::new();
         let store = Store::from_jumbf(data, &mut report)?;
+
+        // make sure the claims stores are compatible
+        let pc = store.provenance_claim().ok_or(Error::OtherError(
+            "ingredient missing provenace claim".into(),
+        ))?;
+        if claim.version() < pc.version() {
+            return Err(Error::OtherError("ingredient verion too new".into()));
+        }
+
         claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
         Ok(store)
     }
@@ -3554,6 +3571,10 @@ pub enum InvalidClaimError {
     /// The claim has a version that is newer than supported by this crate.
     #[error("claim version is too new, not supported")]
     ClaimVersionTooNew,
+
+    /// The claim has a version does not match JUMBF box label.
+    #[error("claim version does not match JUMBF box label")]
+    ClaimBoxVersion,
 
     /// The claim description box could not be parsed.
     #[error("claim description box was invalid")]
@@ -3776,15 +3797,12 @@ pub mod tests {
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
 
         // Create a new claim.
-        let claim1 = create_test_claim().unwrap();
-
-        // Create a new claim.
         let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 2);
         create_editing_claim(&mut claim2).unwrap();
         claim2.add_claim_generator_info(cgi.clone());
 
         // Create a 3rd party claim
-        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 2);
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
         claim_capture.add_claim_generator_info(cgi);
 
@@ -3793,7 +3811,6 @@ pub mod tests {
 
         // Test generate JUMBF
         // Get labels for label test
-        let claim1_label = claim1.label().to_string();
         let capture = claim_capture.label().to_string();
         let claim2_label = claim2.label().to_string();
 
@@ -3817,14 +3834,13 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         let mut report = DetailedStatusTracker::new();
-        
+
         // read from new file
-        let new_store =
-            Store::load_from_asset(&op, true, &mut report).unwrap();
+        let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
         assert!(errors.is_empty());
-        
+
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
             0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,

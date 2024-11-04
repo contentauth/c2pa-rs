@@ -178,6 +178,79 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
     parts.last().map(|b| b.to_string())
 }
 
+// Struct deconstructed manifest label
+pub(crate) struct ManifestParts {
+    pub guid: String,
+    pub is_v1: bool,
+    pub vendor: Option<String>,
+    pub version: Option<String>,
+}
+
+// Given a JUMBF URI, return the manifest parts contained within it.
+pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
+    if let Some(manifest) = manifest_label_from_uri(uri) {
+        let parts: Vec<&str> = manifest.split(":").collect();
+        if parts.len() < 3 {
+            return None;
+        }
+
+        let guid;
+        let mut vendor = None;
+        let mut version = None;
+        let is_v1;
+
+        if parts[0] == "urn" || parts[1] == "urn" {
+            if parts[0] == "urn" {
+                is_v1 = parts[1] == "uuid";
+
+                guid = parts[2].to_owned();
+
+                if !is_v1 {
+                    if parts.len() > 5 {
+                        return None;
+                    }
+
+                    if parts.len() > 3 {
+                        if !parts[3].is_empty() {
+                            vendor = Some(parts[3].to_owned());
+                        }
+                    }
+
+                    if parts.len() > 4 {
+                        if !parts[4].is_empty() {
+                            version = Some(parts[4].to_owned());
+                        }
+                    }
+                }
+
+                return Some(ManifestParts {
+                    guid,
+                    is_v1,
+                    vendor,
+                    version,
+                });
+            } else if parts[2] == "uuid" {
+                // this must be a 1.x path to begin with a vendor
+                if parts.len() != 4 {
+                    return None;
+                }
+
+                is_v1 = true;
+                vendor = Some(parts[0].to_owned());
+                guid = parts[3].to_owned();
+
+                return Some(ManifestParts {
+                    guid,
+                    is_v1,
+                    vendor,
+                    version,
+                });
+            }
+        }
+    }
+
+    None
+}
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
@@ -270,5 +343,57 @@ pub mod tests {
             Some(assertion.to_string()),
             assertion_label_from_uri(&assertion_relative)
         );
+    }
+
+    #[test]
+    fn test_manifest_parts() {
+        let l1 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        let l2 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:acme");
+        let l3 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:acme:2_1");
+        let l4 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4::2_1");
+        let l5 = to_manifest_uri("urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        let l6 = to_manifest_uri("acme:urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        let l7 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:acme:2_1:extra");
+        let l8 = to_manifest_uri("acme:urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4:2_1");
+
+        let l1_mp = manifest_label_to_parts(&l1).unwrap();
+        assert_eq!(l1_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(!l1_mp.is_v1);
+        assert_eq!(l1_mp.vendor, None);
+        assert_eq!(l1_mp.version, None);
+
+        let l2_mp = manifest_label_to_parts(&l2).unwrap();
+        assert_eq!(l2_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(!l2_mp.is_v1);
+        assert_eq!(l2_mp.vendor, Some("acme".to_owned()));
+        assert_eq!(l2_mp.version, None);
+
+        let l3_mp = manifest_label_to_parts(&l3).unwrap();
+        assert_eq!(l3_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(!l3_mp.is_v1);
+        assert_eq!(l3_mp.vendor, Some("acme".to_owned()));
+        assert_eq!(l3_mp.version, Some("2_1".to_owned()));
+
+        let l4_mp = manifest_label_to_parts(&l4).unwrap();
+        assert_eq!(l4_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(!l4_mp.is_v1);
+        assert_eq!(l4_mp.vendor, None);
+        assert_eq!(l4_mp.version, Some("2_1".to_owned()));
+
+        let l5_mp = manifest_label_to_parts(&l5).unwrap();
+        assert_eq!(l5_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(l5_mp.is_v1);
+        assert_eq!(l5_mp.vendor, None);
+        assert_eq!(l5_mp.version, None);
+
+        let l6_mp = manifest_label_to_parts(&l6).unwrap();
+        assert_eq!(l6_mp.guid, "F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
+        assert!(l6_mp.is_v1);
+        assert_eq!(l6_mp.vendor, Some("acme".to_owned()));
+        assert_eq!(l6_mp.version, None);
+
+        assert!(manifest_label_to_parts(&l7).is_none());
+
+        assert!(manifest_label_to_parts(&l8).is_none());
     }
 }
