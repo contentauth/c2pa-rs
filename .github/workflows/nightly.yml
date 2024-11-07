@@ -18,6 +18,11 @@ jobs:
   # Create snapshot of latest main or release branch for nightly build
   nightly-snapshot:
     name: Update nightly branch
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER'
+
     runs-on: ubuntu-latest
 
     steps:
