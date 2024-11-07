@@ -59,7 +59,11 @@ mod integration_v2 {
                 "title": "Test",
                 "format": "image/jpeg",
                 "instance_id": "12345",
-                "relationship": "inputTo"
+                "relationship": "inputTo",
+                "metadata": {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
             }
         ],
         "assertions": [
@@ -70,9 +74,32 @@ mod integration_v2 {
                         {
                             "action": "c2pa.edited",
                             "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                            "softwareAgent": "Adobe Firefly 0.1.0"
+                            "softwareAgent": "Adobe Firefly 0.1.0",
+                            "parameters": {
+                                "description": "This image was edited by Adobe Firefly",
+                            }
                         }
                     ]
+                }
+            },
+            {
+                "label": "c2pa.metadata",
+                "data": {
+                    "@context" : {
+                        "exif": "http://ns.adobe.com/exif/1.0/",
+                        "exifEX": "http://cipa.jp/exif/2.32/",
+                        "tiff": "http://ns.adobe.com/tiff/1.0/",
+                        "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+                        "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+                    },
+                    "photoshop:DateCreated": "Aug 31, 2022", 
+                    "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+                    "exif:GPSVersionID": "2.2.0.0",
+                    "exif:GPSLatitude": "39,21.102N",
+                    "exif:GPSLongitude": "74,26.5737W",
+                    "exif:GPSAltitudeRef": 0,
+                    "exif:GPSAltitude": "100963/29890",
+                    "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
                 }
             }
         ]
@@ -119,6 +146,11 @@ mod integration_v2 {
             dest.rewind()?;
             dest
         };
+
+        // write dest to file for debugging
+        let debug_path = format!("{}/../target/v2_test.jpg", env!("CARGO_MANIFEST_DIR"));
+        std::fs::write(debug_path, dest.get_ref())?;
+        dest.rewind()?;
 
         let reader = Reader::from_stream(format, &mut dest)?;
 
