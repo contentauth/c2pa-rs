@@ -9,8 +9,8 @@ version = "0.9.12"
 
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
-	"Gavin Peacock <gpeacock@adobe.com>",
-	"Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
+    "Maurice Fisher <mfisher@adobe.com>",
 ]
 license = "MIT OR Apache-2.0"
 documentation = "https://opensource.contentauthenticity.org/docs/c2patool"
@@ -23,10 +23,10 @@ repository = "https://github.com/contentauth/c2patool"
 [dependencies]
 anyhow = "1.0"
 c2pa = { version = "0.37.0", features = [
-	"fetch_remote_manifests",
-	"file_io",
-	"add_thumbnails",
-	"pdf",
+    "fetch_remote_manifests",
+    "file_io",
+    "add_thumbnails",
+    "pdf",
 ] }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.4"
@@ -38,8 +38,10 @@ serde_json = "1.0"
 tempfile = "3.3"
 pem = "3.0.3"
 openssl = { version = "0.10.61", features = ["vendored"] }
-reqwest = { version = "0.12.4", features = ["blocking"] }
-url = "2.5.0"
+reqwest = { version = "0.12.4", features = ["blocking", "json"] }
+url = { version = "2.5.0", features = ["serde"] }
+async-trait = "0.1.83"
+thiserror = "1.0.64"
 
 [dev-dependencies]
 assert_cmd = "2.0.14"
@@ -51,6 +53,6 @@ mockall = "0.13.0"
 # Use defaults
 
 [profile.release]
-strip = true  # Automatically strip symbols from the binary. 
+strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
 lto = "thin"  # Link time optimization.

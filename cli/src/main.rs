@@ -24,11 +24,13 @@ use std::{
     str::FromStr,
 };
 
+
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport, Signer};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
+use service_signer::{ServiceSigner, SigningServiceImpl};
 use signer::SignConfig;
 use url::Url;
 
@@ -40,6 +42,7 @@ use crate::{
 mod info;
 
 mod callback_signer;
+mod service_signer;
 mod signer;
 
 /// Tool for displaying and creating C2PA manifests.
@@ -129,6 +132,9 @@ struct CliArgs {
     /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
+
+    #[clap(long)]
+    api_signer: Option<Url>,
 }
 
 #[derive(Clone, Debug)]
@@ -564,6 +570,12 @@ fn main() -> Result<()> {
             let signer = CallbackSigner::new(process_runner, cb_config);
 
             Box::new(signer)
+        } else if let Some(signer_url) = args.api_signer {
+            log::info!("Using service signer at: {}", signer_url);
+            let service_wrapper = Box::new(SigningServiceImpl {
+                root_domain: signer_url,
+            });
+            Box::new(ServiceSigner::try_from(service_wrapper)?)
         } else {
             sign_config.signer()?
         };

@@ -707,6 +707,7 @@ version = "0.9.12"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "async-trait",
  "c2pa",
  "clap",
  "env_logger",
@@ -722,6 +723,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
+ "thiserror",
  "url",
 ]
 
@@ -3879,6 +3881,7 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+ "serde",
 ]
 
 [[package]]
