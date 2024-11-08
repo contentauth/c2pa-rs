@@ -190,6 +190,10 @@ pub struct Claim {
     #[serde(skip_deserializing, skip_serializing)]
     remote_manifest: RemoteManifest,
 
+    // external manifest
+    #[serde(skip_deserializing, skip_serializing)]
+    watermark: Option<String>,
+
     // root of CAI store
     #[serde(skip_deserializing, skip_serializing)]
     update_manifest: bool,
@@ -321,6 +325,7 @@ impl Claim {
 
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
+            watermark: None,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -355,6 +360,7 @@ impl Claim {
     pub fn new_with_user_guid<S: Into<String>>(claim_generator: S, user_guid: S) -> Self {
         Claim {
             remote_manifest: RemoteManifest::NoRemote,
+            watermark: None,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
             ingredients_store: HashMap::new(),
@@ -514,6 +520,14 @@ impl Claim {
         self.remote_manifest = RemoteManifest::EmbedWithRemote(url.to_string());
 
         Ok(())
+    }
+
+    pub fn set_watermark(&mut self, watermark: &str) {
+        self.watermark = Some(watermark.to_owned());
+    }
+
+    pub fn watermark(&self) -> Option<&String> {
+        self.watermark.as_ref()
     }
 
     pub fn set_external_manifest(&mut self) {

@@ -20,6 +20,7 @@ use std::{
 use byteorder::{BigEndian, ReadBytesExt};
 use conv::ValueFrom;
 use png_pong::chunk::InternationalText;
+use rustmark::{Trustmark, Version};
 use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
@@ -638,16 +639,35 @@ impl RemoteRefEmbed for PngIO {
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(w) => {
+                let output_buf = Vec::new();
+                let mut output_stream = Cursor::new(output_buf);
+
+                // do here so source file is closed after update
+                {
+                    let mut source_stream = std::fs::File::open(asset_path)?;
+                    self.embed_reference_to_stream(
+                        &mut source_stream,
+                        &mut output_stream,
+                        RemoteRefEmbedType::Watermark(w),
+                    )?;
+                }
+
+                std::fs::write(asset_path, output_stream.into_inner())?;
+
+                Ok(())
+            }
         }
     }
 
     fn embed_reference_to_stream(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        mut source_stream: &mut dyn CAIRead,
+        mut output_stream: &mut dyn CAIReadWrite,
         embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
+        use rand::{thread_rng, Rng};
+
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
                 source_stream.rewind()?;
@@ -708,7 +728,62 @@ impl RemoteRefEmbed for PngIO {
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_s) => {
+                let num_bits = Version::Bch5.data_bits();
+                let num_bytes = num_bits / 8 + 1;
+
+                let mut random = vec![0u8; num_bytes.into()];
+                thread_rng()
+                    .try_fill(random.as_mut_slice())
+                    .map_err(|_| Error::OtherError("could not generate unique watermark".into()))?;
+
+                let mut watermark = String::new();
+                let mut bits_left = num_bits;
+                let mut iter = random.iter();
+                loop {
+                    if bits_left > 0 {
+                        let curr_byte_str = match iter.next() {
+                            Some(b) => format!("{:0>8b}", b),
+                            None => {
+                                return Err(Error::OtherError(
+                                    "could not generate unique watermark".into(),
+                                ))
+                            }
+                        };
+
+                        if bits_left >= 8 {
+                            watermark.push_str(&curr_byte_str);
+                            bits_left -= 8;
+                        } else {
+                            watermark.extend(curr_byte_str.chars().take(bits_left.into()));
+                            bits_left = 0;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                let img_data_len = source_stream.stream_size()?;
+                let img_data = source_stream.read_to_vec(img_data_len)?;
+                let input = image::load_from_memory_with_format(&img_data, image::ImageFormat::Png)
+                    .map_err(|_e| Error::OtherError("could not generate TrustMark".into()))?;
+
+                let mut model_path = std::env::current_exe()?;
+                model_path.pop();
+                model_path.push("models");
+                let tm = Trustmark::new(&model_path, Version::Bch5)
+                    .map_err(|_e| Error::OtherError("could not generate TrustMark".into()))?;
+
+                let encoded = tm
+                    .encode(watermark.clone(), input, 0.95)
+                    .map_err(|_e| Error::OtherError("could not generate TrustMark".into()))?;
+                encoded
+                    .to_rgba8()
+                    .write_to(&mut output_stream, image::ImageFormat::Png)
+                    .map_err(|_e| Error::OtherError("could not generate TrustMark".into()))?;
+
+                Ok(())
+            }
         }
     }
 }
@@ -813,7 +888,7 @@ pub mod tests {
     #[test]
     fn test_png_xmp_write() {
         let ap = test::fixture_path("libpng-test.png");
-        let mut source_stream = std::fs::File::open(ap).unwrap();
+        let mut source_stream = std::fs::File::open(&ap).unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output = temp_dir_path(&temp_dir, "out.png");

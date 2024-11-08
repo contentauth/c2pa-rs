@@ -2632,10 +2632,36 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
     ) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
         let intermediate_output: Vec<u8> = Vec::new();
         let mut intermediate_stream = Cursor::new(intermediate_output);
+        let mut intermediate_stream2;
+        let mut current_stream = input_stream;
+
+        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // embed watermark if present
+        if let Some(w) = pc.watermark() {
+            if let Some(external_ref_writer) = io_handler.remote_ref_writer_ref() {
+                match external_ref_writer.embed_reference_to_stream(
+                    current_stream,
+                    &mut intermediate_stream,
+                    RemoteRefEmbedType::Watermark(w.to_owned()),
+                ) {
+                    Ok(_) => {
+                        current_stream = &mut intermediate_stream;
+                        current_stream.rewind()?;
+                        let tmp: Vec<u8> = Vec::new();
+                        intermediate_stream2 = Cursor::new(tmp);
+                        current_stream = &mut intermediate_stream2;
+                    }
+                    Err(Error::UnsupportedType) => (),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
 
         // Add remote reference XMP if needed and strip out existing manifest
         // We don't need to strip manifests if we are replacing an existing one
@@ -2645,8 +2671,6 @@ impl Store {
             RemoteManifest::Remote(url) => (Some(url), true),
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
-
-        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
@@ -2661,7 +2685,7 @@ impl Store {
 
                 let tmp_output: Vec<u8> = Vec::new();
                 let mut tmp_stream = Cursor::new(tmp_output);
-                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+                manifest_writer.remove_cai_store_from_stream(current_stream, &mut tmp_stream)?;
 
                 // add external ref if possible
                 tmp_stream.rewind()?;
@@ -2673,7 +2697,7 @@ impl Store {
             } else {
                 // add external ref if possible
                 external_ref_writer.embed_reference_to_stream(
-                    input_stream,
+                    current_stream,
                     &mut intermediate_stream,
                     RemoteRefEmbedType::Xmp(url),
                 )?;
@@ -2683,11 +2707,12 @@ impl Store {
                 .get_writer(format)
                 .ok_or(Error::UnsupportedType)?;
 
-            manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+            manifest_writer
+                .remove_cai_store_from_stream(current_stream, &mut intermediate_stream)?;
         } else {
             // just clone stream
-            input_stream.rewind()?;
-            std::io::copy(input_stream, &mut intermediate_stream)?;
+            current_stream.rewind()?;
+            std::io::copy(current_stream, &mut intermediate_stream)?;
         }
 
         let is_bmff = is_bmff_format(format);
@@ -2883,16 +2908,29 @@ impl Store {
                 MANIFEST_STORE_EXT.to_owned()
             }
         };
+        let ah = get_assetio_handler(&ext).ok_or(Error::UnsupportedType)?;
 
         // clone the source to working copy if requested
         if asset_path != dest_path {
             fs::copy(asset_path, dest_path).map_err(Error::IoError)?;
         }
 
-        //  update file following the steps outlined in CAI spec
-
-        // 1) Add DC provenance XMP
+        // embed watermark if present
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        if let Some(w) = pc.watermark() {
+            if let Some(external_ref_writer) = ah.remote_ref_writer_ref() {
+                match external_ref_writer
+                    .embed_reference(dest_path, RemoteRefEmbedType::Watermark(w.to_owned()))
+                {
+                    Ok(_) => (),
+                    Err(Error::UnsupportedType) => (),
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        //  update file following the steps outlined in C2PA spec
+        // 1) Add DC provenance XMP
         let output_path = match pc.remote_manifest() {
             crate::claim::RemoteManifest::NoRemote => dest_path.to_path_buf(),
             crate::claim::RemoteManifest::SideCar => {
@@ -2909,30 +2947,21 @@ impl Store {
                 // remove any previous c2pa manifest from the asset
                 remove_jumbf_from_file(dest_path)?;
 
-                if let Some(h) = get_assetio_handler(&ext) {
-                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
-                        external_ref_writer
-                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
-                    } else {
-                        return Err(Error::XmpNotSupported);
-                    }
+                if let Some(external_ref_writer) = ah.remote_ref_writer_ref() {
+                    external_ref_writer.embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
                 } else {
-                    return Err(Error::UnsupportedType);
+                    return Err(Error::XmpNotSupported);
                 }
 
                 d
             }
             crate::claim::RemoteManifest::EmbedWithRemote(url) => {
-                if let Some(h) = get_assetio_handler(&ext) {
-                    if let Some(external_ref_writer) = h.remote_ref_writer_ref() {
-                        external_ref_writer
-                            .embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
-                    } else {
-                        return Err(Error::XmpNotSupported);
-                    }
+                if let Some(external_ref_writer) = ah.remote_ref_writer_ref() {
+                    external_ref_writer.embed_reference(dest_path, RemoteRefEmbedType::Xmp(url))?;
                 } else {
-                    return Err(Error::UnsupportedType);
+                    return Err(Error::XmpNotSupported);
                 }
+
                 dest_path.to_path_buf()
             }
         };

@@ -76,6 +76,9 @@ pub(crate) fn safe_vec<T: Clone>(item_cnt: u64, init_with: Option<T>) -> Result<
 pub trait ReaderUtils {
     // Reads contents from a stream making sure if can be done and will fit within available memory
     fn read_to_vec(&mut self, data_len: u64) -> Result<Vec<u8>>;
+
+    // Return the length of the stream
+    fn stream_size(&mut self) -> Result<u64>;
 }
 
 // Provide implementation for any object that support Read + Seek
@@ -103,5 +106,9 @@ impl<R: Read + Seek> ReaderUtils for R {
         self.take(data_len).read_to_end(&mut output)?;
 
         Ok(output)
+    }
+
+    fn stream_size(&mut self) -> Result<u64> {
+        stream_len(self)
     }
 }
