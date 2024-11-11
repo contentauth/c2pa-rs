@@ -76,6 +76,7 @@ pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum SoftwareAgent {
     String(String),
     ClaimGeneratorInfo(ClaimGeneratorInfo),

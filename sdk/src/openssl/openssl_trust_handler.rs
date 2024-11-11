@@ -278,7 +278,7 @@ pub(crate) fn verify_trust(
             .set_flags(X509VerifyFlags::NO_CHECK_TIME)
             .map_err(Error::OpenSslError)?;
     }
-     
+
     builder
         .set_param(&verify_param)
         .map_err(Error::OpenSslError)?;

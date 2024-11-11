@@ -439,7 +439,7 @@ impl Claim {
         let uuid =
             Uuid::try_parse(&ug).map_err(|_e| Error::BadParam("invalid Claim GUID".into()))?;
         match uuid.get_version() {
-            Some(v) if v == uuid::Version::Random => (),
+            Some(uuid::Version::Random) => (),
             _ => return Err(Error::BadParam("invalid Claim GUID".into())),
         }
         let label = if claim_version == 1 {

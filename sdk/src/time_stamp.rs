@@ -13,6 +13,7 @@
 
 use std::ops::Deref;
 
+use asn1_rs::nom::AsBytes;
 use async_generic::async_generic;
 use bcder::{
     decode::{Constructed, SliceSource},
@@ -20,6 +21,7 @@ use bcder::{
     ConstOid, OctetString,
 };
 use coset::{sig_structure_data, ProtectedHeader};
+use rasn::{AsnType, Decode, Encode};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
@@ -33,8 +35,8 @@ use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{
-            CertificateChoices::Certificate, ContentInfo, SignedData, OID_ID_SIGNED_DATA,
-            OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
+            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_MESSAGE_DIGEST,
+            OID_SIGNING_TIME,
         },
     },
     error::{Error, Result},
@@ -444,29 +446,30 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
     }
 }
 
+#[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ContentInfo {
+    pub content_type: rasn::types::ObjectIdentifier,
+    #[rasn(tag(explicit(0)))]
+    pub content: rasn::types::Any,
+}
+
 // Return timeStampToken used by sigTst2
 pub(crate) fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
     let ts_resp = get_timestamp_response(ts).ok()?;
 
     let tst = ts_resp.0.time_stamp_token?;
-    let mut tst_der = Vec::new();
-    tst.write_encoded(bcder::Mode::Der, &mut tst_der).ok()?;
+    let a: Result<Vec<u32>> = tst
+        .content_type
+        .iter()
+        .map(|v| v.to_u32().ok_or(Error::NotFound))
+        .collect();
 
-    if let Ok(ts) = Constructed::decode(tst_der.as_ref(), bcder::Mode::Der, |cons| {
-        cons.take_sequence(|cons| {
-            let content_type = crate::asn1::rfc5652::ContentType::take_from(cons)?;
-            let content = cons.take_constructed_if(bcder::Tag::CTX_0, |cons| cons.capture_all())?;
+    let ci = ContentInfo {
+        content_type: rasn::types::ObjectIdentifier::new(a.ok()?)?,
+        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+    };
 
-            Ok(ContentInfo {
-                content_type,
-                content,
-            })
-        })
-    }) {
-        println!("{:?}", ts);
-    }
-
-    Some(tst_der)
+    rasn::der::encode(&ci).ok()
 }
 
 // Returns TimeStamp token info if ts verifies against supplied data
@@ -784,13 +787,13 @@ pub(crate) fn get_timestamp_signed_data(data: &[u8]) -> Result<Option<SignedData
 
     if let Some(token) = &tst {
         if token.content_type == OID_ID_SIGNED_DATA {
-            return Ok(Some(
+            Ok(Some(
                 token
                     .content
                     .clone()
                     .decode(SignedData::take_from)
                     .map_err(|_err| Error::CoseInvalidTimeStamp)?,
-            ));
+            ))
         } else {
             Err(Error::CoseInvalidTimeStamp)
         }

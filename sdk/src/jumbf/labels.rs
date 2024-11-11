@@ -210,16 +210,12 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
                         return None;
                     }
 
-                    if parts.len() > 3 {
-                        if !parts[3].is_empty() {
-                            vendor = Some(parts[3].to_owned());
-                        }
+                    if parts.len() > 3 && !parts[3].is_empty() {
+                        vendor = Some(parts[3].to_owned());
                     }
 
-                    if parts.len() > 4 {
-                        if !parts[4].is_empty() {
-                            version = Some(parts[4].to_owned());
-                        }
+                    if parts.len() > 4 && !parts[4].is_empty() {
+                        version = Some(parts[4].to_owned());
                     }
                 }
 

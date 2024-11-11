@@ -365,7 +365,7 @@ pub(crate) fn temp_signer() -> Box<dyn Signer> {
             &sign_cert,
             &pem_key,
             SigningAlg::Ps256,
-            Some("http://timestamp.digicert.com".into()),
+            None, // Some("http://timestamp.digicert.com".into()),
         )
         .expect("get_temp_signer");
 
