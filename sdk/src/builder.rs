@@ -56,7 +56,7 @@ pub struct ManifestDefinition {
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
     pub vendor: Option<String>,
 
-    /// Clam Generator Info is always required with at least one entry
+    /// Claim Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
