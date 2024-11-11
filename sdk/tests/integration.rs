@@ -326,6 +326,7 @@ mod integration_1 {
             .unwrap();
 
         // get placed manifest
+        #[allow(deprecated)]
         let (placed_manifest, label) = manifest
             .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
             .unwrap();
@@ -345,6 +346,7 @@ mod integration_1 {
 
         // add manifest back into data
         input_stream.rewind().unwrap();
+        #[allow(deprecated)]
         Manifest::embed_placed_manifest(
             &placed_manifest,
             "jpg",
@@ -392,6 +394,7 @@ mod integration_1 {
             .unwrap();
 
         // get placed manifest
+        #[allow(deprecated)]
         let (placed_manifest, label) = manifest
             .get_placed_manifest(signer.reserve_size(), "mp4", &mut input_stream)
             .unwrap();
@@ -411,6 +414,7 @@ mod integration_1 {
 
         // add manifest back into data
         input_stream.rewind().unwrap();
+        #[allow(deprecated)]
         Manifest::embed_placed_manifest(
             &placed_manifest,
             "mp4",
