@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.37.1"
+version = "0.38.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -124,7 +124,7 @@ sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
-url = "2.5.2"
+url = "=2.5.2" # Can't advance to 2.5.3 until Unicode-3.0 license is reviewed.
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
