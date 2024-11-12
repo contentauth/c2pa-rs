@@ -78,7 +78,7 @@ fn r#macro() {
         LogItem {
             label: "test1".to_string(),
             description: "test item 1".to_string(),
-            file: "internal/status-tracker/src/tests/log.rs".to_string(),
+            file: file!().to_string(),
             function: "test func".to_string(),
             line: log_item.line,
             err_val: None,
