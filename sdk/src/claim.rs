@@ -16,6 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
+use c2pa_status_tracker::log_item;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -50,7 +51,7 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    status_tracker::{log_item, OneShotStatusTracker, StatusTracker},
+    status_tracker::{OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
         base64,

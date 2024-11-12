@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
+use c2pa_status_tracker::log_item;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -40,7 +41,7 @@ use crate::{
     },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
-    status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
+    status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::{base64, xmp_inmemory_utils::XmpInfo},
     validation_status::{self, status_for_store, ValidationStatus},
@@ -755,7 +756,7 @@ impl Ingredient {
                             // add a log entry for the error so we act like verify
                             validation_log.log_silent(
                                 log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(e),
+                                    .error(e),
                             );
                         }),
                     Some(manifest_bytes),
@@ -886,8 +887,7 @@ impl Ingredient {
                 result.inspect_err(|e| {
                     // add a log entry for the error so we act like verify
                     validation_log.log_silent(
-                        log_item!("asset", "error loading file", "Ingredient::from_file")
-                            .set_error(e),
+                        log_item!("asset", "error loading file", "Ingredient::from_file").error(e),
                     );
                 }),
                 Some(manifest_bytes),
@@ -960,7 +960,7 @@ impl Ingredient {
                                     "error loading asset",
                                     "Ingredient::from_stream_async"
                                 )
-                                .set_error(&e),
+                                .error(&e),
                             );
                             Err(e)
                         }
@@ -1362,7 +1362,7 @@ impl Ingredient {
             Err(e) => {
                 // add a log entry for the error so we act like verify
                 validation_log.log_silent(
-                    log_item!("asset", "error loading file", "Ingredient::from_file").set_error(&e),
+                    log_item!("asset", "error loading file", "Ingredient::from_file").error(&e),
                 );
                 Err(e)
             }

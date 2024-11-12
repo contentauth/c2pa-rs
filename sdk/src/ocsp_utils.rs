@@ -11,13 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_status_tracker::log_item;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use conv::ConvUtil;
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponse, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 
 use crate::{
-    status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
+    status_tracker::{DetailedStatusTracker, StatusTracker},
     validation_status, Error, Result,
 };
 

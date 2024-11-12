@@ -15,6 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
+use c2pa_status_tracker::log_item;
 use ciborium::value::Value;
 use conv::*;
 use coset::{
@@ -37,7 +38,7 @@ use crate::{
     error::{Error, Result},
     ocsp_utils::{check_ocsp_response, OcspData},
     settings::get_settings_value,
-    status_tracker::{log_item, StatusTracker},
+    status_tracker::StatusTracker,
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
     utils::sig_utils::parse_ec_der_sig,
@@ -911,9 +912,8 @@ fn check_trust(
         }
         Err(e) => {
             let log_item = log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .error(Error::CoseCertUntrusted)
                 .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                .set_error(&e);
+                .error(&e);
 
             validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
             Err(e)

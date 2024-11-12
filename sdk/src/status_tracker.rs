@@ -13,61 +13,9 @@
 
 use std::fmt;
 
+use c2pa_status_tracker::LogItem;
+
 use crate::error::{Error, Result};
-
-#[derive(Debug)]
-pub struct LogItem {
-    pub label: String, // JUBMF label of the item if available, or other descriptive label
-    pub file: String,  // File where failure occurred
-    pub function: String, // Function where failure occurred
-    pub line: String,  // Line number for error
-    pub description: String, // Description of the failure
-    err_val: Option<String>, // Actual error code as string
-    pub validation_status: Option<String>, // C2PA code if available
-}
-
-impl LogItem {
-    pub fn new(label: &str, description: &str, function: &str, file: &str, line: u32) -> Self {
-        LogItem {
-            label: label.to_string(),
-            file: file.to_string(),
-            function: function.to_string(),
-            line: line.to_string(),
-            description: description.to_string(),
-            err_val: None,
-            validation_status: None,
-        }
-    }
-
-    // add an error value
-    pub fn error(self, err: Error) -> Self {
-        LogItem {
-            err_val: Some(format!("{err:?}")),
-            ..self
-        }
-    }
-
-    // add an error value
-    pub fn set_error(self, err: &Error) -> Self {
-        LogItem {
-            err_val: Some(format!("{err:?}")),
-            ..self
-        }
-    }
-
-    /// returns a reference to the error string if there is one
-    pub fn error_str(&self) -> Option<&str> {
-        self.err_val.as_deref()
-    }
-
-    // add an error value
-    pub fn validation_status(self, status: &str) -> Self {
-        LogItem {
-            validation_status: Some(status.to_string()),
-            ..self
-        }
-    }
-}
 
 pub trait StatusTracker: Send {
     // should we stop on the first error
@@ -231,32 +179,15 @@ pub fn report_split_errors(report: &mut Vec<LogItem>) -> Vec<LogItem> {
     }
     output
 }
-/// log_item create a log item suitable for StatusTracker
-/// label - name of object this LogItem references
-/// description - reason for this LogItem
-/// function - name of the function generating this LogItem
-macro_rules! log_item {
-    ($label:expr, $description:expr, $function:expr) => {{
-        use crate::status_tracker::LogItem;
-        LogItem::new(
-            &$label.to_string(),
-            &$description.to_string(),
-            &$function.to_string(),
-            file!(),
-            line!(),
-        )
-    }};
-}
-
-pub(crate) use log_item;
 
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_status_tracker::{log_item, LogItem};
+
     use super::*;
     use crate::validation_status;
-    //validation_item::log_item!;
 
     #[test]
     fn test_standard_tracker_stopping_for_error() {

@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
+use c2pa_status_tracker::log_item;
 use log::error;
 
 #[cfg(feature = "file_io")]
@@ -60,7 +61,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
+    status_tracker::{DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
         hash_utils::{hash_sha256, HashRange},
@@ -3285,7 +3286,7 @@ impl Store {
             })
             .inspect_err(|e| {
                 validation_log.log_silent(
-                    log_item!("asset", "error loading file", "load_from_asset").set_error(e),
+                    log_item!("asset", "error loading file", "load_from_asset").error(e),
                 );
             })
     }
@@ -3298,7 +3299,7 @@ impl Store {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
             validation_log.log_silent(
-                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(e),
+                log_item!("asset", "error loading asset", "get_store_from_memory").error(e),
             );
         })
     }
@@ -4674,7 +4675,7 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report.get_log());
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(errors[0].error_str().unwrap().starts_with("IoError"));
+        assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
     }
 
     #[test]
@@ -4686,7 +4687,11 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report.get_log());
         assert!(!report.get_log().is_empty());
         let errors = report_split_errors(report.get_log_mut());
-        assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
+        assert!(errors[0]
+            .err_val
+            .as_ref()
+            .unwrap()
+            .starts_with("Prerelease"));
     }
 
     #[test]
@@ -4850,7 +4855,8 @@ pub mod tests {
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
         assert!(!report.get_log().is_empty());
         assert!(report.get_log()[0]
-            .error_str()
+            .err_val
+            .as_ref()
             .unwrap()
             .starts_with("ClaimDecoding"))
     }
