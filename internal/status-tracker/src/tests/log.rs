@@ -84,6 +84,9 @@ fn validation_status() {
         LogItem {
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),
+            #[cfg(target_os = "windows")]
+            file: Cow::Borrowed("internal\\status-tracker\\src\\tests\\log.rs"),
+            #[cfg(not(target_os = "windows"))]
             file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
             function: Cow::Borrowed("test func"),
             line: log_item.line,
