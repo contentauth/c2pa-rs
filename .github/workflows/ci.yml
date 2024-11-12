@@ -54,11 +54,6 @@ jobs:
           RUST_BACKTRACE: "1"
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
-      - name: Run doc tests (does not generate coverage 🙃)
-        run: cargo test --doc --verbose --all-features -p c2pa -p cawg-identity -p c2pa-crypto
-        # TODO: Include doc tests in coverage once it is stabilized.
-        # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2 for progress.
-
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
@@ -72,6 +67,18 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+
+      - name: Run doc tests (does not generate coverage 🙃)
+        # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
+        # coverage. (This requires a bug fix that is only available
+        # in nightly Rust.) Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
+        # for progress.
+        run: cargo test --all-features --workspace
+  
+        # NOTE: This actually runs _all_ tests again without coverage.
+        # While there is a --docs option that selects only the doc tests,
+        # it winds up re-compling EVERYTHING and that performance hit is
+        # worse than simply re-running the tests again. (Bleh.)
 
   tests-cross:
     name: Unit tests
