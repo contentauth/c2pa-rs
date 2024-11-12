@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
+
 members = [
     "cawg_identity",
     "crypto",
     "export_schema",
+    "internal/status-tracker",
     "make_test_images",
     "sdk",
 ]
