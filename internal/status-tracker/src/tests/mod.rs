@@ -17,3 +17,5 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
+
+mod log;

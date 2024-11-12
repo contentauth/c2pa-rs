@@ -186,7 +186,7 @@ impl LogItem {
 #[macro_export]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
-        use c2pa_status_tracker::LogItem;
+        use $crate::LogItem;
         LogItem::new(
             &$label.to_string(),
             &$description.to_string(),

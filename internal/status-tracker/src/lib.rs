@@ -22,4 +22,5 @@
 mod log;
 pub use log::LogItem;
 
+#[cfg(test)]
 pub(crate) mod tests;
