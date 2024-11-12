@@ -118,7 +118,7 @@ serde_with = "3.11.0"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
-tempfile = { version = "3.14", features = ["nightly"] }
+tempfile = "3.14"
 thiserror = "1.0.61"
 treeline = "0.1.0"
 url = "2.5.3"
@@ -135,6 +135,9 @@ p384 = "0.13.0"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
 
+[target.'cfg(target_env = "p2")'.dependencies]
+tempfile = { version = "3.14", features = ["nightly"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
 instant = "0.1.12"
@@ -149,6 +152,7 @@ image = { version = "0.24.7", default-features = false, features = [
 [target.'cfg(target_os = "wasi")'.dependencies]
 getrandom = "0.2.7"
 instant = { version = "0.1.12", features = ["inaccurate"] }
+
 
 [target.'cfg(all(target_arch = "wasm32",not(target_os = "wasi")))'.dependencies]
 chrono = { version = "0.4.38", default-features = false, features = [
