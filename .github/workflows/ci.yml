@@ -54,6 +54,11 @@ jobs:
           RUST_BACKTRACE: "1"
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
+      - name: Run doc tests (does not generate coverage)
+        run: cargo test --doc --verbose --all-features --workspace  
+        # TODO: Include doc tests in coverage once it is stabilized.
+        # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2 for progress.
+
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
