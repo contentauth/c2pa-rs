@@ -11,31 +11,31 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
+use std::{borrow::Cow, fmt::Debug};
 
 /// Detailed information about an error or other noteworthy condition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogItem {
     /// JUBMF label of the item (if available), or other descriptive label
-    pub label: String,
+    pub label: Cow<'static, str>,
 
     /// Description of the error
-    pub description: String,
+    pub description: Cow<'static, str>,
 
     /// Source file where error was detected
-    pub file: String,
+    pub file: Cow<'static, str>,
 
     /// Function where error was detected
-    pub function: String,
+    pub function: Cow<'static, str>,
 
     /// Source line number where error was detected
     pub line: u32,
 
     /// Error code as string
-    pub err_val: Option<String>,
+    pub err_val: Option<Cow<'static, str>>,
 
     /// C2PA validation status code
-    pub validation_status: Option<String>,
+    pub validation_status: Option<Cow<'static, str>>,
 }
 
 impl LogItem {
@@ -44,29 +44,36 @@ impl LogItem {
     /// ## Example
     ///
     /// ```
+    /// # use std::borrow::Cow;
     /// # use c2pa_status_tracker::LogItem;
     /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42);
     ///
     /// assert_eq!(
     ///     log_item,
     ///     LogItem {
-    ///         label: "test1".to_string(),
-    ///         description: "test item 1".to_string(),
-    ///         file: "src/test.rs".to_string(),
-    ///         function: "test func".to_string(),
+    ///         label: Cow::Borrowed("test1"),
+    ///         description: Cow::Borrowed("test item 1"),
+    ///         file: Cow::Borrowed("src/test.rs"),
+    ///         function: Cow::Borrowed("test func"),
     ///         line: 42u32,
     ///         err_val: None,
     ///         validation_status: None,
     ///     }
     /// );
     /// ```
-    pub fn new(label: &str, description: &str, function: &str, file: &str, line: u32) -> Self {
+    pub fn new(
+        label: &'static str,
+        description: &'static str,
+        function: &'static str,
+        file: &'static str,
+        line: u32,
+    ) -> Self {
         LogItem {
-            label: label.to_string(),
-            file: file.to_string(),
-            function: function.to_string(),
+            label: label.into(),
+            file: file.into(),
+            function: function.into(),
             line,
-            description: description.to_string(),
+            description: description.into(),
             err_val: None,
             validation_status: None,
         }
@@ -81,6 +88,7 @@ impl LogItem {
     /// ## Example
     ///
     /// ```
+    /// # use std::borrow::Cow;
     /// # use c2pa_status_tracker::LogItem;
     /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
     ///     .error("sample error message");
@@ -88,19 +96,19 @@ impl LogItem {
     /// assert_eq!(
     ///     log_item,
     ///     LogItem {
-    ///         label: "test1".to_string(),
-    ///         description: "test item 1".to_string(),
-    ///         file: "src/test.rs".to_string(),
-    ///         function: "test func".to_string(),
+    ///         label: Cow::Borrowed("test1"),
+    ///         description: Cow::Borrowed("test item 1"),
+    ///         file: Cow::Borrowed("src/test.rs"),
+    ///         function: Cow::Borrowed("test func"),
     ///         line: 42u32,
-    ///         err_val: Some("\"sample error message\"".to_string()),
+    ///         err_val: Some(Cow::Borrowed("\"sample error message\"")),
     ///         validation_status: None,
     ///     }
     /// );
     /// ```
     pub fn error<E: std::fmt::Debug>(self, err: E) -> Self {
         LogItem {
-            err_val: Some(format!("{err:?}")),
+            err_val: Some(format!("{err:?}").into()),
             ..self
         }
     }
@@ -110,6 +118,7 @@ impl LogItem {
     /// ## Example
     ///
     /// ```
+    /// # use std::borrow::Cow;
     /// # use c2pa_status_tracker::LogItem;
     /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
     ///     .validation_status("claim.missing");
@@ -117,19 +126,19 @@ impl LogItem {
     /// assert_eq!(
     ///     log_item,
     ///     LogItem {
-    ///         label: "test1".to_string(),
-    ///         description: "test item 1".to_string(),
-    ///         file: "src/test.rs".to_string(),
-    ///         function: "test func".to_string(),
+    ///         label: Cow::Borrowed("test1"),
+    ///         description: Cow::Borrowed("test item 1"),
+    ///         file: Cow::Borrowed("src/test.rs"),
+    ///         function: Cow::Borrowed("test func"),
     ///         line: 42u32,
     ///         err_val: None,
-    ///         validation_status: Some("claim.missing".to_string()),
+    ///         validation_status: Some(Cow::Borrowed("claim.missing")),
     ///     }
     /// );
     /// ```
-    pub fn validation_status(self, status: &str) -> Self {
+    pub fn validation_status(self, status: &'static str) -> Self {
         LogItem {
-            validation_status: Some(status.to_string()),
+            validation_status: Some(status.into()),
             ..self
         }
     }
@@ -149,16 +158,17 @@ impl LogItem {
 /// ## Example
 ///
 /// ```
+/// # use std::borrow::Cow;
 /// # use c2pa_status_tracker::{log_item, LogItem};
 /// let log_item = log_item!("test1", "test item 1", "test func");
 ///
 /// assert_eq!(
 ///     log_item,
 ///     LogItem {
-///         label: "test1".to_string(),
-///         description: "test item 1".to_string(),
-///         file: file!().to_string(),
-///         function: "test func".to_string(),
+///         label: Cow::Borrowed("test1"),
+///         description: Cow::Borrowed("test item 1"),
+///         file: Cow::Borrowed(file!()),
+///         function: Cow::Borrowed("test func"),
 ///         line: log_item.line,
 ///         err_val: None,
 ///         validation_status: None,
@@ -170,13 +180,14 @@ impl LogItem {
 #[macro_export]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
-        use $crate::LogItem;
-        LogItem::new(
-            &$label.to_string(),
-            &$description.to_string(),
-            &$function.to_string(),
-            file!(),
-            line!(),
-        )
+        $crate::LogItem {
+            label: $label.into(),
+            file: file!().into(),
+            function: $function.into(),
+            line: line!(),
+            description: $description.into(),
+            err_val: None,
+            validation_status: None,
+        }
     }};
 }

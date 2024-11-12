@@ -1291,7 +1291,7 @@ impl Store {
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
-                            &c2pa_manifest.url(),
+                            c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks"
                         )
@@ -1324,7 +1324,7 @@ impl Store {
                     Store::ingredient_checks(store, ingredient, asset_data, validation_log)?;
                 } else {
                     let log_item = log_item!(
-                        &c2pa_manifest.url(),
+                        c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks"
                     )
@@ -1346,7 +1346,7 @@ impl Store {
         if claim.update_manifest() {
             if !(num_parent_ofs == 1 && claim.ingredient_assertions().len() == 1) {
                 let log_item = log_item!(
-                    &claim.uri(),
+                    claim.uri(),
                     "update manifest must have one parent",
                     "ingredient_checks"
                 )
@@ -1363,7 +1363,7 @@ impl Store {
             }
         } else if num_parent_ofs > 1 {
             let log_item = log_item!(
-                &claim.uri(),
+                claim.uri(),
                 "too many ingredient parents",
                 "ingredient_checks"
             )
@@ -1413,7 +1413,7 @@ impl Store {
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
                         let log_item = log_item!(
-                            &c2pa_manifest.url(),
+                            c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks_async"
                         )
@@ -1448,7 +1448,7 @@ impl Store {
                         .await?;
                 } else {
                     let log_item = log_item!(
-                        &c2pa_manifest.url(),
+                        c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks_async"
                     )
@@ -2326,7 +2326,7 @@ impl Store {
                             )
                         {
                             let log_item = log_item!(
-                                &c2pa_manifest.url(),
+                                c2pa_manifest.url(),
                                 "ingredient hash incorrect",
                                 "embed_placed_manifest"
                             )

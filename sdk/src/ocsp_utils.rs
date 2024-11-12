@@ -334,7 +334,7 @@ pub(crate) fn check_ocsp_response(
                                             );
                                             let log_item = log_item!(
                                                 "OCSP_RESPONSE",
-                                                &msg,
+                                                msg,
                                                 "check_ocsp_response"
                                             )
                                             .error(Error::CoseCertRevoked)
@@ -376,7 +376,7 @@ pub(crate) fn check_ocsp_response(
                                             );
                                             let log_item = log_item!(
                                                 "OCSP_RESPONSE",
-                                                &msg,
+                                                msg,
                                                 "check_ocsp_response"
                                             )
                                             .error(Error::CoseCertRevoked)

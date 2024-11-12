@@ -1286,20 +1286,17 @@ impl Claim {
         if is_provenance {
             // must have at least one hard binding for normal manifests
             if claim.hash_assertions().is_empty() && !claim.update_manifest() {
-                let log_item = log_item!(
-                    &claim.uri(),
-                    "claim missing data binding",
-                    "verify_internal"
-                )
-                .error(Error::ClaimMissingHardBinding)
-                .validation_status(validation_status::HARD_BINDINGS_MISSING);
+                let log_item =
+                    log_item!(claim.uri(), "claim missing data binding", "verify_internal")
+                        .error(Error::ClaimMissingHardBinding)
+                        .validation_status(validation_status::HARD_BINDINGS_MISSING);
                 validation_log.log(log_item, Some(Error::ClaimMissingHardBinding))?;
             }
 
             // update manifests cannot have data hashes
             if !claim.hash_assertions().is_empty() && claim.update_manifest() {
                 let log_item = log_item!(
-                    &claim.uri(),
+                    claim.uri(),
                     "update manifests cannot contain data hash assertions",
                     "verify_internal"
                 )

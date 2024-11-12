@@ -1424,7 +1424,7 @@ pub mod tests {
 
             assert_eq!(
                 validation_log.get_log()[0].validation_status,
-                Some(validation_status::SIGNING_CREDENTIAL_EXPIRED.to_string())
+                Some(validation_status::SIGNING_CREDENTIAL_EXPIRED.into())
             );
         }
     }
