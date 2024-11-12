@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use crate::{log_item, LogItem};
+use crate::{log_item, LogItem, LogKind};
 
 #[test]
 fn r#macro() {
@@ -22,6 +22,7 @@ fn r#macro() {
     assert_eq!(
         log,
         LogItem {
+            kind: LogKind::Informational,
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),
             file: Cow::Borrowed(file!()),
@@ -43,6 +44,7 @@ fn macro_from_string() {
     assert_eq!(
         log,
         LogItem {
+            kind: crate::LogKind::Informational,
             label: Cow::Borrowed("test1"),
             description: Cow::Owned("test item 1".to_string()),
             file: Cow::Borrowed(file!()),
@@ -57,12 +59,32 @@ fn macro_from_string() {
 }
 
 #[test]
+fn success() {
+    let log_item = log_item!("test1", "test item 1", "test func").success();
+
+    assert_eq!(
+        log_item,
+        LogItem {
+            kind: LogKind::Success,
+            label: Cow::Borrowed("test1"),
+            description: Cow::Borrowed("test item 1"),
+            file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
+            function: Cow::Borrowed("test func"),
+            line: log_item.line,
+            err_val: None,
+            validation_status: None,
+        }
+    );
+}
+
+#[test]
 fn error() {
     let log_item = log_item!("test1", "test item 1", "test func").error("sample error message");
 
     assert_eq!(
         log_item,
         LogItem {
+            kind: LogKind::Failure,
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),
             file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
@@ -82,6 +104,7 @@ fn validation_status() {
     assert_eq!(
         log_item,
         LogItem {
+            kind: LogKind::Informational,
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),
             #[cfg(target_os = "windows")]

@@ -20,7 +20,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 mod log;
-pub use log::LogItem;
+pub use log::{LogItem, LogKind};
 
 mod status_tracker;
 pub use status_tracker::{detailed::DetailedStatusTracker, StatusTracker};

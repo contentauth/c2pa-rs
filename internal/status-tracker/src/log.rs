@@ -24,16 +24,20 @@ use std::{borrow::Cow, fmt::Debug};
 ///   generated
 /// * `function`: name of the function generating this `LogItem`
 ///
+/// Creates an item flagged as [`LogKind::Informational`]. This can be changed
+/// by calling [`success()`] or [`error()`].
+///
 /// ## Example
 ///
 /// ```
 /// # use std::borrow::Cow;
-/// # use c2pa_status_tracker::{log_item, LogItem};
+/// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
 /// let log = log_item!("test1", "test item 1", "test func");
 ///
 /// assert_eq!(
 ///     log,
 ///     LogItem {
+///         kind: LogKind::Informational,
 ///         label: Cow::Borrowed("test1"),
 ///         description: Cow::Borrowed("test item 1"),
 ///         file: Cow::Borrowed(file!()),
@@ -46,10 +50,14 @@ use std::{borrow::Cow, fmt::Debug};
 /// #
 /// # assert!(log.line > 2);
 /// ```
+///
+/// [`success()`]: LogItem::success()
+/// [`error()`]: LogItem::error()
 #[macro_export]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
         $crate::LogItem {
+            kind: $crate::LogKind::Informational,
             label: $label.into(),
             file: file!().into(),
             function: $function.into(),
@@ -60,11 +68,15 @@ macro_rules! log_item {
         }
     }};
 }
+
 /// Detailed information about an error or other noteworthy condition.
 ///
 /// Use the [`log_item`](crate::log_item) macro to create a `LogItem`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogItem {
+    /// Kind of log item.
+    pub kind: LogKind,
+
     /// JUBMF label of the item (if available), or other descriptive label
     pub label: Cow<'static, str>,
 
@@ -88,22 +100,34 @@ pub struct LogItem {
 }
 
 impl LogItem {
+    /// Change the log item kind to [`LogKind::Success`].
+    pub fn success(self) -> Self {
+        LogItem {
+            kind: LogKind::Success,
+            ..self
+        }
+    }
+
     /// Captures the description from the value (typically an `Error` enum) as
     /// additional information for this `LogItem` struct.
     ///
+    /// Changes the log item kind to [`LogKind::Failure`].
+    ///
     /// IMPORTANT: This is implemented using the [`Debug`](std::fmt::Debug)
     /// trait, but in common practice, the `Error` enum from any crate is likely
-    /// to fulfill this requirement.     
+    /// to fulfill this requirement.    
+    ///
     /// ## Example
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::{log_item, LogItem};
+    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
     /// let log = log_item!("test1", "test item 1", "test func").error("sample error message");
     ///
     /// assert_eq!(
     ///     log,
     ///     LogItem {
+    ///         kind: LogKind::Failure,
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
     ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
@@ -117,6 +141,7 @@ impl LogItem {
     pub fn error<E: std::fmt::Debug>(self, err: E) -> Self {
         LogItem {
             err_val: Some(format!("{err:?}").into()),
+            kind: LogKind::Failure,
             ..self
         }
     }
@@ -127,12 +152,13 @@ impl LogItem {
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::{log_item, LogItem};
+    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
     /// let log = log_item!("test1", "test item 1", "test func").validation_status("claim.missing");
     ///
     /// assert_eq!(
     ///     log,
     ///     LogItem {
+    ///         kind: LogKind::Informational,
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
     ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
@@ -149,4 +175,17 @@ impl LogItem {
             ..self
         }
     }
+}
+
+/// Descriptive nature of this [`LogItem`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LogKind {
+    /// This [`LogItem`] describes a success condition.
+    Success,
+
+    /// This [`LogItem`] describes an informational condition.
+    Informational,
+
+    /// This [`LogItem`] describes a failure or error condition.
+    Failure,
 }
