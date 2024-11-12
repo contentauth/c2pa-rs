@@ -265,7 +265,7 @@ impl ManifestStore {
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_stream() instead")]
     #[async_generic]
     pub fn from_bytes(format: &str, image_bytes: &[u8], verify: bool) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let result = if _sync {
             Store::load_from_memory(format, image_bytes, verify, &mut validation_log)
@@ -297,7 +297,7 @@ impl ManifestStore {
         mut stream: impl Read + Seek + Send,
         verify: bool,
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
@@ -337,7 +337,7 @@ impl ManifestStore {
     #[cfg(feature = "v1_api")]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_file() instead")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store(store, &validation_log))
@@ -368,7 +368,7 @@ impl ManifestStore {
         path: P,
         resource_path: P,
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Ok(Self::from_store_with_resources(
@@ -392,7 +392,7 @@ impl ManifestStore {
         fragment_bytes: &[u8],
         verify: bool,
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         match Store::load_fragment_from_memory_async(
             format,
@@ -421,7 +421,7 @@ impl ManifestStore {
         fragments: &Vec<std::path::PathBuf>,
         verify: bool,
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
@@ -471,7 +471,7 @@ impl ManifestStore {
         format: &str,
         asset_bytes: &[u8],
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         Store::verify_store_async(
@@ -513,7 +513,7 @@ impl ManifestStore {
         format: &str,
         asset_bytes: &[u8],
     ) -> Result<ManifestStore> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         Store::verify_store(

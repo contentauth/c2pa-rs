@@ -1775,7 +1775,7 @@ pub(crate) mod tests {
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
             .expect("load from memory");
@@ -1800,7 +1800,7 @@ pub(crate) mod tests {
             .embed(&output2, &output2, signer.as_ref())
             .expect("embed");
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
         let claim2 = store3.provenance_claim().unwrap();
 

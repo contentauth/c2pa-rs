@@ -738,7 +738,7 @@ impl Ingredient {
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
@@ -854,7 +854,7 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let jumbf_stream = load_jumbf_from_stream(format, stream);
@@ -935,7 +935,7 @@ impl Ingredient {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
@@ -1343,7 +1343,7 @@ impl Ingredient {
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path

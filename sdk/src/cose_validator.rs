@@ -906,7 +906,7 @@ fn check_trust(
                     log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                         .error(Error::CoseCertUntrusted)
                         .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
-                validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
+                validation_log.log(log_item, Error::CoseCertUntrusted)?;
                 Err(Error::CoseCertUntrusted)
             }
         }
@@ -915,7 +915,7 @@ fn check_trust(
                 .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
                 .error(&e);
 
-            validation_log.log(log_item, Some(Error::CoseCertUntrusted))?;
+            validation_log.log(log_item, Error::CoseCertUntrusted)?;
             Err(e)
         }
     }
@@ -993,7 +993,7 @@ pub(crate) async fn verify_cose_async(
             )
             .error(Error::CoseSignatureAlgorithmNotSupported)
             .validation_status(validation_status::ALGORITHM_UNSUPPORTED);
-            validation_log.log(log_item, Some(Error::CoseSignatureAlgorithmNotSupported))?;
+            validation_log.log(log_item, Error::CoseSignatureAlgorithmNotSupported)?;
 
             // one of these must exist
             return Err(Error::CoseSignatureAlgorithmNotSupported);
@@ -1028,20 +1028,20 @@ pub(crate) async fn verify_cose_async(
                         )
                         .error(Error::CoseTimeStampMismatch)
                         .validation_status(validation_status::TIMESTAMP_MISMATCH);
-                        validation_log.log(log_item, Some(Error::CoseTimeStampMismatch))?;
+                        validation_log.log(log_item, Error::CoseTimeStampMismatch)?;
                     }
                     Error::CoseTimeStampValidity => {
                         let log_item =
                             log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
                                 .error(Error::CoseTimeStampValidity)
                                 .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
-                        validation_log.log(log_item, Some(Error::CoseTimeStampValidity))?;
+                        validation_log.log(log_item, Error::CoseTimeStampValidity)?;
                     }
                     _ => {
                         let log_item =
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
-                        validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
+                        validation_log.log(log_item, Error::CoseInvalidTimeStamp)?;
 
                         return Err(Error::CoseInvalidTimeStamp);
                     }
@@ -1078,7 +1078,7 @@ pub(crate) async fn verify_cose_async(
             .error(Error::CoseSignatureAlgorithmNotSupported)
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
 
-        validation_log.log(log_item, Some(e))?;
+        validation_log.log(log_item, e)?;
 
         return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
@@ -1200,7 +1200,7 @@ pub(crate) fn verify_cose(
             .error(Error::CoseSignatureAlgorithmNotSupported)
             .validation_status(validation_status::ALGORITHM_UNSUPPORTED);
 
-            validation_log.log(log_item, Some(Error::CoseSignatureAlgorithmNotSupported))?;
+            validation_log.log(log_item, Error::CoseSignatureAlgorithmNotSupported)?;
 
             return Err(Error::CoseSignatureAlgorithmNotSupported);
         }
@@ -1235,7 +1235,7 @@ pub(crate) fn verify_cose(
                         )
                         .error(Error::CoseTimeStampMismatch)
                         .validation_status(validation_status::TIMESTAMP_MISMATCH);
-                        validation_log.log(log_item, Some(Error::CoseTimeStampMismatch))?;
+                        validation_log.log(log_item, Error::CoseTimeStampMismatch)?;
                         return Err(Error::CoseTimeStampMismatch);
                     }
                     Error::CoseTimeStampValidity => {
@@ -1246,14 +1246,14 @@ pub(crate) fn verify_cose(
                         )
                         .error(Error::CoseTimeStampValidity)
                         .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY);
-                        validation_log.log(log_item, Some(Error::CoseTimeStampValidity))?;
+                        validation_log.log(log_item, Error::CoseTimeStampValidity)?;
                         return Err(Error::CoseTimeStampValidity);
                     }
                     _ => {
                         let log_item =
                             log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                                 .error(Error::CoseInvalidTimeStamp);
-                        validation_log.log(log_item, Some(Error::CoseInvalidTimeStamp))?;
+                        validation_log.log(log_item, Error::CoseInvalidTimeStamp)?;
                         return Err(Error::CoseInvalidTimeStamp);
                     }
                 }
@@ -1278,7 +1278,7 @@ pub(crate) fn verify_cose(
             .error(Error::CoseSignatureAlgorithmNotSupported)
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID);
 
-        validation_log.log(log_item, Some(e))?;
+        validation_log.log(log_item, e)?;
 
         return Err(Error::CoseSignatureAlgorithmNotSupported);
     }
@@ -1408,7 +1408,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_expired_cert() {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut cert_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1491,7 +1491,7 @@ pub mod tests {
         let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
         let es256_cert = std::fs::read(cert_path).unwrap();
@@ -1528,7 +1528,7 @@ pub mod tests {
 
     #[test]
     fn test_no_timestamp() {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("extern_sign_test", Some("contentauth"));
         claim.build().unwrap();
@@ -1551,7 +1551,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
         claim.build().unwrap();

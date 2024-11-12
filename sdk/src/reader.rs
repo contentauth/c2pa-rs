@@ -150,7 +150,7 @@ impl Reader {
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, &mut validation_log)?;
@@ -198,7 +198,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 

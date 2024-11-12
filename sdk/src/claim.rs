@@ -1072,7 +1072,7 @@ impl Claim {
             .error(Error::ClaimMissingSignatureBox)
             .validation_status(validation_status::CLAIM_SIGNATURE_MISSING);
 
-            validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
+            validation_log.log(log_item, Error::ClaimMissingSignatureBox)?;
         }
 
         // check certificate revocation
@@ -1112,7 +1112,7 @@ impl Claim {
             let log_item = log_item!(claim.signature_uri(), "signature missing", "verify_claim")
                 .error(Error::ClaimMissingSignatureBox)
                 .validation_status(validation_status::CLAIM_SIGNATURE_MISSING);
-            validation_log.log(log_item, Some(Error::ClaimMissingSignatureBox))?;
+            validation_log.log(log_item, Error::ClaimMissingSignatureBox)?;
         }
 
         let data = if let Some(ref original_bytes) = claim.original_bytes {
@@ -1160,7 +1160,7 @@ impl Claim {
                     )
                     .error(Error::CoseSignature)
                     .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH);
-                    validation_log.log(log_item, Some(Error::CoseSignature))?;
+                    validation_log.log(log_item, Error::CoseSignature)?;
                 } else {
                     let log_item = log_item!(
                         claim.signature_uri(),
@@ -1178,7 +1178,7 @@ impl Claim {
                     "verify_internal"
                 )
                 .error(parse_err);
-                validation_log.log(log_item, None)?;
+                validation_log.log_silent(log_item);
             }
         };
 
@@ -1195,7 +1195,7 @@ impl Claim {
                     )
                     .error(Error::ClaimSelfRedact)
                     .validation_status(validation_status::ASSERTION_SELF_REDACTED);
-                    validation_log.log(log_item, Some(Error::ClaimSelfRedact))?;
+                    validation_log.log(log_item, Error::ClaimSelfRedact)?;
                 }
 
                 if r.contains(assertions::labels::ACTIONS) {
@@ -1206,7 +1206,7 @@ impl Claim {
                     )
                     .error(Error::ClaimDisallowedRedaction)
                     .validation_status(validation_status::ACTION_ASSERTION_REDACTED);
-                    validation_log.log(log_item, Some(Error::ClaimDisallowedRedaction))?;
+                    validation_log.log(log_item, Error::ClaimDisallowedRedaction)?;
                 }
             }
         }
@@ -1220,7 +1220,7 @@ impl Claim {
             )
             .error(Error::UpdateManifestInvalid)
             .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
-            validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
+            validation_log.log(log_item, Error::UpdateManifestInvalid)?;
         }
 
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
@@ -1247,10 +1247,10 @@ impl Claim {
                         .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
-                            Some(Error::HashMismatch(format!(
+                            Error::HashMismatch(format!(
                                 "Assertion hash failure: {}",
                                 assertion_absolute_uri.clone(),
-                            ))),
+                            )),
                         )?;
                     } else {
                         let log_item = log_item!(
@@ -1274,9 +1274,9 @@ impl Claim {
                     .validation_status(validation_status::ASSERTION_MISSING);
                     validation_log.log(
                         log_item,
-                        Some(Error::AssertionMissing {
+                        Error::AssertionMissing {
                             url: assertion_absolute_uri.clone(),
-                        }),
+                        },
                     )?;
                 }
             }
@@ -1290,7 +1290,7 @@ impl Claim {
                     log_item!(claim.uri(), "claim missing data binding", "verify_internal")
                         .error(Error::ClaimMissingHardBinding)
                         .validation_status(validation_status::HARD_BINDINGS_MISSING);
-                validation_log.log(log_item, Some(Error::ClaimMissingHardBinding))?;
+                validation_log.log(log_item, Error::ClaimMissingHardBinding)?;
             }
 
             // update manifests cannot have data hashes
@@ -1302,7 +1302,7 @@ impl Claim {
                 )
                 .error(Error::UpdateManifestInvalid)
                 .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
-                validation_log.log(log_item, Some(Error::UpdateManifestInvalid))?;
+                validation_log.log(log_item, Error::UpdateManifestInvalid)?;
             }
 
             for hash_binding_assertion in claim.hash_assertions() {
@@ -1348,7 +1348,7 @@ impl Claim {
 
                                 validation_log.log(
                                     log_item,
-                                    Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
+                                    Error::HashMismatch(format!("Asset hash failure: {e}")),
                                 )?;
                             }
                         }
@@ -1408,7 +1408,7 @@ impl Claim {
 
                             validation_log.log(
                                 log_item,
-                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
@@ -1484,7 +1484,7 @@ impl Claim {
 
                             validation_log.log(
                                 log_item,
-                                Some(Error::HashMismatch(format!("Asset hash failure: {e}"))),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }

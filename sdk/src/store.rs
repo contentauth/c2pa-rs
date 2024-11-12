@@ -951,7 +951,7 @@ impl Store {
                 .error(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
             validation_log.log(
                 log_item,
-                Some(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound)),
+                Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound),
             )?;
 
             return Err(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
@@ -995,9 +995,7 @@ impl Store {
                             .validation_status(validation_status::CLAIM_MULTIPLE);
                     validation_log.log(
                         log_item,
-                        Some(Error::InvalidClaim(
-                            InvalidClaimError::C2paMultipleClaimBoxes,
-                        )),
+                        Error::InvalidClaim(InvalidClaimError::C2paMultipleClaimBoxes),
                     )?;
 
                     return Err(Error::InvalidClaim(
@@ -1018,7 +1016,7 @@ impl Store {
                                 .validation_status(validation_status::CLAIM_MULTIPLE);
                         validation_log.log(
                             log_item,
-                            Some(Error::InvalidClaim(InvalidClaimError::ClaimBoxData)),
+                            Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
                         )?;
                     }
                 }
@@ -1182,7 +1180,7 @@ impl Store {
                             let log_item =
                                 log_item!("JUMBF", "error loading assertion", "from_jumbf")
                                     .error(e);
-                            validation_log.log(log_item, None)?;
+                            validation_log.log_silent(log_item);
                         }
                     }
                 }
@@ -1301,9 +1299,9 @@ impl Store {
                         .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
-                            Some(Error::HashMismatch(
+                            Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
-                            )),
+                            ),
                         )?;
                     }
 
@@ -1334,9 +1332,7 @@ impl Store {
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
-                        Some(Error::ClaimVerification(format!(
-                            "ingredient: {label} is missing"
-                        ))),
+                        Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
             }
@@ -1356,9 +1352,7 @@ impl Store {
                 .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS);
                 validation_log.log(
                     log_item,
-                    Some(Error::ClaimVerification(
-                        "update manifest must have one parent".to_string(),
-                    )),
+                    Error::ClaimVerification("update manifest must have one parent".to_string()),
                 )?;
             }
         } else if num_parent_ofs > 1 {
@@ -1373,9 +1367,7 @@ impl Store {
             .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS);
             validation_log.log(
                 log_item,
-                Some(Error::ClaimVerification(
-                    "ingredient has more than one parent".to_string(),
-                )),
+                Error::ClaimVerification("ingredient has more than one parent".to_string()),
             )?;
         }
 
@@ -1423,9 +1415,9 @@ impl Store {
                         .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
                         validation_log.log(
                             log_item,
-                            Some(Error::HashMismatch(
+                            Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
-                            )),
+                            ),
                         )?;
                     }
 
@@ -1458,9 +1450,7 @@ impl Store {
                     .validation_status(validation_status::CLAIM_MISSING);
                     validation_log.log(
                         log_item,
-                        Some(Error::ClaimVerification(format!(
-                            "ingredient: {label} is missing"
-                        ))),
+                        Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
             }
@@ -1486,7 +1476,7 @@ impl Store {
                     log_item!("Unknown", "could not find active manifest", "verify_store")
                         .error(Error::ProvenanceMissing)
                         .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+                validation_log.log(log_item, Error::ProvenanceMissing)?;
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -1525,7 +1515,7 @@ impl Store {
                     log_item!("Unknown", "could not find active manifest", "verify_store")
                         .error(Error::ProvenanceMissing)
                         .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+                validation_log.log(log_item, Error::ProvenanceMissing)?;
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -2263,7 +2253,7 @@ impl Store {
             labels::INGREDIENT,
         ];
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         // todo: what kinds of validation can we do here since the file is not finailized;
@@ -2336,9 +2326,9 @@ impl Store {
                             .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
                             validation_log.log(
                                 log_item,
-                                Some(Error::HashMismatch(
+                                Error::HashMismatch(
                                     "ingredient hash does not match found ingredient".to_string(),
-                                )),
+                                ),
                             )?;
                         }
                     }
@@ -3957,7 +3947,7 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
         Store::verify_store_async(
             &new_store,
@@ -3994,7 +3984,7 @@ pub mod tests {
             .unwrap();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -4045,7 +4035,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4141,7 +4131,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::new();
+            let mut report = DetailedStatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4214,7 +4204,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::new();
+            let mut report = DetailedStatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4288,7 +4278,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4362,7 +4352,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4436,7 +4426,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4495,7 +4485,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4539,7 +4529,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4583,7 +4573,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4624,7 +4614,7 @@ pub mod tests {
     #[test]
     fn test_unsupported_type_without_external_manifest() {
         let ap = fixture_path("Purple Square.psd");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.display(), report);
@@ -4637,7 +4627,7 @@ pub mod tests {
     fn test_bad_jumbf() {
         // test bad jumbf
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         // error report
@@ -4651,7 +4641,7 @@ pub mod tests {
     fn test_detect_byte_change() {
         // test bad jumbf
         let ap = fixture_path("XCA.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
         // error report
@@ -4669,7 +4659,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_file_not_found() {
         let ap = fixture_path("this_does_not_exist.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
         println!("Error report for {}: {:?}", ap.display(), report.get_log());
@@ -4681,7 +4671,7 @@ pub mod tests {
     #[test]
     fn test_old_manifest() {
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         println!("Error report for {}: {:?}", ap.display(), report.get_log());
@@ -4911,7 +4901,7 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         let _errors = report_split_errors(report.get_log_mut());
 
@@ -4922,7 +4912,7 @@ pub mod tests {
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
         let ap = fixture_path("legacy_ingredient_hash.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -4931,7 +4921,7 @@ pub mod tests {
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -4945,7 +4935,7 @@ pub mod tests {
                let init_stream = std::fs::read(init_stream_path).unwrap();
                let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-               let mut report = DetailedStatusTracker::new();
+               let mut report = DetailedStatusTracker::default();
                let store = Store::load_fragment_from_memory(
                    "mp4",
                    &init_stream,
@@ -4977,7 +4967,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -5018,7 +5008,7 @@ pub mod tests {
             )
             .unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         let output_data = output_stream.into_inner();
 
@@ -5036,7 +5026,7 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
@@ -5291,7 +5281,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -5342,7 +5332,7 @@ pub mod tests {
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -5453,7 +5443,7 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
@@ -5538,7 +5528,7 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
@@ -5603,7 +5593,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
@@ -5676,7 +5666,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
@@ -5743,7 +5733,7 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
@@ -5861,7 +5851,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
         let errors = report_split_errors(report.get_log_mut());
@@ -5923,7 +5913,7 @@ pub mod tests {
                     for entry in &fragments {
                         let file_path = new_output_path.join(entry.file_name().unwrap());
 
-                        let mut validation_log = DetailedStatusTracker::new();
+                        let mut validation_log = DetailedStatusTracker::default();
 
                         let fragment_stream = std::fs::read(&file_path).unwrap();
                         let _manifest = Store::load_fragment_from_memory(
@@ -5946,7 +5936,7 @@ pub mod tests {
                     }
 
                     let mut reader = Cursor::new(init_stream);
-                    let mut validation_log = DetailedStatusTracker::new();
+                    let mut validation_log = DetailedStatusTracker::default();
                     let _manifest = Store::load_from_file_and_fragments(
                         "mp4",
                         &mut reader,
