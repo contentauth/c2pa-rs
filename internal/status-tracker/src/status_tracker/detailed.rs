@@ -23,8 +23,10 @@ use crate::{LogItem, StatusTracker};
 ///
 /// [`log()`]: Self::log
 #[derive(Default, Debug)]
+#[non_exhaustive]
 pub struct DetailedStatusTracker {
-    logged_items: Vec<LogItem>,
+    /// List of items that were logged during validation
+    pub logged_items: Vec<LogItem>,
 }
 
 impl DetailedStatusTracker {

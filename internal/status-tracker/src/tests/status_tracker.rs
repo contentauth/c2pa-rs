@@ -27,10 +27,12 @@ mod detailed {
         let item2 = log_item!("test2", "test item 1", "test func").error(SampleError {}); // add arbitrary error
         assert!(tracker.log(item2, SampleError {}).is_ok());
 
-        // TO DO ...
-        // // there should be two items with error
-        // let errors = report_split_errors(tracker.get_log_mut());
-        // assert_eq!(errors.len(), 3);
+        assert_eq!(tracker.logged_items.len(), 2);
+
+        // Verify that one item with error was found.
+        let errors = tracker.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(tracker.logged_items.len(), 1);
     }
 }
 
