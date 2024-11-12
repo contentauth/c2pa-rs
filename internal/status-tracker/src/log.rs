@@ -33,7 +33,7 @@ pub struct LogItem {
 
     /// Error code as string
     pub err_val: Option<String>,
-    // NOTE: This was not public in the c2pa-rs version. Why not?
+
     /// C2PA validation status code
     pub validation_status: Option<String>,
 }
@@ -104,22 +104,6 @@ impl LogItem {
             ..self
         }
     }
-
-    // MIGRATION NOTE: This looks a lot like `error` above. Can we coalesce?
-
-    // // add an error value
-    // pub fn set_error<E: std::fmt::Debug>(self, err: &E) -> Self {
-    //     LogItem {
-    //         err_val: Some(format!("{err:?}")),
-    //         ..self
-    //     }
-    // }
-
-    // MIGRATION NOTE: Made err_val public. Don't think we need the accessor any
-    // more. /// Returns a reference to the error string if there is one
-    // pub fn error_str(&self) -> Option<&str> {
-    //     self.err_val.as_deref()
-    // }
 
     /// Add a C2PA validation status code.
     ///
