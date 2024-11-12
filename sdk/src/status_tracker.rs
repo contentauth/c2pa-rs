@@ -184,7 +184,7 @@ pub fn report_split_errors(report: &mut Vec<LogItem>) -> Vec<LogItem> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_status_tracker::{log_item, LogItem};
+    use c2pa_status_tracker::log_item;
 
     use super::*;
     use crate::validation_status;
@@ -194,12 +194,11 @@ pub mod tests {
         let mut tracker = OneShotStatusTracker::new();
 
         // item without error
-        let item1 = LogItem::new("test1", "test item 1", "test func", file!(), line!());
+        let item1 = log_item!("test1", "test item 1", "test func");
         assert!(tracker.log(item1, None).is_ok());
 
         // item with an error
-        let item2 = LogItem::new("test2", "test item 1", "test func", file!(), line!())
-            .error(Error::NotFound); // add arbitrary error
+        let item2 = log_item!("test2", "test item 1", "test func").error(Error::NotFound); // add arbitrary error
         assert!(tracker.log(item2, None).is_err());
 
         // item with error with caller specified error response, testing macro for generation
@@ -217,12 +216,11 @@ pub mod tests {
         let mut tracker = DetailedStatusTracker::new();
 
         // item without error
-        let item1 = LogItem::new("test1", "test item 1", "test func", file!(), line!());
+        let item1 = log_item!("test1", "test item 1", "test func");
         assert!(tracker.log(item1, None).is_ok());
 
         // item with an error
-        let item2 = LogItem::new("test2", "test item 1", "test func", file!(), line!())
-            .error(Error::NotFound); // add arbitrary error
+        let item2 = log_item!("test2", "test item 1", "test func").error(Error::NotFound); // add arbitrary error
         assert!(tracker.log(item2, None).is_ok());
 
         // item with error with caller specified error response, testing macro for generation

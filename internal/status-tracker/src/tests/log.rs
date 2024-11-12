@@ -16,62 +16,6 @@ use std::borrow::Cow;
 use crate::{log_item, LogItem};
 
 #[test]
-fn new() {
-    let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42);
-
-    assert_eq!(
-        log_item,
-        LogItem {
-            label: Cow::Borrowed("test1"),
-            description: Cow::Borrowed("test item 1"),
-            file: Cow::Borrowed("src/test.rs"),
-            function: Cow::Borrowed("test func"),
-            line: 42u32,
-            err_val: None,
-            validation_status: None,
-        }
-    );
-}
-
-#[test]
-fn error() {
-    let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
-        .error("sample error message");
-
-    assert_eq!(
-        log_item,
-        LogItem {
-            label: Cow::Borrowed("test1"),
-            description: Cow::Borrowed("test item 1"),
-            file: Cow::Borrowed("src/test.rs"),
-            function: Cow::Borrowed("test func"),
-            line: 42u32,
-            err_val: Some(Cow::Borrowed("\"sample error message\"")),
-            validation_status: None,
-        }
-    );
-}
-
-#[test]
-fn validation_status() {
-    let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
-        .validation_status("claim.missing");
-
-    assert_eq!(
-        log_item,
-        LogItem {
-            label: Cow::Borrowed("test1"),
-            description: Cow::Borrowed("test item 1"),
-            file: Cow::Borrowed("src/test.rs"),
-            function: Cow::Borrowed("test func"),
-            line: 42u32,
-            err_val: None,
-            validation_status: Some(Cow::Borrowed("claim.missing")),
-        }
-    );
-}
-
-#[test]
 fn r#macro() {
     let log = log_item!("test1", "test item 1", "test func");
 
@@ -89,6 +33,64 @@ fn r#macro() {
     );
 
     assert!(log.line > 2);
+}
+
+#[test]
+fn macro_from_string() {
+    let desc = "test item 1".to_string();
+    let log = log_item!("test1", desc, "test func");
+
+    assert_eq!(
+        log,
+        LogItem {
+            label: Cow::Borrowed("test1"),
+            description: Cow::Owned("test item 1".to_string()),
+            file: Cow::Borrowed(file!()),
+            function: Cow::Borrowed("test func"),
+            line: log.line,
+            err_val: None,
+            validation_status: None,
+        }
+    );
+
+    assert!(log.line > 2);
+}
+
+#[test]
+fn error() {
+    let log_item = log_item!("test1", "test item 1", "test func").error("sample error message");
+
+    assert_eq!(
+        log_item,
+        LogItem {
+            label: Cow::Borrowed("test1"),
+            description: Cow::Borrowed("test item 1"),
+            file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
+            function: Cow::Borrowed("test func"),
+            line: log_item.line,
+            err_val: Some(Cow::Borrowed("\"sample error message\"")),
+            validation_status: None,
+        }
+    );
+}
+
+#[test]
+fn validation_status() {
+    let log_item =
+        log_item!("test1", "test item 1", "test func").validation_status("claim.missing");
+
+    assert_eq!(
+        log_item,
+        LogItem {
+            label: Cow::Borrowed("test1"),
+            description: Cow::Borrowed("test item 1"),
+            file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
+            function: Cow::Borrowed("test func"),
+            line: log_item.line,
+            err_val: None,
+            validation_status: Some(Cow::Borrowed("claim.missing")),
+        }
+    );
 }
 
 #[test]

@@ -14,6 +14,8 @@
 use std::{borrow::Cow, fmt::Debug};
 
 /// Detailed information about an error or other noteworthy condition.
+///
+/// Use the [`log_item`](crate::log_item) macro to create a `LogItem`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogItem {
     /// JUBMF label of the item (if available), or other descriptive label
@@ -39,46 +41,6 @@ pub struct LogItem {
 }
 
 impl LogItem {
-    /// Create a new `LogItem`.
-    ///
-    /// ## Example
-    ///
-    /// ```
-    /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::LogItem;
-    /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42);
-    ///
-    /// assert_eq!(
-    ///     log_item,
-    ///     LogItem {
-    ///         label: Cow::Borrowed("test1"),
-    ///         description: Cow::Borrowed("test item 1"),
-    ///         file: Cow::Borrowed("src/test.rs"),
-    ///         function: Cow::Borrowed("test func"),
-    ///         line: 42u32,
-    ///         err_val: None,
-    ///         validation_status: None,
-    ///     }
-    /// );
-    /// ```
-    pub fn new(
-        label: &'static str,
-        description: &'static str,
-        function: &'static str,
-        file: &'static str,
-        line: u32,
-    ) -> Self {
-        LogItem {
-            label: label.into(),
-            file: file.into(),
-            function: function.into(),
-            line,
-            description: description.into(),
-            err_val: None,
-            validation_status: None,
-        }
-    }
-
     /// Captures the description from the value (typically an `Error` enum) as
     /// additional information for this `LogItem` struct.
     ///
@@ -89,18 +51,17 @@ impl LogItem {
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::LogItem;
-    /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
-    ///     .error("sample error message");
+    /// # use c2pa_status_tracker::{log_item, LogItem};
+    /// let log = log_item!("test1", "test item 1", "test func").error("sample error message");
     ///
     /// assert_eq!(
-    ///     log_item,
+    ///     log,
     ///     LogItem {
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
-    ///         file: Cow::Borrowed("src/test.rs"),
+    ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
     ///         function: Cow::Borrowed("test func"),
-    ///         line: 42u32,
+    ///         line: 7,
     ///         err_val: Some(Cow::Borrowed("\"sample error message\"")),
     ///         validation_status: None,
     ///     }
@@ -119,18 +80,17 @@ impl LogItem {
     ///
     /// ```
     /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::LogItem;
-    /// let log_item = LogItem::new("test1", "test item 1", "test func", "src/test.rs", 42)
-    ///     .validation_status("claim.missing");
+    /// # use c2pa_status_tracker::{log_item, LogItem};
+    /// let log = log_item!("test1", "test item 1", "test func").validation_status("claim.missing");
     ///
     /// assert_eq!(
-    ///     log_item,
+    ///     log,
     ///     LogItem {
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
-    ///         file: Cow::Borrowed("src/test.rs"),
+    ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
     ///         function: Cow::Borrowed("test func"),
-    ///         line: 42u32,
+    ///         line: 7,
     ///         err_val: None,
     ///         validation_status: Some(Cow::Borrowed("claim.missing")),
     ///     }
@@ -147,7 +107,7 @@ impl LogItem {
 /// Creates a [`LogItem`] struct that is annotated with the source file and line
 /// number where the log condition was discovered.
 ///
-/// Takes three parameters:
+/// Takes three parameters, each of which may be a `'static str` or `String`:
 ///
 /// * `label`: name of object this LogItem references (typically a JUMBF path
 ///   reference)
@@ -160,22 +120,22 @@ impl LogItem {
 /// ```
 /// # use std::borrow::Cow;
 /// # use c2pa_status_tracker::{log_item, LogItem};
-/// let log_item = log_item!("test1", "test item 1", "test func");
+/// let log = log_item!("test1", "test item 1", "test func");
 ///
 /// assert_eq!(
-///     log_item,
+///     log,
 ///     LogItem {
 ///         label: Cow::Borrowed("test1"),
 ///         description: Cow::Borrowed("test item 1"),
 ///         file: Cow::Borrowed(file!()),
 ///         function: Cow::Borrowed("test func"),
-///         line: log_item.line,
+///         line: log.line,
 ///         err_val: None,
 ///         validation_status: None,
 ///     }
 /// );
 /// #
-/// # assert!(log_item.line > 2);
+/// # assert!(log.line > 2);
 /// ```
 #[macro_export]
 macro_rules! log_item {
