@@ -19,3 +19,4 @@
 #![allow(clippy::unwrap_used)]
 
 mod log;
+mod status_tracker;

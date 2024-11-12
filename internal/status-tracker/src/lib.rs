@@ -22,5 +22,8 @@
 mod log;
 pub use log::LogItem;
 
+mod status_tracker;
+pub use status_tracker::{detailed::DetailedStatusTracker, StatusTracker};
+
 #[cfg(test)]
 pub(crate) mod tests;
