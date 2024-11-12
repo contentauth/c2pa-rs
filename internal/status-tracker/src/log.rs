@@ -13,6 +13,53 @@
 
 use std::{borrow::Cow, fmt::Debug};
 
+/// Creates a [`LogItem`] struct that is annotated with the source file and line
+/// number where the log condition was discovered.
+///
+/// Takes three parameters, each of which may be a `'static str` or `String`:
+///
+/// * `label`: name of object this LogItem references (typically a JUMBF path
+///   reference)
+/// * `description`: human-readable reason for this `LogItem` to have been
+///   generated
+/// * `function`: name of the function generating this `LogItem`
+///
+/// ## Example
+///
+/// ```
+/// # use std::borrow::Cow;
+/// # use c2pa_status_tracker::{log_item, LogItem};
+/// let log = log_item!("test1", "test item 1", "test func");
+///
+/// assert_eq!(
+///     log,
+///     LogItem {
+///         label: Cow::Borrowed("test1"),
+///         description: Cow::Borrowed("test item 1"),
+///         file: Cow::Borrowed(file!()),
+///         function: Cow::Borrowed("test func"),
+///         line: log.line,
+///         err_val: None,
+///         validation_status: None,
+///     }
+/// );
+/// #
+/// # assert!(log.line > 2);
+/// ```
+#[macro_export]
+macro_rules! log_item {
+    ($label:expr, $description:expr, $function:expr) => {{
+        $crate::LogItem {
+            label: $label.into(),
+            file: file!().into(),
+            function: $function.into(),
+            line: line!(),
+            description: $description.into(),
+            err_val: None,
+            validation_status: None,
+        }
+    }};
+}
 /// Detailed information about an error or other noteworthy condition.
 ///
 /// Use the [`log_item`](crate::log_item) macro to create a `LogItem`.
@@ -102,52 +149,4 @@ impl LogItem {
             ..self
         }
     }
-}
-
-/// Creates a [`LogItem`] struct that is annotated with the source file and line
-/// number where the log condition was discovered.
-///
-/// Takes three parameters, each of which may be a `'static str` or `String`:
-///
-/// * `label`: name of object this LogItem references (typically a JUMBF path
-///   reference)
-/// * `description`: human-readable reason for this `LogItem` to have been
-///   generated
-/// * `function`: name of the function generating this `LogItem`
-///
-/// ## Example
-///
-/// ```
-/// # use std::borrow::Cow;
-/// # use c2pa_status_tracker::{log_item, LogItem};
-/// let log = log_item!("test1", "test item 1", "test func");
-///
-/// assert_eq!(
-///     log,
-///     LogItem {
-///         label: Cow::Borrowed("test1"),
-///         description: Cow::Borrowed("test item 1"),
-///         file: Cow::Borrowed(file!()),
-///         function: Cow::Borrowed("test func"),
-///         line: log.line,
-///         err_val: None,
-///         validation_status: None,
-///     }
-/// );
-/// #
-/// # assert!(log.line > 2);
-/// ```
-#[macro_export]
-macro_rules! log_item {
-    ($label:expr, $description:expr, $function:expr) => {{
-        $crate::LogItem {
-            label: $label.into(),
-            file: file!().into(),
-            function: $function.into(),
-            line: line!(),
-            description: $description.into(),
-            err_val: None,
-            validation_status: None,
-        }
-    }};
 }
