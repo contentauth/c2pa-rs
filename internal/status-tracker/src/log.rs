@@ -18,7 +18,7 @@ use crate::StatusTracker;
 /// Creates a [`LogItem`] struct that is annotated with the source file and line
 /// number where the log condition was discovered.
 ///
-/// Takes three parameters, each of which may be a `'static str` or `String`:
+/// Takes three parameters, each of which may be a `&'static str` or `String`:
 ///
 /// * `label`: name of object this LogItem references (typically a JUMBF path
 ///   reference)
