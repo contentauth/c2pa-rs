@@ -39,7 +39,9 @@ mod detailed {
 }
 
 mod one_shot {
-    use crate::{log_item, tests::status_tracker::SampleError, OneShotStatusTracker};
+    use crate::{
+        log_item, tests::status_tracker::SampleError, OneShotStatusTracker, StatusTracker,
+    };
 
     #[test]
     fn stops_on_first_error() {
@@ -60,6 +62,9 @@ mod one_shot {
             .unwrap_err();
 
         assert_eq!(err, SampleError {});
+
+        assert_eq!(tracker.get_log().len(), 2);
+        assert_eq!(tracker.get_log_mut().len(), 2);
     }
 }
 
