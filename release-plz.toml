@@ -50,6 +50,9 @@ changelog_path = "./CHANGELOG.md"
 name = "c2pa-crypto"
 
 [[package]]
+name = "c2pa-status-tracker"
+
+[[package]]
 name = "cawg-identity"
 
 [[package]]

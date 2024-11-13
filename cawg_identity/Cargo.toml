@@ -6,7 +6,7 @@ authors = [
     "Eric Scouten <scouten@adobe.com>",
 ]
 license = "MIT OR Apache-2.0"
-documentation = "https://docs.rs/c2pa-crypto"
+documentation = "https://docs.rs/cawg-identity"
 homepage = "https://creator-assertions.github.io/identity/"
 repository = "https://github.com/contentauth/c2pa-rs"
 readme = "README.md"
