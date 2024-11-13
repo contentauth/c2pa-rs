@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use atree::{Arena, Token};
+#[cfg(feature = "v1_api")]
+use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[cfg(feature = "v1_api")]
-use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
 use crate::{
     assertion::AssertionData, claim::Claim, store::Store, utils::base64,
     validation_status::ValidationStatus, Result,
@@ -58,7 +58,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {
@@ -98,7 +98,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_cert_chain<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let cert_str = store.get_provenance_cert_chain()?;
@@ -115,7 +115,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn cert_chain<P: AsRef<Path>>(path: P) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
@@ -123,7 +123,7 @@ impl ManifestStoreReport {
     /// Returns the certificate used to sign the active manifest.
     #[cfg(feature = "v1_api")]
     pub fn cert_chain_from_bytes(format: &str, bytes: &[u8]) -> Result<String> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::load_from_memory(format, bytes, true, &mut validation_log)?;
         store.get_provenance_cert_chain()
     }
@@ -138,7 +138,7 @@ impl ManifestStoreReport {
 
         // convert log items to ValidationStatus
         let mut statuses = Vec::new();
-        for item in validation_log.get_log() {
+        for item in validation_log.logged_items() {
             if let Some(status) = item.validation_status.as_ref() {
                 statuses.push(
                     ValidationStatus::new(status.to_string())
@@ -156,7 +156,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "v1_api")]
     /// Creates a ManifestStoreReport from image bytes and a format
     pub fn from_bytes(format: &str, image_bytes: &[u8]) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::load_from_memory(format, image_bytes, true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
@@ -165,7 +165,7 @@ impl ManifestStoreReport {
     /// Creates a ManifestStoreReport from a file
     #[cfg(feature = "file_io")]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
         Self::from_store_with_log(&store, &validation_log)
     }
@@ -175,7 +175,7 @@ impl ManifestStoreReport {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let asset_type = crate::jumbf_io::get_supported_file_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 

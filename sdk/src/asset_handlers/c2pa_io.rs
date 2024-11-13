@@ -146,11 +146,11 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_status_tracker::OneShotStatusTracker;
     use tempfile::tempdir;
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
-        status_tracker::OneShotStatusTracker,
         store::Store,
         utils::test::{fixture_path, temp_dir_path, temp_signer},
     };
@@ -168,7 +168,7 @@ pub mod tests {
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
 
-        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::new())
+        let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::default())
             .expect("loading store");
 
         let signer = temp_signer();

@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+use c2pa_status_tracker::DetailedStatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
-    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
+    settings::get_settings_value, store::Store, validation_status::ValidationStatus, Manifest,
+    ManifestStoreReport,
 };
 
 /// A reader for the manifest store.
@@ -150,7 +151,7 @@ impl Reader {
         format: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<Reader> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // first we convert the JUMBF into a usable store
         let store = Store::from_jumbf(c2pa_data, &mut validation_log)?;
@@ -198,7 +199,7 @@ impl Reader {
         mut stream: impl Read + Seek + Send,
         mut fragment: impl Read + Seek + Send,
     ) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let manifest_bytes = Store::load_jumbf_from_stream(format, &mut stream)?;
         let store = Store::from_jumbf(&manifest_bytes, &mut validation_log)?;
 

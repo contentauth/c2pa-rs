@@ -75,6 +75,7 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.1.0" }
 chrono = { version = "0.4.38", default-features = false, features = [
     "serde",
     "wasmbind",

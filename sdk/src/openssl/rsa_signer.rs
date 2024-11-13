@@ -62,7 +62,7 @@ impl RsaSigner {
                     if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
                         self.ocsp_size.set(ocsp_rsp.len());
                         let mut validation_log =
-                            crate::status_tracker::DetailedStatusTracker::default();
+                            c2pa_status_tracker::DetailedStatusTracker::default();
                         if let Ok(ocsp_data) = crate::ocsp_utils::check_ocsp_response(
                             &ocsp_rsp,
                             None,

@@ -1857,17 +1857,16 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_read_mp4() {
-        use crate::{
-            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-            store::Store,
-        };
+        use c2pa_status_tracker::DetailedStatusTracker;
+
+        use crate::store::Store;
 
         let ap = fixture_path("video1.mp4");
 
         let mut log = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut log);
 
-        let errors = report_split_errors(log.get_log_mut());
+        let errors = log.take_errors();
         assert!(errors.is_empty());
 
         if let Ok(s) = store {
