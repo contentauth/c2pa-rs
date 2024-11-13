@@ -56,6 +56,31 @@ pub trait StatusTracker: Debug + Send {
             .iter()
             .filter(|item| item.err_val.is_some())
     }
+
+    /// Return `true` if the validation log contains a specific C2PA status
+    /// code.
+    fn has_status(&self, val: &str) -> bool {
+        self.logged_items().iter().any(|vi| {
+            if let Some(vs) = &vi.validation_status {
+                vs == val
+            } else {
+                eprintln!("false!");
+                false
+            }
+        })
+    }
+
+    /// Return `true` if the validation log contains a specific error.
+    fn has_error<E: Debug>(&self, err: E) -> bool {
+        let err_type = format!("{:?}", &err);
+        self.logged_items().iter().any(|vi| {
+            if let Some(e) = &vi.err_val {
+                e == &err_type
+            } else {
+                false
+            }
+        })
+    }
 }
 
 pub(crate) mod detailed;

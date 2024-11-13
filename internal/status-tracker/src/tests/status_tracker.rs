@@ -26,10 +26,19 @@ mod detailed {
 
         // Add another item with an error. Should not stop.
         log_item!("test2", "test item 1", "test func")
+            .validation_status("foo.bar")
             .failure(&mut tracker, SampleError {})
             .unwrap();
 
+        dbg!(&tracker);
+
         assert_eq!(tracker.logged_items().len(), 2);
+
+        assert!(tracker.has_status("foo.bar"));
+        assert!(!tracker.has_status("blah"));
+
+        assert!(tracker.has_error(SampleError {}));
+        assert!(!tracker.has_error("Something Else"));
 
         // Verify that one item with error was found.
         let errors = tracker.take_errors();
