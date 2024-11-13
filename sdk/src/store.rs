@@ -3528,6 +3528,7 @@ pub mod tests {
 
     use std::io::Write;
 
+    use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
@@ -3539,7 +3540,6 @@ pub mod tests {
         claim::AssertionStoreJsonFormat,
         hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
-        status_tracker::*,
         utils::{
             hash_utils::Hasher,
             patch::patch_file,
@@ -4579,10 +4579,7 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(
-            report.logged_items(),
-            Error::UnsupportedType
-        ));
+        assert!(report.has_error(Error::UnsupportedType));
     }
 
     #[test]
@@ -4596,10 +4593,7 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(
-            report.logged_items(),
-            Error::PrereleaseError
-        ));
+        assert!(report.has_error(Error::PrereleaseError));
     }
 
     #[test]
@@ -4613,11 +4607,7 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.logged_items().is_empty());
 
-        let errs = report.take_errors();
-        assert!(report_has_status(
-            &errs,
-            validation_status::ASSERTION_DATAHASH_MISMATCH
-        ));
+        assert!(report.has_status(validation_status::ASSERTION_DATAHASH_MISMATCH));
     }
 
     #[test]
@@ -4829,17 +4819,10 @@ pub mod tests {
     #[test]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
-        let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
+        let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-
-        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
-
-        assert!(report_has_err(&errors, Error::CoseTimeStampMismatch));
-
-        assert!(report_has_status(
-            &errors,
-            validation_status::TIMESTAMP_MISMATCH
-        ));
+        assert!(report.has_error(Error::CoseTimeStampMismatch));
+        assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
     #[test]
@@ -5007,7 +4990,7 @@ pub mod tests {
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
 
-        assert!(report_has_err(report.logged_items(), Error::JumbfNotFound));
+        assert!(report.has_error(Error::JumbfNotFound));
     }
 
     #[test]
