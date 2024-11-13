@@ -47,3 +47,4 @@ pub trait StatusTracker: Debug + Display + Send {
 }
 
 pub(crate) mod detailed;
+pub(crate) mod one_shot;

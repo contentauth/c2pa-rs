@@ -15,40 +15,19 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{LogItem, StatusTracker};
 
-/// A `DetailedStatusTracker` aggregates all log conditions observed during a
-/// validation pass.
-///
-/// When [`add_error()`] is called, it will not raise an error.
-///
-/// [`add_error()`]: Self::add_error()
+/// A `OneShotStatusTracker` will trigger an error upon the first call to its
+/// [`add_error`] function, which is designed to abort any unnecessary
+/// computation if the overall result is unnecessary.
+/// 
+/// [`add_error`]: Self::add_error
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub struct DetailedStatusTracker {
+pub struct OneShotStatusTracker {
     /// List of items that were logged during validation
     pub logged_items: Vec<LogItem>,
 }
 
-impl DetailedStatusTracker {
-    /// Return the [`LogItem`]s that have error conditions (`err_val` is
-    /// populated).
-    ///
-    /// Removes matching items from the list of log items.
-    pub fn take_errors(&mut self) -> Vec<LogItem> {
-        let mut output: Vec<LogItem> = Vec::new();
-
-        let mut i = 0;
-        while i < self.logged_items.len() {
-            if self.logged_items[i].err_val.is_some() {
-                output.push(self.logged_items.remove(i));
-            } else {
-                i += 1;
-            }
-        }
-        output
-    }
-}
-
-impl StatusTracker for DetailedStatusTracker {
+impl StatusTracker for OneShotStatusTracker {
     fn get_log(&self) -> &[LogItem] {
         &self.logged_items
     }
@@ -61,13 +40,18 @@ impl StatusTracker for DetailedStatusTracker {
         self.logged_items.push(log_item);
     }
 
-    fn add_error<E>(&mut self, log_item: LogItem, _err: E) -> Result<(), E> {
+    fn add_error<E>(&mut self, log_item: LogItem, err: E) -> std::result::Result<(), E> {
+        let item_has_err = log_item.err_val.is_some();
         self.logged_items.push(log_item);
-        Ok(())
+        if item_has_err {
+            Err(err)
+        } else {
+            Ok(())
+        }
     }
 }
 
-impl Display for DetailedStatusTracker {
+impl Display for OneShotStatusTracker {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{:?}", self.logged_items)
     }

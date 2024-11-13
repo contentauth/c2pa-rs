@@ -38,7 +38,32 @@ mod detailed {
     }
 }
 
-#[derive(Debug)]
+mod one_shot {
+    use crate::{log_item, tests::status_tracker::SampleError, OneShotStatusTracker};
+
+    #[test]
+    fn stops_on_first_error() {
+        let mut tracker = OneShotStatusTracker::default();
+
+        // Add an item without error.
+        log_item!("test1", "test item 1", "test func").success(&mut tracker);
+
+        // Add another item with an error. Should not stop.
+        // let item2 = log_item!("test2", "test item 1", "test
+        // func").error(Error::NotFound); // add arbitrary error HMMM ... I
+        // didn't know log_silent would error out. assert!(tracker.
+        // log_silent(item2).is_err());
+
+        // Adding an error item should trigger an abort.
+        let err = log_item!("test3", "test item 3 from macro", "test func")
+            .failure(&mut tracker, SampleError {})
+            .unwrap_err();
+
+        assert_eq!(err, SampleError {});
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct SampleError {}
 
 impl Display for SampleError {
