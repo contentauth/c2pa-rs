@@ -18,7 +18,7 @@ use crate::{LogItem, StatusTracker};
 /// A `OneShotStatusTracker` will trigger an error upon the first call to its
 /// [`add_error`] function, which is designed to abort any unnecessary
 /// computation if the overall result is unnecessary.
-/// 
+///
 /// [`add_error`]: Self::add_error
 #[derive(Debug, Default)]
 #[non_exhaustive]
