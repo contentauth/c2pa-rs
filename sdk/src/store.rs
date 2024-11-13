@@ -947,7 +947,7 @@ impl Store {
         // check the CAI Block
         let desc_box = cai_block.desc_box();
         if desc_box.uuid() != CAI_BLOCK_UUID {
-            log_item!("JUMBF", "c2pa box not found", "from_jumbf").silent_failure(
+            log_item!("JUMBF", "c2pa box not found", "from_jumbf").failure_no_throw(
                 validation_log,
                 Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound),
             );
@@ -987,7 +987,7 @@ impl Store {
                 if claim_box_cnt > 1 {
                     log_item!("JUMBF", "c2pa multiple claim boxes found", "from_jumbf")
                         .validation_status(validation_status::CLAIM_MULTIPLE)
-                        .silent_failure(
+                        .failure_no_throw(
                             validation_log,
                             Error::InvalidClaim(InvalidClaimError::C2paMultipleClaimBoxes),
                         );
@@ -1056,13 +1056,13 @@ impl Store {
                         match claim_superbox.data_box_as_json_box(0) {
                             Some(_c) => {
                                 log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                    .silent_failure(validation_log, Error::PrereleaseError);
+                                    .failure_no_throw(validation_log, Error::PrereleaseError);
 
                                 return Err(Error::PrereleaseError);
                             }
                             None => {
                                 log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                    .silent_failure(
+                                    .failure_no_throw(
                                         validation_log,
                                         Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
                                     );
@@ -1162,12 +1162,12 @@ impl Store {
                             == std::mem::discriminant(&Error::PrereleaseError)
                         {
                             log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                .silent_failure(validation_log, e);
+                                .failure_no_throw(validation_log, e);
 
                             return Err(Error::PrereleaseError);
                         } else {
                             log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                .silent_failure(validation_log, e);
+                                .failure_no_throw(validation_log, e);
                         }
                     }
                 }
@@ -1443,7 +1443,7 @@ impl Store {
             None => {
                 log_item!("Unknown", "could not find active manifest", "verify_store")
                     .validation_status(validation_status::CLAIM_MISSING)
-                    .silent_failure(validation_log, Error::ProvenanceMissing);
+                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -1480,7 +1480,7 @@ impl Store {
             None => {
                 log_item!("Unknown", "could not find active manifest", "verify_store")
                     .validation_status(validation_status::CLAIM_MISSING)
-                    .silent_failure(validation_log, Error::ProvenanceMissing);
+                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -3238,7 +3238,7 @@ impl Store {
             })
             .inspect_err(|e| {
                 log_item!("asset", "error loading file", "load_from_asset")
-                    .silent_failure(validation_log, e);
+                    .failure_no_throw(validation_log, e);
             })
     }
 
@@ -3250,7 +3250,7 @@ impl Store {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
             log_item!("asset", "error loading asset", "get_store_from_memory")
-                .silent_failure(validation_log, e);
+                .failure_no_throw(validation_log, e);
         })
     }
 

@@ -100,7 +100,7 @@ fn get_cose_sign1(
                 "get_cose_sign1"
             )
             .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-            .silent_failure(validation_log, Error::InvalidCoseSignature { coset_error });
+            .failure_no_throw(validation_log, Error::InvalidCoseSignature { coset_error });
 
             Err(Error::CoseSignature)
         }
@@ -121,7 +121,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         Error::CoseInvalidCert
     })?;
@@ -134,7 +134,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
     }
@@ -149,7 +149,7 @@ pub(crate) fn check_cert(
         ) {
             log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED)
-                .silent_failure(validation_log, Error::CoseCertExpiration);
+                .failure_no_throw(validation_log, Error::CoseCertExpiration);
 
             return Err(Error::CoseCertExpiration);
         }
@@ -166,7 +166,7 @@ pub(crate) fn check_cert(
         ) {
             log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
                 .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED)
-                .silent_failure(validation_log, Error::CoseCertExpiration);
+                .failure_no_throw(validation_log, Error::CoseCertExpiration);
 
             return Err(Error::CoseCertExpiration);
         }
@@ -192,7 +192,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
     }
@@ -249,7 +249,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -265,7 +265,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -276,7 +276,7 @@ pub(crate) fn check_cert(
                 "check_cert_alg"
             )
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-            .silent_failure(validation_log, Error::CoseInvalidCert);
+            .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
             return Err(Error::CoseInvalidCert);
         }
@@ -301,7 +301,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -331,7 +331,7 @@ pub(crate) fn check_cert(
                 "check_cert_alg"
             )
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-            .silent_failure(validation_log, Error::CoseInvalidCert);
+            .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
             return Err(Error::CoseInvalidCert);
         }
@@ -350,7 +350,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
     }
@@ -363,7 +363,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
     }
@@ -384,7 +384,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -396,7 +396,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -416,7 +416,7 @@ pub(crate) fn check_cert(
                     "check_cert_alg"
                 )
                 .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                .silent_failure(validation_log, Error::CoseInvalidCert);
+                .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
             }
@@ -444,7 +444,7 @@ pub(crate) fn check_cert(
                             "check_cert_alg"
                         )
                         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-                        .silent_failure(validation_log, Error::CoseInvalidCert);
+                        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                         return Err(Error::CoseInvalidCert);
                     }
@@ -498,7 +498,7 @@ pub(crate) fn check_cert(
             "check_cert_alg"
         )
         .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-        .silent_failure(validation_log, Error::CoseInvalidCert);
+        .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         Err(Error::CoseInvalidCert)
     }
@@ -885,7 +885,7 @@ fn check_trust(
             } else {
                 log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                     .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                    .silent_failure(validation_log, Error::CoseCertUntrusted);
+                    .failure_no_throw(validation_log, Error::CoseCertUntrusted);
 
                 Err(Error::CoseCertUntrusted)
             }
@@ -893,7 +893,7 @@ fn check_trust(
         Err(e) => {
             log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                 .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                .silent_failure(validation_log, &e);
+                .failure_no_throw(validation_log, &e);
 
             // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
             // validation_log.log(log_item, Error::CoseCertUntrusted)?;
@@ -973,7 +973,7 @@ pub(crate) async fn verify_cose_async(
                 "verify_cose_async"
             )
             .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
-            .silent_failure(validation_log, Error::CoseSignatureAlgorithmNotSupported);
+            .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
             // one of these must exist
             return Err(Error::CoseSignatureAlgorithmNotSupported);
@@ -1016,7 +1016,7 @@ pub(crate) async fn verify_cose_async(
                     }
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                            .silent_failure(validation_log, Error::CoseInvalidTimeStamp);
+                            .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
 
                         return Err(Error::CoseInvalidTimeStamp);
                     }
@@ -1051,7 +1051,7 @@ pub(crate) async fn verify_cose_async(
     if let Err(_e) = check_sig(&sign1.signature, alg) {
         log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-            .silent_failure(validation_log, Error::CoseSignatureAlgorithmNotSupported);
+            .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
         // TO REVIEW: This could return e if OneShotStatusTracker is used. Hmmm.
         // validation_log.log(log_item, e)?;
@@ -1174,7 +1174,7 @@ pub(crate) fn verify_cose(
                 "verify_cose"
             )
             .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
-            .silent_failure(validation_log, Error::CoseSignatureAlgorithmNotSupported);
+            .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
             return Err(Error::CoseSignatureAlgorithmNotSupported);
         }
@@ -1208,7 +1208,7 @@ pub(crate) fn verify_cose(
                             "verify_cose"
                         )
                         .validation_status(validation_status::TIMESTAMP_MISMATCH)
-                        .silent_failure(validation_log, Error::CoseTimeStampMismatch);
+                        .failure_no_throw(validation_log, Error::CoseTimeStampMismatch);
 
                         return Err(Error::CoseTimeStampMismatch);
                     }
@@ -1219,13 +1219,13 @@ pub(crate) fn verify_cose(
                             "verify_cose"
                         )
                         .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY)
-                        .silent_failure(validation_log, Error::CoseTimeStampValidity);
+                        .failure_no_throw(validation_log, Error::CoseTimeStampValidity);
 
                         return Err(Error::CoseTimeStampValidity);
                     }
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                            .silent_failure(validation_log, Error::CoseInvalidTimeStamp);
+                            .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
 
                         return Err(Error::CoseInvalidTimeStamp);
                     }
@@ -1249,7 +1249,7 @@ pub(crate) fn verify_cose(
     if let Err(e) = check_sig(&sign1.signature, alg) {
         log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
             .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
-            .silent_failure(validation_log, e);
+            .failure_no_throw(validation_log, e);
 
         return Err(Error::CoseSignatureAlgorithmNotSupported);
     }

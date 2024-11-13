@@ -142,7 +142,7 @@ pub mod tests {
 
         // item with an error
         log_item!("test2", "test item 1", "test func")
-            .silent_failure(&mut tracker, Error::NotFound);
+            .failure_no_throw(&mut tracker, Error::NotFound);
 
         // item with error with caller specified error response, testing macro for generation
         log_item!("test3", "test item 3 from macro", "test func")
@@ -152,7 +152,7 @@ pub mod tests {
         // item with error with caller specified error response, testing macro for generation, test validation_status
         log_item!("test3", "test item 3 from macro", "test func")
             .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
-            .silent_failure(&mut tracker, Error::UnsupportedType);
+            .failure_no_throw(&mut tracker, Error::UnsupportedType);
 
         // there should be two items with error
         let errors = report_split_errors(tracker.get_log_mut());

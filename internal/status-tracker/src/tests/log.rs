@@ -127,10 +127,10 @@ fn failure() {
 }
 
 #[test]
-fn silent_failure() {
+fn failure_no_throw() {
     let mut tracker = DetailedStatusTracker::default();
     log_item!("test1", "test item 1", "test func")
-        .silent_failure(&mut tracker, "sample error message");
+        .failure_no_throw(&mut tracker, "sample error message");
 
     let log_item = tracker.get_log().first().unwrap();
 

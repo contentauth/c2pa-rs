@@ -168,7 +168,7 @@ impl LogItem {
     ///
     /// Does not return a [`Result`] and thus ignores the [`StatusTracker`]
     /// error-handling configuration.
-    pub fn silent_failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) {
+    pub fn failure_no_throw<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
 

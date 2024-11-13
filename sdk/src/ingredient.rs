@@ -755,7 +755,7 @@ impl Ingredient {
                         .inspect_err(|e| {
                             // add a log entry for the error so we act like verify
                             log_item!("asset", "error loading file", "Ingredient::from_file")
-                                .silent_failure(&mut validation_log, e);
+                                .failure_no_throw(&mut validation_log, e);
                         }),
                     Some(manifest_bytes),
                 )
@@ -885,7 +885,7 @@ impl Ingredient {
                 result.inspect_err(|e| {
                     // add a log entry for the error so we act like verify
                     log_item!("asset", "error loading file", "Ingredient::from_file")
-                        .silent_failure(&mut validation_log, e);
+                        .failure_no_throw(&mut validation_log, e);
                 }),
                 Some(manifest_bytes),
             )
@@ -956,7 +956,7 @@ impl Ingredient {
                                 "error loading asset",
                                 "Ingredient::from_stream_async"
                             )
-                            .silent_failure(&mut validation_log, &e);
+                            .failure_no_throw(&mut validation_log, &e);
 
                             Err(e)
                         }
@@ -1358,7 +1358,7 @@ impl Ingredient {
             Err(e) => {
                 // add a log entry for the error so we act like verify
                 log_item!("asset", "error loading file", "Ingredient::from_file")
-                    .silent_failure(&mut validation_log, &e);
+                    .failure_no_throw(&mut validation_log, &e);
 
                 Err(e)
             }

@@ -280,7 +280,7 @@ pub(crate) fn check_ocsp_response(
                                     .validation_status(
                                         validation_status::SIGNING_CREDENTIAL_REVOKED,
                                     )
-                                    .silent_failure(&mut validation_log, Error::CoseCertRevoked);
+                                    .failure_no_throw(&mut validation_log, Error::CoseCertRevoked);
                                 } else {
                                     found_good = true;
                                     break; // found good match so break
@@ -335,7 +335,7 @@ pub(crate) fn check_ocsp_response(
                                                 .validation_status(
                                                     validation_status::SIGNING_CREDENTIAL_REVOKED,
                                                 )
-                                                .silent_failure(
+                                                .failure_no_throw(
                                                     &mut validation_log,
                                                     Error::CoseCertRevoked,
                                                 );
@@ -375,7 +375,7 @@ pub(crate) fn check_ocsp_response(
                                                 .validation_status(
                                                     validation_status::SIGNING_CREDENTIAL_REVOKED,
                                                 )
-                                                .silent_failure(
+                                                .failure_no_throw(
                                                     &mut validation_log,
                                                     Error::CoseCertRevoked,
                                                 );
@@ -399,7 +399,7 @@ pub(crate) fn check_ocsp_response(
                                     .validation_status(
                                         validation_status::SIGNING_CREDENTIAL_REVOKED,
                                     )
-                                    .silent_failure(&mut validation_log, Error::CoseCertRevoked);
+                                    .failure_no_throw(&mut validation_log, Error::CoseCertRevoked);
                                 }
                             }
                             CertStatus::Unknown(_) => return Err(Error::UnsupportedType), /* noop for this case */
