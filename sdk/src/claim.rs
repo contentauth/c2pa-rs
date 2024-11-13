@@ -1172,9 +1172,6 @@ impl Claim {
                     "claim signature is not valid",
                     "verify_internal"
                 )
-                // .validation_status(???)
-                // PR REVIEW: Should there be a validation status?
-                // There wasn't one before.
                 .failure(validation_log, parse_err)?;
             }
         };
