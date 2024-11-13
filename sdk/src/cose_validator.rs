@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use c2pa_status_tracker::log_item;
+use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
 use coset::{
@@ -38,7 +38,6 @@ use crate::{
     error::{Error, Result},
     ocsp_utils::{check_ocsp_response, OcspData},
     settings::get_settings_value,
-    status_tracker::StatusTracker,
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
     utils::sig_utils::parse_ec_der_sig,
@@ -1367,14 +1366,11 @@ async fn validate_with_cert_async(
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
-
+    use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{
-        openssl::temp_signer, signer::ConfigurableSigner, status_tracker::DetailedStatusTracker,
-        Signer, SigningAlg,
-    };
+    use crate::{openssl::temp_signer, signer::ConfigurableSigner, Signer, SigningAlg};
 
     #[test]
     #[cfg(feature = "file_io")]

@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use atree::{Arena, Token};
+#[cfg(feature = "v1_api")]
+use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
 use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[cfg(feature = "v1_api")]
-use crate::status_tracker::{DetailedStatusTracker, StatusTracker};
 use crate::{
     assertion::AssertionData, claim::Claim, store::Store, utils::base64,
     validation_status::ValidationStatus, Result,
@@ -58,7 +58,7 @@ impl ManifestStoreReport {
     #[cfg(feature = "file_io")]
     #[cfg(feature = "v1_api")]
     pub fn dump_tree<P: AsRef<Path>>(path: P) -> Result<()> {
-        let mut validation_log = crate::status_tracker::DetailedStatusTracker::default();
+        let mut validation_log = DetailedStatusTracker::default();
         let store = crate::store::Store::load_from_asset(path.as_ref(), true, &mut validation_log)?;
 
         let claim = store.provenance_claim().ok_or(crate::Error::ClaimMissing {

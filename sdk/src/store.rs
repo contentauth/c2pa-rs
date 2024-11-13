@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_status_tracker::log_item;
+use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
 #[cfg(feature = "file_io")]
@@ -61,7 +61,6 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    status_tracker::{DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
         hash_utils::{hash_sha256, HashRange},
@@ -467,7 +466,7 @@ impl Store {
 
         let sig = claim.signature_val();
         let data = claim.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::new();
+        let mut validation_log = OneShotStatusTracker::default();
 
         if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
@@ -523,7 +522,7 @@ impl Store {
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
-                        let mut cose_log = OneShotStatusTracker::new();
+                        let mut cose_log = OneShotStatusTracker::default();
 
                         let result = if _sync {
                             verify_cose(
@@ -2077,7 +2076,7 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
-        let mut validation_log = OneShotStatusTracker::new();
+        let mut validation_log = OneShotStatusTracker::default();
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls will work (the Store is not finalized this way)
@@ -3445,7 +3444,7 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
-        let mut report = OneShotStatusTracker::new();
+        let mut report = OneShotStatusTracker::default();
         let store = Store::from_jumbf(data, &mut report)?;
         claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
         Ok(store)
@@ -3628,7 +3627,7 @@ pub mod tests {
 
         // read from new file
         let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -3674,7 +3673,7 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
             .expect("Should still verify");
 
         // test patching jumbf - error should be detected
@@ -3685,7 +3684,7 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
             .expect_err("Should not verify");
     }
 
@@ -3720,7 +3719,7 @@ pub mod tests {
 
         // read from new file
         let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
 
         // can  we get by the ingredient data back
 
@@ -4568,7 +4567,7 @@ pub mod tests {
     #[test]
     fn test_manifest_bad_sig() {
         let ap = fixture_path("CE-sig-CA.jpg");
-        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::new()).is_err());
+        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::default()).is_err());
     }
 
     #[test]
@@ -4666,7 +4665,8 @@ pub mod tests {
 
         // read back in
         let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -4703,7 +4703,8 @@ pub mod tests {
 
         // read back in
         let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 

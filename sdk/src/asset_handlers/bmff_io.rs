@@ -1857,10 +1857,9 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_read_mp4() {
-        use crate::{
-            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-            store::Store,
-        };
+        use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+
+        use crate::{status_tracker::report_split_errors, store::Store};
 
         let ap = fixture_path("video1.mp4");
 

@@ -19,6 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
+use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     claim::ClaimAssetData,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    status_tracker::{DetailedStatusTracker, StatusTracker},
     store::Store,
     utils::base64,
     validation_status::{status_for_store, ValidationStatus},
@@ -250,11 +250,11 @@ impl ManifestStore {
     #[allow(dead_code)]
     #[deprecated(since = "0.38.0", note = "Please use Reader::from_json() instead")]
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
-        use crate::status_tracker::OneShotStatusTracker;
+        use c2pa_status_tracker::OneShotStatusTracker;
         let store = manifest.to_store()?;
         Ok(Self::from_store_impl(
             store,
-            &OneShotStatusTracker::new(),
+            &OneShotStatusTracker::default(),
             #[cfg(feature = "file_io")]
             manifest.resources().base_path(),
         ))
@@ -585,11 +585,12 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_status_tracker::OneShotStatusTracker;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{status_tracker::OneShotStatusTracker, utils::test::create_test_store};
+    use crate::utils::test::create_test_store;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -601,7 +602,7 @@ mod tests {
     fn manifest_report() {
         let store = create_test_store().expect("creating test store");
 
-        let manifest_store = ManifestStore::from_store(store, &OneShotStatusTracker::new());
+        let manifest_store = ManifestStore::from_store(store, &OneShotStatusTracker::default());
         assert!(manifest_store.active_manifest.is_some());
         assert!(!manifest_store.manifests.is_empty());
         let manifest = manifest_store.get_active().unwrap();

@@ -1503,6 +1503,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
     #[cfg(target_arch = "wasm32")]
@@ -1516,7 +1517,6 @@ pub(crate) mod tests {
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
         reader::Reader,
-        status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
         Manifest, Result,

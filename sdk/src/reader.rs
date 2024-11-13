@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::io::{Read, Seek, Write};
 
 use async_generic::async_generic;
+use c2pa_status_tracker::DetailedStatusTracker;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::{
     claim::ClaimAssetData, error::Result, manifest_store::ManifestStore,
-    settings::get_settings_value, status_tracker::DetailedStatusTracker, store::Store,
-    validation_status::ValidationStatus, Manifest, ManifestStoreReport,
+    settings::get_settings_value, store::Store, validation_status::ValidationStatus, Manifest,
+    ManifestStoreReport,
 };
 
 /// A reader for the manifest store.

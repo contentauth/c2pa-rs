@@ -17,16 +17,13 @@
 
 #![deny(missing_docs)]
 
-use c2pa_status_tracker::LogItem;
+use c2pa_status_tracker::{LogItem, StatusTracker};
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    assertion::AssertionBase, assertions::Ingredient, error::Error, jumbf,
-    status_tracker::StatusTracker, store::Store,
-};
+use crate::{assertion::AssertionBase, assertions::Ingredient, error::Error, jumbf, store::Store};
 
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
