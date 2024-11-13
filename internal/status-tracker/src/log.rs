@@ -111,7 +111,7 @@ impl LogItem {
     ///         kind: LogKind::Informational,
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
-    ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
+    ///         file: Cow::Borrowed(file!()),
     ///         function: Cow::Borrowed("test func"),
     ///         line: 7,
     ///         err_val: None,
