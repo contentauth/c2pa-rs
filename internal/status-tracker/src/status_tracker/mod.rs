@@ -64,7 +64,6 @@ pub trait StatusTracker: Debug + Send {
             if let Some(vs) = &vi.validation_status {
                 vs == val
             } else {
-                eprintln!("false!");
                 false
             }
         })
