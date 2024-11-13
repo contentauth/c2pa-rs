@@ -29,12 +29,12 @@ mod detailed {
             .failure(&mut tracker, SampleError {})
             .unwrap();
 
-        assert_eq!(tracker.logged_items.len(), 2);
+        assert_eq!(tracker.logged_items().len(), 2);
 
         // Verify that one item with error was found.
         let errors = tracker.take_errors();
         assert_eq!(errors.len(), 1);
-        assert_eq!(tracker.logged_items.len(), 1);
+        assert_eq!(tracker.logged_items().len(), 1);
     }
 
     #[test]
@@ -48,13 +48,13 @@ mod detailed {
             .failure(&mut tracker2, SampleError {})
             .unwrap();
 
-        assert_eq!(tracker1.logged_items.len(), 1);
-        assert_eq!(tracker2.logged_items.len(), 1);
+        assert_eq!(tracker1.logged_items().len(), 1);
+        assert_eq!(tracker2.logged_items().len(), 1);
 
         tracker1.append(&tracker2);
 
-        assert_eq!(tracker1.logged_items.len(), 2);
-        assert_eq!(tracker2.logged_items.len(), 1);
+        assert_eq!(tracker1.logged_items().len(), 2);
+        assert_eq!(tracker2.logged_items().len(), 1);
     }
 }
 
