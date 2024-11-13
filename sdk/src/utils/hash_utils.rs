@@ -30,6 +30,7 @@ use crate::{utils::io_utils::stream_len, Error, Result};
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+/// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
     start: usize,
     length: usize,

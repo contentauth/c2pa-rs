@@ -1,23 +1,20 @@
 {
-  "active_manifest": "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47",
+  "active_manifest": "urn:uuid:b6eb5aed-cc20-469f-b23a-88eb3b43775b",
   "manifests": {
-    "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47": {
-      "claim_generator": "test/1.0 c2pa-rs/0.31.1-dev",
+    "urn:uuid:b6eb5aed-cc20-469f-b23a-88eb3b43775b": {
+      "claim_generator": "test/1.0",
       "claim_generator_info": [
         {
           "name": "test",
-          "version": "1.0"
-        },
-        {
-          "name": "c2pa-rs",
-          "version": "0.31.1-dev"
+          "version": "1.0",
+          "org.cai.c2pa_rs": "0.37.1"
         }
       ],
       "format": "image/jpeg",
-      "instance_id": "xmp:iid:d6b460e3-fce8-4892-a123-bbb8c28cd9af",
+      "instance_id": "xmp:iid:c0044b65-0988-459b-b08d-f890668cfb7d",
       "thumbnail": {
         "format": "image/jpeg",
-        "identifier": "self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg"
+        "identifier": "self#jumbf=/c2pa/urn:uuid:b6eb5aed-cc20-469f-b23a-88eb3b43775b/c2pa.assertions/c2pa.thumbnail.claim.jpeg"
       },
       "ingredients": [],
       "assertions": [
@@ -46,14 +43,7 @@
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "638838410810235485828984295321338730070538954823"
       },
-      "label": "urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47"
+      "label": "urn:uuid:b6eb5aed-cc20-469f-b23a-88eb3b43775b"
     }
-  },
-  "validation_status": [
-    {
-      "code": "assertion.dataHash.mismatch",
-      "url": "self#jumbf=/c2pa/urn:uuid:d0d0c9a8-9ebb-45b1-a184-eb458e92cd47/c2pa.assertions/c2pa.hash.data",
-      "explanation": "asset hash error, name: jumbf manifest, error: hash verification( Hashes do not match )"
-    }
-  ]
+  }
 }

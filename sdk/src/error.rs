@@ -296,6 +296,12 @@ pub enum Error {
 
     #[error("capability is not supported by this version")]
     VersionCompatibility(String),
+
+    #[error("insufficient memory space for operation")]
+    InsufficientMemory,
+
+    #[error("parameters out of range")]
+    OutOfRange,
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

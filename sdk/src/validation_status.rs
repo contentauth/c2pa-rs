@@ -17,19 +17,13 @@
 
 #![deny(missing_docs)]
 
+use c2pa_status_tracker::{LogItem, StatusTracker};
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    assertion::AssertionBase,
-    assertions::Ingredient,
-    error::Error,
-    jumbf,
-    status_tracker::{LogItem, StatusTracker},
-    store::Store,
-};
+use crate::{assertion::AssertionBase, assertions::Ingredient, error::Error, jumbf, store::Store};
 
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
@@ -138,7 +132,7 @@ impl ValidationStatus {
             ),
             // If we don't have a validation_status, then make one from the err_val
             // using the description plus error text explanation.
-            None => item.error_str().as_ref().map(|e| {
+            None => item.err_val.as_ref().map(|e| {
                 let code = Self::code_from_error_str(e);
                 Self::new(code.to_string())
                     .set_url(item.label.to_string())
@@ -164,7 +158,7 @@ pub fn status_for_store(
     validation_log: &impl StatusTracker,
 ) -> Vec<ValidationStatus> {
     let statuses: Vec<ValidationStatus> = validation_log
-        .get_log()
+        .logged_items()
         .iter()
         .filter_map(ValidationStatus::from_validation_item)
         .filter(|s| !is_success(&s.code))
@@ -194,8 +188,7 @@ pub fn status_for_store(
                             if let Some(url) = &status.url {
                                 if url.starts_with("self#jumbf") {
                                     // Some are just labels (i.e. "Cose_Sign1")
-                                    status.url =
-                                        Some(dbg!(jumbf::labels::to_absolute_uri(&label, url)));
+                                    status.url = Some(jumbf::labels::to_absolute_uri(&label, url));
                                 }
                             }
                         }

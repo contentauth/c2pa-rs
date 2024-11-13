@@ -156,8 +156,10 @@ pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
+
 #[allow(dead_code)]
 pub(crate) mod jumbf;
+
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
@@ -172,10 +174,11 @@ pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod signing_alg;
-pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;
+
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
+
 pub(crate) mod validator;

@@ -34,7 +34,7 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     ingredient::Ingredient,
-    jumbf,
+    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, skip_serializing_resources, ResourceRef, ResourceStore},
     salt::DefaultSalt,
@@ -576,7 +576,7 @@ impl Manifest {
 
         manifest.redactions = claim.redactions().map(|rs| {
             rs.iter()
-                .filter_map(|r| jumbf::labels::assertion_label_from_uri(r))
+                .filter_map(|r| assertion_label_from_uri(r))
                 .collect()
         });
 
@@ -591,14 +591,14 @@ impl Manifest {
             .iter()
             .map(|h| {
                 let alg = h.alg().or_else(|| Some(claim.alg().to_string()));
-                HashedUri::new(h.url(), alg, &h.hash())
+                let url = to_absolute_uri(claim.label(), &h.url());
+                HashedUri::new(url, alg, &h.hash())
             })
             .collect();
 
         for assertion in claim.assertions() {
-            let claim_assertion = store.get_claim_assertion_from_uri(
-                &jumbf::labels::to_absolute_uri(claim.label(), &assertion.url()),
-            )?;
+            let claim_assertion = store
+                .get_claim_assertion_from_uri(&to_absolute_uri(claim.label(), &assertion.url()))?;
             let assertion = claim_assertion.assertion();
             let label = claim_assertion.label();
             let base_label = assertion.label();
@@ -649,7 +649,7 @@ impl Manifest {
                 }
                 base if base.starts_with(labels::INGREDIENT) => {
                     // note that we use the original label here, not the base label
-                    let assertion_uri = jumbf::labels::to_assertion_uri(claim.label(), &label);
+                    let assertion_uri = to_assertion_uri(claim.label(), &label);
                     let ingredient = Ingredient::from_ingredient_uri(
                         store,
                         manifest_label,
@@ -664,8 +664,8 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = Thumbnail::from_assertion(assertion)?;
-                    let id = jumbf::labels::to_assertion_uri(claim.label(), label);
-                    let id = jumbf::labels::to_relative_uri(&id);
+                    let id = to_assertion_uri(claim.label(), label);
+                    //let id = jumbf::labels::to_relative_uri(&id);
                     manifest.thumbnail = Some(manifest.resources.add_uri(
                         &id,
                         &thumbnail.content_type,
@@ -850,6 +850,7 @@ impl Manifest {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, a)| {
+                            #[allow(deprecated)]
                             if a.instance_id().is_some()
                                 && a.get_parameter(ingredients_key).is_none()
                             {
@@ -861,6 +862,7 @@ impl Manifest {
                         .collect();
 
                     for (index, action) in needs_ingredient {
+                        #[allow(deprecated)]
                         if let Some(id) = action.instance_id() {
                             if let Some(hash_url) = ingredient_map.get(id) {
                                 let update = match ingredients_key {
@@ -1229,7 +1231,7 @@ impl Manifest {
     #[cfg(feature = "file_io")]
     #[deprecated(
         since = "0.35.0",
-        note = "use Builder.sign file with cose_handling enabled."
+        note = "use Builder.sign_file with cose_handling enabled signer."
     )]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
@@ -1249,6 +1251,7 @@ impl Manifest {
 
     /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
+    #[deprecated(since = "0.35.0", note = "use Builder.sign_fragmented_files.")]
     pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         asset_path: P,
@@ -1412,6 +1415,7 @@ impl Manifest {
     /// expect that it has not been placed into an output asset and has not
     /// been signed.  Use embed_placed_manifest to insert into the asset
     /// referenced by input_stream
+    #[deprecated(since = "0.35.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn get_placed_manifest(
         &mut self,
         reserve_size: usize,
@@ -1431,6 +1435,7 @@ impl Manifest {
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
     /// the manifest is signed.  
+    #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,
@@ -1460,26 +1465,26 @@ impl std::fmt::Display for Manifest {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 /// Holds information about a signature
 pub struct SignatureInfo {
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg: Option<SigningAlg>,
-    /// human readable issuing authority for this signature
+    /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer: Option<String>,
 
-    /// The serial number of the certificate
+    /// The serial number of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert_serial_number: Option<String>,
 
-    /// the time the signature was created
+    /// The time the signature was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
 
-    /// revocation status of the certificate
+    /// Revocation status of the certificate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revocation_status: Option<bool>,
 
-    /// the cert chain for this claim
+    /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
     cert_chain: String,
 }
@@ -1498,6 +1503,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
     #[cfg(target_arch = "wasm32")]
@@ -1511,7 +1517,6 @@ pub(crate) mod tests {
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
         reader::Reader,
-        status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{static_test_uuid, temp_remote_signer, temp_signer, TEST_VC},
         Manifest, Result,
@@ -1770,7 +1775,7 @@ pub(crate) mod tests {
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
             .expect("load from memory");
@@ -1795,7 +1800,7 @@ pub(crate) mod tests {
             .embed(&output2, &output2, signer.as_ref())
             .expect("embed");
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
         let claim2 = store3.provenance_claim().unwrap();
 
@@ -1805,7 +1810,7 @@ pub(crate) mod tests {
 
         assert!(claim2.redactions().is_some());
         assert!(!claim2.redactions().unwrap().is_empty());
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
         let redacted_uri = &claim2.redactions().unwrap()[0];
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
@@ -2145,16 +2150,16 @@ pub(crate) mod tests {
             .await
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes_async("jpeg", &output.into_inner(), true)
-                .await
-                .expect("from_bytes");
+        output.set_position(0);
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             "EmbedStream"
         );
         #[cfg(feature = "add_thumbnails")]
-        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+        assert!(reader.active_manifest().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 

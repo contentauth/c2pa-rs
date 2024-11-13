@@ -1,10 +1,73 @@
 # Changelog
 
-All changes to this project are documented in this file.
+All notable changes to this project will be documented in this file.
 
-This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
-Do not manually edit this file. It will be automatically updated when a new release is published.
+Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.38.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.37.1...c2pa-v0.38.0)
+_06 November 2024_
+
+### Added
+
+* Add fragmented mp4 Builder and Reader support ([#649](https://github.com/contentauth/c2pa-rs/pull/649))
+* Associate ingredients with actions using parameters.org.cai.ingredientsIds array ([#627](https://github.com/contentauth/c2pa-rs/pull/627))
+
+### Fixed
+
+* Stay on url version 2.5.2 until Unicode-3.0 license can be approved ([#654](https://github.com/contentauth/c2pa-rs/pull/654))
+
+## [0.37.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.37.0...c2pa-v0.37.1)
+_24 October 2024_
+
+### Documented
+
+* Update API documentation ([#621](https://github.com/contentauth/c2pa-rs/pull/621))
+
+## [0.37.0](https://github.com/contentauth/c2pa-rs/compare/v0.36.4...v0.37.0)
+_17 October 2024_
+
+### Fixed
+
+* Adds identified RangeType to region of interest ([#631](https://github.com/contentauth/c2pa-rs/pull/631))
+
+## [0.36.4](https://github.com/contentauth/c2pa-rs/compare/v0.36.3...v0.36.4)
+_15 October 2024_
+
+### Fixed
+
+* Harden SDK against attempting buffers that are too large ([#628](https://github.com/contentauth/c2pa-rs/pull/628))
+
+## [0.36.3](https://github.com/contentauth/c2pa-rs/compare/v0.36.2...v0.36.3)
+_07 October 2024_
+
+### Fixed
+
+* Changelog contained duplicate entries for 0.16.1 ([#618](https://github.com/contentauth/c2pa-rs/pull/618))
+
+## [0.36.2](https://github.com/contentauth/c2pa-rs/compare/v0.36.1...v0.36.2)
+_07 October 2024_
+
+* No-op change to start using release-plz to manage releases
+
+## 0.36.1
+_04 October 2024_
+
+* fix: Make sure algorithm is being respected in data_hash.rs ([#613](https://github.com/contentauth/c2pa-rs/pull/613))
+* fix: Make sure RSTn segment names are included in the data box hashes list ([#612](https://github.com/contentauth/c2pa-rs/pull/612))
+* Update mp4 requirement from 0.13.0 to 0.14.0 in /sdk ([#595](https://github.com/contentauth/c2pa-rs/pull/595))
+* chore: Add m4a test ([#606](https://github.com/contentauth/c2pa-rs/pull/606))
+* fix: Write absolute urls to manifest store resource references. ([#603](https://github.com/contentauth/c2pa-rs/pull/603))
+* doc: Removes xmp_write feature from README.md.
+* chore: Remove deprecated actions-rs/clippy-check action ([#601](https://github.com/contentauth/c2pa-rs/pull/601))
+* chore: bump stefanzweifel/git-auto-commit-action from 4 to 5 ([#600](https://github.com/contentauth/c2pa-rs/pull/600))
+* chore: bump actions/github-script from 3 to 7 ([#599](https://github.com/contentauth/c2pa-rs/pull/599))
+* chore: bump paulhatch/semantic-version from 5.2.1 to 5.4.0 ([#598](https://github.com/contentauth/c2pa-rs/pull/598))
+* chore: Use Dependabot to upgrade GitHub Actions steps ([#597](https://github.com/contentauth/c2pa-rs/pull/597))
+* chore: Fix dependabot issues ([#594](https://github.com/contentauth/c2pa-rs/pull/594))
+* Fixes issue where nested assertion-uri-hash errors were being reported at the active manifest level. ([#593](https://github.com/contentauth/c2pa-rs/pull/593))
+* Feature/add content length to tsa request ([#587](https://github.com/contentauth/c2pa-rs/pull/587))
 
 ## 0.36.0
 _23 September 2024_
@@ -443,13 +506,6 @@ _22 February 2023_
 _19 December 2022_
 
 * Update xmp-toolkit from 0.6.0 to 1.0.0 ([#165](https://github.com/contentauth/c2pa-rs/pull/165))
-* Prepare 0.16.1 release
-* Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
-* Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
-
-## 0.16.1
-_19 December 2022_
-
 * Address new Clippy warnings for Rust 1.66 ([#164](https://github.com/contentauth/c2pa-rs/pull/164))
 * Create external manifests for unknown types ([#162](https://github.com/contentauth/c2pa-rs/pull/162))
 

@@ -18,6 +18,7 @@
 use std::io::Cursor;
 
 use async_generic::async_generic;
+use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
@@ -30,7 +31,6 @@ use crate::{
     claim::Claim,
     cose_validator::{check_cert, verify_cose},
     settings::get_settings_value,
-    status_tracker::OneShotStatusTracker,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
         timestamptoken_from_timestamprsp,
@@ -76,7 +76,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
     match signed_bytes {
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
-            let mut cose_log = OneShotStatusTracker::new();
+            let mut cose_log = OneShotStatusTracker::default();
             let passthrough_tb = crate::trust_handler::TrustPassThrough::new();
 
             match verify_cose(

@@ -1,0 +1,63 @@
+[changelog]
+body = """
+
+## [{{ version | trim_start_matches(pat="v") }}]{%- if release_link -%}({{ release_link }}){% endif %}
+_{{ timestamp | date(format="%d %B %Y") }}_
+{% for group, commits in commits | group_by(attribute="group") -%}
+{%- if group != "chore" %}
+### {{ group | upper_first }}
+
+{% for commit in commits -%}
+{%- if commit.scope and commit.scope != package -%}
+* *({{commit.scope}})* {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | upper_first }}{%- if commit.links %} ({% for link in commit.links %}[{{link.text}}]({{link.href}}) {% endfor -%}){% endif %}
+{% else -%}
+* {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | upper_first }}
+{% endif -%}
+{%- endfor %}
+
+{%- endif %}
+
+{%- endfor -%}
+"""
+
+commit_parsers = [
+  { message = "^feat", group = "added" },
+  { message = "^changed", group = "changed" },
+  { message = "^deprecated", group = "deprecated" },
+  { message = "^fix", group = "fixed" },
+  { message = "^security", group = "security" },
+  { message = "^chore", group = "chore" },
+  { message = "^update", group = "updated dependencies" },
+  { message = "^doc", group = "documented" },
+  { message = "^.*", group = "other" },
+]
+
+[workspace]
+dependencies_update = true
+features_always_increment_minor = true
+pr_labels = ["release"]
+release_always = false
+release_commits = "^(feat|fix|update|doc)[(:]"
+
+[[package]]
+name = "c2pa"
+changelog_path = "./CHANGELOG.md"
+# This being the most important crate in the workspace,
+# we will leave the changelog in the repo root instead
+# of in the `sdk` folder (which would be the default).
+
+[[package]]
+name = "c2pa-crypto"
+
+[[package]]
+name = "cawg-identity"
+
+[[package]]
+name = "export_schema"
+publish = false
+release = false
+
+[[package]]
+name = "make_test_images"
+publish = false
+release = false

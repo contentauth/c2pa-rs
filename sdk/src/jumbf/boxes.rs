@@ -34,7 +34,10 @@ use hex::FromHex;
 use log::debug;
 use thiserror::Error;
 
-use crate::jumbf::{boxio, labels};
+use crate::{
+    jumbf::{boxio, labels},
+    utils::io_utils::ReaderUtils,
+};
 
 /// `JumbfParseError` enumerates errors detected while parsing JUMBF data structures.
 #[derive(Debug, Error)]
@@ -1963,8 +1966,9 @@ impl BoxReader {
 
             if header.name == BoxType::SaltHash {
                 let data_len = header.size - HEADER_SIZE;
-                let mut buf = vec![0u8; data_len as usize];
-                reader.read_exact(&mut buf)?;
+                let buf = reader
+                    .read_to_vec(data_len)
+                    .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
                 bytes_left -= header.size;
 
@@ -2001,8 +2005,9 @@ impl BoxReader {
         }
 
         let json_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; json_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(json_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFJSONContentBox::new(buf))
     }
@@ -2022,8 +2027,9 @@ impl BoxReader {
         }
 
         let cbor_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; cbor_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(cbor_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFCBORContentBox::new(buf))
     }
@@ -2043,8 +2049,9 @@ impl BoxReader {
         }
 
         let padding_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; padding_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(padding_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFPaddingContentBox::new_with_vec(buf))
     }
@@ -2065,8 +2072,9 @@ impl BoxReader {
 
         // read the data itself...
         let data_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFCodestreamContentBox::new(buf))
     }
@@ -2091,8 +2099,9 @@ impl BoxReader {
 
         // and finally the data itself...
         let data_len = size - HEADER_SIZE - 16 /*UUID*/;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFUUIDContentBox::new(&uuid, buf))
     }
@@ -2121,8 +2130,9 @@ impl BoxReader {
 
         // read the data itself...
         let data_len = size - HEADER_SIZE - TOGGLE_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let mut buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         let (media_type, file_name) = match togs[0] {
             1 => {
@@ -2170,8 +2180,9 @@ impl BoxReader {
 
         // read data itself...
         let data_len = size - HEADER_SIZE;
-        let mut buf = vec![0u8; data_len as usize];
-        reader.read_exact(&mut buf)?;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
         Ok(JUMBFEmbeddedFileContentBox::new(buf))
     }
@@ -2272,8 +2283,10 @@ impl BoxReader {
 
                         // read data itself...
                         let data_len = box_header.size - HEADER_SIZE;
-                        let mut buf = vec![0u8; data_len as usize];
-                        reader.read_exact(&mut buf)?;
+                        reader
+                            .read_to_vec(data_len)
+                            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+
                         continue;
                     }
                 };
