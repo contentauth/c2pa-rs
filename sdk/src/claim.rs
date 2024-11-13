@@ -1172,6 +1172,7 @@ impl Claim {
                     "claim signature is not valid",
                     "verify_internal"
                 )
+                .validation_status(validation_status::GENERAL_ERROR)
                 .failure(validation_log, parse_err)?;
             }
         };
