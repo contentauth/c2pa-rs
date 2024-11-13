@@ -4846,7 +4846,7 @@ pub mod tests {
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
         let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
-        let first_error = report.filter_errors().cloned().next().unwrap();
+        let first_error = report.filter_errors().next().cloned().unwrap();
 
         assert_eq!(
             first_error.validation_status.as_deref(),
