@@ -451,7 +451,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
         {
             let signer = crate::wasm::RsaWasmSignerAsync::new();
 
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size(), 1).await
         }
     }
 
@@ -590,7 +590,7 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
         #[cfg(target_arch = "wasm32")]
         {
             let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size(), 1).await
         }
 
         #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]

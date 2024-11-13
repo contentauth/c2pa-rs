@@ -21,7 +21,6 @@ use coset::{
     iana::{self, EnumI64},
     sig_structure_data, Label, TaggedCborSerializable,
 };
-
 use serde_bytes::ByteBuf;
 use x509_parser::{
     der_parser::{ber::parse_ber_sequence, oid},

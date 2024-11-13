@@ -17,7 +17,7 @@ use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
-use serde::{de::DeserializeOwned, ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -32,6 +32,7 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
+    cbor_types::map_cbor_to_type,
     cose_validator::{
         check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
         verify_cose, verify_cose_async,
@@ -334,18 +335,6 @@ impl Serialize for Claim {
         } else {
             self.serialize_v1(serializer)
         }
-    }
-}
-
-fn map_cbor_to_type<T: DeserializeOwned>(key: &str, mp: &serde_cbor::Value) -> Option<T> {
-    if let serde_cbor::Value::Map(m) = mp {
-        let k = serde_cbor::Value::Text(key.to_string());
-        let v = m.get(&k)?;
-        let v_bytes = serde_cbor::ser::to_vec(v).ok()?;
-        let output: T = serde_cbor::from_slice(&v_bytes).ok()?;
-        Some(output)
-    } else {
-        None
     }
 }
 

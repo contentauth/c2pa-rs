@@ -612,6 +612,10 @@ pub enum AssertionDecodeErrorCause {
 
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
+
+    /// There was a problem decoding field.
+    #[error("the assertion had a mandatory field: {expected} that could not be decoded")]
+    FieldDecoding { expected: String },
 }
 
 pub(crate) type AssertionDecodeResult<T> = std::result::Result<T, AssertionDecodeError>;

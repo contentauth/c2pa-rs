@@ -13,18 +13,21 @@
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
 use super::AssetType;
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionCbor},
+    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, Metadata, ReviewRating},
+    cbor_types::map_cbor_to_type,
     error::Result,
     hashed_uri::HashedUri,
+    validation_results::ValidationResultsMap,
     validation_status::ValidationStatus,
+    Error,
 };
 
-const ASSERTION_CREATION_VERSION: usize = 2;
+const ASSERTION_CREATION_VERSION: usize = 3;
 
 // Used to differentiate a parent from a component
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -40,33 +43,41 @@ pub enum Relationship {
 }
 
 /// An ingredient assertion
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Ingredient {
-    #[serde(rename = "dc:title")]
-    pub title: String,
-    #[serde(rename = "dc:format")]
-    pub format: String,
-    #[serde(rename = "documentID", skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub format: Option<String>,
     pub document_id: Option<String>,
-    #[serde(rename = "instanceID", skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub c2pa_manifest: Option<HashedUri>,
-    #[serde(rename = "validationStatus", skip_serializing_if = "Option::is_none")]
     pub validation_status: Option<Vec<ValidationStatus>>,
     pub relationship: Relationship,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<HashedUri>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<HashedUri>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(rename = "informational_URI", skip_serializing_if = "Option::is_none")]
     pub informational_uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
+
+    pub validation_results: Option<ValidationResultsMap>,
+    pub active_manifest: Option<HashedUri>,
+    pub claim_signature: Option<HashedUri>,
+
+    pub version: usize,
+}
+
+impl Serialize for Ingredient {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.version {
+            1 => self.serialize_v1(serializer),
+            2 => self.serialize_v2(serializer),
+            3 => self.serialize_v3(serializer),
+            _ => Err(serde::ser::Error::custom("Ingredient serializer not found")),
+        }
+    }
 }
 
 impl Ingredient {
@@ -77,10 +88,11 @@ impl Ingredient {
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
         Self {
-            title: title.to_owned(),
-            format: format.to_owned(),
+            title: Some(title.to_owned()),
+            format: Some(format.to_owned()),
             document_id: document_id.map(|id| id.to_owned()),
             instance_id: Some(instance_id.to_owned()),
+            version: 1,
             ..Default::default()
         }
     }
@@ -91,19 +103,47 @@ impl Ingredient {
         S2: Into<String>,
     {
         Self {
-            title: title.into(),
-            format: format.into(),
+            title: Some(title.into()),
+            format: Some(format.into()),
+            version: 2,
             ..Default::default()
         }
     }
 
+    pub fn new_v3(relationship: Relationship) -> Self {
+        Self {
+            relationship,
+            version: 3,
+            ..Default::default()
+        }
+    }
+
+    fn is_v1_compatible(&self) -> bool {
+        self.title.is_some()
+            && self.format.is_some()
+            && self.instance_id.is_some()
+            && self.data.is_none()   // V2 exclusive params
+            && self.data_types.is_none()
+            && self.description.is_none()
+            && self.informational_uri.is_none()
+            && self.validation_results.is_none() // V3 exclusive params
+            && self.active_manifest.is_none()
+            && self.claim_signature.is_none()
+    }
+
     /// determines if an ingredient is a v2 ingredient
-    fn is_v2(&self) -> bool {
-        self.instance_id.is_none()
-            || self.data.is_some()
-            || self.description.is_some()
-            || self.informational_uri.is_some()
-            || self.data_types.is_some()
+    fn is_v2_compatible(&self) -> bool {
+        self.title.is_some()
+        && self.format.is_some()
+        && self.validation_results.is_none() // V3 exclusive params
+        && self.active_manifest.is_none()
+        && self.claim_signature.is_none()
+    }
+
+    fn is_v3_compatible(&self) -> bool {
+        self.document_id.is_none()    // V3 restricted fields
+            && self.validation_status.is_none()
+            && self.c2pa_manifest.is_none()
     }
 
     pub fn set_parent(mut self) -> Self {
@@ -147,9 +187,278 @@ impl Ingredient {
             Some(validation_status) => validation_status.push(status),
         }
     }
+
+    fn serialize_v1<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        /* Ingredient V1 fields
+            "dc:title": tstr, ; name of the ingredient
+            "dc:format": format-string, ; Media Type of the ingredient
+            ? "documentID": tstr, ; value of the ingredient's `xmpMM:DocumentID`
+            "instanceID": tstr, ; unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`
+            "relationship": $relation-choice, ; The relationship of this ingredient to the asset it is an ingredient of.
+            ? "c2pa_manifest": $hashed-uri-map, ; hashed_uri reference to the C2PA Manifest of the ingredient
+            ? "thumbnail": $hashed-uri-map, ; hashed_uri reference to an ingredient thumbnail
+            ? "validationStatus": [1* $status-map] ; validation status of the ingredient
+            ? "metadata": $assertion-metadata-map ; additional information about the assertion
+        */
+
+        let mut ingredient_map_len = 4;
+        if self.document_id.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.c2pa_manifest.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.thumbnail.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.validation_status.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+
+        let mut ingredient_map = serializer.serialize_struct("Ingredient", ingredient_map_len)?;
+
+        // serialize mandatory fields
+        ingredient_map.serialize_field("dc:title", &self.title)?;
+        ingredient_map.serialize_field("dc:format", &self.format)?;
+        if let Some(instance_id) = &self.instance_id {
+            ingredient_map.serialize_field("instanceID", instance_id)?;
+        } else {
+            return Err(serde::ser::Error::custom("Ingredient_v1 miss instanceId"));
+        }
+        ingredient_map.serialize_field("relationship", &self.relationship)?;
+
+        // serialize optional fields
+        if let Some(doc_id) = &self.document_id {
+            ingredient_map.serialize_field("documentID", doc_id)?;
+        }
+        if let Some(cm) = &self.c2pa_manifest {
+            ingredient_map.serialize_field("c2pa_manifest", cm)?;
+        }
+        if let Some(huri) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", huri)?;
+        }
+        if let Some(md) = &self.metadata {
+            ingredient_map.serialize_field("metadata", md)?;
+        }
+
+        ingredient_map.end()
+    }
+
+    fn serialize_v2<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        /* Ingredient V2 fields
+            "dc:title": tstr, ; name of the ingredient
+            "dc:format": format-string, ; Media Type of the ingredient
+            "relationship": $relation-choice, ; The relationship of this ingredient to the asset it is an ingredient of.
+            ? "documentID": tstr, ; value of the ingredient's `xmpMM:DocumentID`
+            ? "instanceID": tstr, ; unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`
+            ? "data" : $hashed-uri-map / $hashed-ext-uri-map, ; hashed_uri reference to a data box or a hashed_ext_uri to external data
+            ? "data_types": [1* $asset-type-map],  ; additional information about the data's type to the ingredient V2 structure.
+            ? "c2pa_manifest": $hashed-uri-map, ; hashed_uri reference to the C2PA Manifest of the ingredient
+            ? "thumbnail": $hashed-uri-map, ; hashed_uri reference to a thumbnail in a data box
+            ? "validationStatus": [1* $status-map] ; validation status of the ingredient
+            ? "description": tstr .size (1..max-tstr-length) ; Additional description of the ingredient
+            ? "informational_URI": tstr .size (1..max-tstr-length) ; URI to an informational page about the ingredient or its data
+            ? "metadata": $assertion-metadata-map ; additional information about the assertion
+        */
+
+        let mut ingredient_map_len = 3;
+        if self.document_id.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.instance_id.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.data.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.data_types.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.c2pa_manifest.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.thumbnail.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.validation_status.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.description.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.informational_uri.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+
+        let mut ingredient_map = serializer.serialize_struct("Ingredient", ingredient_map_len)?;
+
+        // serialize mandatory fields
+        ingredient_map.serialize_field("dc:title", &self.title)?;
+        ingredient_map.serialize_field("dc:format", &self.format)?;
+        ingredient_map.serialize_field("relationship", &self.relationship)?;
+
+        // serialize optional fields
+        if let Some(doc_id) = &self.document_id {
+            ingredient_map.serialize_field("documentID", doc_id)?;
+        }
+        if let Some(instance_id) = &self.instance_id {
+            ingredient_map.serialize_field("instanceID", instance_id)?;
+        }
+        if let Some(data) = &self.data {
+            ingredient_map.serialize_field("data", data)?;
+        }
+        if let Some(data_types) = &self.data_types {
+            ingredient_map.serialize_field("data_types", data_types)?;
+        }
+        if let Some(cm) = &self.c2pa_manifest {
+            ingredient_map.serialize_field("c2pa_manifest", cm)?;
+        }
+        if let Some(huri) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", huri)?;
+        }
+        if let Some(vs) = &self.validation_status {
+            ingredient_map.serialize_field("validationStatus", vs)?;
+        }
+        if let Some(desc) = &self.description {
+            ingredient_map.serialize_field("description", desc)?;
+        }
+        if let Some(info) = &self.informational_uri {
+            ingredient_map.serialize_field("informational_URI", info)?;
+        }
+        if let Some(md) = &self.metadata {
+            ingredient_map.serialize_field("metadata", md)?;
+        }
+
+        ingredient_map.end()
+    }
+
+    fn serialize_v3<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        /* Ingredient V3 fields
+            ? "dc:title": tstr, ; name of the ingredient
+            ? "dc:format": format-string, ; Media Type of the ingredient
+            "relationship": $relation-choice, ; The relationship of this ingredient to the asset it is an ingredient of.
+            ? "validationResults": $validation-results-map, ; Results from the claim generator performing full validation on the ingredient asset
+            ? "instanceID": tstr, ; unique identifier such as the value of the ingredient's `xmpMM:InstanceID`
+            ? "data" : $hashed-uri-map / $hashed-ext-uri-map, ; hashed_uri reference to a data box or a hashed_ext_uri to external data
+            ? "dataTypes": [1* $asset-type-map],  ; additional information about the data's type to the ingredient V3 structure
+            ? "activeManifest": $hashed-uri-map, ; hashed_uri to the box corresponding to the active manifest of the ingredient
+            ? "claimSignature": $hashed-uri-map, ; hashed_uri to the Claim Signature box in the C2PA Manifest of the ingredient
+            ? "thumbnail": $hashed-uri-map, ; hashed_uri reference to a thumbnail in a data box
+            ? "description": tstr .size (1..max-tstr-length), ; Additional description of the ingredient
+            ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
+            ? "metadata": $assertion-metadata-map ; additional information about the assertion
+        */
+
+        let mut ingredient_map_len = 1;
+        if self.title.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.format.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.validation_results.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.instance_id.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.data.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.data_types.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.active_manifest.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.claim_signature.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.thumbnail.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.description.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.informational_uri.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+
+        let mut ingredient_map = serializer.serialize_struct("Ingredient", ingredient_map_len)?;
+
+        // serialize mandatory fields
+        ingredient_map.serialize_field("relationship", &self.relationship)?;
+
+        // serialize optional fields
+        if let Some(title) = &self.title {
+            ingredient_map.serialize_field("dc:title", title)?;
+        }
+        if let Some(format) = &self.format {
+            ingredient_map.serialize_field("dc:format", format)?;
+        }
+        if let Some(vr) = &self.validation_results {
+            ingredient_map.serialize_field("validationStatus", vr)?;
+        }
+        if let Some(instance_id) = &self.instance_id {
+            ingredient_map.serialize_field("instanceID", instance_id)?;
+        }
+        if let Some(data) = &self.data {
+            ingredient_map.serialize_field("data", data)?;
+        }
+        if let Some(data_types) = &self.data_types {
+            ingredient_map.serialize_field("dataTypes", data_types)?;
+        }
+        if let Some(am) = &self.active_manifest {
+            ingredient_map.serialize_field("activeManifest", am)?;
+        }
+        if let Some(cs) = &self.claim_signature {
+            ingredient_map.serialize_field("claimSignature", cs)?;
+        }
+        if let Some(huri) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", huri)?;
+        }
+        if let Some(desc) = &self.description {
+            ingredient_map.serialize_field("description", desc)?;
+        }
+        if let Some(info) = &self.informational_uri {
+            ingredient_map.serialize_field("informationalURI", info)?;
+        }
+        if let Some(md) = &self.metadata {
+            ingredient_map.serialize_field("metadata", md)?;
+        }
+
+        ingredient_map.end()
+    }
 }
 
-impl AssertionCbor for Ingredient {}
+fn to_decoding_err(label: &str, version: usize, field: &str) -> Error {
+    Error::AssertionDecoding(AssertionDecodeError::from_err(
+        label.to_owned(),
+        Some(version),
+        "application/cbor".to_owned(),
+        AssertionDecodeErrorCause::FieldDecoding {
+            expected: field.to_owned(),
+        },
+    ))
+}
 
 impl AssertionBase for Ingredient {
     const LABEL: &'static str = Self::LABEL;
@@ -157,19 +466,285 @@ impl AssertionBase for Ingredient {
 
     /// if we require v2 fields then use V2
     fn version(&self) -> Option<usize> {
-        if self.is_v2() {
-            Some(2)
+        if self.version > 1 {
+            Some(self.version)
         } else {
-            Some(1)
+            None
         }
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
-        Self::to_cbor_assertion(self)
+        let data = crate::assertion::AssertionData::Cbor(
+            serde_cbor::to_vec(self).map_err(|_err| Error::AssertionEncoding)?,
+        );
+        Ok(Assertion::new(self.label(), self.version(), data))
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        Self::from_cbor_assertion(assertion)
+        let ingredient_value: serde_cbor::Value = serde_cbor::from_slice(assertion.data())
+            .map_err(|e| {
+                Error::AssertionDecoding(AssertionDecodeError::from_err(
+                    assertion.label(),
+                    Some(assertion.get_ver()),
+                    "application/cbor".to_owned(),
+                    e,
+                ))
+            })?;
+
+        let version = assertion.get_ver();
+
+        static V1_FIELDS: [&str; 9] = [
+            "dc:title",
+            "dc:format",
+            "documentID",
+            "instanceID",
+            "relationship",
+            "c2pa_manifest",
+            "thumbnail",
+            "validationStatus",
+            "metadata",
+        ];
+
+        static V2_FIELDS: [&str; 13] = [
+            "dc:title",
+            "dc:format",
+            "relationship",
+            "documentID",
+            "instanceID",
+            "data",
+            "data_types",
+            "c2pa_manifest",
+            "thumbnail",
+            "validationStatus",
+            "description",
+            "informational_URI",
+            "metadata",
+        ];
+
+        static V3_FIELDS: [&str; 13] = [
+            "dc:title",
+            "dc:format",
+            "relationship",
+            "validationResults",
+            "instanceID",
+            "data",
+            "data_types",
+            "activeManifest",
+            "claimSignature",
+            "thumbnail",
+            "description",
+            "informationalURI",
+            "metadata",
+        ];
+
+        // make sure decoded matches expected fields
+        let decoded = match version {
+            1 => {
+                // make sure only V1 fields are present
+                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                    if !m.keys().all(|v| match v {
+                        serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
+                        _ => false,
+                    }) {
+                        return Err(to_decoding_err(
+                            &assertion.label(),
+                            assertion.get_ver(),
+                            "invalid field found in Ingredient assertion",
+                        ));
+                    }
+                } else {
+                    return Err(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "invalid field found in Ingredient assertion",
+                    ));
+                }
+
+                // add mandatory field
+                let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
+                    to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
+                )?;
+                let format: String = map_cbor_to_type("dc:format", &ingredient_value).ok_or(
+                    to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:format"),
+                )?;
+                let instance_id: String = map_cbor_to_type("instanceID", &ingredient_value).ok_or(
+                    to_decoding_err(&assertion.label(), assertion.get_ver(), "instanceID"),
+                )?;
+                let relationship: Relationship =
+                    map_cbor_to_type("relationship", &ingredient_value).ok_or(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "relationship",
+                    ))?;
+
+                // add optional fields
+                let document_id: Option<String> = map_cbor_to_type("documentID", &ingredient_value);
+                let c2pa_manifest: Option<HashedUri> =
+                    map_cbor_to_type("c2pa_manifest", &ingredient_value);
+                let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
+                let validation_status: Option<Vec<ValidationStatus>> =
+                    map_cbor_to_type("validationStatus", &ingredient_value);
+                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+
+                Ingredient {
+                    title: Some(title),
+                    format: Some(format),
+                    document_id,
+                    instance_id: Some(instance_id),
+                    c2pa_manifest,
+                    validation_status,
+                    relationship,
+                    thumbnail,
+                    metadata,
+                    version,
+                    ..Default::default()
+                }
+            }
+            2 => {
+                // make sure only V2 fields are present
+                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                    if !m.keys().all(|v| match v {
+                        serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
+                        _ => false,
+                    }) {
+                        return Err(to_decoding_err(
+                            &assertion.label(),
+                            assertion.get_ver(),
+                            "invalid field found in Ingredient assertion",
+                        ));
+                    }
+                } else {
+                    return Err(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "invalid field found in Ingredient assertion",
+                    ));
+                }
+
+                // add mandatory field
+                let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
+                    to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
+                )?;
+                let format: String = map_cbor_to_type("dc:format", &ingredient_value).ok_or(
+                    to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:format"),
+                )?;
+                let relationship: Relationship =
+                    map_cbor_to_type("relationship", &ingredient_value).ok_or(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "relationship",
+                    ))?;
+
+                // add optional fields
+                let document_id: Option<String> = map_cbor_to_type("documentID", &ingredient_value);
+                let instance_id: Option<String> = map_cbor_to_type("instanceID", &ingredient_value);
+                let data: Option<HashedUri> = map_cbor_to_type("data", &ingredient_value);
+                let data_types: Option<Vec<AssetType>> =
+                    map_cbor_to_type("data_types", &ingredient_value);
+                let c2pa_manifest: Option<HashedUri> =
+                    map_cbor_to_type("c2pa_manifest", &ingredient_value);
+                let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
+                let validation_status: Option<Vec<ValidationStatus>> =
+                    map_cbor_to_type("validationStatus", &ingredient_value);
+                let description: Option<String> =
+                    map_cbor_to_type("description", &ingredient_value);
+                let informational_uri: Option<String> =
+                    map_cbor_to_type("informational_URI", &ingredient_value);
+                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+
+                Ingredient {
+                    title: Some(title),
+                    format: Some(format),
+                    document_id,
+                    instance_id,
+                    c2pa_manifest,
+                    validation_status,
+                    relationship,
+                    thumbnail,
+                    metadata,
+                    data,
+                    description,
+                    informational_uri,
+                    data_types,
+                    version,
+                    ..Default::default()
+                }
+            }
+            3 => {
+                // make sure only V3 fields are present
+                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                    if !m.keys().all(|v| match v {
+                        serde_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
+                        _ => false,
+                    }) {
+                        return Err(to_decoding_err(
+                            &assertion.label(),
+                            assertion.get_ver(),
+                            "invalid field found in Ingredient assertion",
+                        ));
+                    }
+                } else {
+                    return Err(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "invalid field found in Ingredient assertion",
+                    ));
+                }
+
+                // add mandatory field
+                let relationship: Relationship =
+                    map_cbor_to_type("relationship", &ingredient_value).ok_or(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "relationship",
+                    ))?;
+
+                // add optional fields
+                let title: Option<String> = map_cbor_to_type("dc:title", &ingredient_value);
+                let format: Option<String> = map_cbor_to_type("dc:format", &ingredient_value);
+                let validation_results: Option<ValidationResultsMap> =
+                    map_cbor_to_type("validationResults", &ingredient_value);
+                let instance_id: Option<String> = map_cbor_to_type("instanceID", &ingredient_value);
+                let data: Option<HashedUri> = map_cbor_to_type("data", &ingredient_value);
+                let data_types: Option<Vec<AssetType>> =
+                    map_cbor_to_type("data_types", &ingredient_value);
+                let active_manifest: Option<HashedUri> =
+                    map_cbor_to_type("activeManifest", &ingredient_value);
+                let claim_signature: Option<HashedUri> =
+                    map_cbor_to_type("claimSignature", &ingredient_value);
+                let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
+                let description: Option<String> =
+                    map_cbor_to_type("description", &ingredient_value);
+                let informational_uri: Option<String> =
+                    map_cbor_to_type("informationalURI", &ingredient_value);
+                let metadata: Option<Metadata> = map_cbor_to_type("metadata", &ingredient_value);
+
+                Ingredient {
+                    title,
+                    format,
+                    instance_id,
+                    validation_results,
+                    relationship,
+                    thumbnail,
+                    metadata,
+                    data,
+                    description,
+                    informational_uri,
+                    data_types,
+                    active_manifest,
+                    claim_signature,
+                    version,
+                    ..Default::default()
+                }
+            }
+            _ => {
+                return Err(Error::VersionCompatibility(
+                    "Ingredient version to new".into(),
+                ))
+            }
+        };
+
+        Ok(decoded)
     }
 }
 #[cfg(test)]
@@ -193,7 +768,7 @@ pub mod tests {
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), Ingredient::LABEL);
-        let result = Ingredient::from_cbor_assertion(&assertion).expect("from_assertion");
+        let result = Ingredient::from_assertion(&assertion).expect("from_assertion");
         assert_eq!(original.title, result.title);
         assert_eq!(original.format, result.format);
         assert_eq!(original.document_id, result.document_id);
@@ -280,7 +855,7 @@ pub mod tests {
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), Ingredient::LABEL);
-        let restored = Ingredient::from_cbor_assertion(&assertion).expect("from_assertion");
+        let restored = Ingredient::from_assertion(&assertion).expect("from_assertion");
         assert_eq!(original.title, restored.title);
         assert_eq!(original.format, restored.format);
         assert_eq!(original.document_id, restored.document_id);

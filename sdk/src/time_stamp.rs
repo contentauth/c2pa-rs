@@ -243,6 +243,7 @@ impl TimeStampResponse {
         )
     }
 
+    #[allow(dead_code)]
     fn signed_data(&self) -> Result<Option<SignedData>> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
@@ -261,6 +262,7 @@ impl TimeStampResponse {
         }
     }
 
+    #[allow(dead_code)]
     fn tst_info(&self) -> Result<Option<TstInfo>> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
