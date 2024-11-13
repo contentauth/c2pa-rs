@@ -68,6 +68,61 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
+  doc-tests:
+    name: Doc tests (requires nightly Rust)
+    # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
+    # coverage. (This requires a bug fix that is only available in nightly Rust.)
+    # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
+    # for progress.
+
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo llvm-cov --workspace --all-features --lcov --doctests --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: |
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.author_association == 'COLLABORATOR' ||
+          github.event.pull_request.author_association == 'MEMBER' ||
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
+
   tests-cross:
     name: Unit tests
     if: |
@@ -129,7 +184,11 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Run Wasm tests
+      - name: Run Wasm tests (c2pa-status-tracker)
+        run: wasm-pack test --chrome --headless
+        working-directory: ./internal/status-tracker
+
+      - name: Run Wasm tests (c2pa-rs)
         run: wasm-pack test --chrome --headless
         working-directory: ./sdk
 
