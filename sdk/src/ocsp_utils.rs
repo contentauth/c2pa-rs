@@ -423,7 +423,7 @@ pub mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::status_tracker::report_split_errors;
+
     #[test]
     fn test_good_response() {
         let rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
@@ -450,7 +450,7 @@ pub mod tests {
         let ocsp_data =
             check_ocsp_response(rsp_data, Some(test_time), &mut validation_log).unwrap();
 
-        let errors = report_split_errors(validation_log.get_log_mut());
+        let errors = validation_log.take_errors();
 
         assert!(ocsp_data.revoked_at.is_some());
         assert!(!errors.is_empty());

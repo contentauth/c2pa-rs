@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::Debug;
+use std::{fmt::Debug, iter::Iterator};
 
 use crate::LogItem;
 
@@ -52,6 +52,14 @@ pub trait StatusTracker: Debug + Send {
     ///
     /// Primarily intended for use by [`LogItem::failure()`].
     fn add_error<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E>;
+
+    /// Return the [`LogItem`]s that have error conditions (`err_val` is
+    /// populated).
+    ///
+    /// Removes matching items from the list of log items.
+    fn filter_errors(&mut self) -> impl Iterator<Item = &LogItem> {
+        self.get_log().iter().filter(|item| item.err_val.is_some())
+    }
 }
 
 pub(crate) mod detailed;

@@ -39,19 +39,3 @@ pub fn report_has_err(report: &[LogItem], err: Error) -> bool {
         }
     })
 }
-
-/// Split Errors off from rest of report
-#[allow(dead_code)] // in case we make use of these or export this
-pub fn report_split_errors(report: &mut Vec<LogItem>) -> Vec<LogItem> {
-    let mut output: Vec<LogItem> = Vec::new();
-
-    let mut i = 0;
-    while i < report.len() {
-        if report[i].err_val.is_some() {
-            output.push(report.remove(i));
-        } else {
-            i += 1;
-        }
-    }
-    output
-}
