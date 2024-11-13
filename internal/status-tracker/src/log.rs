@@ -155,7 +155,6 @@ impl LogItem {
     ///
     /// If the implementation is configured to aggregate all log messages, this
     /// function will return `Ok(())`.
-    #[must_use]
     pub fn failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) -> Result<(), E> {
         self.kind = LogKind::Failure;
         self.err_val = Some(format!("{err:?}").into());
