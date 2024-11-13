@@ -38,6 +38,8 @@ use crate::StatusTracker;
 ///     LogItem {
 ///         kind: LogKind::Informational,
 ///         label: Cow::Borrowed("test1"),
+///         crate_name: Cow::Borrowed(env!("CARGO_PKG_NAME")),
+///         crate_version: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
 ///         description: Cow::Borrowed("test item 1"),
 ///         file: Cow::Borrowed(file!()),
 ///         function: Cow::Borrowed("test func"),
@@ -55,6 +57,8 @@ macro_rules! log_item {
         $crate::LogItem {
             kind: $crate::LogKind::Informational,
             label: $label.into(),
+            crate_name: env!("CARGO_PKG_NAME").into(),
+            crate_version: env!("CARGO_PKG_VERSION").into(),
             file: file!().into(),
             function: $function.into(),
             line: line!(),
@@ -78,6 +82,12 @@ pub struct LogItem {
 
     /// Description of the error
     pub description: Cow<'static, str>,
+
+    /// Crate where error was detected
+    pub crate_name: Cow<'static, str>,
+
+    /// Version of the crate
+    pub crate_version: Cow<'static, str>,
 
     /// Source file where error was detected
     pub file: Cow<'static, str>,
@@ -111,6 +121,8 @@ impl LogItem {
     ///         kind: LogKind::Informational,
     ///         label: Cow::Borrowed("test1"),
     ///         description: Cow::Borrowed("test item 1"),
+    ///         crate_name: Cow::Borrowed(env!("CARGO_PKG_NAME")),
+    ///         crate_version: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
     ///         file: Cow::Borrowed(file!()),
     ///         function: Cow::Borrowed("test func"),
     ///         line: 7,
