@@ -1175,7 +1175,7 @@ impl Claim {
                 // .validation_status(???)
                 // PR REVIEW: Should there be a validation status?
                 // There wasn't one before.
-                .failure_no_throw(validation_log, parse_err);
+                .failure(validation_log, parse_err)?;
             }
         };
 
