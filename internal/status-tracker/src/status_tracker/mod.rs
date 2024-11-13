@@ -52,7 +52,9 @@ pub trait StatusTracker: Debug + Send {
     ///
     /// Removes matching items from the list of log items.
     fn filter_errors(&mut self) -> impl Iterator<Item = &LogItem> {
-        self.logged_items().iter().filter(|item| item.err_val.is_some())
+        self.logged_items()
+            .iter()
+            .filter(|item| item.err_val.is_some())
     }
 }
 

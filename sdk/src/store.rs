@@ -4579,7 +4579,10 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.logged_items(), Error::UnsupportedType));
+        assert!(report_has_err(
+            report.logged_items(),
+            Error::UnsupportedType
+        ));
     }
 
     #[test]
@@ -4593,7 +4596,10 @@ pub mod tests {
         println!("Error report for {}: {:?}", ap.display(), report);
         assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.logged_items(), Error::PrereleaseError));
+        assert!(report_has_err(
+            report.logged_items(),
+            Error::PrereleaseError
+        ));
     }
 
     #[test]
@@ -4621,7 +4627,11 @@ pub mod tests {
         let mut report = DetailedStatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.logged_items());
+        println!(
+            "Error report for {}: {:?}",
+            ap.display(),
+            report.logged_items()
+        );
         assert!(!report.logged_items().is_empty());
         let errors = report.take_errors();
         assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
@@ -4633,7 +4643,11 @@ pub mod tests {
         let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.logged_items());
+        println!(
+            "Error report for {}: {:?}",
+            ap.display(),
+            report.logged_items()
+        );
         assert!(!report.logged_items().is_empty());
         let errors = report.take_errors();
         assert!(errors[0]
