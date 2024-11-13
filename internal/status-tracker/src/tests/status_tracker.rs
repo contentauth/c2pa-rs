@@ -11,21 +11,23 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt::{self, Display, Formatter};
+
 mod detailed {
     use super::SampleError;
-    use crate::{log_item, DetailedStatusTracker, StatusTracker};
+    use crate::{log_item, DetailedStatusTracker};
 
     #[test]
     fn aggregates_errors() {
         let mut tracker = DetailedStatusTracker::default();
 
         // Add an item without an error.
-        let item1 = log_item!("test1", "test item 1", "test func");
-        assert!(tracker.log(item1, SampleError {}).is_ok());
+        log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
         // Add another item with an error. Should not stop.
-        let item2 = log_item!("test2", "test item 1", "test func").error(SampleError {}); // add arbitrary error
-        assert!(tracker.log(item2, SampleError {}).is_ok());
+        log_item!("test2", "test item 1", "test func")
+            .failure(&mut tracker, SampleError {})
+            .unwrap();
 
         assert_eq!(tracker.logged_items.len(), 2);
 
@@ -38,3 +40,9 @@ mod detailed {
 
 #[derive(Debug)]
 struct SampleError {}
+
+impl Display for SampleError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "SampleError")
+    }
+}

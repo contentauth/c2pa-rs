@@ -13,6 +13,8 @@
 
 use std::{borrow::Cow, fmt::Debug};
 
+use crate::StatusTracker;
+
 /// Creates a [`LogItem`] struct that is annotated with the source file and line
 /// number where the log condition was discovered.
 ///
@@ -100,52 +102,6 @@ pub struct LogItem {
 }
 
 impl LogItem {
-    /// Change the log item kind to [`LogKind::Success`].
-    pub fn success(self) -> Self {
-        LogItem {
-            kind: LogKind::Success,
-            ..self
-        }
-    }
-
-    /// Captures the description from the value (typically an `Error` enum) as
-    /// additional information for this `LogItem` struct.
-    ///
-    /// Changes the log item kind to [`LogKind::Failure`].
-    ///
-    /// IMPORTANT: This is implemented using the [`Debug`](std::fmt::Debug)
-    /// trait, but in common practice, the `Error` enum from any crate is likely
-    /// to fulfill this requirement.    
-    ///
-    /// ## Example
-    ///
-    /// ```
-    /// # use std::borrow::Cow;
-    /// # use c2pa_status_tracker::{log_item, LogKind, LogItem};
-    /// let log = log_item!("test1", "test item 1", "test func").error("sample error message");
-    ///
-    /// assert_eq!(
-    ///     log,
-    ///     LogItem {
-    ///         kind: LogKind::Failure,
-    ///         label: Cow::Borrowed("test1"),
-    ///         description: Cow::Borrowed("test item 1"),
-    ///         file: Cow::Borrowed("internal/status-tracker/src/log.rs"),
-    ///         function: Cow::Borrowed("test func"),
-    ///         line: 7,
-    ///         err_val: Some(Cow::Borrowed("\"sample error message\"")),
-    ///         validation_status: None,
-    ///     }
-    /// );
-    /// ```
-    pub fn error<E: std::fmt::Debug>(self, err: E) -> Self {
-        LogItem {
-            err_val: Some(format!("{err:?}").into()),
-            kind: LogKind::Failure,
-            ..self
-        }
-    }
-
     /// Add a C2PA validation status code.
     ///
     /// ## Example
@@ -169,11 +125,54 @@ impl LogItem {
     ///     }
     /// );
     /// ```
+    #[must_use]
     pub fn validation_status(self, status: &'static str) -> Self {
         LogItem {
             validation_status: Some(status.into()),
             ..self
         }
+    }
+
+    /// Set the log item kind to [`LogKind::Success`] and add it to the
+    /// [`StatusTracker`].
+    pub fn success(mut self, tracker: &mut impl StatusTracker) {
+        self.kind = LogKind::Success;
+        tracker.add_non_error(self);
+    }
+
+    /// Set the log item kind to [`LogKind::Informational`] and add it to the
+    /// [`StatusTracker`].
+    pub fn informational(mut self, tracker: &mut impl StatusTracker) {
+        self.kind = LogKind::Informational;
+        tracker.add_non_error(self);
+    }
+
+    /// Set the log item kind to [`LogKind::Failure1] and add it to the
+    /// [`StatusTracker`].
+    ///
+    /// Some implementations are configured to stop immediately on errors. If
+    /// so, this function will return `Err(err)`.
+    ///
+    /// If the implementation is configured to aggregate all log messages, this
+    /// function will return `Ok(())`.
+    #[must_use]
+    pub fn failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) -> Result<(), E> {
+        self.kind = LogKind::Failure;
+        self.err_val = Some(format!("{err:?}").into());
+
+        tracker.add_error(self, err)
+    }
+
+    /// Set the log item kind to [`LogKind::Failure1] and add it to the
+    /// [`StatusTracker`].
+    ///
+    /// Does not return a [`Result`] and thus ignores the [`StatusTracker`]
+    /// error-handling configuration.
+    pub fn silent_failure<E: Debug>(mut self, tracker: &mut impl StatusTracker, err: E) {
+        self.kind = LogKind::Failure;
+        self.err_val = Some(format!("{err:?}").into());
+
+        tracker.add_non_error(self);
     }
 }
 

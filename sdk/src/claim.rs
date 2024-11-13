@@ -1064,15 +1064,13 @@ impl Claim {
         };
 
         if sig_box_err {
-            let log_item = log_item!(
+            log_item!(
                 claim.signature_uri(),
                 "signature missing",
                 "verify_claim_async"
             )
-            .error(Error::ClaimMissingSignatureBox)
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING);
-
-            validation_log.log(log_item, Error::ClaimMissingSignatureBox)?;
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
         // check certificate revocation
@@ -1109,10 +1107,9 @@ impl Claim {
         };
 
         if sig_box_err {
-            let log_item = log_item!(claim.signature_uri(), "signature missing", "verify_claim")
-                .error(Error::ClaimMissingSignatureBox)
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISSING);
-            validation_log.log(log_item, Error::ClaimMissingSignatureBox)?;
+            log_item!(claim.signature_uri(), "signature missing", "verify_claim")
+                .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+                .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
         let data = if let Some(ref original_bytes) = claim.original_bytes {
@@ -1153,32 +1150,33 @@ impl Claim {
         match verified {
             Ok(vi) => {
                 if !vi.validated {
-                    let log_item = log_item!(
+                    log_item!(
                         claim.signature_uri(),
                         "claim signature is not valid",
                         "verify_internal"
                     )
-                    .error(Error::CoseSignature)
-                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH);
-                    validation_log.log(log_item, Error::CoseSignature)?;
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure(validation_log, Error::CoseSignature)?;
                 } else {
-                    let log_item = log_item!(
+                    log_item!(
                         claim.signature_uri(),
                         "claim signature valid",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED);
-                    validation_log.log_silent(log_item);
+                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                    .success(validation_log);
                 }
             }
             Err(parse_err) => {
-                let log_item = log_item!(
+                log_item!(
                     claim.signature_uri(),
                     "claim signature is not valid",
                     "verify_internal"
                 )
-                .error(parse_err);
-                validation_log.log_silent(log_item);
+                // .validation_status(???)
+                // PR REVIEW: Should there be a validation status?
+                // There wasn't one before.
+                .silent_failure(validation_log, parse_err);
             }
         };
 
@@ -1188,39 +1186,36 @@ impl Claim {
                 let r_manifest = jumbf::labels::manifest_label_from_uri(r)
                     .ok_or(Error::AssertionInvalidRedaction)?;
                 if claim.label().contains(&r_manifest) {
-                    let log_item = log_item!(
+                    log_item!(
                         claim.uri(),
                         "claim contains self redaction",
                         "verify_internal"
                     )
-                    .error(Error::ClaimSelfRedact)
-                    .validation_status(validation_status::ASSERTION_SELF_REDACTED);
-                    validation_log.log(log_item, Error::ClaimSelfRedact)?;
+                    .validation_status(validation_status::ASSERTION_SELF_REDACTED)
+                    .failure(validation_log, Error::ClaimSelfRedact)?;
                 }
 
                 if r.contains(assertions::labels::ACTIONS) {
-                    let log_item = log_item!(
+                    log_item!(
                         claim.uri(),
                         "redaction of action assertions disallowed",
                         "verify_internal"
                     )
-                    .error(Error::ClaimDisallowedRedaction)
-                    .validation_status(validation_status::ACTION_ASSERTION_REDACTED);
-                    validation_log.log(log_item, Error::ClaimDisallowedRedaction)?;
+                    .validation_status(validation_status::ACTION_ASSERTION_REDACTED)
+                    .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }
         }
 
         // make sure UpdateManifests do not contain actions
         if claim.update_manifest() && claim.label().contains(assertions::labels::ACTIONS) {
-            let log_item = log_item!(
+            log_item!(
                 claim.uri(),
                 "update manifests cannot contain actions",
                 "verify_internal"
             )
-            .error(Error::UpdateManifestInvalid)
-            .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
-            validation_log.log(log_item, Error::UpdateManifestInvalid)?;
+            .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+            .failure(validation_log, Error::UpdateManifestInvalid)?;
         }
 
         // verify assertion structure comparing hashes from assertion list to contents of assertion store
@@ -1235,45 +1230,38 @@ impl Claim {
                 // get the assertion if label and hash match
                 Some(ca) => {
                     if !vec_compare(ca.hash(), &assertion.hash()) {
-                        let log_item = log_item!(
+                        log_item!(
                             assertion_absolute_uri.clone(),
                             format!("hash does not match assertion data: {}", assertion.url()),
                             "verify_internal"
                         )
-                        .error(Error::HashMismatch(format!(
-                            "Assertion hash failure: {}",
-                            assertion_absolute_uri.clone(),
-                        )))
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH);
-                        validation_log.log(
-                            log_item,
+                        .validation_status(validation_status::ASSERTION_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
                             Error::HashMismatch(format!(
                                 "Assertion hash failure: {}",
                                 assertion_absolute_uri.clone(),
                             )),
                         )?;
                     } else {
-                        let log_item = log_item!(
-                            assertion_absolute_uri.clone(),
+                        log_item!(
+                            assertion_absolute_uri,
                             format!("hashed uri matched: {}", assertion.url()),
                             "verify_internal"
                         )
-                        .validation_status(validation_status::ASSERTION_HASHEDURI_MATCH);
-                        validation_log.log_silent(log_item);
+                        .validation_status(validation_status::ASSERTION_HASHEDURI_MATCH)
+                        .success(validation_log);
                     }
                 }
                 None => {
-                    let log_item = log_item!(
+                    log_item!(
                         assertion_absolute_uri.clone(),
                         format!("cannot find matching assertion: {}", assertion.url()),
                         "verify_internal"
                     )
-                    .error(Error::AssertionMissing {
-                        url: assertion_absolute_uri.clone(),
-                    })
-                    .validation_status(validation_status::ASSERTION_MISSING);
-                    validation_log.log(
-                        log_item,
+                    .validation_status(validation_status::ASSERTION_MISSING)
+                    .failure(
+                        validation_log,
                         Error::AssertionMissing {
                             url: assertion_absolute_uri.clone(),
                         },
@@ -1286,23 +1274,20 @@ impl Claim {
         if is_provenance {
             // must have at least one hard binding for normal manifests
             if claim.hash_assertions().is_empty() && !claim.update_manifest() {
-                let log_item =
-                    log_item!(claim.uri(), "claim missing data binding", "verify_internal")
-                        .error(Error::ClaimMissingHardBinding)
-                        .validation_status(validation_status::HARD_BINDINGS_MISSING);
-                validation_log.log(log_item, Error::ClaimMissingHardBinding)?;
+                log_item!(claim.uri(), "claim missing data binding", "verify_internal")
+                    .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                    .failure(validation_log, Error::ClaimMissingHardBinding)?;
             }
 
             // update manifests cannot have data hashes
             if !claim.hash_assertions().is_empty() && claim.update_manifest() {
-                let log_item = log_item!(
+                log_item!(
                     claim.uri(),
                     "update manifests cannot contain data hash assertions",
                     "verify_internal"
                 )
-                .error(Error::UpdateManifestInvalid)
-                .validation_status(validation_status::MANIFEST_UPDATE_INVALID);
-                validation_log.log(log_item, Error::UpdateManifestInvalid)?;
+                .validation_status(validation_status::MANIFEST_UPDATE_INVALID)
+                .failure(validation_log, Error::UpdateManifestInvalid)?;
             }
 
             for hash_binding_assertion in claim.hash_assertions() {
@@ -1327,27 +1312,25 @@ impl Claim {
 
                         match hash_result {
                             Ok(_a) => {
-                                let log_item = log_item!(
+                                log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
                                     "data hash valid",
                                     "verify_internal"
                                 )
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MATCH);
-                                validation_log.log_silent(log_item);
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
+                                .success(validation_log);
 
                                 continue;
                             }
                             Err(e) => {
-                                let log_item = log_item!(
+                                log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
                                     format!("asset hash error, name: {name}, error: {e}"),
                                     "verify_internal"
                                 )
-                                .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH);
-
-                                validation_log.log(
-                                    log_item,
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                                .failure(
+                                    validation_log,
                                     Error::HashMismatch(format!("Asset hash failure: {e}")),
                                 )?;
                             }
@@ -1387,27 +1370,25 @@ impl Claim {
 
                     match hash_result {
                         Ok(_a) => {
-                            let log_item = log_item!(
+                            log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH);
-                            validation_log.log_silent(log_item);
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
+                            .success(validation_log);
 
                             continue;
                         }
                         Err(e) => {
-                            let log_item = log_item!(
+                            log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
-                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH);
-
-                            validation_log.log(
-                                log_item,
+                            .validation_status(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                            .failure(
+                                validation_log,
                                 Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
@@ -1463,27 +1444,25 @@ impl Claim {
 
                     match hash_result {
                         Ok(_a) => {
-                            let log_item = log_item!(
+                            log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "data hash valid",
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH);
-                            validation_log.log_silent(log_item);
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
+                            .success(validation_log);
 
                             continue;
                         }
                         Err(e) => {
-                            let log_item = log_item!(
+                            log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error: {e}"),
                                 "verify_internal"
                             )
-                            .error(Error::HashMismatch(format!("Asset hash failure: {e}")))
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH);
-
-                            validation_log.log(
-                                log_item,
+                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .failure(
+                                validation_log,
                                 Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }

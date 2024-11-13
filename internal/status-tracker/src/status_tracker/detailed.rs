@@ -58,13 +58,13 @@ impl StatusTracker for DetailedStatusTracker {
         &mut self.logged_items
     }
 
-    fn log<E>(&mut self, log_item: LogItem, _err: E) -> Result<(), E> {
+    fn add_non_error(&mut self, log_item: LogItem) {
         self.logged_items.push(log_item);
-        Ok(())
     }
 
-    fn log_silent(&mut self, log_item: LogItem) {
+    fn add_error<E>(&mut self, log_item: LogItem, _err: E) -> Result<(), E> {
         self.logged_items.push(log_item);
+        Ok(())
     }
 }
 

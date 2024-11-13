@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use crate::{log_item, LogItem, LogKind};
+use crate::{log_item, DetailedStatusTracker, LogItem, LogKind, StatusTracker};
 
 #[test]
 fn r#macro() {
@@ -60,11 +60,14 @@ fn macro_from_string() {
 
 #[test]
 fn success() {
-    let log_item = log_item!("test1", "test item 1", "test func").success();
+    let mut tracker = DetailedStatusTracker::default();
+    log_item!("test1", "test item 1", "test func").success(&mut tracker);
+
+    let log_item = tracker.get_log().first().unwrap();
 
     assert_eq!(
         log_item,
-        LogItem {
+        &LogItem {
             kind: LogKind::Success,
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),
@@ -78,12 +81,62 @@ fn success() {
 }
 
 #[test]
-fn error() {
-    let log_item = log_item!("test1", "test item 1", "test func").error("sample error message");
+fn informational() {
+    let mut tracker = DetailedStatusTracker::default();
+    log_item!("test1", "test item 1", "test func").informational(&mut tracker);
+
+    let log_item = tracker.get_log().first().unwrap();
 
     assert_eq!(
         log_item,
-        LogItem {
+        &LogItem {
+            kind: LogKind::Informational,
+            label: Cow::Borrowed("test1"),
+            description: Cow::Borrowed("test item 1"),
+            file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
+            function: Cow::Borrowed("test func"),
+            line: log_item.line,
+            err_val: None,
+            validation_status: None,
+        }
+    );
+}
+
+#[test]
+fn failure() {
+    let mut tracker = DetailedStatusTracker::default();
+    log_item!("test1", "test item 1", "test func")
+        .failure(&mut tracker, "sample error message")
+        .unwrap();
+
+    let log_item = tracker.get_log().first().unwrap();
+
+    assert_eq!(
+        log_item,
+        &LogItem {
+            kind: LogKind::Failure,
+            label: Cow::Borrowed("test1"),
+            description: Cow::Borrowed("test item 1"),
+            file: Cow::Borrowed("internal/status-tracker/src/tests/log.rs"),
+            function: Cow::Borrowed("test func"),
+            line: log_item.line,
+            err_val: Some(Cow::Borrowed("\"sample error message\"")),
+            validation_status: None,
+        }
+    );
+}
+
+#[test]
+fn silent_failure() {
+    let mut tracker = DetailedStatusTracker::default();
+    log_item!("test1", "test item 1", "test func")
+        .silent_failure(&mut tracker, "sample error message");
+
+    let log_item = tracker.get_log().first().unwrap();
+
+    assert_eq!(
+        log_item,
+        &LogItem {
             kind: LogKind::Failure,
             label: Cow::Borrowed("test1"),
             description: Cow::Borrowed("test item 1"),

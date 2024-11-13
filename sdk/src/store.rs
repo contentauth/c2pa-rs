@@ -947,12 +947,10 @@ impl Store {
         // check the CAI Block
         let desc_box = cai_block.desc_box();
         if desc_box.uuid() != CAI_BLOCK_UUID {
-            let log_item = log_item!("JUMBF", "c2pa box not found", "from_jumbf")
-                .error(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
-            validation_log.log(
-                log_item,
+            log_item!("JUMBF", "c2pa box not found", "from_jumbf").silent_failure(
+                validation_log,
                 Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound),
-            )?;
+            );
 
             return Err(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
         }
@@ -987,16 +985,12 @@ impl Store {
                 }
 
                 if claim_box_cnt > 1 {
-                    let log_item =
-                        log_item!("JUMBF", "c2pa multiple claim boxes found", "from_jumbf")
-                            .error(Error::InvalidClaim(
-                                InvalidClaimError::C2paMultipleClaimBoxes,
-                            ))
-                            .validation_status(validation_status::CLAIM_MULTIPLE);
-                    validation_log.log(
-                        log_item,
-                        Error::InvalidClaim(InvalidClaimError::C2paMultipleClaimBoxes),
-                    )?;
+                    log_item!("JUMBF", "c2pa multiple claim boxes found", "from_jumbf")
+                        .validation_status(validation_status::CLAIM_MULTIPLE)
+                        .silent_failure(
+                            validation_log,
+                            Error::InvalidClaim(InvalidClaimError::C2paMultipleClaimBoxes),
+                        );
 
                     return Err(Error::InvalidClaim(
                         InvalidClaimError::C2paMultipleClaimBoxes,
@@ -1010,14 +1004,12 @@ impl Store {
                     CREDENTIALS => box_order.push(CREDENTIALS),
                     DATABOXES => box_order.push(DATABOXES),
                     _ => {
-                        let log_item =
-                            log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
-                                .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
-                                .validation_status(validation_status::CLAIM_MULTIPLE);
-                        validation_log.log(
-                            log_item,
-                            Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
-                        )?;
+                        log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
+                            .validation_status(validation_status::CLAIM_MULTIPLE)
+                            .failure(
+                                validation_log,
+                                Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
+                            )?;
                     }
                 }
             }
@@ -1063,20 +1055,18 @@ impl Store {
                         // check for old claims for reporting
                         match claim_superbox.data_box_as_json_box(0) {
                             Some(_c) => {
-                                let log_item =
-                                    log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                        .error(Error::PrereleaseError);
-                                validation_log.log_silent(log_item);
+                                log_item!("JUMBF", "error loading claim data", "from_jumbf")
+                                    .silent_failure(validation_log, Error::PrereleaseError);
 
                                 return Err(Error::PrereleaseError);
                             }
                             None => {
-                                let log_item =
-                                    log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                        .error(Error::InvalidClaim(
-                                            InvalidClaimError::ClaimBoxData,
-                                        ));
-                                validation_log.log_silent(log_item);
+                                log_item!("JUMBF", "error loading claim data", "from_jumbf")
+                                    .silent_failure(
+                                        validation_log,
+                                        Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
+                                    );
+
                                 return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxData));
                             }
                         }
@@ -1171,16 +1161,13 @@ impl Store {
                         if std::mem::discriminant(&e)
                             == std::mem::discriminant(&Error::PrereleaseError)
                         {
-                            let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                    .error(e);
-                            validation_log.log_silent(log_item);
+                            log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                .silent_failure(validation_log, e);
+
                             return Err(Error::PrereleaseError);
                         } else {
-                            let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                    .error(e);
-                            validation_log.log_silent(log_item);
+                            log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                .silent_failure(validation_log, e);
                         }
                     }
                 }
@@ -1288,17 +1275,14 @@ impl Store {
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
-                        let log_item = log_item!(
+                        log_item!(
                             c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks"
                         )
-                        .error(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        ))
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                        validation_log.log(
-                            log_item,
+                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
                             Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
                             ),
@@ -1321,17 +1305,14 @@ impl Store {
                     // recurse nested ingredients
                     Store::ingredient_checks(store, ingredient, asset_data, validation_log)?;
                 } else {
-                    let log_item = log_item!(
+                    log_item!(
                         c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks"
                     )
-                    .error(Error::ClaimVerification(format!(
-                        "ingredient: {label} is missing"
-                    )))
-                    .validation_status(validation_status::CLAIM_MISSING);
-                    validation_log.log(
-                        log_item,
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure(
+                        validation_log,
                         Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
@@ -1341,32 +1322,26 @@ impl Store {
         // check ingredient rules
         if claim.update_manifest() {
             if !(num_parent_ofs == 1 && claim.ingredient_assertions().len() == 1) {
-                let log_item = log_item!(
+                log_item!(
                     claim.uri(),
                     "update manifest must have one parent",
                     "ingredient_checks"
                 )
-                .error(Error::ClaimVerification(
-                    "update manifest must have one parent".to_string(),
-                ))
-                .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS);
-                validation_log.log(
-                    log_item,
+                .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS)
+                .failure(
+                    validation_log,
                     Error::ClaimVerification("update manifest must have one parent".to_string()),
                 )?;
             }
         } else if num_parent_ofs > 1 {
-            let log_item = log_item!(
+            log_item!(
                 claim.uri(),
                 "too many ingredient parents",
                 "ingredient_checks"
             )
-            .error(Error::ClaimVerification(
-                "ingredient has more than one parent".to_string(),
-            ))
-            .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS);
-            validation_log.log(
-                log_item,
+            .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
+            .failure(
+                validation_log,
                 Error::ClaimVerification("ingredient has more than one parent".to_string()),
             )?;
         }
@@ -1404,17 +1379,14 @@ impl Store {
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
-                        let log_item = log_item!(
+                        log_item!(
                             c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks_async"
                         )
-                        .error(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        ))
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                        validation_log.log(
-                            log_item,
+                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
                             Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
                             ),
@@ -1439,17 +1411,14 @@ impl Store {
                     Store::ingredient_checks_async(store, ingredient, asset_data, validation_log)
                         .await?;
                 } else {
-                    let log_item = log_item!(
+                    log_item!(
                         c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks_async"
                     )
-                    .error(Error::ClaimVerification(format!(
-                        "ingredient: {label} is missing"
-                    )))
-                    .validation_status(validation_status::CLAIM_MISSING);
-                    validation_log.log(
-                        log_item,
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure(
+                        validation_log,
                         Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
@@ -1472,11 +1441,9 @@ impl Store {
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Error::ProvenanceMissing)?;
+                log_item!("Unknown", "could not find active manifest", "verify_store")
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .silent_failure(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -1511,11 +1478,9 @@ impl Store {
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Error::ProvenanceMissing)?;
+                log_item!("Unknown", "could not find active manifest", "verify_store")
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .silent_failure(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -2315,17 +2280,14 @@ impl Store {
                                 None,
                             )
                         {
-                            let log_item = log_item!(
+                            log_item!(
                                 c2pa_manifest.url(),
                                 "ingredient hash incorrect",
                                 "embed_placed_manifest"
                             )
-                            .error(Error::HashMismatch(
-                                "ingredient hash does not match found ingredient".to_string(),
-                            ))
-                            .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                            validation_log.log(
-                                log_item,
+                            .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                            .failure(
+                                &mut validation_log,
                                 Error::HashMismatch(
                                     "ingredient hash does not match found ingredient".to_string(),
                                 ),
@@ -3275,9 +3237,8 @@ impl Store {
                 Ok(store)
             })
             .inspect_err(|e| {
-                validation_log.log_silent(
-                    log_item!("asset", "error loading file", "load_from_asset").error(e),
-                );
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .silent_failure(validation_log, e);
             })
     }
 
@@ -3288,9 +3249,8 @@ impl Store {
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
-            validation_log.log_silent(
-                log_item!("asset", "error loading asset", "get_store_from_memory").error(e),
-            );
+            log_item!("asset", "error loading asset", "get_store_from_memory")
+                .silent_failure(validation_log, e);
         })
     }
 

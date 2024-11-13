@@ -41,7 +41,11 @@ impl StatusTracker for OneShotStatusTracker {
         &mut self.logged_items
     }
 
-    fn log<E>(&mut self, log_item: LogItem, err: E) -> std::result::Result<(), E> {
+    fn add_non_error(&mut self, log_item: LogItem) {
+        self.logged_items.push(log_item);
+    }
+
+    fn add_error<E>(&mut self, log_item: LogItem, err: E) -> std::result::Result<(), E> {
         let item_has_err = log_item.err_val.is_some();
         self.logged_items.push(log_item);
         if item_has_err {
@@ -49,10 +53,6 @@ impl StatusTracker for OneShotStatusTracker {
         } else {
             Ok(())
         }
-    }
-
-    fn log_silent(&mut self, log_item: LogItem) {
-        self.logged_items.push(log_item);
     }
 }
 
@@ -117,8 +117,7 @@ pub mod tests {
         let mut tracker = OneShotStatusTracker::new();
 
         // item without error
-        let item1 = log_item!("test1", "test item 1", "test func");
-        tracker.log_silent(item1);
+        log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
         // item with an error
         // let item2 = log_item!("test2", "test item 1", "test func").error(Error::NotFound); // add arbitrary error
@@ -126,13 +125,12 @@ pub mod tests {
         // assert!(tracker.log_silent(item2).is_err());
 
         // item with error with caller specified error response, testing macro for generation
-        let item3 = log_item!("test3", "test item 3 from macro", "test func")
-            .error(Error::UnsupportedType)
-            .validation_status(validation_status::ALGORITHM_UNSUPPORTED);
-        assert!(matches!(
-            tracker.log(item3, Error::NotFound),
-            Err(Error::NotFound)
-        ));
+        let err = log_item!("test3", "test item 3 from macro", "test func")
+            .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+            .failure(&mut tracker, Error::NotFound)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::NotFound));
     }
 
     #[test]
@@ -140,23 +138,21 @@ pub mod tests {
         let mut tracker = DetailedStatusTracker::default();
 
         // item without error
-        let item1 = log_item!("test1", "test item 1", "test func");
-        tracker.log_silent(item1);
+        log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
         // item with an error
-        let item2 = log_item!("test2", "test item 1", "test func").error(Error::NotFound); // add arbitrary error
-        tracker.log_silent(item2);
+        log_item!("test2", "test item 1", "test func")
+            .silent_failure(&mut tracker, Error::NotFound);
 
         // item with error with caller specified error response, testing macro for generation
-        let item3 =
-            log_item!("test3", "test item 3 from macro", "test func").error(Error::UnsupportedType);
-        assert!(tracker.log(item3, Some(Error::NotFound)).is_ok());
+        log_item!("test3", "test item 3 from macro", "test func")
+            .failure(&mut tracker, Error::UnsupportedType)
+            .unwrap();
 
         // item with error with caller specified error response, testing macro for generation, test validation_status
-        let item4 = log_item!("test3", "test item 3 from macro", "test func")
-            .error(Error::UnsupportedType)
-            .validation_status(validation_status::ALGORITHM_UNSUPPORTED);
-        tracker.log_silent(item4);
+        log_item!("test3", "test item 3 from macro", "test func")
+            .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+            .silent_failure(&mut tracker, Error::UnsupportedType);
 
         // there should be two items with error
         let errors = report_split_errors(tracker.get_log_mut());

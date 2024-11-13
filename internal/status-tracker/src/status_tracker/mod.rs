@@ -28,22 +28,32 @@ pub trait StatusTracker: Debug + Display + Send {
     /// the new `DetailedStatusTracker::take_errors`.
     fn get_log_mut(&mut self) -> &mut Vec<LogItem>;
 
-    /// Record a validation log item.
+    /// DEPRECTATED: Use `add_non_error` instead.
+    #[deprecated = "Use `add_non_error` instead"]
+    fn log<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E> {
+        self.add_error(log_item, err)
+    }
+
+    /// Add a non-error [`LogItem`] to this status tracker.
+    ///
+    /// Primarily intended for use by [`LogItem::log_success()`]
+    /// or [`LogItem::log_informational()`].
+    fn add_non_error(&mut self, log_item: LogItem);
+
+    /// Add an error-case [`LogItem`] to this status tracker.
     ///
     /// Some implementations are configured to stop immediately on errors. If
-    /// so, and the [`LogItem`]'s `err_val` field is non-empty, this function
-    /// will return `Err(err)`.
+    /// so, this function will return `Err(err)`.
     ///
     /// If the implementation is configured to aggregate all log
     /// messages, this function returns `Ok(())`.
-    fn log<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E>;
+    fn add_error<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E>;
 
-    /// Record a validation log item without stopping.
-    ///
-    /// Unlike [`log()`], this does not return a [`Result`] type.
-    ///
-    /// [`log()`]: Self::log()
-    fn log_silent(&mut self, log_item: LogItem);
+    /// DEPRECTATED: Use `add_non_error` instead.
+    #[deprecated = "Use `add_non_error` instead"]
+    fn log_silent(&mut self, log_item: LogItem) {
+        self.add_non_error(log_item);
+    }
 }
 
 pub(crate) mod detailed;
