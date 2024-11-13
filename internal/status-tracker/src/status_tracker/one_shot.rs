@@ -39,12 +39,7 @@ impl StatusTracker for OneShotStatusTracker {
     }
 
     fn add_error<E>(&mut self, log_item: LogItem, err: E) -> std::result::Result<(), E> {
-        let item_has_err = log_item.err_val.is_some();
         self.logged_items.push(log_item);
-        if item_has_err {
-            Err(err)
-        } else {
-            Ok(())
-        }
+        Err(err)
     }
 }
