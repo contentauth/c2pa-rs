@@ -30,10 +30,6 @@ impl StatusTracker for OneShotStatusTracker {
         &self.logged_items
     }
 
-    fn get_log_mut(&mut self) -> &mut Vec<LogItem> {
-        &mut self.logged_items
-    }
-
     fn add_non_error(&mut self, log_item: LogItem) {
         self.logged_items.push(log_item);
     }

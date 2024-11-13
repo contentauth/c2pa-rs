@@ -22,12 +22,6 @@ pub trait StatusTracker: Debug + Send {
     /// Return the current list of validation log items.
     fn get_log(&self) -> &[LogItem];
 
-    /// Return a mutable reference to the list of validation log items.
-    ///
-    /// NOTE: I'm close to removing this function in favor of
-    /// the new `DetailedStatusTracker::take_errors`.
-    fn get_log_mut(&mut self) -> &mut Vec<LogItem>;
-
     /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     fn append(&mut self, other: &impl StatusTracker) {
