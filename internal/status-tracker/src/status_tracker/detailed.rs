@@ -47,7 +47,7 @@ impl DetailedStatusTracker {
 }
 
 impl StatusTracker for DetailedStatusTracker {
-    fn get_log(&self) -> &[LogItem] {
+    fn logged_items(&self) -> &[LogItem] {
         &self.logged_items
     }
 

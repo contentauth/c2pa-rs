@@ -82,7 +82,7 @@ mod one_shot {
             .unwrap_err();
 
         assert_eq!(err, SampleError {});
-        assert_eq!(tracker.get_log().len(), 2);
+        assert_eq!(tracker.logged_items().len(), 2);
     }
 }
 

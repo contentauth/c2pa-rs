@@ -4577,9 +4577,9 @@ pub mod tests {
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.get_log(), Error::UnsupportedType));
+        assert!(report_has_err(report.logged_items(), Error::UnsupportedType));
     }
 
     #[test]
@@ -4591,9 +4591,9 @@ pub mod tests {
 
         // error report
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.get_log(), Error::PrereleaseError));
+        assert!(report_has_err(report.logged_items(), Error::PrereleaseError));
     }
 
     #[test]
@@ -4605,7 +4605,7 @@ pub mod tests {
 
         // error report
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
         let errs = report.take_errors();
         assert!(report_has_status(
@@ -4621,8 +4621,8 @@ pub mod tests {
         let mut report = DetailedStatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.get_log());
-        assert!(!report.get_log().is_empty());
+        println!("Error report for {}: {:?}", ap.display(), report.logged_items());
+        assert!(!report.logged_items().is_empty());
         let errors = report.take_errors();
         assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
     }
@@ -4633,8 +4633,8 @@ pub mod tests {
         let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.get_log());
-        assert!(!report.get_log().is_empty());
+        println!("Error report for {}: {:?}", ap.display(), report.logged_items());
+        assert!(!report.logged_items().is_empty());
         let errors = report.take_errors();
         assert!(errors[0]
             .err_val
@@ -4804,8 +4804,8 @@ pub mod tests {
     fn test_claim_decoding() {
         // modify a required field label in the claim - causes failure to read claim from cbor
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
-        assert!(!report.get_log().is_empty());
-        assert!(report.get_log()[0]
+        assert!(!report.logged_items().is_empty());
+        assert!(report.logged_items()[0]
             .err_val
             .as_ref()
             .unwrap()
@@ -4816,7 +4816,7 @@ pub mod tests {
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
         let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
         let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
 
@@ -4993,7 +4993,7 @@ pub mod tests {
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
 
-        assert!(report_has_err(report.get_log(), Error::JumbfNotFound));
+        assert!(report_has_err(report.logged_items(), Error::JumbfNotFound));
     }
 
     #[test]

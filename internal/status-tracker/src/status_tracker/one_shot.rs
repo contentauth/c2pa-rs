@@ -26,7 +26,7 @@ pub struct OneShotStatusTracker {
 }
 
 impl StatusTracker for OneShotStatusTracker {
-    fn get_log(&self) -> &[LogItem] {
+    fn logged_items(&self) -> &[LogItem] {
         &self.logged_items
     }
 

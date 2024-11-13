@@ -20,12 +20,12 @@ use crate::LogItem;
 /// aggregate log messages as they are generated.
 pub trait StatusTracker: Debug + Send {
     /// Return the current list of validation log items.
-    fn get_log(&self) -> &[LogItem];
+    fn logged_items(&self) -> &[LogItem];
 
     /// Appends the contents of another [`StatusTracker`] to this list of
     /// validation log items.
     fn append(&mut self, other: &impl StatusTracker) {
-        for log_item in other.get_log() {
+        for log_item in other.logged_items() {
             self.add_non_error(log_item.clone());
         }
     }
@@ -52,7 +52,7 @@ pub trait StatusTracker: Debug + Send {
     ///
     /// Removes matching items from the list of log items.
     fn filter_errors(&mut self) -> impl Iterator<Item = &LogItem> {
-        self.get_log().iter().filter(|item| item.err_val.is_some())
+        self.logged_items().iter().filter(|item| item.err_val.is_some())
     }
 }
 

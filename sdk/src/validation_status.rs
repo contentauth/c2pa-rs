@@ -158,7 +158,7 @@ pub fn status_for_store(
     validation_log: &impl StatusTracker,
 ) -> Vec<ValidationStatus> {
     let statuses: Vec<ValidationStatus> = validation_log
-        .get_log()
+        .logged_items()
         .iter()
         .filter_map(ValidationStatus::from_validation_item)
         .filter(|s| !is_success(&s.code))

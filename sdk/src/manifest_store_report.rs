@@ -138,7 +138,7 @@ impl ManifestStoreReport {
 
         // convert log items to ValidationStatus
         let mut statuses = Vec::new();
-        for item in validation_log.get_log() {
+        for item in validation_log.logged_items() {
             if let Some(status) = item.validation_status.as_ref() {
                 statuses.push(
                     ValidationStatus::new(status.to_string())

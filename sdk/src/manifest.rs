@@ -1810,7 +1810,7 @@ pub(crate) mod tests {
 
         assert!(claim2.redactions().is_some());
         assert!(!claim2.redactions().unwrap().is_empty());
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
         let redacted_uri = &claim2.redactions().unwrap()[0];
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();

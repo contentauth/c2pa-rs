@@ -63,7 +63,7 @@ fn success() {
     let mut tracker = DetailedStatusTracker::default();
     log_item!("test1", "test item 1", "test func").success(&mut tracker);
 
-    let log_item = tracker.get_log().first().unwrap();
+    let log_item = tracker.logged_items().first().unwrap();
 
     assert_eq!(
         log_item,
@@ -85,7 +85,7 @@ fn informational() {
     let mut tracker = DetailedStatusTracker::default();
     log_item!("test1", "test item 1", "test func").informational(&mut tracker);
 
-    let log_item = tracker.get_log().first().unwrap();
+    let log_item = tracker.logged_items().first().unwrap();
 
     assert_eq!(
         log_item,
@@ -109,7 +109,7 @@ fn failure() {
         .failure(&mut tracker, "sample error message")
         .unwrap();
 
-    let log_item = tracker.get_log().first().unwrap();
+    let log_item = tracker.logged_items().first().unwrap();
 
     assert_eq!(
         log_item,
@@ -132,7 +132,7 @@ fn failure_no_throw() {
     log_item!("test1", "test item 1", "test func")
         .failure_no_throw(&mut tracker, "sample error message");
 
-    let log_item = tracker.get_log().first().unwrap();
+    let log_item = tracker.logged_items().first().unwrap();
 
     assert_eq!(
         log_item,

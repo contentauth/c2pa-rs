@@ -657,7 +657,7 @@ impl Ingredient {
                 debug!("ingredient {:?}", e);
                 // convert any other error to a validation status
                 let statuses: Vec<ValidationStatus> = validation_log
-                    .get_log()
+                    .logged_items()
                     .iter()
                     .filter_map(ValidationStatus::from_validation_item)
                     .filter(|s| !validation_status::is_success(s.code()))

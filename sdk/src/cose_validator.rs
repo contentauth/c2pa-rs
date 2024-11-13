@@ -1387,10 +1387,10 @@ pub mod tests {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_err());
 
-            assert!(!validation_log.get_log().is_empty());
+            assert!(!validation_log.logged_items().is_empty());
 
             assert_eq!(
-                validation_log.get_log()[0].validation_status,
+                validation_log.logged_items()[0].validation_status,
                 Some(validation_status::SIGNING_CREDENTIAL_EXPIRED.into())
             );
         }
