@@ -18,10 +18,9 @@ use crate::{LogItem, StatusTracker};
 /// A `DetailedStatusTracker` aggregates all log conditions observed during a
 /// validation pass.
 ///
-/// When [`log()`] is called, it will not raise an error regardless of whether
-/// the [`LogItem`]'s `err_val` is populated.
+/// When [`add_error()`] is called, it will not raise an error.
 ///
-/// [`log()`]: Self::log
+/// [`add_error()`]: Self::add_error()
 #[derive(Default, Debug)]
 #[non_exhaustive]
 pub struct DetailedStatusTracker {

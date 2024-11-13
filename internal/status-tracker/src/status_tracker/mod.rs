@@ -28,16 +28,10 @@ pub trait StatusTracker: Debug + Display + Send {
     /// the new `DetailedStatusTracker::take_errors`.
     fn get_log_mut(&mut self) -> &mut Vec<LogItem>;
 
-    /// DEPRECTATED: Use `add_non_error` instead.
-    #[deprecated = "Use `add_non_error` instead"]
-    fn log<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E> {
-        self.add_error(log_item, err)
-    }
-
     /// Add a non-error [`LogItem`] to this status tracker.
     ///
-    /// Primarily intended for use by [`LogItem::log_success()`]
-    /// or [`LogItem::log_informational()`].
+    /// Primarily intended for use by [`LogItem::success()`]
+    /// or [`LogItem::informational()`].
     fn add_non_error(&mut self, log_item: LogItem);
 
     /// Add an error-case [`LogItem`] to this status tracker.
@@ -47,13 +41,9 @@ pub trait StatusTracker: Debug + Display + Send {
     ///
     /// If the implementation is configured to aggregate all log
     /// messages, this function returns `Ok(())`.
+    ///
+    /// Primarily intended for use by [`LogItem::failure()`].
     fn add_error<E>(&mut self, log_item: LogItem, err: E) -> Result<(), E>;
-
-    /// DEPRECTATED: Use `add_non_error` instead.
-    #[deprecated = "Use `add_non_error` instead"]
-    fn log_silent(&mut self, log_item: LogItem) {
-        self.add_non_error(log_item);
-    }
 }
 
 pub(crate) mod detailed;

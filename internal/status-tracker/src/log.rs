@@ -26,9 +26,6 @@ use crate::StatusTracker;
 ///   generated
 /// * `function`: name of the function generating this `LogItem`
 ///
-/// Creates an item flagged as [`LogKind::Informational`]. This can be changed
-/// by calling [`success()`] or [`error()`].
-///
 /// ## Example
 ///
 /// ```
@@ -52,9 +49,6 @@ use crate::StatusTracker;
 /// #
 /// # assert!(log.line > 2);
 /// ```
-///
-/// [`success()`]: LogItem::success()
-/// [`error()`]: LogItem::error()
 #[macro_export]
 macro_rules! log_item {
     ($label:expr, $description:expr, $function:expr) => {{
@@ -147,7 +141,7 @@ impl LogItem {
         tracker.add_non_error(self);
     }
 
-    /// Set the log item kind to [`LogKind::Failure1] and add it to the
+    /// Set the log item kind to [`LogKind::Failure`] and add it to the
     /// [`StatusTracker`].
     ///
     /// Some implementations are configured to stop immediately on errors. If
@@ -162,7 +156,7 @@ impl LogItem {
         tracker.add_error(self, err)
     }
 
-    /// Set the log item kind to [`LogKind::Failure1] and add it to the
+    /// Set the log item kind to [`LogKind::Failure`] and add it to the
     /// [`StatusTracker`].
     ///
     /// Does not return a [`Result`] and thus ignores the [`StatusTracker`]
