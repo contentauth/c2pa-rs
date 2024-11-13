@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{self, Display, Formatter};
-
 use crate::{LogItem, StatusTracker};
 
 /// A `DetailedStatusTracker` aggregates all log conditions observed during a
@@ -64,11 +62,5 @@ impl StatusTracker for DetailedStatusTracker {
     fn add_error<E>(&mut self, log_item: LogItem, _err: E) -> Result<(), E> {
         self.logged_items.push(log_item);
         Ok(())
-    }
-}
-
-impl Display for DetailedStatusTracker {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.logged_items)
     }
 }

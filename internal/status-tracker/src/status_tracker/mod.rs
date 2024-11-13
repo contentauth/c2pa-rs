@@ -11,14 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 
 use crate::LogItem;
 
 /// A `StatusTracker` is used in the validation logic of c2pa-rs and
 /// related crates to control error-handling behavior and optionally
 /// aggregate log messages as they are generated.
-pub trait StatusTracker: Debug + Display + Send {
+pub trait StatusTracker: Debug + Send {
     /// Return the current list of validation log items.
     fn get_log(&self) -> &[LogItem];
 

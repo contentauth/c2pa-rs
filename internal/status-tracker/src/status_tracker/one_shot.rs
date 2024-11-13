@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{self, Display, Formatter};
-
 use crate::{LogItem, StatusTracker};
 
 /// A `OneShotStatusTracker` will trigger an error upon the first call to its
@@ -48,11 +46,5 @@ impl StatusTracker for OneShotStatusTracker {
         } else {
             Ok(())
         }
-    }
-}
-
-impl Display for OneShotStatusTracker {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.logged_items)
     }
 }
