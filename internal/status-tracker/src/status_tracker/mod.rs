@@ -28,6 +28,14 @@ pub trait StatusTracker: Debug + Send {
     /// the new `DetailedStatusTracker::take_errors`.
     fn get_log_mut(&mut self) -> &mut Vec<LogItem>;
 
+    /// Appends the contents of another [`StatusTracker`] to this list of
+    /// validation log items.
+    fn append(&mut self, other: &impl StatusTracker) {
+        for log_item in other.get_log() {
+            self.add_non_error(log_item.clone());
+        }
+    }
+
     /// Add a non-error [`LogItem`] to this status tracker.
     ///
     /// Primarily intended for use by [`LogItem::success()`]

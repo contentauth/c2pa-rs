@@ -15,7 +15,7 @@ use std::fmt::{self, Display, Formatter};
 
 mod detailed {
     use super::SampleError;
-    use crate::{log_item, DetailedStatusTracker};
+    use crate::{log_item, DetailedStatusTracker, StatusTracker};
 
     #[test]
     fn aggregates_errors() {
@@ -35,6 +35,26 @@ mod detailed {
         let errors = tracker.take_errors();
         assert_eq!(errors.len(), 1);
         assert_eq!(tracker.logged_items.len(), 1);
+    }
+
+    #[test]
+    fn append() {
+        let mut tracker1 = DetailedStatusTracker::default();
+        let mut tracker2 = DetailedStatusTracker::default();
+
+        log_item!("test1", "test item 1", "test func").success(&mut tracker1);
+
+        log_item!("test2", "test item 1", "test func")
+            .failure(&mut tracker2, SampleError {})
+            .unwrap();
+
+        assert_eq!(tracker1.logged_items.len(), 1);
+        assert_eq!(tracker2.logged_items.len(), 1);
+
+        tracker1.append(&tracker2);
+
+        assert_eq!(tracker1.logged_items.len(), 2);
+        assert_eq!(tracker2.logged_items.len(), 1);
     }
 }
 

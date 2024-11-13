@@ -409,9 +409,7 @@ pub(crate) fn check_ocsp_response(
 
     // Per the spec if we cannot interpret the OCSP data treat it as if it did not exist
     if !found_good {
-        validation_log_out
-            .get_log_mut()
-            .append(validation_log.get_log_mut());
+        validation_log_out.append(&validation_log);
     }
 
     Ok(output)
