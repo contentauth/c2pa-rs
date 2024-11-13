@@ -12,3 +12,10 @@ _13 November 2024_
 ### Added
 
 * Factor status tracking infrastructure into its own crate ([#665](https://github.com/contentauth/c2pa-rs/pull/665))
+
+## [0.1.0](https://github.com/contentauth/c2pa-rs/releases/tag/c2pa-status-tracker-v0.1.0)
+_13 November 2024_
+
+### Added
+
+* Factor status tracking infrastructure into its own crate ([#665](https://github.com/contentauth/c2pa-rs/pull/665))
