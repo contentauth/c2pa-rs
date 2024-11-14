@@ -24,7 +24,12 @@ pub(crate) fn utc_now() -> DateTime<Utc> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        let utc_duration = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH);
+        // UNWRAP justification; Very unlikely that system time will be before
+        // UNIX_EPOCH.
+        #[allow(clippy::unwrap_used)]
+        let utc_duration = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .unwrap();
 
         let mut utc_now = chrono::DateTime::UNIX_EPOCH;
         utc_now += utc_duration;
