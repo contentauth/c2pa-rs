@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
+use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
 #[cfg(feature = "file_io")]
@@ -60,7 +61,6 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker},
     trust_handler::TrustHandlerConfig,
     utils::{
         hash_utils::{hash_sha256, HashRange},
@@ -466,7 +466,7 @@ impl Store {
 
         let sig = claim.signature_val();
         let data = claim.data().ok()?;
-        let mut validation_log = OneShotStatusTracker::new();
+        let mut validation_log = OneShotStatusTracker::default();
 
         if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
@@ -522,7 +522,7 @@ impl Store {
                     get_settings_value::<bool>("verify.verify_after_sign")
                 {
                     if verify_after_sign {
-                        let mut cose_log = OneShotStatusTracker::new();
+                        let mut cose_log = OneShotStatusTracker::default();
 
                         let result = if _sync {
                             verify_cose(
@@ -946,12 +946,10 @@ impl Store {
         // check the CAI Block
         let desc_box = cai_block.desc_box();
         if desc_box.uuid() != CAI_BLOCK_UUID {
-            let log_item = log_item!("JUMBF", "c2pa box not found", "from_jumbf")
-                .error(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
-            validation_log.log(
-                log_item,
-                Some(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound)),
-            )?;
+            log_item!("JUMBF", "c2pa box not found", "from_jumbf").failure_no_throw(
+                validation_log,
+                Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound),
+            );
 
             return Err(Error::InvalidClaim(InvalidClaimError::C2paBlockNotFound));
         }
@@ -986,18 +984,12 @@ impl Store {
                 }
 
                 if claim_box_cnt > 1 {
-                    let log_item =
-                        log_item!("JUMBF", "c2pa multiple claim boxes found", "from_jumbf")
-                            .error(Error::InvalidClaim(
-                                InvalidClaimError::C2paMultipleClaimBoxes,
-                            ))
-                            .validation_status(validation_status::CLAIM_MULTIPLE);
-                    validation_log.log(
-                        log_item,
-                        Some(Error::InvalidClaim(
-                            InvalidClaimError::C2paMultipleClaimBoxes,
-                        )),
-                    )?;
+                    log_item!("JUMBF", "c2pa multiple claim boxes found", "from_jumbf")
+                        .validation_status(validation_status::CLAIM_MULTIPLE)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::InvalidClaim(InvalidClaimError::C2paMultipleClaimBoxes),
+                        );
 
                     return Err(Error::InvalidClaim(
                         InvalidClaimError::C2paMultipleClaimBoxes,
@@ -1011,14 +1003,12 @@ impl Store {
                     CREDENTIALS => box_order.push(CREDENTIALS),
                     DATABOXES => box_order.push(DATABOXES),
                     _ => {
-                        let log_item =
-                            log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
-                                .error(Error::InvalidClaim(InvalidClaimError::ClaimBoxData))
-                                .validation_status(validation_status::CLAIM_MULTIPLE);
-                        validation_log.log(
-                            log_item,
-                            Some(Error::InvalidClaim(InvalidClaimError::ClaimBoxData)),
-                        )?;
+                        log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
+                            .validation_status(validation_status::CLAIM_MULTIPLE)
+                            .failure(
+                                validation_log,
+                                Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
+                            )?;
                     }
                 }
             }
@@ -1064,20 +1054,18 @@ impl Store {
                         // check for old claims for reporting
                         match claim_superbox.data_box_as_json_box(0) {
                             Some(_c) => {
-                                let log_item =
-                                    log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                        .error(Error::PrereleaseError);
-                                validation_log.log_silent(log_item);
+                                log_item!("JUMBF", "error loading claim data", "from_jumbf")
+                                    .failure_no_throw(validation_log, Error::PrereleaseError);
 
                                 return Err(Error::PrereleaseError);
                             }
                             None => {
-                                let log_item =
-                                    log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                        .error(Error::InvalidClaim(
-                                            InvalidClaimError::ClaimBoxData,
-                                        ));
-                                validation_log.log_silent(log_item);
+                                log_item!("JUMBF", "error loading claim data", "from_jumbf")
+                                    .failure_no_throw(
+                                        validation_log,
+                                        Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
+                                    );
+
                                 return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxData));
                             }
                         }
@@ -1172,16 +1160,13 @@ impl Store {
                         if std::mem::discriminant(&e)
                             == std::mem::discriminant(&Error::PrereleaseError)
                         {
-                            let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                    .error(e);
-                            validation_log.log_silent(log_item);
+                            log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                .failure_no_throw(validation_log, e);
+
                             return Err(Error::PrereleaseError);
                         } else {
-                            let log_item =
-                                log_item!("JUMBF", "error loading assertion", "from_jumbf")
-                                    .error(e);
-                            validation_log.log(log_item, None)?;
+                            log_item!("JUMBF", "error loading assertion", "from_jumbf")
+                                .failure_no_throw(validation_log, e);
                         }
                     }
                 }
@@ -1289,20 +1274,17 @@ impl Store {
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
-                        let log_item = log_item!(
-                            &c2pa_manifest.url(),
+                        log_item!(
+                            c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks"
                         )
-                        .error(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        ))
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                        validation_log.log(
-                            log_item,
-                            Some(Error::HashMismatch(
+                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
-                            )),
+                            ),
                         )?;
                     }
 
@@ -1322,20 +1304,15 @@ impl Store {
                     // recurse nested ingredients
                     Store::ingredient_checks(store, ingredient, asset_data, validation_log)?;
                 } else {
-                    let log_item = log_item!(
-                        &c2pa_manifest.url(),
+                    log_item!(
+                        c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks"
                     )
-                    .error(Error::ClaimVerification(format!(
-                        "ingredient: {label} is missing"
-                    )))
-                    .validation_status(validation_status::CLAIM_MISSING);
-                    validation_log.log(
-                        log_item,
-                        Some(Error::ClaimVerification(format!(
-                            "ingredient: {label} is missing"
-                        ))),
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
             }
@@ -1344,37 +1321,27 @@ impl Store {
         // check ingredient rules
         if claim.update_manifest() {
             if !(num_parent_ofs == 1 && claim.ingredient_assertions().len() == 1) {
-                let log_item = log_item!(
-                    &claim.uri(),
+                log_item!(
+                    claim.uri(),
                     "update manifest must have one parent",
                     "ingredient_checks"
                 )
-                .error(Error::ClaimVerification(
-                    "update manifest must have one parent".to_string(),
-                ))
-                .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS);
-                validation_log.log(
-                    log_item,
-                    Some(Error::ClaimVerification(
-                        "update manifest must have one parent".to_string(),
-                    )),
+                .validation_status(validation_status::MANIFEST_UPDATE_WRONG_PARENTS)
+                .failure(
+                    validation_log,
+                    Error::ClaimVerification("update manifest must have one parent".to_string()),
                 )?;
             }
         } else if num_parent_ofs > 1 {
-            let log_item = log_item!(
-                &claim.uri(),
+            log_item!(
+                claim.uri(),
                 "too many ingredient parents",
                 "ingredient_checks"
             )
-            .error(Error::ClaimVerification(
-                "ingredient has more than one parent".to_string(),
-            ))
-            .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS);
-            validation_log.log(
-                log_item,
-                Some(Error::ClaimVerification(
-                    "ingredient has more than one parent".to_string(),
-                )),
+            .validation_status(validation_status::MANIFEST_MULTIPLE_PARENTS)
+            .failure(
+                validation_log,
+                Error::ClaimVerification("ingredient has more than one parent".to_string()),
             )?;
         }
 
@@ -1411,20 +1378,17 @@ impl Store {
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
                         && !verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
                     {
-                        let log_item = log_item!(
-                            &c2pa_manifest.url(),
+                        log_item!(
+                            c2pa_manifest.url(),
                             "ingredient hash incorrect",
                             "ingredient_checks_async"
                         )
-                        .error(Error::HashMismatch(
-                            "ingredient hash does not match found ingredient".to_string(),
-                        ))
-                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                        validation_log.log(
-                            log_item,
-                            Some(Error::HashMismatch(
+                        .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
                                 "ingredient hash does not match found ingredient".to_string(),
-                            )),
+                            ),
                         )?;
                     }
 
@@ -1446,20 +1410,15 @@ impl Store {
                     Store::ingredient_checks_async(store, ingredient, asset_data, validation_log)
                         .await?;
                 } else {
-                    let log_item = log_item!(
-                        &c2pa_manifest.url(),
+                    log_item!(
+                        c2pa_manifest.url(),
                         "ingredient not found",
                         "ingredient_checks_async"
                     )
-                    .error(Error::ClaimVerification(format!(
-                        "ingredient: {label} is missing"
-                    )))
-                    .validation_status(validation_status::CLAIM_MISSING);
-                    validation_log.log(
-                        log_item,
-                        Some(Error::ClaimVerification(format!(
-                            "ingredient: {label} is missing"
-                        ))),
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure(
+                        validation_log,
+                        Error::ClaimVerification(format!("ingredient: {label} is missing")),
                     )?;
                 }
             }
@@ -1481,11 +1440,9 @@ impl Store {
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+                log_item!("Unknown", "could not find active manifest", "verify_store")
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -1520,11 +1477,9 @@ impl Store {
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
-                let log_item =
-                    log_item!("Unknown", "could not find active manifest", "verify_store")
-                        .error(Error::ProvenanceMissing)
-                        .validation_status(validation_status::CLAIM_MISSING);
-                validation_log.log(log_item, Some(Error::ProvenanceMissing))?;
+                log_item!("Unknown", "could not find active manifest", "verify_store")
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure_no_throw(validation_log, Error::ProvenanceMissing);
 
                 return Err(Error::ProvenanceMissing);
             }
@@ -2125,7 +2080,7 @@ impl Store {
             None => return Err(Error::UnsupportedType),
         }
 
-        let mut validation_log = OneShotStatusTracker::new();
+        let mut validation_log = OneShotStatusTracker::default();
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls will work (the Store is not finalized this way)
@@ -2266,7 +2221,7 @@ impl Store {
             labels::INGREDIENT,
         ];
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
         let mut store = Store::from_jumbf(manifest_bytes, &mut validation_log)?;
 
         // todo: what kinds of validation can we do here since the file is not finailized;
@@ -2328,20 +2283,17 @@ impl Store {
                                 None,
                             )
                         {
-                            let log_item = log_item!(
-                                &c2pa_manifest.url(),
+                            log_item!(
+                                c2pa_manifest.url(),
                                 "ingredient hash incorrect",
                                 "embed_placed_manifest"
                             )
-                            .error(Error::HashMismatch(
-                                "ingredient hash does not match found ingredient".to_string(),
-                            ))
-                            .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH);
-                            validation_log.log(
-                                log_item,
-                                Some(Error::HashMismatch(
+                            .validation_status(validation_status::INGREDIENT_HASHEDURI_MISMATCH)
+                            .failure(
+                                &mut validation_log,
+                                Error::HashMismatch(
                                     "ingredient hash does not match found ingredient".to_string(),
-                                )),
+                                ),
                             )?;
                         }
                     }
@@ -3288,9 +3240,8 @@ impl Store {
                 Ok(store)
             })
             .inspect_err(|e| {
-                validation_log.log_silent(
-                    log_item!("asset", "error loading file", "load_from_asset").set_error(e),
-                );
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
             })
     }
 
@@ -3301,9 +3252,8 @@ impl Store {
     ) -> Result<Store> {
         // load jumbf if available
         Self::load_cai_from_memory(asset_type, data, validation_log).inspect_err(|e| {
-            validation_log.log_silent(
-                log_item!("asset", "error loading asset", "get_store_from_memory").set_error(e),
-            );
+            log_item!("asset", "error loading asset", "get_store_from_memory")
+                .failure_no_throw(validation_log, e);
         })
     }
 
@@ -3498,7 +3448,7 @@ impl Store {
         data: &[u8],
         redactions: Option<Vec<String>>,
     ) -> Result<Store> {
-        let mut report = OneShotStatusTracker::new();
+        let mut report = OneShotStatusTracker::default();
         let store = Store::from_jumbf(data, &mut report)?;
         claim.add_ingredient_data(provenance_label, store.claims.clone(), redactions)?;
         Ok(store)
@@ -3582,6 +3532,7 @@ pub mod tests {
 
     use std::io::Write;
 
+    use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
@@ -3593,7 +3544,6 @@ pub mod tests {
         claim::AssertionStoreJsonFormat,
         hashed_uri::HashedUri,
         jumbf_io::{get_assetio_handler_from_path, update_file_jumbf},
-        status_tracker::*,
         utils::{
             hash_utils::Hasher,
             patch::patch_file,
@@ -3681,7 +3631,7 @@ pub mod tests {
 
         // read from new file
         let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -3727,7 +3677,7 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
             .expect("Should still verify");
 
         // test patching jumbf - error should be detected
@@ -3738,7 +3688,7 @@ pub mod tests {
 
         assert_eq!(splice_point, restore_point);
 
-        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new())
+        Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default())
             .expect_err("Should not verify");
     }
 
@@ -3773,7 +3723,7 @@ pub mod tests {
 
         // read from new file
         let new_store =
-            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(&op, true, &mut OneShotStatusTracker::default()).unwrap();
 
         // can  we get by the ingredient data back
 
@@ -3960,7 +3910,7 @@ pub mod tests {
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
         Store::verify_store_async(
             &new_store,
@@ -3970,7 +3920,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -3997,7 +3947,7 @@ pub mod tests {
             .unwrap();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&op, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -4008,7 +3958,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -4048,7 +3998,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4144,7 +4094,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::new();
+            let mut report = DetailedStatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4217,7 +4167,7 @@ pub mod tests {
             // write to new file
             println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-            let mut report = DetailedStatusTracker::new();
+            let mut report = DetailedStatusTracker::default();
 
             // read from new file
             let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4291,7 +4241,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4365,7 +4315,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4439,7 +4389,7 @@ pub mod tests {
         // write to new file
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4498,7 +4448,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4542,7 +4492,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4586,7 +4536,7 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
@@ -4621,76 +4571,84 @@ pub mod tests {
     #[test]
     fn test_manifest_bad_sig() {
         let ap = fixture_path("CE-sig-CA.jpg");
-        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::new()).is_err());
+        assert!(Store::load_from_asset(&ap, true, &mut OneShotStatusTracker::default()).is_err());
     }
 
     #[test]
     fn test_unsupported_type_without_external_manifest() {
         let ap = fixture_path("Purple Square.psd");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let result = Store::load_from_asset(&ap, true, &mut report);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.get_log(), Error::UnsupportedType));
+        assert!(report.has_error(Error::UnsupportedType));
     }
 
     #[test]
     fn test_bad_jumbf() {
         // test bad jumbf
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
         // error report
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
-        assert!(report_has_err(report.get_log(), Error::PrereleaseError));
+        assert!(report.has_error(Error::PrereleaseError));
     }
 
     #[test]
     fn test_detect_byte_change() {
         // test bad jumbf
         let ap = fixture_path("XCA.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         Store::load_from_asset(&ap, true, &mut report).unwrap();
 
         // error report
         println!("Error report for {}: {:?}", ap.display(), report);
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
 
-        let errs = report_split_errors(report.get_log_mut());
-        assert!(report_has_status(
-            &errs,
-            validation_status::ASSERTION_DATAHASH_MISMATCH
-        ));
+        assert!(report.has_status(validation_status::ASSERTION_DATAHASH_MISMATCH));
     }
 
     #[test]
     #[cfg(feature = "file_io")]
     fn test_file_not_found() {
         let ap = fixture_path("this_does_not_exist.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _result = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.get_log());
-        assert!(!report.get_log().is_empty());
-        let errors = report_split_errors(report.get_log_mut());
-        assert!(errors[0].error_str().unwrap().starts_with("IoError"));
+        println!(
+            "Error report for {}: {:?}",
+            ap.display(),
+            report.logged_items()
+        );
+        assert!(!report.logged_items().is_empty());
+        let errors = report.take_errors();
+        assert!(errors[0].err_val.as_ref().unwrap().starts_with("IoError"));
     }
 
     #[test]
     fn test_old_manifest() {
         let ap = fixture_path("prerelease.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _r = Store::load_from_asset(&ap, true, &mut report);
 
-        println!("Error report for {}: {:?}", ap.display(), report.get_log());
-        assert!(!report.get_log().is_empty());
-        let errors = report_split_errors(report.get_log_mut());
-        assert!(errors[0].error_str().unwrap().starts_with("Prerelease"));
+        println!(
+            "Error report for {}: {:?}",
+            ap.display(),
+            report.logged_items()
+        );
+        assert!(!report.logged_items().is_empty());
+        let errors = report.take_errors();
+        assert!(errors[0]
+            .err_val
+            .as_ref()
+            .unwrap()
+            .starts_with("Prerelease"));
     }
 
     #[test]
@@ -4715,7 +4673,8 @@ pub mod tests {
 
         // read back in
         let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -4752,7 +4711,8 @@ pub mod tests {
 
         // read back in
         let restored_store =
-            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::new()).unwrap();
+            Store::load_from_asset(op.as_path(), true, &mut OneShotStatusTracker::default())
+                .unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -4852,9 +4812,10 @@ pub mod tests {
     fn test_claim_decoding() {
         // modify a required field label in the claim - causes failure to read claim from cbor
         let report = patch_and_report("C.jpg", b"claim_generator", b"claim_generatur");
-        assert!(!report.get_log().is_empty());
-        assert!(report.get_log()[0]
-            .error_str()
+        assert!(!report.logged_items().is_empty());
+        assert!(report.logged_items()[0]
+            .err_val
+            .as_ref()
             .unwrap()
             .starts_with("ClaimDecoding"))
     }
@@ -4862,26 +4823,20 @@ pub mod tests {
     #[test]
     fn test_claim_modified() {
         // replace the title that is inside the claim data - should cause signature to not match
-        let mut report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
-        assert!(!report.get_log().is_empty());
-        let errors = report_split_errors(report.get_log_mut());
-
-        assert!(report_has_err(&errors, Error::CoseTimeStampMismatch));
-
-        assert!(report_has_status(
-            &errors,
-            validation_status::TIMESTAMP_MISMATCH
-        ));
+        let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
+        assert!(!report.logged_items().is_empty());
+        assert!(report.has_error(Error::CoseTimeStampMismatch));
+        assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
     #[test]
     fn test_assertion_hash_mismatch() {
         // modifies content of an action assertion - causes an assertion hashuri mismatch
         let mut report = patch_and_report("CA.jpg", b"brightnesscontrast", b"brightnesscontraxx");
-        let errors = report_split_errors(report.get_log_mut());
+        let first_error = report.filter_errors().next().cloned().unwrap();
 
         assert_eq!(
-            errors[0].validation_status.as_deref(),
+            first_error.validation_status.as_deref(),
             Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)
         );
     }
@@ -4895,7 +4850,7 @@ pub mod tests {
         const REPLACE_BYTES: &[u8] =
             b"c2pa_manifest\xA3\x63url\x78\x4aself#jumbf=/c2pa/contentauth:urn:uuix:";
         let mut report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
-        let errors = report_split_errors(report.get_log_mut());
+        let errors: Vec<c2pa_status_tracker::LogItem> = report.filter_errors().cloned().collect();
         assert_eq!(
             errors[0].validation_status.as_deref(),
             Some(validation_status::ASSERTION_HASHEDURI_MISMATCH)
@@ -4909,9 +4864,9 @@ pub mod tests {
     #[test]
     fn test_display() {
         let ap = fixture_path("CA.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
-        let _errors = report_split_errors(report.get_log_mut());
+        let _errors = report.take_errors();
 
         println!("store = {store}");
     }
@@ -4920,7 +4875,7 @@ pub mod tests {
     fn test_legacy_ingredient_hash() {
         // test 1.0 ingredient hash
         let ap = fixture_path("legacy_ingredient_hash.jpg");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -4929,7 +4884,7 @@ pub mod tests {
     fn test_bmff_legacy() {
         // test 1.0 bmff hash
         let ap = fixture_path("legacy.mp4");
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store = Store::load_from_asset(&ap, true, &mut report).expect("load_from_asset");
         println!("store = {store}");
     }
@@ -4943,7 +4898,7 @@ pub mod tests {
                let init_stream = std::fs::read(init_stream_path).unwrap();
                let segment_stream = std::fs::read(segment_stream_path).unwrap();
 
-               let mut report = DetailedStatusTracker::new();
+               let mut report = DetailedStatusTracker::default();
                let store = Store::load_fragment_from_memory(
                    "mp4",
                    &init_stream,
@@ -4975,12 +4930,12 @@ pub mod tests {
         store.commit_claim(claim1).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // can we read back in
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
 
         assert!(errors.is_empty());
 
@@ -5016,14 +4971,14 @@ pub mod tests {
             )
             .unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         let output_data = output_stream.into_inner();
 
         // can we read back in
         let _new_store = Store::load_from_memory("mp4", &output_data, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
 
         assert!(errors.is_empty());
     }
@@ -5034,12 +4989,12 @@ pub mod tests {
         // test adding to actual image
         let ap = fixture_path("no_manifest.jpg");
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // can we read back in
         let _store = Store::load_from_asset(&ap, true, &mut report);
 
-        assert!(report_has_err(report.get_log(), Error::JumbfNotFound));
+        assert!(report.has_error(Error::JumbfNotFound));
     }
 
     #[test]
@@ -5289,7 +5244,7 @@ pub mod tests {
         result = result_stream.into_inner();
 
         // make sure we can read from new file
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_memory("jpeg", &result, false, &mut report).unwrap();
 
         Store::verify_store_async(
@@ -5300,7 +5255,7 @@ pub mod tests {
         .await
         .unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
         // std::fs::write("target/test.jpg", result).unwrap();
     }
@@ -5340,12 +5295,12 @@ pub mod tests {
 
         println!("Provenance: {}\n", store.provenance_path().unwrap());
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
 
         // read from new file
         let new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
 
         // dump store and compare to original
@@ -5451,14 +5406,14 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
             .await
             .unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5536,10 +5491,10 @@ pub mod tests {
             .unwrap();
         output_file.write_all(&out_stream.into_inner()).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5601,14 +5556,14 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let new_store = Store::load_from_asset(&output, false, &mut report).unwrap();
 
         Store::verify_store_async(&new_store, &mut ClaimAssetData::Path(&output), &mut report)
             .await
             .unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5733,10 +5688,10 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5800,10 +5755,10 @@ pub mod tests {
         output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
         output_file.write_all(&cm).unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&output, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5918,10 +5873,10 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let _new_store = Store::load_from_asset(&op, true, &mut report).unwrap();
 
-        let errors = report_split_errors(report.get_log_mut());
+        let errors = report.take_errors();
         assert!(errors.is_empty());
     }
 
@@ -5980,7 +5935,7 @@ pub mod tests {
                     for entry in &fragments {
                         let file_path = new_output_path.join(entry.file_name().unwrap());
 
-                        let mut validation_log = DetailedStatusTracker::new();
+                        let mut validation_log = DetailedStatusTracker::default();
 
                         let fragment_stream = std::fs::read(&file_path).unwrap();
                         let _manifest = Store::load_fragment_from_memory(
@@ -5992,7 +5947,7 @@ pub mod tests {
                         )
                         .unwrap();
 
-                        let errors = report_split_errors(validation_log.get_log_mut());
+                        let errors = validation_log.take_errors();
                         assert!(errors.is_empty());
                     }
 
@@ -6003,7 +5958,7 @@ pub mod tests {
                     }
 
                     let mut reader = Cursor::new(init_stream);
-                    let mut validation_log = DetailedStatusTracker::new();
+                    let mut validation_log = DetailedStatusTracker::default();
                     let _manifest = Store::load_from_file_and_fragments(
                         "mp4",
                         &mut reader,
@@ -6013,7 +5968,7 @@ pub mod tests {
                     )
                     .unwrap();
 
-                    let errors = report_split_errors(validation_log.get_log_mut());
+                    let errors = validation_log.take_errors();
                     assert!(errors.is_empty());
                 }
                 Err(_) => panic!("test misconfigures"),
