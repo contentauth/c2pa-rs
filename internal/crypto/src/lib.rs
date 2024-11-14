@@ -20,6 +20,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
 pub(crate) mod internal;
+
+mod ocsp;
+pub use ocsp::{OcspError, OcspResponse};
+
 pub mod validation_codes;
 
 #[cfg(test)]
