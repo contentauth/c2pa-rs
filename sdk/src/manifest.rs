@@ -1503,6 +1503,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
+    #[cfg(feature = "file_io")]
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]
     use tempfile::tempdir;
