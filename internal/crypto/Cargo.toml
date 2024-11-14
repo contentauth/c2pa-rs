@@ -32,6 +32,10 @@ rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
 thiserror = "1.0.61"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+url = "=2.5.2" # Can't advance to 2.5.3 until Unicode-3.0 license is reviewed.
+x509-parser = "0.16.0"
+
 [dependencies.chrono]
 version = "0.4.38"
 default-features = false
