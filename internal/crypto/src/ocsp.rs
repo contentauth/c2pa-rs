@@ -18,7 +18,7 @@ use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
-use crate::validation_codes;
+use crate::{internal::time, validation_codes};
 
 /// OcspResponse - struct to contain the OCSPResponse DER and the time
 /// for the next OCSP check
@@ -49,8 +49,6 @@ impl Default for OcspResponse {
 
 impl OcspResponse {
     /// Convert an OCSP response in DER format to `OcspResponse`.
-    ///
-    /// Provide `signing_time` if available.
     pub fn from_der_checked(
         der: &[u8],
         signing_time: Option<DateTime<Utc>>,
@@ -58,11 +56,15 @@ impl OcspResponse {
     ) -> Result<Self, OcspError> {
         let mut internal_validation_log = DetailedStatusTracker::default();
 
-        let mut output = OcspResponse::default();
-        output.ocsp_der = der.to_vec();
+        let mut output = OcspResponse {
+            ocsp_der: der.to_vec(),
+            ..Default::default()
+        };
 
         let mut found_good = false;
 
+        // Per spec if we cannot interpret the OCSP data, we must treat it as if it did
+        // not exist.
         let Ok(ocsp_response) = rasn::der::decode::<rasn_ocsp::OcspResponse>(der) else {
             return Ok(output);
         };
@@ -119,13 +121,8 @@ impl OcspResponse {
                                         || (st.timestamp() >= this_update
                                             && st.timestamp() <= next_update)
                                 } else {
-                                    // no timestamp so check against current time
-                                    // use instant to avoid wasm issues
-                                    let now_f64 = instant::now() / 1000.0;
-                                    let now: i64 = now_f64
-                                        .approx_as()
-                                        .map_err(|_e| OcspError::InvalidSystemTime)?;
-
+                                    // If no signing time was provided, use current system time.
+                                    let now = time::utc_now().timestamp();
                                     now >= this_update && now <= next_update
                                 };
 
