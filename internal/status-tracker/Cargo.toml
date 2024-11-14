@@ -1,17 +1,17 @@
 [package]
-name = "cawg-identity"
-version = "0.1.1"
-description = "Implementation of CAWG identity assertion specification"
+name = "c2pa-status-tracker"
+version = "0.1.0"
+description = "Status tracking internals for c2pa-rs crate"
 authors = [
+    "Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
     "Eric Scouten <scouten@adobe.com>",
 ]
 license = "MIT OR Apache-2.0"
-documentation = "https://docs.rs/cawg-identity"
-homepage = "https://creator-assertions.github.io/identity/"
+documentation = "https://docs.rs/c2pa-rs-status-tracker"
+homepage = "https://contentauthenticity.org"
 repository = "https://github.com/contentauth/c2pa-rs"
 readme = "README.md"
-keywords = ["identity"]
-categories = ["api-bindings"]
 edition = "2021"
 rust-version = "1.76.0"
 exclude = ["tests/fixtures"]
