@@ -216,12 +216,16 @@ impl OcspResponse {
                             };
 
                             if !in_range {
-                                log_item!("OCSP_RESPONSE", format!("certificate revoked at: {}", utc_with_offset), "check_ocsp_response")
-                                    .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                                    .failure_no_throw(
-                                        &mut internal_validation_log,
-                                        OcspError::CertificateRevoked,
-                                    );
+                                log_item!(
+                                    "OCSP_RESPONSE",
+                                    format!("certificate revoked at: {}", utc_with_offset),
+                                    "check_ocsp_response"
+                                )
+                                .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                                .failure_no_throw(
+                                    &mut internal_validation_log,
+                                    OcspError::CertificateRevoked,
+                                );
 
                                 output.revoked_at = Some(DateTime::from_naive_utc_and_offset(
                                     revoked_at_native,

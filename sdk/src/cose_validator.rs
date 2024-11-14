@@ -15,6 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
+use c2pa_crypto::OcspResponse;
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
@@ -36,7 +37,6 @@ use crate::validator::{get_validator, CoseValidator};
 use crate::{
     asn1::rfc3161::TstInfo,
     error::{Error, Result},
-    ocsp_utils::{check_ocsp_response, OcspData},
     settings::get_settings_value,
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
@@ -681,10 +681,10 @@ pub(crate) fn check_ocsp_status(
     data: &[u8],
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
-) -> Result<OcspData> {
+) -> Result<OcspResponse> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
-    let mut result = Ok(OcspData::default());
+    let mut result = Ok(OcspResponse::default());
 
     if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
         let time_stamp_info = if _sync {
@@ -698,9 +698,11 @@ pub(crate) fn check_ocsp_status(
             let signing_time = gt_to_datetime(tst_info.gen_time.clone());
 
             // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-            if let Ok(ocsp_data) =
-                check_ocsp_response(&ocsp_response_der, Some(signing_time), validation_log)
-            {
+            if let Ok(ocsp_data) = OcspResponse::from_der_checked(
+                &ocsp_response_der,
+                Some(signing_time),
+                validation_log,
+            ) {
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
@@ -734,9 +736,11 @@ pub(crate) fn check_ocsp_status(
                         };
 
                         // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-                        if let Ok(ocsp_data) =
-                            check_ocsp_response(&ocsp_response_der, signing_time, validation_log)
-                        {
+                        if let Ok(ocsp_data) = OcspResponse::from_der_checked(
+                            &ocsp_response_der,
+                            signing_time,
+                            validation_log,
+                        ) {
                             // if we get a valid response validate the certs
                             if ocsp_data.revoked_at.is_none() {
                                 if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
