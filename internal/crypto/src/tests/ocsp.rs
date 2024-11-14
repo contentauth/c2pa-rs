@@ -17,6 +17,7 @@ use chrono::{TimeZone, Utc};
 use crate::OcspResponse;
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn good() {
     let rsp_data = include_bytes!("fixtures/ocsp/good.data");
 
@@ -32,6 +33,7 @@ fn good() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn revoked() {
     let rsp_data = include_bytes!("fixtures/ocsp/revoked.data");
 
