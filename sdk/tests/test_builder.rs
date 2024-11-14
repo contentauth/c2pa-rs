@@ -13,9 +13,7 @@
 
 use std::io::{self, Cursor};
 
-#[cfg(feature = "file_io")]
-use c2pa::Reader;
-use c2pa::{Builder, Result};
+use c2pa::{settings::load_settings_from_str, Builder, Reader, Result};
 
 mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
@@ -116,6 +114,37 @@ fn test_builder_fragmented() -> Result<()> {
             }
             Err(e) => panic!("error = {e:?}"),
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_builder_remote_url_no_embed() -> Result<()> {
+    let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let mut builder = Builder::from_json(&manifest_def)?;
+    // disable remote fetching for this test
+    load_settings_from_str(r#"{"verify": { "remote_manifest_fetch": false} }"#, "json")?;
+    builder.no_embed = true;
+    // very important to use a URL that does not exist, otherwise you may get a JumbfParseError or JumbfNotFound
+    builder.set_remote_url("http://this_does_not_exist/foo.jpg");
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(&test_signer(), format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_stream(format, &mut dest);
+    if let Err(c2pa::Error::RemoteManifestUrl(url)) = reader {
+        assert_eq!(url, "http://this_does_not_exist/foo.jpg".to_string());
+    } else {
+        panic!(
+            "Expected Err(c2pa::Error::RemoteManifestUrl), got {:?}",
+            reader
+        );
     }
     Ok(())
 }

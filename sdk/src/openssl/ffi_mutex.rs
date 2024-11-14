@@ -30,7 +30,7 @@ pub(crate) struct OpenSslMutex<'a> {
     guard: &'a str,
 }
 
-impl<'a> OpenSslMutex<'a> {
+impl OpenSslMutex<'_> {
     /// Acquire a mutex on OpenSSL FFI code.
     ///
     /// WARNING: Calling code MUST NOT PANIC inside this function or

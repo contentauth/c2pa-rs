@@ -81,3 +81,58 @@ and compare the old build with the new ones for any significant deltas.
 The tool needs to ignore changes due to new GUIDs, dates, and json object field order.
 
 The make_test_images crate has been updated to do this by default. We may make a policy to run the test comparison nightly.
+
+
+The 2024 API List
+
+ | Module         | Method                             |  C++ | Python | WASM | Node  |
+ | --------       | ---------------------------------- |----- | ------ | ---- | ----- |
+ | Builder        |                                    |      |        |      |       |
+ |                | new                                |      |        |      |       |          
+ |                | from_json                          |   X  |   X    |   X  |       |
+ |                | set_claim_generator_info           |      |        |      |       |  
+ |                | set_format                         |      |        |      |       | 
+ |                | set_remote_url                     |      |   X    |      |       | 
+ |                | set_no_embed                       |      |   X    |      |       | 
+ |                | set_thumbnail                      |      |        |      |       | 
+ |                | add_assertion                      |      |        |      |       | 
+ |                | add_assertion_json                 |      |        |      |       | 
+ |                | add_ingredient_from_stream         |   X  |    X   |      |       | 
+ |                | add_ingredient_from_stream_async   |      |        |      |       | 
+ |                | add_ingredient                     |      |        |      |       | 
+ |                | add_resource                       |   X  |    X   |      |       | 
+ |                | to_archive                         |   X  |    X   |      |       | 
+ |                | from_archive                       |   X  |    X   |      |       | 
+ |                | data_hashed_placeholder            |      |        |      |       | 
+ |                | sign_data_hashed_embeddable        |      |        |      |       | 
+ |                | sign_data_hashed_embeddable_async  |      |        |      |       | 
+ |                | sign_box_hashed_embeddable         |      |        |      |       | 
+ |                | sign_box_hashed_embeddable_async   |      |        |      |       | 
+ |                | sign                               |   X  |    X   |      |       | 
+ |                | sign_async                         |      |        |      |       | 
+ |                | sign_fragmented_files              |      |        |      |       | 
+ |                | sign_file                          |   X  |    X   |      |       | 
+ | Reader         |                                    |      |        |      |       | 
+ |                | from_stream                        |      |    X   |      |       | 
+ |                | from_stream_async                  |      |        |      |       | 
+ |                | from_file                          |      |    X   |      |       | 
+ |                | from_file_async                    |      |        |      |       | 
+ |                | from_json                          |      |        |      |       | 
+ |                | from_manifest_data_and_stream      |      |    X   |      |       | 
+ |                | from_manifest_data_and_stream_async|      |        |      |       | 
+ |                | from_fragment                      |      |        |      |       | 
+ |                | from_fragment_async                |      |        |      |       | 
+ |                | from_fragmented_files              |      |        |      |       | 
+ |                | json                               |      |        |      |       | 
+ |                | validation_status                  |      |        |      |       | 
+ |                | active_manifest                    |      |    X   |      |       | 
+ |                | active_label                       |      |        |      |       | 
+ |                | iter_manifests                     |      |        |      |       | 
+ |                | get_manifest                       |      |    X   |      |       | 
+ |                | resource_to_stream                 |  X   |    X   |      |       | 
+ |                | to_folder                          |      |        |      |       | 
+ | CallbackSigner |                                    |      |        |      |       | 
+ |                | new                                |      |        |      |       | 
+ |                | set_tsa_url                        |      |        |      |       | 
+ |                | set_context                        |      |        |      |       | 
+ |                | ed25519_sign                       |      |        |      |       | 

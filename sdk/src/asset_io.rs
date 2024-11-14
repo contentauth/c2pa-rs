@@ -180,7 +180,7 @@ pub trait AssetIO: Sync + Send {
     // List of supported extensions and mime types
     fn supported_types(&self) -> &[&str];
 
-    /// OPTIONAL INTERFACES
+    // OPTIONAL INTERFACES
 
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)

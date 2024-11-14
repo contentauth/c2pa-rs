@@ -316,7 +316,6 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     /// # Errors
     /// * Returns an [`Error`] if the thumbnail is not valid.
-
     pub fn set_thumbnail<S, R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
     where
         S: Into<String>,

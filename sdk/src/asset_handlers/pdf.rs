@@ -239,9 +239,7 @@ impl C2paPdf for Pdf {
         }
 
         // Find the File Spec, which contains the reference to the manifest.
-        let file_spec_ref = self
-            .c2pa_file_spec_object_id()
-            .ok_or_else(|| Error::NoManifest)?;
+        let file_spec_ref = self.c2pa_file_spec_object_id().ok_or(Error::NoManifest)?;
 
         // Find the manifest's file stream.
         let file_stream_ef_ref = self
@@ -344,7 +342,7 @@ impl Pdf {
     fn remove_c2pa_file_spec_reference(&mut self) -> Result<(), Error> {
         let c2pa_file_spec_reference = self
             .c2pa_file_spec_object_id()
-            .ok_or_else(|| Error::FindingC2PAFileSpec)?;
+            .ok_or(Error::FindingC2PAFileSpec)?;
 
         self.document
             .catalog_mut()?
@@ -389,7 +387,7 @@ impl Pdf {
             .document
             .page_iter()
             .next()
-            .ok_or_else(|| Error::AddingAnnotation)?;
+            .ok_or(Error::AddingAnnotation)?;
 
         // Get a mutable ref to the first page as a Dictionary object.
         let first_page = self
@@ -525,7 +523,7 @@ impl Pdf {
                     .map(|value| value == CONTENT_CREDS)
                     .unwrap_or_default()
             })
-            .ok_or_else(|| Error::UnableToFindEmbeddedFileManifest)?;
+            .ok_or(Error::UnableToFindEmbeddedFileManifest)?;
 
         let content_creds_reference_idx = content_creds_marker_idx + 1;
         if content_creds_reference_idx >= names_vector.len() {
