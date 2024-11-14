@@ -87,6 +87,7 @@ impl OcspResponse {
             for ocsp_cert in ocsp_certs {
                 let cert_der =
                     rasn::der::encode(ocsp_cert).map_err(|_e| OcspError::InvalidCertificate)?;
+
                 cert_der_vec.push(cert_der);
             }
 
@@ -118,8 +119,7 @@ impl OcspResponse {
                         this_update
                     };
 
-                    // check to see if we are within range or current time within
-                    // range
+                    // Was signing time within the acceptable range?
                     let in_range = if let Some(st) = signing_time {
                         st.timestamp() < this_update
                             || (st.timestamp() >= this_update && st.timestamp() <= next_update)
@@ -146,17 +146,16 @@ impl OcspResponse {
                             OcspError::CertificateRevoked,
                         );
                     } else {
-                        // As soon as we find one successful match, we're done.
+                        // As soon as we find one successful match, nothing else matters.
                         return Ok(output);
                     }
                 }
+
                 CertStatus::Revoked(revoked_info) => {
                     if let Some(reason) = revoked_info.revocation_reason {
                         if reason == CrlReason::RemoveFromCRL {
-                            // if it was revoked check if was revoked after signing
-                            // time
                             let revocation_time = &revoked_info.revocation_time;
-                            // check cert range against signing time
+
                             let revoked_at = NaiveDateTime::parse_from_str(
                                 &revocation_time.to_string(),
                                 DATE_FMT,
@@ -165,8 +164,7 @@ impl OcspResponse {
                             .and_utc()
                             .timestamp();
 
-                            // check to see if we are within range or current time
-                            // within range
+                            // Was signing time prior to revocation?
                             let in_range = if let Some(st) = signing_time {
                                 revoked_at > st.timestamp()
                             } else {
@@ -186,6 +184,7 @@ impl OcspResponse {
                                     DateTime::from_naive_utc_and_offset(revoked_at_native, Utc);
 
                                 let msg = format!("certificate revoked at: {}", utc_with_offset);
+
                                 log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                     .failure_no_throw(
@@ -199,16 +198,17 @@ impl OcspResponse {
                                 ));
                             }
                         } else {
-                            let revoked_at_native = NaiveDateTime::parse_from_str(
+                            let Ok(revoked_at_native) = NaiveDateTime::parse_from_str(
                                 &revoked_info.revocation_time.to_string(),
                                 DATE_FMT,
-                            )
-                            .map_err(|_e| OcspError::InvalidCertificate)?;
+                            ) else {
+                                return Err(OcspError::InvalidCertificate);
+                            };
 
                             let utc_with_offset: DateTime<Utc> =
                                 DateTime::from_naive_utc_and_offset(revoked_at_native, Utc);
 
-                            // check to see if cert was signed before revocation
+                            // Was the cert signed before revocation?
                             let in_range = if let Some(st) = signing_time {
                                 st.timestamp() < utc_with_offset.timestamp()
                             } else {
@@ -216,8 +216,7 @@ impl OcspResponse {
                             };
 
                             if !in_range {
-                                let msg = format!("certificate revoked at: {}", utc_with_offset);
-                                log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
+                                log_item!("OCSP_RESPONSE", format!("certificate revoked at: {}", utc_with_offset), "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                     .failure_no_throw(
                                         &mut internal_validation_log,
@@ -246,7 +245,8 @@ impl OcspResponse {
                         );
                     }
                 }
-                CertStatus::Unknown(_) => return Err(OcspError::CertificateStatusUnknown), /* noop for this case */
+
+                CertStatus::Unknown(_) => return Err(OcspError::CertificateStatusUnknown),
             }
         }
 
