@@ -11,15 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+use crate::internal::time;
 
-pub(crate) mod internal;
+#[test]
+fn now() {
+    let time_now = time::utc_now();
+    let unix_ts = time_now.timestamp();
+    dbg!(&unix_ts);
 
-#[cfg(test)]
-pub(crate) mod tests;
+    assert!(unix_ts > 1731560000); // 2024-11-14T04:53:00Z
+    assert!(unix_ts > 1731561000); // 2024-11-14T04:53:00Z (later ... delete!)
+}

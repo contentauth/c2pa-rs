@@ -11,15 +11,24 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+#![allow(dead_code)] // TEMPORARY while building
 
-pub(crate) mod internal;
+use chrono::{DateTime, Utc};
 
-#[cfg(test)]
-pub(crate) mod tests;
+/// Return the current time in UTC.
+pub(crate) fn utc_now() -> DateTime<Utc> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Utc::now()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let utc_duration = web_time::Instant::now().duration_since(web_time::UNIX_EPOCH);
+
+        let mut utc_now = chrono::DateTime::UNIX_EPOCH;
+        utc_now += utc_duration;
+
+        utc_now
+    }
+}

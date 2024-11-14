@@ -26,3 +26,16 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+
+[dependencies.chrono]
+version = "0.4.38"
+default-features = false
+features = ["wasmbind"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.chrono]
+version = "0.4.38"
+default-features = false
+features = ["now", "wasmbind"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1.1"
