@@ -28,7 +28,7 @@ pub(crate) fn utc_now() -> DateTime<Utc> {
         // at 0.
         let utc_duration = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
-            .unwrap_or(0);
+            .unwrap_or(std::time::Duration::ZERO);
 
         let mut utc_now = chrono::DateTime::UNIX_EPOCH;
         utc_now += utc_duration;
