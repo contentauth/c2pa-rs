@@ -39,7 +39,7 @@ impl Default for OcspResponse {
     fn default() -> Self {
         Self {
             ocsp_der: Vec::new(),
-            next_update: Utc::now(),
+            next_update: time::utc_now(),
             revoked_at: None,
             ocsp_certs: None,
         }
