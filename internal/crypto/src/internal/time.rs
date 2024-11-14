@@ -24,7 +24,7 @@ pub(crate) fn utc_now() -> DateTime<Utc> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        let utc_duration = web_time::Instant::now().duration_since(web_time::UNIX_EPOCH);
+        let utc_duration = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH);
 
         let mut utc_now = chrono::DateTime::UNIX_EPOCH;
         utc_now += utc_duration;
