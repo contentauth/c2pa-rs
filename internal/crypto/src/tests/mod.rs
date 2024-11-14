@@ -11,15 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+// Tests are grouped under this module so as to avoid
+// having the test code itself included in coverage numbers.
 
-pub(crate) mod internal;
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
 
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(target_arch = "wasm32")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+mod internal;
