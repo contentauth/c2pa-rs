@@ -113,9 +113,11 @@ pub const CLAIM_SIGNATURE_MISMATCH: &str = "claimSignature.mismatch";
 /// If a manifest was documented to exist in a remote location,
 /// but is not present there, or the location is not currently available
 /// (such as in an offline scenario),
-/// the `manifest.inaccessible` error code shall be used to report the situation.
+/// the `manifest.inaccessible` error code shall be used to report the
+/// situation.
 ///
-/// `ValidationStatus.url()` URI reference to the C2PA Manifest that could not be accessed.
+/// `ValidationStatus.url()` URI reference to the C2PA Manifest that could not
+/// be accessed.
 pub const MANIFEST_INACCESSIBLE: &str = "manifest.inaccessible";
 
 /// The manifest has more than one ingredient whose `relationship`
@@ -190,7 +192,8 @@ pub const ASSERTION_MISSING: &str = "assertion.missing";
 /// Any corresponding URL should point to a C2PA claim box or assertion.
 pub const ASSERTION_UNDECLARED: &str = "assertion.undeclared";
 
-/// A non-embedded (remote) assertion was inaccessible at the time of validation.
+/// A non-embedded (remote) assertion was inaccessible at the time of
+/// validation.
 ///
 /// Any corresponding URL should point to a C2PA assertion.
 pub const ASSERTION_INACCESSIBLE: &str = "assertion.inaccessible";
@@ -251,8 +254,8 @@ pub const ASSERTION_BMFFHASH_MISMATCH: &str = "assertion.bmffHash.mismatch";
 /// Any corresponding URL should point to a C2PA assertion.
 pub const ASSERTION_BOXHASH_MISMATCH: &str = "assertion.boxesHash.mismatch";
 
-/// The hash of a box-based asset does not contain boxes in the expected order for
-/// the General Boxes hash assertion.
+/// The hash of a box-based asset does not contain boxes in the expected order
+/// for the General Boxes hash assertion.
 ///
 /// Any corresponding URL should point to a C2PA assertion.
 pub const ASSERTION_BOXHASH_UNKNOWN: &str = "assertion.boxesHash.";

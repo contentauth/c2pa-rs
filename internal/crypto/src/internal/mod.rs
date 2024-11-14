@@ -11,16 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
-
-pub(crate) mod internal;
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod time;

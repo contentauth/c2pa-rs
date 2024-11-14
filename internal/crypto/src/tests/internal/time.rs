@@ -11,16 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
-pub(crate) mod internal;
-pub mod validation_codes;
+use crate::internal::time;
 
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
+fn now() {
+    let time_now = time::utc_now();
+    let unix_ts = time_now.timestamp();
+    dbg!(&unix_ts);
+
+    assert!(unix_ts > 1731560000); // 2024-11-14T04:53:00Z
+}
