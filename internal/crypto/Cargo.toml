@@ -27,7 +27,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 c2pa-status-tracker = { path = "../status-tracker", version = "0.1.0" }
-conv = "0.3.3"
 rasn = "0.18.0"
 rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
@@ -50,6 +49,3 @@ web-time = "1.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-instant = "0.1.12"

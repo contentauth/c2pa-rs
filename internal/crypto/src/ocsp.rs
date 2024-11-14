@@ -13,7 +13,6 @@
 
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use conv::ConvUtil;
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
@@ -170,13 +169,8 @@ impl OcspResponse {
                                     let in_range = if let Some(st) = signing_time {
                                         revoked_at > st.timestamp()
                                     } else {
-                                        // no timestamp so check against current time
-                                        // use instant to avoid wasm issues
-                                        let now_f64 = instant::now() / 1000.0;
-                                        let now: i64 = now_f64
-                                            .approx_as()
-                                            .map_err(|_e| OcspError::InvalidSystemTime)?;
-
+                                        // No signing time was provided; use current system time.
+                                        let now = time::utc_now().timestamp();
                                         revoked_at > now
                                     };
 
