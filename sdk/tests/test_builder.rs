@@ -125,7 +125,8 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
     // disable remote fetching for this test
     load_settings_from_str(r#"{"verify": { "remote_manifest_fetch": false} }"#, "json")?;
     builder.no_embed = true;
-    builder.set_remote_url("https://example.com/CA.jpg");
+    // very important to use a URL that does not exist, otherwise you may get a JumbfParseError or JumbfNotFound
+    builder.set_remote_url("http://this_does_not_exist/foo.jpg");
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
@@ -138,7 +139,7 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest);
     if let Err(c2pa::Error::RemoteManifestUrl(url)) = reader {
-        assert_eq!(url, "https://example.com/CA.jpg".to_string());
+        assert_eq!(url, "http://this_does_not_exist/foo.jpg".to_string());
     } else {
         panic!(
             "Expected Err(c2pa::Error::RemoteManifestUrl), got {:?}",
