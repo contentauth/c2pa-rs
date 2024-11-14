@@ -14,6 +14,9 @@
 use c2pa_status_tracker::DetailedStatusTracker;
 use chrono::{TimeZone, Utc};
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
+
 use crate::OcspResponse;
 
 #[test]
