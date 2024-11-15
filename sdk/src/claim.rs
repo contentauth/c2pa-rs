@@ -16,6 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
+use c2pa_crypto::base64;
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -52,10 +53,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     trust_handler::TrustHandlerConfig,
-    utils::{
-        base64,
-        hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
-    },
+    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
     validator::ValidationInfo,
     ClaimGeneratorInfo,

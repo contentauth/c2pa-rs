@@ -19,8 +19,12 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
+pub mod base64;
 pub mod hash;
 pub(crate) mod internal;
+
+pub mod ocsp;
+pub mod validation_codes;
 
 #[cfg(test)]
 pub(crate) mod tests;
