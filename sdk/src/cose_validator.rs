@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use c2pa_crypto::ocsp::OcspResponse;
+use c2pa_crypto::{asn1::rfc3161::TstInfo, ocsp::OcspResponse};
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
@@ -35,7 +35,6 @@ use crate::openssl::verify_trust;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::validator::{get_validator, CoseValidator};
 use crate::{
-    asn1::rfc3161::TstInfo,
     error::{Error, Result},
     settings::get_settings_value,
     time_stamp::gt_to_datetime,

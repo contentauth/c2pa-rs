@@ -2,6 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! ASN.1 types defined by [RFC 3281].
+//!
+//! [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3281
+
 use bcder::{
     decode::{Constructed, DecodeError, Source},
     BitString, Oid,
