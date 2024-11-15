@@ -721,7 +721,7 @@ pub(crate) fn check_ocsp_status(
                     // get the cert chain
                     let certs = get_sign_certs(&sign1)?;
 
-                    if let Some(ocsp_der) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                    if let Some(ocsp_der) = c2pa_crypto::ocsp::fetch_ocsp_response(&certs) {
                         // fetch_ocsp_response(&certs) {
                         let ocsp_response_der = ocsp_der;
 

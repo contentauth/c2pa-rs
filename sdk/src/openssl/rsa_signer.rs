@@ -59,7 +59,7 @@ impl RsaSigner {
             #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
             {
                 if let Ok(certs) = self.certs_internal() {
-                    if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                    if let Some(ocsp_rsp) = c2pa_crypto::ocsp::fetch_ocsp_response(&certs) {
                         self.ocsp_size.set(ocsp_rsp.len());
                         let mut validation_log =
                             c2pa_status_tracker::DetailedStatusTracker::default();
