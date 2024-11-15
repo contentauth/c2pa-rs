@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod base64;
 pub(crate) mod cbor_types;
 #[allow(dead_code)]
 pub(crate) mod hash_utils;
