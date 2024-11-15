@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! Tools for working with OCSP responses.
+
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
