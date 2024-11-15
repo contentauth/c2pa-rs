@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::time_stamp::TimeStampProvider;
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -106,12 +107,14 @@ impl Signer for EcSigner {
         Ok(certs)
     }
 
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
-    }
-
     fn reserve_size(&self) -> usize {
         1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
+    }
+}
+
+impl TimeStampProvider for EcSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }
 

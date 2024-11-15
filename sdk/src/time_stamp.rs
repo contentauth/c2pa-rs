@@ -21,7 +21,7 @@ use bcder::{
 };
 use c2pa_crypto::{
     asn1::{
-        rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TstInfo},
+        rfc3161::{TimeStampResp, TstInfo},
         rfc5652::{
             CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
         },
@@ -117,62 +117,21 @@ pub(crate) fn cose_sigtst_to_tstinfos(
     }
 }
 
-// Send a Time-Stamp request for a given message to an HTTP URL.
-//
-// This is a wrapper around [time_stamp_request_http] that constructs the low-level
-// ASN.1 request object with reasonable defaults.
-
-pub(crate) fn time_stamp_message_http(
-    message: &[u8],
-    digest_algorithm: DigestAlgorithm,
-) -> Result<TimeStampReq> {
-    use rand::{thread_rng, Rng};
-
-    let mut h = digest_algorithm.digester();
-    h.update(message);
-    let digest = h.finish();
-
-    let mut random = [0u8; 8];
-    thread_rng()
-        .try_fill(&mut random)
-        .map_err(|_| Error::CoseTimeStampGeneration)?;
-
-    let request = TimeStampReq {
-        version: bcder::Integer::from(1_u8),
-        message_imprint: MessageImprint {
-            hash_algorithm: digest_algorithm.into(),
-            hashed_message: bcder::OctetString::new(bytes::Bytes::copy_from_slice(digest.as_ref())),
-        },
-        req_policy: None,
-        nonce: Some(bcder::Integer::from(u64::from_le_bytes(random))),
-        cert_req: Some(true),
-        extensions: None,
-    };
-
-    Ok(request)
-}
-
 // Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8]))]
 pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>>> {
     if _sync {
-        signer.send_timestamp_request(data)
+        signer
+            .send_time_stamp_request(data)
+            .map(|r| r.map_err(|e| e.into()))
     } else {
-        signer.send_timestamp_request(data).await
+        signer
+            .send_time_stamp_request(data)
+            .await
+            .map(|r| r.map_err(|e| e.into()))
         // TO DO: Fix bug in async_generic. This .await
         // should be automatically removed.
     }
-}
-
-#[allow(unused_variables)]
-pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>> {
-    let request = time_stamp_message_http(data, x509_certificate::DigestAlgorithm::Sha256)?;
-
-    let mut body = Vec::<u8>::new();
-    request
-        .encode_ref()
-        .write_encoded(bcder::Mode::Der, &mut body)?;
-    Ok(body)
 }
 
 pub fn gt_to_datetime(

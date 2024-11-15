@@ -152,7 +152,7 @@ pub enum TimeStampError {
     /// An unexpected internal error occured whiel requesting the time stamp
     /// response.
     #[error("Internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
 fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
@@ -175,9 +175,9 @@ fn time_stamp_message_http(
     let digest = h.finish();
 
     let mut random = [0u8; 8];
-    thread_rng()
-        .try_fill(&mut random)
-        .map_err(|_| TimeStampError::InternalError("Unable to generate random number"))?;
+    thread_rng().try_fill(&mut random).map_err(|_| {
+        TimeStampError::InternalError("Unable to generate random number".to_string())
+    })?;
 
     let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),

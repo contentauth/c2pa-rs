@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-use c2pa_crypto::ocsp::OcspResponse;
+use c2pa_crypto::{ocsp::OcspResponse, time_stamp::TimeStampProvider};
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -219,10 +219,6 @@ impl Signer for RsaSigner {
         self.alg
     }
 
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
-    }
-
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         let _openssl = super::OpenSslMutex::acquire().ok()?;
 
@@ -237,6 +233,12 @@ impl Signer for RsaSigner {
         } else {
             None
         }
+    }
+}
+
+impl TimeStampProvider for RsaSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }
 

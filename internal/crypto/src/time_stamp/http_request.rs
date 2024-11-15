@@ -40,7 +40,9 @@ pub fn default_rfc3161_request(
         bcder::Mode::Der,
         TimeStampReq::take_from,
     )
-    .map_err(|_err| TimeStampError::InternalError("failure to decode Constructed TimeStampReq"))?;
+    .map_err(|_err| {
+        TimeStampError::InternalError("failure to decode Constructed TimeStampReq".to_string())
+    })?;
 
     let ts = time_stamp_request_http(url, headers, &request)?;
 

@@ -1545,6 +1545,7 @@ pub mod tests {
             pub signer: Box<dyn crate::Signer>,
             pub ocsp_rsp: Vec<u8>,
         }
+
         impl crate::Signer for OcspSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
                 self.signer.sign(data)
@@ -1566,6 +1567,8 @@ pub mod tests {
                 Some(self.ocsp_rsp.clone())
             }
         }
+
+        impl c2pa_crypto::time_stamp::TimeStampProvider for OcspSigner {}
 
         let ocsp_signer = OcspSigner {
             signer: Box::new(signer),

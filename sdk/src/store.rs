@@ -3871,6 +3871,8 @@ pub mod tests {
         }
     }
 
+    impl c2pa_crypto::time_stamp::TimeStampProvider for BadSigner {}
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
@@ -5976,7 +5978,7 @@ pub mod tests {
                     alg: signer.alg(),
                     certs: signer.certs().unwrap_or_default(),
                     reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_authority_url(),
+                    tsa_url: signer.time_stamp_service_url(),
                     ocsp_val: signer.ocsp_val(),
                 }
             }
@@ -6005,10 +6007,6 @@ pub mod tests {
                 self.reserve_size
             }
 
-            fn time_authority_url(&self) -> Option<String> {
-                self.tsa_url.clone()
-            }
-
             async fn ocsp_val(&self) -> Option<Vec<u8>> {
                 self.ocsp_val.clone()
             }
@@ -6016,6 +6014,13 @@ pub mod tests {
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for DynamicSigner {
+            fn time_stamp_service_url(&self) -> Option<String> {
+                self.tsa_url.clone()
             }
         }
 

@@ -154,13 +154,16 @@ impl Signer for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
+}
 
-    fn time_authority_url(&self) -> Option<String> {
+impl TimeStampProvider for CallbackSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 }
 
 use async_trait::async_trait;
+use c2pa_crypto::time_stamp::{AsyncTimeStampProvider, TimeStampProvider};
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -182,8 +185,10 @@ impl AsyncSigner for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
+}
 
-    fn time_authority_url(&self) -> Option<String> {
+impl AsyncTimeStampProvider for CallbackSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 
