@@ -141,8 +141,6 @@ pub use signing_alg::SigningAlg;
 pub use utils::mime::format_from_path;
 
 // Internal modules
-#[allow(dead_code, clippy::enum_variant_names)]
-pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
