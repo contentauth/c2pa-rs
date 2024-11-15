@@ -18,13 +18,14 @@ use std::{
     sync::RwLock,
 };
 
+use c2pa_crypto::base64;
 use config::{Config, FileFormat};
 use lazy_static::lazy_static;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{utils::base64, Error, Result};
+use crate::{Error, Result};
 
 lazy_static! {
     static ref SETTINGS: RwLock<Config> =

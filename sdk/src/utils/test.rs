@@ -465,13 +465,13 @@ impl WebCryptoSigner {
             .replace("\n", "")
             .replace(START_KEY, "")
             .replace(END_KEY, "");
-        let key = crate::utils::base64::decode(&key).unwrap();
+        let key = c2pa_crypto::base64::decode(&key).unwrap();
 
         let certs = cert
             .replace("\n", "")
             .replace(START_CERTIFICATE, "")
             .split(END_CERTIFICATE)
-            .map(|x| crate::utils::base64::decode(x).unwrap())
+            .map(|x| c2pa_crypto::base64::decode(x).unwrap())
             .collect();
 
         Self {
