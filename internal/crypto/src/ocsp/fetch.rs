@@ -15,17 +15,20 @@ use std::io::Read;
 
 use rasn::prelude::*;
 use rasn_pkix::Certificate;
-use x509_parser::prelude::*;
-use x509_parser::der_parser::{oid, Oid};
+use x509_parser::{
+    der_parser::{oid, Oid},
+    extensions::ParsedExtension,
+    prelude::*,
+};
 
 /// Retrieve an OCSP response if available.
-/// 
-/// Checks for an OCSP responder in the end-entity certifricate. If found, it will attempt to retrieve the raw DER-encoded OCSP response.
+///
+/// Checks for an OCSP responder in the end-entity certifricate. If found, it
+/// will attempt to retrieve the raw DER-encoded OCSP response.
 ///
 /// Not available on WASM builds.
-pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-
-    // must have minimal chain in hierarchical order
+pub fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+    // There must be at least one cert that isn't an end-entity cert.
     if certs.len() < 2 {
         return None;
     }
@@ -33,12 +36,13 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
 
     if let Some(responders) = extract_aia_responders(&cert) {
-        let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?; // Sha1 Oid
+        let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
         let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
 
         let sha1_ai = rasn_pkix::AlgorithmIdentifier {
             algorithm: alg,
-            parameters: Some(Any::new(rasn::der::encode(&()).ok()?)), /* many OCSP responders expect this to be NULL not None */
+            parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+            // Many OCSP responders expect this to be NULL not None.
         };
 
         for r in responders {
@@ -47,18 +51,18 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
             let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
 
             let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
+
             let issuer_key_raw = &issuer
                 .tbs_certificate
                 .subject_public_key_info
                 .subject_public_key
                 .as_raw_slice();
 
-            let issuer_name_hash =
-                OctetString::from(crate::hash_utils::hash_sha1(&issuer_name_raw));
-            let issuer_key_hash = OctetString::from(crate::hash_utils::hash_sha1(issuer_key_raw));
+            let issuer_name_hash = OctetString::from(crate::hash::sha1(&issuer_name_raw));
+            let issuer_key_hash = OctetString::from(crate::hash::sha1(issuer_key_raw));
             let serial_number = subject.tbs_certificate.serial_number;
 
-            // build request structures
+            // Build request structures.
 
             let req_cert = rasn_ocsp::CertId {
                 hash_algorithm: sha1_ai.clone(),
@@ -121,30 +125,26 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     None
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> Option<Vec<String>> {
-
-    const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
-    const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
-
     let em = cert.extensions_map().ok()?;
 
     let aia_extension = em.get(&AUTHORITY_INFO_ACCESS_OID)?;
 
-    match aia_extension.parsed_extension() {
-        x509_parser::extensions::ParsedExtension::AuthorityInfoAccess(aia) => {
-            let mut output = Vec::new();
+    let ParsedExtension::AuthorityInfoAccess(aia) = aia_extension.parsed_extension() else {
+        return None;
+    };
 
-            for ad in &aia.accessdescs {
-                if let x509_parser::extensions::GeneralName::URI(uri) = ad.access_location {
-                    if ad.access_method == AD_OCSP_OID {
-                        output.push(uri.to_string())
-                    }
-                }
+    let mut output = Vec::new();
+
+    for ad in &aia.accessdescs {
+        if let x509_parser::extensions::GeneralName::URI(uri) = ad.access_location {
+            if ad.access_method == AD_OCSP_OID {
+                output.push(uri.to_string())
             }
-            Some(output)
         }
-        _ => None,
     }
+    Some(output)
 }
 
+const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
+const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);

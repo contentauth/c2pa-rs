@@ -22,9 +22,7 @@
 pub mod hash;
 pub(crate) mod internal;
 
-mod ocsp;
-pub use ocsp::{OcspError, OcspResponse};
-
+pub mod ocsp;
 pub mod validation_codes;
 
 #[cfg(test)]
