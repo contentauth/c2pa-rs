@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,21 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-pub(crate) mod io_utils;
-pub(crate) mod merkle;
-pub(crate) mod mime;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-pub(crate) mod sig_utils;
-#[cfg(feature = "add_thumbnails")]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+mod time;

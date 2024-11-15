@@ -11,21 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-pub(crate) mod io_utils;
-pub(crate) mod merkle;
-pub(crate) mod mime;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-pub(crate) mod sig_utils;
-#[cfg(feature = "add_thumbnails")]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+//! Hash convenience functions.
+
+use sha1::{Digest, Sha1};
+
+/// Given a byte slice, return the SHA-1 hash of that content.
+pub fn sha1(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha1::default();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}

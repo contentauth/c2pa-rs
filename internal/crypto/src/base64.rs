@@ -11,21 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-pub(crate) mod io_utils;
-pub(crate) mod merkle;
-pub(crate) mod mime;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-pub(crate) mod sig_utils;
-#[cfg(feature = "add_thumbnails")]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+//! Base64 convenience functions.
+
+use ::base64::{engine::general_purpose, DecodeError, Engine as _};
+
+/// Encode a byte slice to Base64 string using general encoding without padding.
+pub fn encode(data: &[u8]) -> String {
+    general_purpose::STANDARD.encode(data)
+}
+
+/// Decode a Base 64 string into a byte slice.
+pub fn decode(data: &str) -> Result<Vec<u8>, DecodeError> {
+    general_purpose::STANDARD.decode(data)
+}

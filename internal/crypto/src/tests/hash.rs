@@ -11,21 +11,20 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub(crate) mod cbor_types;
-#[allow(dead_code)]
-pub(crate) mod hash_utils;
-pub(crate) mod io_utils;
-pub(crate) mod merkle;
-pub(crate) mod mime;
-#[allow(dead_code)] // for wasm build
-pub(crate) mod patch;
-pub(crate) mod sig_utils;
-#[cfg(feature = "add_thumbnails")]
-pub(crate) mod thumbnail;
-pub(crate) mod time_it;
-#[allow(dead_code)] // for wasm builds
-pub(crate) mod xmp_inmemory_utils;
-// shared unit testing utilities
-#[cfg(test)]
-#[allow(dead_code)] // for wasm build
-pub mod test;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
+
+use crate::hash::sha1;
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_sha1() {
+    let hash = sha1(b"test message");
+    assert_eq!(
+        hash,
+        [
+            53, 238, 131, 134, 65, 13, 65, 209, 75, 63, 119, 159, 201, 95, 70, 149, 244, 133, 22,
+            130
+        ]
+    );
+}
