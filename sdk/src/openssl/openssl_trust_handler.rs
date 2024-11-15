@@ -18,12 +18,12 @@ use std::{
 };
 
 use asn1_rs::Oid;
+use c2pa_crypto::base64;
 use openssl::x509::verify::X509VerifyFlags;
 
 use crate::{
     hash_utils::hash_sha256,
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
-    utils::base64,
     Error, Result,
 };
 

@@ -19,6 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
+use c2pa_crypto::base64;
 use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -28,7 +29,6 @@ use crate::{
     claim::ClaimAssetData,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     store::Store,
-    utils::base64,
     validation_status::{status_for_store, ValidationStatus},
     Error, Manifest, Result,
 };

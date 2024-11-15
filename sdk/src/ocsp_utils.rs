@@ -152,7 +152,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
 
             // build query param
             let request_der = rasn::der::encode(&ocsp_request).ok()?;
-            let request_str = crate::utils::base64::encode(&request_der);
+            let request_str = c2pa_crypto::base64::encode(&request_der);
 
             let req_url = url.join(&request_str).ok()?;
 

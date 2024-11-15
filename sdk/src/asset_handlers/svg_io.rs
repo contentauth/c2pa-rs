@@ -17,6 +17,7 @@ use std::{
     path::Path,
 };
 
+use c2pa_crypto::base64;
 use conv::ValueFrom;
 use fast_xml::{
     events::{BytesText, Event},
@@ -39,7 +40,7 @@ use crate::{
         RemoteRefEmbed,
     },
     error::{Error, Result},
-    utils::{base64, io_utils::stream_len},
+    utils::io_utils::stream_len,
 };
 
 static SUPPORTED_TYPES: [&str; 8] = [

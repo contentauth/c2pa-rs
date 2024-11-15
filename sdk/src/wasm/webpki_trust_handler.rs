@@ -18,6 +18,7 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
+use c2pa_crypto::base64;
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     prelude::*,
@@ -30,7 +31,6 @@ use crate::{
     trust_handler::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
-    utils::base64,
     wasm::webcrypto_validator::async_validate,
     SigningAlg,
 };

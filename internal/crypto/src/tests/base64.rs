@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,12 +11,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use base64::{engine::general_purpose, Engine as _};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
-pub(crate) fn encode(data: &[u8]) -> String {
-    general_purpose::STANDARD.encode(data)
+use crate::base64;
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn encode() {
+    assert_eq!(base64::encode(b"Hello, world"), "SGVsbG8sIHdvcmxk");
 }
 
-pub(crate) fn decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    general_purpose::STANDARD.decode(data)
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn decode() {
+    assert_eq!(
+        base64::decode("SGVsbG8sIHdvcmxk"),
+        Ok(b"Hello, world".to_vec())
+    );
 }
