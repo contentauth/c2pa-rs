@@ -13,8 +13,7 @@
 
 use std::cell::Cell;
 
-use c2pa_crypto::OcspResponse;
-//use extfmt::Hexlify;
+use c2pa_crypto::ocsp::OcspResponse;
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},

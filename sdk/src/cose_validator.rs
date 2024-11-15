@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use c2pa_crypto::OcspResponse;
+use c2pa_crypto::ocsp::OcspResponse;
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;

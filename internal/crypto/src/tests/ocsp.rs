@@ -16,7 +16,7 @@ use chrono::{TimeZone, Utc};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::OcspResponse;
+use crate::ocsp::OcspResponse;
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
