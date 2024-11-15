@@ -19,12 +19,14 @@ use bcder::{
     encode::Values,
     ConstOid, OctetString,
 };
-use c2pa_crypto::asn1::{
-    rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
-    rfc5652::{
-        CertificateChoices::Certificate, SignedData, SignerIdentifier, OID_ID_SIGNED_DATA,
-        OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
+use c2pa_crypto::{
+    asn1::{
+        rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TstInfo},
+        rfc5652::{
+            CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
+        },
     },
+    time_stamp::TimeStampResponse,
 };
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
@@ -148,57 +150,6 @@ pub(crate) fn time_stamp_message_http(
     };
 
     Ok(request)
-}
-
-pub struct TimeStampResponse(TimeStampResp);
-
-impl std::ops::Deref for TimeStampResponse {
-    type Target = TimeStampResp;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl TimeStampResponse {
-    fn signed_data(&self) -> Result<Option<SignedData>> {
-        if let Some(token) = &self.0.time_stamp_token {
-            if token.content_type == OID_ID_SIGNED_DATA {
-                Ok(Some(
-                    token
-                        .content
-                        .clone()
-                        .decode(SignedData::take_from)
-                        .map_err(|_err| Error::CoseTimeStampGeneration)?,
-                ))
-            } else {
-                Err(Error::CoseTimeStampGeneration)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn tst_info(&self) -> Result<Option<TstInfo>> {
-        if let Some(signed_data) = self.signed_data()? {
-            if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
-                if let Some(content) = signed_data.content_info.content {
-                    Ok(Some(
-                        Constructed::decode(content.to_bytes(), bcder::Mode::Der, |cons| {
-                            TstInfo::take_from(cons)
-                        })
-                        .map_err(|_err| Error::CoseTimeStampGeneration)?,
-                    ))
-                } else {
-                    Ok(None)
-                }
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
 }
 
 // Generate TimeStamp based on rfc3161 using "data" as MessageImprint and return raw TimeStampRsp bytes

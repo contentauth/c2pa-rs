@@ -122,7 +122,8 @@ fn time_stamp_request_http(
     }
 }
 
-struct TimeStampResponse(TimeStampResp);
+/// TO REVIEW: Does this need to be public?
+pub struct TimeStampResponse(pub TimeStampResp);
 
 impl std::ops::Deref for TimeStampResponse {
     type Target = TimeStampResp;
@@ -133,7 +134,7 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
-    // Whether the time stamp request was successful.
+    /// TO REVIEW: Does this need to be public?
     #[cfg(not(target_arch = "wasm32"))]
     pub fn is_success(&self) -> bool {
         matches!(
@@ -142,7 +143,8 @@ impl TimeStampResponse {
         )
     }
 
-    fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
+    /// TO REVIEW: Does this need to be public?
+    pub fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
                 Ok(Some(
@@ -162,7 +164,8 @@ impl TimeStampResponse {
         }
     }
 
-    fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
+    /// TO REVIEW: Does this need to be public?
+    pub fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
                 if let Some(content) = signed_data.content_info.content {
