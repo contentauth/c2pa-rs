@@ -11,12 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use base64::{engine::general_purpose, Engine as _};
+#![deny(clippy::expect_used)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(missing_docs)]
+#![deny(warnings)]
+#![doc = include_str!("../README.md")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
-pub(crate) fn encode(data: &[u8]) -> String {
-    general_purpose::STANDARD.encode(data)
-}
+mod log;
+pub use log::{LogItem, LogKind};
 
-pub(crate) fn decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    general_purpose::STANDARD.decode(data)
-}
+mod status_tracker;
+pub use status_tracker::{
+    detailed::DetailedStatusTracker, one_shot::OneShotStatusTracker, StatusTracker,
+};
+
+#[cfg(test)]
+pub(crate) mod tests;

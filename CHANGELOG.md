@@ -6,6 +6,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.39.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.38.0...c2pa-v0.39.0)
+_13 November 2024_
+
+### Added
+
+* Factor status tracking infrastructure into its own crate ([#665](https://github.com/contentauth/c2pa-rs/pull/665))
+
+### Fixed
+
+* Fixed a typo in ManifestDefinition docstring ([#639](https://github.com/contentauth/c2pa-rs/pull/639))
+
+## [0.38.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.37.1...c2pa-v0.38.0)
+_06 November 2024_
+
+### Added
+
+* Add fragmented mp4 Builder and Reader support ([#649](https://github.com/contentauth/c2pa-rs/pull/649))
+* Associate ingredients with actions using parameters.org.cai.ingredientsIds array ([#627](https://github.com/contentauth/c2pa-rs/pull/627))
+
+### Fixed
+
+* Stay on url version 2.5.2 until Unicode-3.0 license can be approved ([#654](https://github.com/contentauth/c2pa-rs/pull/654))
+
 ## [0.37.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.37.0...c2pa-v0.37.1)
 _24 October 2024_
 

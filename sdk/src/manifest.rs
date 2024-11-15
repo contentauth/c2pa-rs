@@ -1231,7 +1231,7 @@ impl Manifest {
     #[cfg(feature = "file_io")]
     #[deprecated(
         since = "0.35.0",
-        note = "use Builder.sign file with cose_handling enabled."
+        note = "use Builder.sign_file with cose_handling enabled signer."
     )]
     pub async fn embed_remote_signed<P: AsRef<Path>>(
         &mut self,
@@ -1251,6 +1251,7 @@ impl Manifest {
 
     /// Embed a signed manifest into fragmented BMFF content (i.e. DASH) assets using a supplied signer.
     #[cfg(feature = "file_io")]
+    #[deprecated(since = "0.35.0", note = "use Builder.sign_fragmented_files.")]
     pub fn embed_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         asset_path: P,
@@ -1414,6 +1415,7 @@ impl Manifest {
     /// expect that it has not been placed into an output asset and has not
     /// been signed.  Use embed_placed_manifest to insert into the asset
     /// referenced by input_stream
+    #[deprecated(since = "0.35.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn get_placed_manifest(
         &mut self,
         reserve_size: usize,
@@ -1433,6 +1435,7 @@ impl Manifest {
     /// used in get_placed_manifest.  The caller can supply list of ManifestPathCallback
     /// traits to make any modifications to assertions.  The callbacks are processed before
     /// the manifest is signed.  
+    #[deprecated(since = "0.38.0", note = "use Builder.sign with dynamic assertions.")]
     pub fn embed_placed_manifest(
         manifest_bytes: &[u8],
         format: &str,
@@ -1501,6 +1504,8 @@ pub(crate) mod tests {
     use std::io::Cursor;
 
     #[cfg(feature = "file_io")]
+    use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
+    #[cfg(feature = "file_io")]
     use tempfile::tempdir;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
@@ -1513,7 +1518,6 @@ pub(crate) mod tests {
         assertions::{c2pa_action, Action, Actions},
         ingredient::Ingredient,
         reader::Reader,
-        status_tracker::{DetailedStatusTracker, StatusTracker},
         store::Store,
         utils::test::{temp_remote_signer, temp_signer, TEST_VC},
         Manifest, Result,
@@ -1772,7 +1776,7 @@ pub(crate) mod tests {
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let store1 = Store::load_from_memory("c2pa", &c2pa_data, true, &mut validation_log)
             .expect("load from memory");
@@ -1797,7 +1801,7 @@ pub(crate) mod tests {
             .embed(&output2, &output2, signer.as_ref())
             .expect("embed");
 
-        let mut report = DetailedStatusTracker::new();
+        let mut report = DetailedStatusTracker::default();
         let store3 = Store::load_from_asset(&output2, true, &mut report).unwrap();
         let claim2 = store3.provenance_claim().unwrap();
 
@@ -1807,7 +1811,7 @@ pub(crate) mod tests {
 
         assert!(claim2.redactions().is_some());
         assert!(!claim2.redactions().unwrap().is_empty());
-        assert!(!report.get_log().is_empty());
+        assert!(!report.logged_items().is_empty());
         let redacted_uri = &claim2.redactions().unwrap()[0];
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
@@ -2145,16 +2149,16 @@ pub(crate) mod tests {
             .await
             .expect("embed_stream");
 
-        let manifest_store =
-            crate::ManifestStore::from_bytes_async("jpeg", &output.into_inner(), true)
-                .await
-                .expect("from_bytes");
+        output.set_position(0);
+        let reader = Reader::from_stream_async("jpeg", &mut output)
+            .await
+            .expect("from_bytes");
         assert_eq!(
-            manifest_store.get_active().unwrap().title().unwrap(),
+            reader.active_manifest().unwrap().title().unwrap(),
             "EmbedStream"
         );
         #[cfg(feature = "add_thumbnails")]
-        assert!(manifest_store.get_active().unwrap().thumbnail().is_some());
+        assert!(reader.active_manifest().unwrap().thumbnail().is_some());
         //println!("{manifest_store}");main
     }
 

@@ -165,7 +165,6 @@ pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
-pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
 pub(crate) mod openssl;
 #[allow(dead_code)]
@@ -175,7 +174,6 @@ pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod signing_alg;
-pub(crate) mod status_tracker;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;

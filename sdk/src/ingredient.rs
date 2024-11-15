@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io::Cursor};
 
 use async_generic::async_generic;
+use c2pa_crypto::base64;
+use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -40,9 +42,8 @@ use crate::{
     },
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
-    status_tracker::{log_item, DetailedStatusTracker, StatusTracker},
     store::Store,
-    utils::{base64, xmp_inmemory_utils::XmpInfo},
+    utils::xmp_inmemory_utils::XmpInfo,
     validation_status::{self, status_for_store, ValidationStatus},
 };
 
@@ -657,7 +658,7 @@ impl Ingredient {
                 debug!("ingredient {:?}", e);
                 // convert any other error to a validation status
                 let statuses: Vec<ValidationStatus> = validation_log
-                    .get_log()
+                    .logged_items()
                     .iter()
                     .filter_map(ValidationStatus::from_validation_item)
                     .filter(|s| !validation_status::is_success(s.code()))
@@ -737,7 +738,7 @@ impl Ingredient {
         // optionally generate a hash so we know if the file has changed
         ingredient.hash = options.hash(path);
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_path(path) {
@@ -753,10 +754,8 @@ impl Ingredient {
                         })
                         .inspect_err(|e| {
                             // add a log entry for the error so we act like verify
-                            validation_log.log_silent(
-                                log_item!("asset", "error loading file", "Ingredient::from_file")
-                                    .set_error(e),
-                            );
+                            log_item!("asset", "error loading file", "Ingredient::from_file")
+                                .failure_no_throw(&mut validation_log, e);
                         }),
                     Some(manifest_bytes),
                 )
@@ -853,7 +852,7 @@ impl Ingredient {
     // Internal implementation to avoid code bloat.
     #[async_generic()]
     fn add_stream_internal(mut self, format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let jumbf_stream = load_jumbf_from_stream(format, stream);
@@ -885,10 +884,8 @@ impl Ingredient {
             (
                 result.inspect_err(|e| {
                     // add a log entry for the error so we act like verify
-                    validation_log.log_silent(
-                        log_item!("asset", "error loading file", "Ingredient::from_file")
-                            .set_error(e),
-                    );
+                    log_item!("asset", "error loading file", "Ingredient::from_file")
+                        .failure_no_throw(&mut validation_log, e);
                 }),
                 Some(manifest_bytes),
             )
@@ -935,7 +932,7 @@ impl Ingredient {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
         let (result, manifest_bytes) = match Store::load_jumbf_from_stream(format, stream) {
@@ -954,14 +951,13 @@ impl Ingredient {
                             .map(|_| store)
                         }
                         Err(e) => {
-                            validation_log.log_silent(
-                                log_item!(
-                                    "asset",
-                                    "error loading asset",
-                                    "Ingredient::from_stream_async"
-                                )
-                                .set_error(&e),
-                            );
+                            log_item!(
+                                "asset",
+                                "error loading asset",
+                                "Ingredient::from_stream_async"
+                            )
+                            .failure_no_throw(&mut validation_log, &e);
+
                             Err(e)
                         }
                     },
@@ -1343,7 +1339,7 @@ impl Ingredient {
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
-        let mut validation_log = DetailedStatusTracker::new();
+        let mut validation_log = DetailedStatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
@@ -1361,9 +1357,9 @@ impl Ingredient {
             }
             Err(e) => {
                 // add a log entry for the error so we act like verify
-                validation_log.log_silent(
-                    log_item!("asset", "error loading file", "Ingredient::from_file").set_error(&e),
-                );
+                log_item!("asset", "error loading file", "Ingredient::from_file")
+                    .failure_no_throw(&mut validation_log, &e);
+
                 Err(e)
             }
         };

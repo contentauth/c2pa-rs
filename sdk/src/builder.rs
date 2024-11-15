@@ -12,7 +12,7 @@
 // each license.
 
 #[cfg(feature = "file_io")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{
     collections::HashMap,
     io::{Read, Seek, Write},
@@ -56,7 +56,7 @@ pub struct ManifestDefinition {
     /// This is typically Internet domain name for the vendor (i.e. `adobe`)
     pub vendor: Option<String>,
 
-    /// Clam Generator Info is always required with at least one entry
+    /// Claim Generator Info is always required with at least one entry
     #[serde(default = "default_claim_generator_info")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
@@ -316,7 +316,6 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     /// # Errors
     /// * Returns an [`Error`] if the thumbnail is not valid.
-
     pub fn set_thumbnail<S, R>(&mut self, format: S, stream: &mut R) -> Result<&mut Self>
     where
         S: Into<String>,
@@ -583,7 +582,11 @@ impl Builder {
         let mut claim_generator_info = definition.claim_generator_info.clone();
         let metadata = definition.metadata.clone();
         // add the default claim generator info for this library
-        claim_generator_info.push(ClaimGeneratorInfo::default());
+        if claim_generator_info.is_empty() {
+            claim_generator_info.push(ClaimGeneratorInfo::default());
+        }
+
+        claim_generator_info[0].insert("org.cai.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
         // Build the claim_generator string since this is required
         let claim_generator: String = claim_generator_info
@@ -973,6 +976,68 @@ impl Builder {
     }
 
     #[cfg(feature = "file_io")]
+    // Internal utiltiy to set format and title based on destination filename.
+    //
+    // Also sets the instance_id to a new UUID and ensures the destination file does not exist.
+    fn set_asset_from_dest<P: AsRef<Path>>(&mut self, dest: P) -> Result<()> {
+        let path = dest.as_ref();
+        if !path.exists() {
+            // ensure the path to the file exists
+            if let Some(output_dir) = path.parent() {
+                std::fs::create_dir_all(output_dir)?;
+            }
+        } else {
+            // if the file exists, we need to remove it to avoid appending to it
+            return Err(crate::Error::BadParam(
+                "Destination file already exists".to_string(),
+            ));
+        };
+        self.definition.format =
+            crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if self.definition.title.is_none() {
+            if let Some(title) = path.file_name() {
+                self.definition.title = Some(title.to_string_lossy().to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Sign a set of fragmented BMFF files.
+    ///
+    /// Note: Currently this does not support files with existing C2PA manifest.
+    ///
+    /// # Arguments
+    /// * `signer` - The signer to use.
+    /// * `asset_path` - The path to the primary asset file.
+    /// * `fragment_paths` - The paths to the fragmented files.
+    /// * `output_path` - The path to the output file.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be signed.
+    #[cfg(feature = "file_io")]
+    pub fn sign_fragmented_files<P: AsRef<Path>>(
+        &mut self,
+        signer: &dyn Signer,
+        asset_path: P,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        output_path: P,
+    ) -> Result<()> {
+        self.set_asset_from_dest(output_path.as_ref())?;
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to DASH content
+        store.save_to_bmff_fragmented(
+            asset_path.as_ref(),
+            fragment_paths,
+            output_path.as_ref(),
+            signer,
+        )
+    }
+
+    #[cfg(feature = "file_io")]
     /// Sign a file using a supplied signer.
     /// # Arguments
     /// * `source` - The path to the source file to read from.
@@ -989,6 +1054,9 @@ impl Builder {
     {
         let source = source.as_ref();
         let dest = dest.as_ref();
+
+        self.set_asset_from_dest(dest)?;
+
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
         let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
         let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
@@ -998,22 +1066,6 @@ impl Builder {
             ));
         }
         let mut source = std::fs::File::open(source)?;
-        if !dest.exists() {
-            // ensure the path to the file exists
-            if let Some(output_dir) = dest.parent() {
-                std::fs::create_dir_all(output_dir)?;
-            }
-        } else {
-            // if the file exists, we need to remove it to avoid appending to it
-            return Err(crate::Error::BadParam(
-                "Destination file already exists".to_string(),
-            ));
-        };
-        if self.definition.title.is_none() {
-            if let Some(title) = dest.file_name() {
-                self.definition.title = Some(title.to_string_lossy().to_string());
-            }
-        }
 
         let mut dest = std::fs::OpenOptions::new()
             .read(true)
