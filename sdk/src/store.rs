@@ -3114,7 +3114,11 @@ impl Store {
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]
             {
-                Store::fetch_remote_manifest(ext_ref)
+                if let Ok(true) = get_settings_value::<bool>("remote_manifest_fetch") {
+                    Store::fetch_remote_manifest(ext_ref)
+                } else {
+                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                }
             }
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
