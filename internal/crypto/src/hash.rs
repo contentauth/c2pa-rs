@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,17 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+//! Hash convenience functions.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
+use sha1::{Digest, Sha1};
 
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-mod base64;
-mod hash;
-mod internal;
-mod ocsp;
+/// Given a byte slice, return the SHA-1 hash of that content.
+pub fn sha1(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha1::default();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}

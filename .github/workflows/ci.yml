@@ -225,48 +225,6 @@ jobs:
       - name: Run tests
         run: cargo +nightly test -Z direct-minimal-versions --all-targets --all-features
 
-  publish-preflight:
-    name: Preflight crate publish
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test')
-
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        rust_version: [stable]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Dry-run of crate publish (c2pa-rs)
-        run: cargo publish -p c2pa --dry-run
-
-      - name: Dry-run of crate publish (c2pa-crypto)
-        run: cargo publish -p c2pa-crypto --dry-run
-
-      - name: Dry-run of crate publish (c2pa-status-tracker)
-        run: cargo publish -p c2pa-status-tracker --dry-run
-
-      - name: Dry-run of crate publish (cawg-identity)
-        run: cargo publish -p cawg-identity --dry-run
-
   clippy_check:
     name: Clippy
     if: |

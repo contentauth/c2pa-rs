@@ -16,8 +16,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::internal::time;
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn now() {
     let time_now = time::utc_now();
     let unix_ts = time_now.timestamp();
