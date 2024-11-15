@@ -163,7 +163,6 @@ pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
-pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
 pub(crate) mod openssl;
 #[allow(dead_code)]
