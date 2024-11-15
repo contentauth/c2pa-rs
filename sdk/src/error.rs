@@ -299,6 +299,9 @@ pub enum Error {
 
     #[error("parameters out of range")]
     OutOfRange,
+
+    #[error(transparent)]
+    TimeStampError(#[from] c2pa_crypto::time_stamp::TimeStampError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

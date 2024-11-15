@@ -22,6 +22,12 @@ use crate::{
     time_stamp::TimeStampError,
 };
 
+/// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
+/// provider.
+///
+/// If successful, responds with the raw bytestream of the response.
+///
+/// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[async_generic]
 pub fn default_rfc3161_request(
     url: &str,
@@ -58,8 +64,8 @@ fn time_stamp_request_http(
     // TimeStampResp so we just return the data directly.
     use std::io::Read;
 
-    const HTTP_CONTENT_TYPE_REQUEST: &str = "application/time_stamp-query";
-    const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/time_stamp-reply";
+    const HTTP_CONTENT_TYPE_REQUEST: &str = "application/timestamp-query";
+    const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
 
     let mut body = Vec::<u8>::new();
     request

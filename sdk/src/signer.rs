@@ -10,7 +10,11 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
+
+use c2pa_crypto::time_stamp::{default_rfc3161_request, default_rfc3161_request_async};
+
 use crate::{DynamicAssertion, Result, SigningAlg};
+
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -58,13 +62,14 @@ pub trait Signer {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(crate::time_stamp::default_rfc3161_request(
-                    &url, headers, &body, message,
-                ));
+                return Some(
+                    default_rfc3161_request(&url, headers, &body, message).map_err(|e| e.into()),
+                );
             }
         }
         None
     }
+
     #[cfg(target_arch = "wasm32")]
     fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
@@ -175,8 +180,9 @@ pub trait AsyncSigner: Sync {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    crate::time_stamp::default_rfc3161_request_async(&url, headers, &body, message)
-                        .await,
+                    default_rfc3161_request_async(&url, headers, &body, message)
+                        .await
+                        .map_err(|e| e.into()),
                 );
             }
         }

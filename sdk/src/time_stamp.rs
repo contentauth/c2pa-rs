@@ -20,9 +20,7 @@ use bcder::{
     ConstOid, OctetString,
 };
 use c2pa_crypto::asn1::{
-    rfc3161::{
-        MessageImprint, PkiStatus, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO,
-    },
+    rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
     rfc5652::{
         CertificateChoices::Certificate, SignedData, SignerIdentifier, OID_ID_SIGNED_DATA,
         OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
@@ -117,76 +115,6 @@ pub(crate) fn cose_sigtst_to_tstinfos(
     }
 }
 
-// internal only function to work around bug in serialization of TimeStampResponse
-// so we just return the data directly
-#[cfg(not(target_arch = "wasm32"))]
-fn time_stamp_request_http(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
-    request: &TimeStampReq,
-) -> Result<Vec<u8>> {
-    use std::io::Read;
-
-    const HTTP_CONTENT_TYPE_REQUEST: &str = "application/timestamp-query";
-    const HTTP_CONTENT_TYPE_RESPONSE: &str = "application/timestamp-reply";
-
-    let mut body = Vec::<u8>::new();
-    request
-        .encode_ref()
-        .write_encoded(bcder::Mode::Der, &mut body)?;
-
-    let mut req = ureq::post(url);
-
-    if let Some(headers) = headers {
-        for (ref name, ref value) in headers {
-            req = req.set(name.as_str(), value.as_str());
-        }
-    }
-
-    let response = req
-        .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
-        .send_bytes(&body)
-        .map_err(|_err| Error::CoseTimeStampGeneration)?;
-
-    if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
-        let len = response
-            .header("Content-Length")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(20000);
-
-        let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
-
-        response
-            .into_reader()
-            .take(1000000)
-            .read_to_end(&mut response_bytes)
-            .map_err(|_err| Error::CoseTimeStampGeneration)?;
-
-        let res = TimeStampResponse(
-            Constructed::decode(response_bytes.as_ref(), bcder::Mode::Der, |cons| {
-                TimeStampResp::take_from(cons)
-            })
-            .map_err(|_err| Error::CoseTimeStampGeneration)?,
-        );
-
-        // Verify nonce was reflected, if present.
-        if res.is_success() {
-            if let Some(tst_info) = res
-                .tst_info()
-                .map_err(|_err| Error::CoseTimeStampGeneration)?
-            {
-                if tst_info.nonce != request.nonce {
-                    return Err(Error::CoseTimeStampGeneration);
-                }
-            }
-        }
-
-        Ok(response_bytes)
-    } else {
-        Err(Error::CoseTimeStampGeneration)
-    }
-}
-
 // Send a Time-Stamp request for a given message to an HTTP URL.
 //
 // This is a wrapper around [time_stamp_request_http] that constructs the low-level
@@ -233,15 +161,6 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
-    // Whether the time stamp request was successful.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn is_success(&self) -> bool {
-        matches!(
-            self.0.status.status,
-            PkiStatus::Granted | PkiStatus::GrantedWithMods
-        )
-    }
-
     fn signed_data(&self) -> Result<Option<SignedData>> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
@@ -292,33 +211,6 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
         // TO DO: Fix bug in async_generic. This .await
         // should be automatically removed.
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[async_generic]
-pub fn default_rfc3161_request(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
-    data: &[u8],
-    message: &[u8],
-) -> Result<Vec<u8>> {
-    let request = Constructed::decode(
-        bcder::decode::SliceSource::new(data),
-        bcder::Mode::Der,
-        TimeStampReq::take_from,
-    )
-    .map_err(|_err| Error::CoseTimeStampGeneration)?;
-
-    let ts = time_stamp_request_http(url, headers, &request)?;
-
-    // sanity check
-    if _sync {
-        verify_timestamp(&ts, message)?;
-    } else {
-        verify_timestamp_async(&ts, message).await?;
-    }
-
-    Ok(ts)
 }
 
 #[allow(unused_variables)]

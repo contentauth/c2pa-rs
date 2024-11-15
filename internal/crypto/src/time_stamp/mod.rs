@@ -17,6 +17,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(self) mod http_request;
+pub use http_request::{default_rfc3161_request, default_rfc3161_request_async};
 
 mod provider;
 pub use provider::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider};
