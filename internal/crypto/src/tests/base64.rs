@@ -11,16 +11,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
-
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-
 #[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+use wasm_bindgen_test::wasm_bindgen_test;
 
-mod base64;
-mod hash;
-mod internal;
+use crate::base64;
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn encode() {
+    assert_eq!(base64::encode(b"Hello, world"), "SGVsbG8sIHdvcmxk");
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn decode() {
+    assert_eq!(
+        base64::decode("SGVsbG8sIHdvcmxk"),
+        Ok(b"Hello, world".to_vec())
+    );
+}

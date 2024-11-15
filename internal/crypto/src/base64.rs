@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,16 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+//! Base64 convenience functions.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
+use ::base64::{engine::general_purpose, DecodeError, Engine as _};
 
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+/// Encode a byte slice to Base64 string using general encoding without padding.
+pub fn encode(data: &[u8]) -> String {
+    general_purpose::STANDARD.encode(data)
+}
 
-mod base64;
-mod hash;
-mod internal;
+/// Decode a Base 64 string into a byte slice.
+pub fn decode(data: &str) -> Result<Vec<u8>, DecodeError> {
+    general_purpose::STANDARD.decode(data)
+}
