@@ -23,5 +23,8 @@ pub mod base64;
 pub mod hash;
 pub(crate) mod internal;
 
+pub mod ocsp;
+pub mod validation_codes;
+
 #[cfg(test)]
 pub(crate) mod tests;
