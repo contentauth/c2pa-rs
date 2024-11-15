@@ -11,22 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+//! Functions for working with [RFC 3161] time stamp service providers.
+//!
+//! [RFC 3161]: https://www.ietf.org/rfc/rfc3161.txt
 
-pub mod asn1;
-pub mod base64;
-pub mod hash;
-pub(crate) mod internal;
+#[cfg(not(target_arch = "wasm32"))]
+pub(self) mod http_request;
 
-pub mod ocsp;
-pub mod time_stamp;
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+mod provider;
+pub use provider::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider};
