@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,21 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+//! Hash convenience functions.
 
-pub mod hash;
-pub(crate) mod internal;
+use sha1::{Digest, Sha1};
 
-mod ocsp;
-pub use ocsp::{OcspError, OcspResponse};
-
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+/// Given a byte slice, return the SHA-1 hash of that content.
+pub fn sha1(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha1::default();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}

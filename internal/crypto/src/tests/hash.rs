@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,21 +11,20 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
-pub mod hash;
-pub(crate) mod internal;
+use crate::hash::sha1;
 
-mod ocsp;
-pub use ocsp::{OcspError, OcspResponse};
-
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_sha1() {
+    let hash = sha1(b"test message");
+    assert_eq!(
+        hash,
+        [
+            53, 238, 131, 134, 65, 13, 65, 209, 75, 63, 119, 159, 201, 95, 70, 149, 244, 133, 22,
+            130
+        ]
+    );
+}
