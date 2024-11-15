@@ -450,20 +450,6 @@ pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
     Hasher::finalize(hasher)
 }
 
-pub fn hash_sha1(data: &[u8]) -> Vec<u8> {
-    use sha1::Sha1;
-
-    // create a Sha1 object
-    let mut hasher = Sha1::new();
-
-    // process input message
-    hasher.update(data);
-
-    // acquire hash digest in the form of GenericArray,
-    // which in this case is equivalent to [u8; 20]
-    hasher.finalize().to_vec()
-}
-
 // Used by Merkle tree calculations to generate the pair wise hash
 pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> {
     let mut temp = left.to_vec();
