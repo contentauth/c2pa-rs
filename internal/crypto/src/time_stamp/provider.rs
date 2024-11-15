@@ -135,7 +135,7 @@ pub enum TimeStampError {
     /// Unable to send the HTTPS time stamp response.
     #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]
-    HttpError(#[from] ureq::Error),
+    HttpError(#[from] Box<ureq::Error>),
 
     /// An I/O error occurred while processing the HTTPS time stamp response.
     #[error(transparent)]

@@ -84,7 +84,8 @@ fn time_stamp_request_http(
 
     let response = req
         .set("Content-Type", HTTP_CONTENT_TYPE_REQUEST)
-        .send_bytes(&body)?;
+        .send_bytes(&body)
+        .map_err(|e| TimeStampError::HttpError(Box::new(e)))?;
 
     if response.status() == 200 && response.content_type() == HTTP_CONTENT_TYPE_RESPONSE {
         let len = response

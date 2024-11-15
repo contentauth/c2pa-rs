@@ -228,17 +228,13 @@ impl TimeStampProvider for Box<dyn Signer + Send + Sync> {
         &self,
         message: &[u8],
     ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        (**self)
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
+        (**self).time_stamp_request_body(message)
     }
 
     fn send_time_stamp_request(
         &self,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        (**self)
-            .send_time_stamp_request(message)
-            .map(|m| m.map_err(|e| e.into()))
+        (**self).send_time_stamp_request(message)
     }
 }
