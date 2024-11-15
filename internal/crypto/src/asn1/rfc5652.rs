@@ -2,15 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/*! ASN.1 data structures defined by RFC 5652.
-
-The types defined in this module are intended to be extremely low-level
-and only to be used for (de)serialization. See types outside the
-`asn1` module tree for higher-level functionality.
-
-Some RFC 5652 types are defined in the `x509-certificate` crate, which
-this crate relies on for certificate parsing functionality.
-*/
+//! ASN.1 types defined by [RFC 5652].
+//!
+//! [RFC 5652]: https://datatracker.ietf.org/doc/html/rfc5652
+//!
+//! The types defined in this module are intended to be extremely low-level and
+//! only to be used for (de)serialization. See types outside the `asn1` module
+//! tree for higher-level functionality.
+//!
+//! Some RFC 5652 types are defined in the `x509-certificate` crate, which this
+//! crate relies on for certificate parsing functionality.
 
 use std::{
     fmt::{Debug, Formatter},
@@ -474,15 +475,17 @@ impl SignerInfo {
     ///    of the signedAttrs field is performed for message digest calculation.
     ///    The `IMPLICIT [0]` tag in the signedAttrs is not used for the DER
     ///    encoding, rather an EXPLICIT SET OF tag is used.  That is, the DER
-    ///    encoding of the EXPLICIT SET OF tag, rather than of the `IMPLICIT [0]`
-    ///    tag, MUST be included in the message digest calculation along with
-    ///    the length and content octets of the SignedAttributes value.
+    ///    encoding of the EXPLICIT SET OF tag, rather than of the `IMPLICIT
+    /// [0]`    tag, MUST be included in the message digest calculation
+    /// along with    the length and content octets of the SignedAttributes
+    /// value.
     ///
     /// A few things to note here:
     ///
-    /// * We must ensure DER (not BER) encoding of the entire SignedAttrs values.
-    /// * The SignedAttr tag must use `EXPLICIT SET OF` instead of `IMPLICIT [0]`,
-    ///   so default encoding is not appropriate.
+    /// * We must ensure DER (not BER) encoding of the entire SignedAttrs
+    ///   values.
+    /// * The SignedAttr tag must use `EXPLICIT SET OF` instead of `IMPLICIT
+    ///   [0]`, so default encoding is not appropriate.
     /// * If this instance came into existence via a parse, we stashed away the
     ///   raw bytes constituting SignedAttributes to ensure we can do a lossless
     ///   copy.
@@ -661,7 +664,8 @@ impl SignedAttributes {
     }
 
     /// Obtain an instance where the attributes are sorted according to DER
-    /// rules. See the comment in [SignerInfo::signed_attributes_digested_content].
+    /// rules. See the comment in
+    /// [SignerInfo::signed_attributes_digested_content].
     pub fn as_sorted(&self) -> Result<Self, std::io::Error> {
         // All elements of the set have the same type. So sorting is based on encoded
         // values, with shorter elements padded with 0s. Rust will sort a shorter value
