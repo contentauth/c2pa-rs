@@ -76,7 +76,7 @@ pub trait TimeStampProvider {
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncTimeStampProvider: Sync {
+pub trait AsyncTimeStampProvider {
     /// Return the URL for time stamp service.
     fn time_stamp_service_url(&self) -> Option<String> {
         None

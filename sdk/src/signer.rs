@@ -131,7 +131,7 @@ pub trait AsyncSigner: Sync + AsyncTimeStampProvider {
 
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait AsyncSigner {
+pub trait AsyncSigner: AsyncTimeStampProvider {
     /// Returns a new byte array which is a signature over the original.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
 
