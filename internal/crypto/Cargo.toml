@@ -32,7 +32,7 @@ base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
 c2pa-status-tracker = { path = "../status-tracker", version = "0.1.0" }
-getrandom = { version = "0.2.15", features = ["js"] }
+getrandom = { version = "0.2.7", features = ["js"] }
 hex = "0.4.3"
 rand = "0.8.5"
 rasn = "0.18.0"
