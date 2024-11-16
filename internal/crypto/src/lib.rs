@@ -27,5 +27,8 @@ pub(crate) mod internal;
 pub mod ocsp;
 pub mod validation_codes;
 
+mod signing_alg;
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
+
 #[cfg(test)]
 pub(crate) mod tests;

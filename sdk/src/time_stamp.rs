@@ -388,16 +388,16 @@ fn get_local_validator(
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es256)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es256)
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es384)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es384)
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es512)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es512)
         } else {
             return Err(Error::CoseTimeStampAuthority);
         }
     } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        crate::validator::get_validator(crate::SigningAlg::Ed25519)
+        crate::validator::get_validator(c2pa_crypto::SigningAlg::Ed25519)
     } else {
         return Err(Error::CoseTimeStampAuthority);
     };
@@ -429,16 +429,16 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Some(crate::SigningAlg::Es256.to_string())
+            Some(c2pa_crypto::SigningAlg::Es256.to_string())
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Some(crate::SigningAlg::Es384.to_string())
+            Some(c2pa_crypto::SigningAlg::Es384.to_string())
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Some(crate::SigningAlg::Es512.to_string())
+            Some(c2pa_crypto::SigningAlg::Es512.to_string())
         } else {
             None
         }
     } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        Some(crate::SigningAlg::Ed25519.to_string())
+        Some(c2pa_crypto::SigningAlg::Ed25519.to_string())
     } else {
         None
     }
