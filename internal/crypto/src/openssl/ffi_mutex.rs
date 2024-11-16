@@ -19,11 +19,14 @@ use std::{
 
 static FFI_MUTEX: Mutex<()> = Mutex::new(());
 
-/// OpenSSL code is not re-entrant. Use this to guard against race conditions.
+/// This mutex must be used by all code that accesses OpenSSL native code since
+/// the OpenSSL native code library is not re-entrant.
+///
+/// Failure to do so has been observed to lead to unexpected behavior including
+/// process crashes.
 pub struct OpenSslMutex<'a> {
-    // Dead code here is intentional. We don't need to read the () contents
-    // of this guard. We only need to ensure that the guard is dropped when
-    // this struct is dropped.
+    // The dead code bypass is intentional. We don't need to read the () contents of this guard. We
+    // only need to ensure that the guard is dropped when this struct is dropped.
     #[allow(dead_code)]
     guard: MutexGuard<'a, ()>,
 }
@@ -55,7 +58,7 @@ impl OpenSslMutex<'_> {
 //     }
 // }
 
-/// Error returned when unable to acquire OpenSSL native code mutex.
+/// Error returned when unable to acquire the OpenSSL native code mutex.
 ///
 /// If this occurs, it's likely that a prior invocation of OpenSSL code panicked
 /// while holding the mutex. When this happens, the OpenSSL native code mutex is
