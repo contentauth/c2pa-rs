@@ -25,6 +25,10 @@ pub mod hash;
 pub(crate) mod internal;
 
 pub mod ocsp;
+
+#[cfg(feature = "openssl")]
+pub mod openssl;
+
 pub mod validation_codes;
 
 mod signing_alg;
