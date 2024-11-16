@@ -53,9 +53,6 @@ pub(crate) use openssl_trust_handler::verify_trust;
 #[cfg(feature = "openssl")]
 pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 
-mod ffi_mutex;
-pub(crate) use ffi_mutex::OpenSslMutex;
-
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
 
