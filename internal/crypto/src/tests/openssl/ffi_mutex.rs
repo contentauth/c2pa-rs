@@ -11,13 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::wasm_bindgen_test;
-
 use crate::openssl::OpenSslMutexUnavailable;
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn impl_display() {
     let err = OpenSslMutexUnavailable {};
     assert_eq!(
@@ -27,7 +23,6 @@ fn impl_display() {
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn impl_debug() {
     let err = OpenSslMutexUnavailable {};
     assert_eq!(format!("{err:?}"), "OpenSslMutexUnavailable");
