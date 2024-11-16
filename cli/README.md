@@ -134,6 +134,8 @@ Where:
 - `<PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
 - `[COMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
 
+By default, c2patool writes a JSON representation of C2PA manifests found in the asset to the standard output. 
+
 ### Subcommands
 
 The tool supports the following subcommands:
@@ -319,6 +321,8 @@ Enable trust support by using the `trust` subcommand, as follows:
 ```
 c2patool [path] trust [OPTIONS]
 ```
+
+When the `trust` subcommand is supplied, should c2patool encounter a problem with validating any of the claims in the asset, its JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
 
 ### Additional options
 
