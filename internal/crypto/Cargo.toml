@@ -49,6 +49,9 @@ ureq = "2.4.0"
 url = "=2.5.2" # Can't advance to 2.5.3 until Unicode-3.0 license is reviewed.
 x509-parser = "0.16.0"
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["openssl"] # TEMPORARY: Remove after openssl transition complete.
+
 [dependencies.chrono]
 version = "0.4.38"
 default-features = false
