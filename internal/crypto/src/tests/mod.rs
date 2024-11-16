@@ -26,7 +26,10 @@ mod hash;
 mod internal;
 mod ocsp;
 
-#[cfg(feature = "openssl")]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
 mod openssl;
+
+#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
+compile_error!("OpenSSL feature is not compatible with WASM platform");
 
 mod signing_alg;

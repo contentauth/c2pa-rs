@@ -26,7 +26,7 @@ pub(crate) mod internal;
 
 pub mod ocsp;
 
-#[cfg(feature = "openssl")]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
 pub mod openssl;
 
 pub mod validation_codes;
