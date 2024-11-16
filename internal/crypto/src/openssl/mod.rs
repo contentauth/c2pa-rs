@@ -19,4 +19,4 @@
 //! [`openssl` native code library]: https://crates.io/crates/openssl
 
 mod ffi_mutex;
-pub use ffi_mutex::OpenSslMutex;
+pub use ffi_mutex::{OpenSslMutex, OpenSslMutexUnavailable};

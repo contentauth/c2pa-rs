@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-use c2pa_crypto::{ocsp::OcspResponse, SigningAlg};
+use c2pa_crypto::{ocsp::OcspResponse, openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -97,7 +97,7 @@ impl ConfigurableSigner for RsaSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
@@ -211,7 +211,7 @@ impl Signer for RsaSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
         self.certs_internal()
     }
 
@@ -224,7 +224,7 @@ impl Signer for RsaSigner {
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
-        let _openssl = super::OpenSslMutex::acquire().ok()?;
+        let _openssl = OpenSslMutex::acquire().ok()?;
 
         // update OCSP if needed
         self.update_ocsp();
