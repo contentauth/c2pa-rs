@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::SigningAlg;
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -23,7 +24,7 @@ use crate::{
     error::{Error, Result},
     signer::ConfigurableSigner,
     utils::sig_utils::der_to_p1363,
-    Signer, SigningAlg,
+    Signer,
 };
 
 /// Implements `Signer` trait using OpenSSL's implementation of

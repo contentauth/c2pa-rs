@@ -25,3 +25,4 @@ mod base64;
 mod hash;
 mod internal;
 mod ocsp;
+mod signing_alg;

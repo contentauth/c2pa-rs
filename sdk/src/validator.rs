@@ -11,12 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::SigningAlg;
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
 #[cfg(feature = "openssl")]
 use crate::openssl::{EcValidator, EdValidator, RsaValidator};
-use crate::{Result, SigningAlg};
+use crate::Result;
 
 #[derive(Debug, Default)]
 pub struct ValidationInfo {

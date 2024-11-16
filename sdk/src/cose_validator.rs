@@ -15,7 +15,7 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use c2pa_crypto::{asn1::rfc3161::TstInfo, ocsp::OcspResponse};
+use c2pa_crypto::{asn1::rfc3161::TstInfo, ocsp::OcspResponse, SigningAlg};
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
@@ -42,7 +42,6 @@ use crate::{
     utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
-    SigningAlg,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::{
