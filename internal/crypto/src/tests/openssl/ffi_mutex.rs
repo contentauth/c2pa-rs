@@ -11,22 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+use crate::openssl::OpenSslMutexUnavailable;
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
+#[test]
+fn impl_display() {
+    let err = OpenSslMutexUnavailable {};
+    assert_eq!(
+        err.to_string(),
+        "Unable to acquire OpenSSL native code mutex"
+    );
+}
 
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-mod base64;
-mod hash;
-mod internal;
-mod ocsp;
-
-#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-mod openssl;
-
-mod signing_alg;
+#[test]
+fn impl_debug() {
+    let err = OpenSslMutexUnavailable {};
+    assert_eq!(format!("{err:?}"), "OpenSslMutexUnavailable");
+}

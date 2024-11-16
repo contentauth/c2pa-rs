@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
@@ -40,7 +40,7 @@ impl ConfigurableSigner for EdSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let certs_size = signcert.len();
         let signcerts = X509::stack_from_pem(signcert).map_err(Error::OpenSslError)?;
@@ -70,7 +70,7 @@ impl ConfigurableSigner for EdSigner {
 
 impl Signer for EdSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let mut signer =
             openssl::sign::Signer::new_without_digest(&self.pkey).map_err(Error::OpenSslError)?;
@@ -85,7 +85,7 @@ impl Signer for EdSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let mut certs: Vec<Vec<u8>> = Vec::new();
 

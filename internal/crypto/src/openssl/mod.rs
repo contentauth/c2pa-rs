@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,22 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+//! This module provides functions for working with the [`openssl` native code
+//! library].
+//!
+//! It is only available if the `openssl` feature is enabled.
+//!
+//! [`openssl` native code library]: https://crates.io/crates/openssl
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-mod base64;
-mod hash;
-mod internal;
-mod ocsp;
-
-#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-mod openssl;
-
-mod signing_alg;
+mod ffi_mutex;
+pub use ffi_mutex::{OpenSslMutex, OpenSslMutexUnavailable};
