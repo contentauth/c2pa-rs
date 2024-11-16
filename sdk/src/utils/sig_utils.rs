@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::SigningAlg;
 use x509_parser::der_parser::{self, der::parse_der_integer};
 
-use crate::{Error, Result, SigningAlg};
+use crate::{Error, Result};
 
 // C2PA use P1363 format for EC signatures so we must
 // convert from ASN.1 DER to IEEE P1363 format to verify.

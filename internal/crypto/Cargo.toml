@@ -25,6 +25,9 @@ exclude = ["tests/fixtures"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+json_schema = ["dep:schemars"]
+
 [dependencies]
 base64 = "0.22.1"
 bcder = "0.7.3"
@@ -33,6 +36,8 @@ hex = "0.4.3"
 rasn = "0.18.0"
 rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
+schemars = { version = "0.8.21", optional = true }
+serde = { version = "1.0.197", features = ["derive"] }
 sha1 = "0.10.6"
 thiserror = "1.0.61"
 x509-certificate = "0.21.0"

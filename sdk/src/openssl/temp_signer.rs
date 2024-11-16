@@ -35,10 +35,12 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "file_io")]
+use c2pa_crypto::SigningAlg;
+
+#[cfg(feature = "file_io")]
 use crate::{
     openssl::{EcSigner, EdSigner, RsaSigner},
     signer::ConfigurableSigner,
-    SigningAlg,
 };
 
 /// Create an OpenSSL ES256 signer that can be used for testing purposes.

@@ -16,6 +16,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
+use c2pa_crypto::SigningAlg;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -40,7 +41,7 @@ use crate::{
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, ClaimGeneratorInfo, HashRange, ManifestAssertionKind, ManifestPatchCallback,
-    RemoteSigner, Signer, SigningAlg,
+    RemoteSigner, Signer,
 };
 
 /// A Manifest represents all the information in a c2pa manifest

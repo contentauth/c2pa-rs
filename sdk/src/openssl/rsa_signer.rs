@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-use c2pa_crypto::ocsp::OcspResponse;
+use c2pa_crypto::{ocsp::OcspResponse, SigningAlg};
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -22,7 +22,7 @@ use openssl::{
 };
 
 use super::check_chain_order;
-use crate::{signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
+use crate::{signer::ConfigurableSigner, Error, Result, Signer};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// SHA256 + RSA encryption.

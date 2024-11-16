@@ -11,13 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::SigningAlg;
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
 };
 
 use super::check_chain_order;
-use crate::{signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
+use crate::{signer::ConfigurableSigner, Error, Result, Signer};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// Edwards Curve encryption.

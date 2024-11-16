@@ -300,10 +300,12 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_crypto::SigningAlg;
+
     use super::*;
     use crate::{
         openssl::temp_signer::{self},
-        Signer, SigningAlg,
+        Signer,
     };
 
     #[test]

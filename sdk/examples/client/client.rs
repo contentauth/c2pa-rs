@@ -18,8 +18,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use c2pa::{
     assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
-    create_signer, Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship, SigningAlg,
+    create_signer, Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship,
 };
+use c2pa_crypto::SigningAlg;
 
 const GENERATOR: &str = "test_app/0.1";
 const INDENT_SPACE: usize = 2;

@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::SigningAlg;
 use openssl::{ec::EcKey, hash::MessageDigest, pkey::PKey};
 
-use crate::{validator::CoseValidator, Error, Result, SigningAlg};
+use crate::{validator::CoseValidator, Error, Result};
 
 pub struct EcValidator {
     alg: SigningAlg,

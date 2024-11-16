@@ -16,9 +16,11 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
+use c2pa_crypto::SigningAlg;
+
 use crate::{
     error::{Error, Result},
-    AsyncSigner, Signer, SigningAlg,
+    AsyncSigner, Signer,
 };
 
 /// Defines a callback function interface for a [`CallbackSigner`].

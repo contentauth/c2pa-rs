@@ -13,6 +13,7 @@
 
 use std::convert::TryFrom;
 
+use c2pa_crypto::SigningAlg;
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use spki::SubjectPublicKeyInfoRef;
 use wasm_bindgen::prelude::*;
@@ -20,7 +21,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
-use crate::{wasm::context::WindowOrWorker, Error, Result, SigningAlg};
+use crate::{wasm::context::WindowOrWorker, Error, Result};
 
 pub struct EcKeyImportParams {
     name: String,
@@ -455,11 +456,11 @@ pub async fn validate_async(alg: SigningAlg, sig: &[u8], data: &[u8], pkey: &[u8
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_crypto::SigningAlg;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::SigningAlg;
 
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

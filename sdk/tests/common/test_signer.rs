@@ -11,7 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{CallbackSigner, SigningAlg};
+use c2pa::CallbackSigner;
+use c2pa_crypto::SigningAlg;
 
 const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");

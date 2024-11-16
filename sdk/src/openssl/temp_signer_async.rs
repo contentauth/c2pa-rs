@@ -20,7 +20,7 @@
 //! This module should be used only for testing purposes.
 
 #[cfg(feature = "openssl_sign")]
-use crate::SigningAlg;
+use c2pa_crypto::SigningAlg;
 
 #[cfg(feature = "openssl_sign")]
 fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {

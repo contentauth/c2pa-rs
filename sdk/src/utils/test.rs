@@ -20,6 +20,7 @@ use std::{
     path::PathBuf,
 };
 
+use c2pa_crypto::SigningAlg;
 use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
@@ -32,7 +33,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    RemoteSigner, Result, Signer, SigningAlg,
+    RemoteSigner, Result, Signer,
 };
 #[cfg(feature = "openssl_sign")]
 use crate::{
