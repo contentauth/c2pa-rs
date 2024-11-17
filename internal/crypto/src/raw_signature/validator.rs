@@ -43,6 +43,11 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         return Some(validator);
     }
 
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    if let Some(validator) = crate::webcrypto::validators::validator_for_signing_alg(alg) {
+        return Some(validator);
+    }
+
     None
 }
 
