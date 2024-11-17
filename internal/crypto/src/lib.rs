@@ -32,10 +32,12 @@ pub mod openssl;
 #[cfg(all(feature = "openssl", target_arch = "wasm32"))]
 compile_error!("OpenSSL feature is not compatible with WASM platform");
 
-pub mod validation_codes;
+pub mod raw_signature;
 
 mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
+
+pub mod validation_codes;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -11,5 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod ffi_mutex;
-mod validators;
+//! Tools for working with raw signature algorithms.
+
+mod validator;
+pub use validator::{
+    validator_for_signing_alg, RawSignatureValidationError, RawSignatureValidator,
+};
