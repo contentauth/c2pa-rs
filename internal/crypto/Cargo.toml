@@ -63,6 +63,9 @@ default-features = false
 features = ["now", "wasmbind"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+ecdsa = "0.16.9"
+p256 = "0.13.2"
+p384 = "0.13.0"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
 web-time = "1.1"

@@ -66,6 +66,14 @@ pub enum RawSignatureValidationError {
     #[cfg(feature = "openssl")]
     #[error(transparent)]
     OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+
+    /// An invalid public key was provided.
+    #[error("invalid public key")]
+    InvalidPublicKey,
+
+    /// An invalid signature value was provided.
+    #[error("invalid signature value")]
+    InvalidSignature,
 }
 
 #[cfg(feature = "openssl")]
