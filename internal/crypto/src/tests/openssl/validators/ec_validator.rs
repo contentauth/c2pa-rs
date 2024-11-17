@@ -16,7 +16,7 @@ use crate::{
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
 };
 
-const SAMPLE_DATA: &'static [u8] = b"some sample content to sign";
+const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
 #[test]
 fn es256() {

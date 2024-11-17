@@ -11,14 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test;
+
 use crate::{
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
     webcrypto::validators::EcValidator,
 };
 
-const SAMPLE_DATA: &'static [u8] = b"some sample content to sign";
+const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
@@ -29,6 +33,7 @@ fn es256() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es384() {
     let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
@@ -51,6 +56,7 @@ fn es384() {
 // }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256_bad_signature() {
     let mut signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -67,6 +73,7 @@ fn es256_bad_signature() {
 }
 
 #[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
