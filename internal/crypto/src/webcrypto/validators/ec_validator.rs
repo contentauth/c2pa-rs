@@ -12,9 +12,9 @@
 // each license.
 
 use ecdsa::{signature::Verifier as EcdsaVerifier, Signature as EcdsaSignature};
-use spki::DecodePublicKey;
 use p256::ecdsa::VerifyingKey as P256VerifyingKey;
 use p384::ecdsa::VerifyingKey as P384VerifyingKey;
+use spki::DecodePublicKey;
 
 use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
 
