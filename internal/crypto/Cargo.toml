@@ -66,9 +66,21 @@ features = ["now", "wasmbind"]
 ecdsa = "0.16.9"
 p256 = "0.13.2"
 p384 = "0.13.0"
+spki = "0.7.3"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
+web-sys = { version = "0.3.58", features = [
+    "console",
+    "Crypto",
+    "SubtleCrypto",
+    "CryptoKey",
+    "Window",
+    "WorkerGlobalScope",
+] }
 web-time = "1.1"
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
+getrandom = { version = "0.2.7", features = ["js"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"

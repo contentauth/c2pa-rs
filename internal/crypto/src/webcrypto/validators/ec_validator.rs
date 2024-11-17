@@ -12,6 +12,7 @@
 // each license.
 
 use ecdsa::{signature::Verifier as EcdsaVerifier, Signature as EcdsaSignature};
+use spki::DecodePublicKey;
 use p256::ecdsa::VerifyingKey as P256VerifyingKey;
 use p384::ecdsa::VerifyingKey as P384VerifyingKey;
 
@@ -48,10 +49,10 @@ impl RawSignatureValidator for EcValidator {
             }
 
             Self::Es384 => {
-                let vk = P384VerifyingKey::from_public_key_der(&pkey)
+                let vk = P384VerifyingKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
-                let signature = EcdsaSignature::from_slice(&sig)
+                let signature = EcdsaSignature::from_slice(sig)
                     .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
                 vk.verify(&data, &signature)

@@ -28,7 +28,7 @@ fn es256() {
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
     EcValidator::Es256
-        .validate(signature, SAMPLE_DATA, &pub_key)
+        .validate(signature, SAMPLE_DATA, pub_key)
         .unwrap();
 }
 
@@ -39,7 +39,7 @@ fn es384() {
     let pub_key = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
 
     EcValidator::Es384
-        .validate(signature, SAMPLE_DATA, &pub_key)
+        .validate(signature, SAMPLE_DATA, pub_key)
         .unwrap();
 }
 
@@ -66,7 +66,7 @@ fn es256_bad_signature() {
 
     assert_eq!(
         EcValidator::Es256
-            .validate(&signature, SAMPLE_DATA, &pub_key)
+            .validate(&signature, SAMPLE_DATA, pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
@@ -83,7 +83,7 @@ fn es256_bad_data() {
 
     assert_eq!(
         EcValidator::Es256
-            .validate(signature, &data, &pub_key)
+            .validate(signature, &data, pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
