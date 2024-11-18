@@ -87,16 +87,16 @@ fn rs384() {
         .unwrap();
 }
 
-// #[test]
-// fn ps512() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/ps512.raw_sig");
+#[test]
+fn rs512() {
+    let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs512.raw_sig");
 
-//     let cert = include_bytes!("../../fixtures/raw_signature/ps512.pub");
-//     let cert = X509::from_pem(cert).unwrap();
-//     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/legacy/rs512.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap();
+    let pub_key = pub_key.public_key_to_der().unwrap();
 
-//     RsaValidator::Ps512
-//         .validate(signature, SAMPLE_DATA, &pub_key)
-//         .unwrap();
-// }
+    RsaLegacyValidator::Rsa512
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
+}
