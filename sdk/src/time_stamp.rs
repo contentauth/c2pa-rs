@@ -19,10 +19,10 @@ use bcder::{
     encode::Values,
     ConstOid, OctetString,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use c2pa_crypto::asn1::rfc3161::PkiStatus;
 use c2pa_crypto::asn1::{
-    rfc3161::{
-        MessageImprint, PkiStatus, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO,
-    },
+    rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
     rfc5652::{
         CertificateChoices::Certificate, SignedData, SignerIdentifier, OID_ID_SIGNED_DATA,
         OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
