@@ -12,7 +12,7 @@
 // each license.
 
 use crate::{
-    openssl::validators::EcValidator,
+    openssl::validators::EcdsaValidator,
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
 };
 
@@ -26,7 +26,7 @@ fn es256() {
     let cert = openssl::x509::X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    EcValidator::Es256
+    EcdsaValidator::Es256
         .validate(signature, SAMPLE_DATA, &pub_key)
         .unwrap();
 }
@@ -42,7 +42,7 @@ fn es256_bad_signature() {
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     assert_eq!(
-        EcValidator::Es256
+        EcdsaValidator::Es256
             .validate(&signature, SAMPLE_DATA, &pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
@@ -61,7 +61,7 @@ fn es256_bad_data() {
     data[10] = 0;
 
     assert_eq!(
-        EcValidator::Es256
+        EcdsaValidator::Es256
             .validate(signature, &data, &pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
@@ -76,7 +76,7 @@ fn es384() {
     let cert = openssl::x509::X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    EcValidator::Es384
+    EcdsaValidator::Es384
         .validate(signature, SAMPLE_DATA, &pub_key)
         .unwrap();
 }
@@ -89,7 +89,7 @@ fn es512() {
     let cert = openssl::x509::X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    EcValidator::Es512
+    EcdsaValidator::Es512
         .validate(signature, SAMPLE_DATA, &pub_key)
         .unwrap();
 }

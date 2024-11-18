@@ -22,7 +22,7 @@ use crate::{
 
 /// An `EcValidator` can validate raw signatures with one of the ECDSA signature
 /// algorithms.
-pub enum EcValidator {
+pub enum EcdsaValidator {
     /// ECDSA with SHA-256
     Es256,
 
@@ -33,7 +33,7 @@ pub enum EcValidator {
     Es512,
 }
 
-impl RawSignatureValidator for EcValidator {
+impl RawSignatureValidator for EcdsaValidator {
     fn validate(
         &self,
         sig: &[u8],

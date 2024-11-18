@@ -16,7 +16,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
-    webcrypto::validators::EcValidator,
+    webcrypto::validators::EcdsaValidator,
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
@@ -27,7 +27,7 @@ fn es256() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
-    EcValidator::Es256
+    EcdsaValidator::Es256
         .validate(signature, SAMPLE_DATA, pub_key)
         .unwrap();
 }
@@ -38,7 +38,7 @@ fn es384() {
     let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
 
-    EcValidator::Es384
+    EcdsaValidator::Es384
         .validate(signature, SAMPLE_DATA, pub_key)
         .unwrap();
 }
@@ -50,7 +50,7 @@ fn es384() {
 
 // let pub_key = include_bytes!("../../fixtures/raw_signature/es512.pub_key");
 
-//     EcValidator::Es512
+//     EcdsaValidator::Es512
 //         .validate(signature, SAMPLE_DATA, &pub_key)
 //         .unwrap();
 // }
@@ -65,7 +65,7 @@ fn es256_bad_signature() {
     let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
     assert_eq!(
-        EcValidator::Es256
+        EcdsaValidator::Es256
             .validate(&signature, SAMPLE_DATA, pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
@@ -82,7 +82,7 @@ fn es256_bad_data() {
     data[10] = 0;
 
     assert_eq!(
-        EcValidator::Es256
+        EcdsaValidator::Es256
             .validate(signature, &data, pub_key)
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch

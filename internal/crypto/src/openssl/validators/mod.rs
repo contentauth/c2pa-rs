@@ -16,8 +16,8 @@
 
 use crate::{raw_signature::RawSignatureValidator, SigningAlg};
 
-mod ec_validator;
-pub use ec_validator::EcValidator;
+mod ecdsa_validator;
+pub use ecdsa_validator::EcdsaValidator;
 
 mod ed25519_validator;
 pub use ed25519_validator::Ed25519Validator;
@@ -28,9 +28,9 @@ pub use ed25519_validator::Ed25519Validator;
 /// Return a validator for the given signing algorithm.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
     match alg {
-        SigningAlg::Es256 => Some(Box::new(EcValidator::Es256)),
-        SigningAlg::Es384 => Some(Box::new(EcValidator::Es384)),
-        SigningAlg::Es512 => Some(Box::new(EcValidator::Es512)),
+        SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
+        SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
+        SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
         SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
         _ => unimplemented!(),
     }

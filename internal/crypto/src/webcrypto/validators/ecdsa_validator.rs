@@ -18,9 +18,9 @@ use spki::DecodePublicKey;
 
 use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
 
-/// An `EcValidator` can validate raw signatures with one of the ECDSA signature
+/// An `EcdsaValidator` can validate raw signatures with one of the ECDSA signature
 /// algorithms.
-pub enum EcValidator {
+pub enum EcdsaValidator {
     /// ECDSA with SHA-256
     Es256,
 
@@ -30,7 +30,7 @@ pub enum EcValidator {
     // Es512, // not yet implemented (check with Colin)
 }
 
-impl RawSignatureValidator for EcValidator {
+impl RawSignatureValidator for EcdsaValidator {
     fn validate(
         &self,
         sig: &[u8],
