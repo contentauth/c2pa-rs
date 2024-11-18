@@ -34,29 +34,6 @@ fn es256() {
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-fn es384() {
-    let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
-
-    let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
-
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-}
-
-#[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
-// implemented
-fn es512() {
-    let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
-    let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
-
-    let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
-
-    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-}
-
-#[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn es256_bad_signature() {
     let mut signature = include_bytes!("../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -84,6 +61,58 @@ fn es256_bad_data() {
     data[10] = 0;
 
     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+
+    assert_eq!(
+        validator.validate(signature, &data, pub_key).unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn es384() {
+    let signature = include_bytes!("../fixtures/raw_signature/es384.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/es384.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
+// implemented
+fn es512() {
+    let signature = include_bytes!("../fixtures/raw_signature/es512.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/es512.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ed25519() {
+    let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ed25519_bad_data() {
+    let signature = include_bytes!("../fixtures/raw_signature/ed25519.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ed25519.pub_key");
+
+    let mut data = SAMPLE_DATA.to_vec();
+    data[5] = 10;
+    data[6] = 11;
+
+    let validator = validator_for_signing_alg(SigningAlg::Ed25519).unwrap();
 
     assert_eq!(
         validator.validate(signature, &data, pub_key).unwrap_err(),

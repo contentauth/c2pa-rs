@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
