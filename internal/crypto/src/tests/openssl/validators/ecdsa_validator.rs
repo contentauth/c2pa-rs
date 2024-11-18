@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use openssl::x509::X509;
+
 use crate::{
     openssl::validators::EcdsaValidator,
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
@@ -23,7 +25,7 @@ fn es256() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
 
     let cert = include_bytes!("../../fixtures/raw_signature/es256.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let cert = X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     EcdsaValidator::Es256
@@ -38,7 +40,7 @@ fn es256_bad_signature() {
     signature[10] = 10;
 
     let cert = include_bytes!("../../fixtures/raw_signature/es256.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let cert = X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     assert_eq!(
@@ -54,7 +56,7 @@ fn es256_bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
 
     let cert = include_bytes!("../../fixtures/raw_signature/es256.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let cert = X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     let mut data = SAMPLE_DATA.to_vec();
@@ -73,7 +75,7 @@ fn es384() {
     let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
 
     let cert = include_bytes!("../../fixtures/raw_signature/es384.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let cert = X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     EcdsaValidator::Es384
@@ -86,7 +88,7 @@ fn es512() {
     let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
 
     let cert = include_bytes!("../../fixtures/raw_signature/es512.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let cert = X509::from_pem(cert).unwrap();
     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
     EcdsaValidator::Es512
