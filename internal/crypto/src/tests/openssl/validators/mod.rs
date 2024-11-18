@@ -12,5 +12,5 @@
 // each license.
 
 mod ec_validator;
-// mod ed_validator;
+mod ed25519_validator;
 // mod rsa_validator;
