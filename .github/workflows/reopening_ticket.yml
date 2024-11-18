@@ -1,4 +1,4 @@
-name: reopening-ticket
+name: Reopening ticket
 on:
   issues:
     types: [reopened]
