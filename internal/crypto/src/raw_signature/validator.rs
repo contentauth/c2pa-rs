@@ -80,12 +80,12 @@ pub fn validator_for_sig_and_hash_algs(
         }
 
         // Not sure yet if we'll need legacy validators for WASM.
-        // #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-        // if let Some(validator) =
-        //     crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-        // {
-        //     return Some(validator);
-        // }
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        if let Some(validator) =
+            crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        {
+            return Some(validator);
+        }
     } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()

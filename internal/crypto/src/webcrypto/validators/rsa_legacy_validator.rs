@@ -11,22 +11,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(missing_docs)] // REMOVE once this becomes `pub(crate)`
-
-use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa, sign::Verifier};
-
-use crate::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+use rsa::{
+    pkcs1v15::{Signature, VerifyingKey},
+    sha2::{Sha256, Sha384, Sha512},
+    signature::Verifier,
+    RsaPublicKey,
 };
+use spki::SubjectPublicKeyInfoRef;
+use x509_parser::der_parser::ber::{parse_ber_sequence /* BerObject */};
+
+use super::rsa_validator::biguint_val;
+use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
 
 /// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
 /// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
 /// providers issue these signatures, which is why it's supported here.)
-///
-/// TEMPORARILY public; will move to `pub(crate)` visibility later in the
-/// refactoring.
-pub enum RsaLegacyValidator {
+pub(crate) enum RsaLegacyValidator {
     Sha1,
     Rsa256,
     Rsa384,
@@ -38,29 +38,45 @@ impl RawSignatureValidator for RsaLegacyValidator {
         &self,
         sig: &[u8],
         data: &[u8],
-        pkey: &[u8],
+        public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
-        let _openssl = OpenSslMutex::acquire()?;
-        let rsa = Rsa::public_key_from_der(pkey)?;
+        let signature: Signature = sig
+            .try_into()
+            .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
 
-        // Rebuild RSA keys to eliminate incompatible values.
-        let n = rsa.n().to_owned()?;
-        let e = rsa.e().to_owned()?;
+        let spki = SubjectPublicKeyInfoRef::try_from(public_key)
+            .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
-        let new_rsa = Rsa::from_public_components(n, e)?;
-        let public_key = PKey::from_rsa(new_rsa)?;
+        let (_, seq) = parse_ber_sequence(&spki.subject_public_key.raw_bytes())
+            .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
-        let mut verifier = match self {
-            Self::Sha1 => Verifier::new(MessageDigest::sha1(), &public_key)?,
-            Self::Rsa256 => Verifier::new(MessageDigest::sha256(), &public_key)?,
-            Self::Rsa384 => Verifier::new(MessageDigest::sha384(), &public_key)?,
-            Self::Rsa512 => Verifier::new(MessageDigest::sha512(), &public_key)?,
+        let modulus = biguint_val(&seq[0]);
+        let exp = biguint_val(&seq[1]);
+
+        let public_key = RsaPublicKey::new(modulus, exp)
+            .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
+
+        let result = match self {
+            Self::Sha1 => {
+                unimplemented!();
+            }
+
+            Self::Rsa256 => {
+                let vk = VerifyingKey::<Sha256>::new(public_key);
+                vk.verify(&data, &signature)
+            }
+
+            Self::Rsa384 => {
+                let vk = VerifyingKey::<Sha384>::new(public_key);
+                vk.verify(&data, &signature)
+            }
+
+            Self::Rsa512 => {
+                let vk = VerifyingKey::<Sha512>::new(public_key);
+                vk.verify(&data, &signature)
+            }
         };
 
-        if verifier.verify_oneshot(sig, data)? {
-            Ok(())
-        } else {
-            Err(RawSignatureValidationError::SignatureMismatch)
-        }
+        result.map_err(|_| RawSignatureValidationError::SignatureMismatch)
     }
 }

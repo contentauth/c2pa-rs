@@ -78,7 +78,7 @@ impl RawSignatureValidator for RsaValidator {
     }
 }
 
-fn biguint_val(ber_object: &BerObject) -> BigUint {
+pub(super) fn biguint_val(ber_object: &BerObject) -> BigUint {
     ber_object
         .as_biguint()
         .map(|x| x.to_u32_digits())

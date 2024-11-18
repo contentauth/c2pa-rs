@@ -28,8 +28,7 @@ mod ed25519_validator;
 pub use ed25519_validator::Ed25519Validator;
 
 mod rsa_legacy_validator;
-pub use rsa_legacy_validator::RsaLegacyValidator;
-// TEMPORARY: Move to pub(crate) visibility after time stamp code moves over.
+pub(crate) use rsa_legacy_validator::RsaLegacyValidator;
 
 mod rsa_validator;
 pub use rsa_validator::RsaValidator;
