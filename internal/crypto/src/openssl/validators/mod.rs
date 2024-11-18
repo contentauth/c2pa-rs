@@ -35,6 +35,8 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
         SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
         SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
-        _ => unimplemented!(),
+        SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
+        SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
+        SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
     }
 }

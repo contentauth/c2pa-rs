@@ -119,3 +119,73 @@ fn ed25519_bad_data() {
         RawSignatureValidationError::SignatureMismatch
     );
 }
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ps256() {
+    let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ps256_bad_signature() {
+    let mut signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig").to_vec();
+    assert_ne!(signature[10], 10);
+    signature[10] = 10;
+
+    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+
+    assert_eq!(
+        validator
+            .validate(&signature, SAMPLE_DATA, pub_key)
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ps256_bad_data() {
+    let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
+
+    let mut data = SAMPLE_DATA.to_vec();
+    data[10] = 0;
+
+    let validator = validator_for_signing_alg(SigningAlg::Ps256).unwrap();
+
+    assert_eq!(
+        validator.validate(signature, &data, pub_key).unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn ps384() {
+    let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Ps384).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
+
+#[test]
+// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
+// implemented
+fn ps512() {
+    let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
+    let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");
+
+    let validator = validator_for_signing_alg(SigningAlg::Ps512).unwrap();
+
+    validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
+}
