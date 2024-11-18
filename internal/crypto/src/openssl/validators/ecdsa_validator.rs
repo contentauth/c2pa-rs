@@ -20,8 +20,9 @@ use crate::{
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},
 };
 
-/// An `EcValidator` can validate raw signatures with one of the ECDSA signature
-/// algorithms.
+/// An `EcdsaValidator` can validate raw signatures with one of the ECDSA
+/// signature algorithms.
+#[non_exhaustive]
 pub enum EcdsaValidator {
     /// ECDSA with SHA-256
     Es256,
