@@ -8,16 +8,16 @@ The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C
 
 Additional documentation:
 
-- [Usage](usage.md)
-- [Supported formats](supported-formats.md)
-- [Release notes](release-notes.md)
-- [Testing](testing.md)
+- [Usage](docs/usage.md)
+- [Supported formats](docs/supported-formats.md)
+- [Release notes](docs/release-notes.md)
+- [Testing](docs/testing.md)
 
 </div>
 
 ## Key features
 
-The C2PA Rust library (previously referred to as the "Rust SDK") implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html).
+The C2PA Rust library implements a subset of the [C2PA technical specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html).
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_manifests).
@@ -26,13 +26,15 @@ The library enables a desktop, mobile, or embedded application to:
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_hard_bindings).
 
-For details on what you can do with the library, see [Using the Rust library](usage.md).
+
+
+For details on what you can do with the library, see [Using the Rust library](docs/usage.md).
 
 ## State of the project
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.  
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](release-notes.md) for more information. Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
+NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
 ### Contributions and feedback
 
