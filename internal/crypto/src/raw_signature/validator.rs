@@ -11,8 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use bcder::Oid;
 use thiserror::Error;
 
+use super::oids::*;
 use crate::SigningAlg;
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
@@ -46,6 +48,57 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     if let Some(validator) = crate::webcrypto::validators::validator_for_signing_alg(alg) {
         return Some(validator);
+    }
+
+    None
+}
+
+/// Return a built-in signature validator for the requested signature
+/// algorithm as identified by OID.
+///
+/// Which validators are available may vary depending on the platform and
+/// which crate features were enabled.
+///
+/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
+/// into c2pa-crypto
+pub fn validator_for_sig_and_hash_algs(
+    sig_alg: &Oid,
+    hash_alg: &Oid,
+) -> Option<Box<dyn RawSignatureValidator>> {
+    if sig_alg.as_ref() == RSA_OID.as_bytes()
+        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
+        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
+    {
+        // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
+
+        #[cfg(feature = "openssl")]
+        if let Some(validator) =
+            crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        {
+            return Some(validator);
+        }
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        if let Some(validator) =
+            crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+        {
+            return Some(validator);
+        }
+    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
+        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
+    {
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            return validator_for_signing_alg(SigningAlg::Es256);
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            return validator_for_signing_alg(SigningAlg::Es384);
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            return validator_for_signing_alg(SigningAlg::Es512);
+        }
+    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        return validator_for_signing_alg(SigningAlg::Ed25519);
     }
 
     None

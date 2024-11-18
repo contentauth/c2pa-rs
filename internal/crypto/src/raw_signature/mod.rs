@@ -13,7 +13,10 @@
 
 //! Tools for working with raw signature algorithms.
 
+pub(crate) mod oids;
+
 mod validator;
 pub use validator::{
-    validator_for_signing_alg, RawSignatureValidationError, RawSignatureValidator,
+    validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
+    RawSignatureValidator,
 };
