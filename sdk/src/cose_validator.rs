@@ -15,9 +15,12 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-#[cfg(not(target_arch = "wasm32"))]
-use c2pa_crypto::raw_signature::{validator_for_signing_alg, RawSignatureValidator};
-use c2pa_crypto::{asn1::rfc3161::TstInfo, ocsp::OcspResponse, SigningAlg};
+use c2pa_crypto::{
+    asn1::rfc3161::TstInfo,
+    ocsp::OcspResponse,
+    raw_signature::{validator_for_signing_alg, RawSignatureValidator},
+    SigningAlg,
+};
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
@@ -1156,7 +1159,6 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1285,19 +1287,6 @@ pub(crate) fn verify_cose(
     Ok(result)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn verify_cose(
-    _cose_bytes: &[u8],
-    _data: &[u8],
-    _additional_data: &[u8],
-    _cert_check: bool,
-    _th: &dyn TrustHandlerConfig,
-    _validation_log: &mut impl StatusTracker,
-) -> Result<ValidationInfo> {
-    Err(Error::CoseVerifier)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn validate_with_cert(
     validator: Box<dyn RawSignatureValidator>,
     sig: &[u8],
