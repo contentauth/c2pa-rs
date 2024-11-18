@@ -32,7 +32,7 @@ use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
-#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
+#[cfg(target_arch = "wasm32")]
 use crate::cose_validator::{
     ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
     ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
@@ -361,50 +361,6 @@ fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chr
     }
 }
 
-#[cfg(feature = "openssl")]
-fn get_local_validator(
-    sig_alg: &bcder::Oid,
-    hash_alg: &bcder::Oid,
-) -> Result<Box<dyn crate::validator::CoseValidator>> {
-    let validator = if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA1_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("sha1"))
-        } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rsa256"))
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rsa384"))
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Box::new(crate::openssl::RsaLegacyValidator::new("rsa512"))
-        } else {
-            return Err(Error::CoseTimeStampAuthority);
-        }
-    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es256)
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es384)
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es512)
-        } else {
-            return Err(Error::CoseTimeStampAuthority);
-        }
-    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        crate::validator::get_validator(c2pa_crypto::SigningAlg::Ed25519)
-    } else {
-        return Err(Error::CoseTimeStampAuthority);
-    };
-
-    Ok(validator)
-}
-
 #[cfg(target_arch = "wasm32")]
 fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<String> {
     if sig_alg.as_ref() == RSA_OID.as_bytes()
@@ -627,8 +583,19 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             let validated_res: Result<bool> = if _sync {
                 #[cfg(feature = "openssl")]
                 {
-                    let validator = get_local_validator(sig_alg, hash_alg)?;
-                    validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                    let Some(validator) =
+                        c2pa_crypto::raw_signature::validator_for_sig_and_hash_algs(
+                            sig_alg, hash_alg,
+                        )
+                    else {
+                        return Err(Error::CoseSignatureAlgorithmNotSupported);
+                    };
+
+                    validator
+                        .validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                        .map_err(|_| Error::CoseTimeStampMismatch)?;
+
+                    Ok(true)
                 }
 
                 #[cfg(not(feature = "openssl"))]
@@ -638,8 +605,19 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             } else {
                 #[cfg(feature = "openssl")]
                 {
-                    let validator = get_local_validator(sig_alg, hash_alg)?;
-                    validator.validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                    let Some(validator) =
+                        c2pa_crypto::raw_signature::validator_for_sig_and_hash_algs(
+                            sig_alg, hash_alg,
+                        )
+                    else {
+                        return Err(Error::CoseSignatureAlgorithmNotSupported);
+                    };
+
+                    validator
+                        .validate(&sig_val.to_bytes(), &tbs, &signing_key_der)
+                        .map_err(|_| Error::CoseTimeStampMismatch)?;
+
+                    Ok(true)
                 }
 
                 #[cfg(target_arch = "wasm32")]
