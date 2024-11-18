@@ -32,32 +32,6 @@ fn es256() {
 }
 
 #[test]
-fn es384() {
-    let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
-
-    let cert = include_bytes!("../../fixtures/raw_signature/es384.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
-    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
-
-    EcValidator::Es384
-        .validate(signature, SAMPLE_DATA, &pub_key)
-        .unwrap();
-}
-
-#[test]
-fn es512() {
-    let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
-
-    let cert = include_bytes!("../../fixtures/raw_signature/es512.pub");
-    let cert = openssl::x509::X509::from_pem(cert).unwrap();
-    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
-
-    EcValidator::Es512
-        .validate(signature, SAMPLE_DATA, &pub_key)
-        .unwrap();
-}
-
-#[test]
 fn es256_bad_signature() {
     let mut signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig").to_vec();
     assert_ne!(signature[10], 10);
@@ -92,4 +66,30 @@ fn es256_bad_data() {
             .unwrap_err(),
         RawSignatureValidationError::SignatureMismatch
     );
+}
+
+#[test]
+fn es384() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
+
+    let cert = include_bytes!("../../fixtures/raw_signature/es384.pub");
+    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+
+    EcValidator::Es384
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
+}
+
+#[test]
+fn es512() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
+
+    let cert = include_bytes!("../../fixtures/raw_signature/es512.pub");
+    let cert = openssl::x509::X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+
+    EcValidator::Es512
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
 }
