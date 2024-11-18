@@ -37,11 +37,11 @@ impl RawSignatureValidator for EcdsaValidator {
         data: &[u8],
         public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
-        let signature = EcdsaSignature::from_slice(sig)
-            .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
-
         let result = match self {
             Self::Es256 => {
+                let signature = EcdsaSignature::from_slice(sig)
+                    .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
+
                 let vk = P256VerifyingKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
@@ -49,6 +49,9 @@ impl RawSignatureValidator for EcdsaValidator {
             }
 
             Self::Es384 => {
+                let signature = EcdsaSignature::from_slice(sig)
+                    .map_err(|_| RawSignatureValidationError::InvalidSignature)?;
+
                 let vk = P384VerifyingKey::from_public_key_der(public_key)
                     .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 

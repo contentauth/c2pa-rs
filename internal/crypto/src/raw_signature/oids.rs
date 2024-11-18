@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(dead_code)] // Usage varies by platform.
+
 use x509_parser::{der_parser::oid, oid_registry::Oid};
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
