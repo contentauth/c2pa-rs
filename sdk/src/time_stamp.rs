@@ -19,6 +19,15 @@ use bcder::{
     encode::Values,
     ConstOid, OctetString,
 };
+use c2pa_crypto::asn1::{
+    rfc3161::{
+        MessageImprint, PkiStatus, TimeStampReq, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO,
+    },
+    rfc5652::{
+        CertificateChoices::Certificate, SignedData, SignerIdentifier, OID_ID_SIGNED_DATA,
+        OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
+    },
+};
 use coset::{sig_structure_data, ProtectedHeader};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
@@ -30,13 +39,6 @@ use crate::cose_validator::{
     SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
 };
 use crate::{
-    asn1::{
-        rfc3161::{TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
-        rfc5652::{
-            CertificateChoices::Certificate, SignedData, OID_ID_SIGNED_DATA, OID_MESSAGE_DIGEST,
-            OID_SIGNING_TIME,
-        },
-    },
     error::{Error, Result},
     hash_utils::vec_compare,
     AsyncSigner, Signer,
@@ -121,7 +123,7 @@ pub(crate) fn cose_sigtst_to_tstinfos(
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
-    request: &crate::asn1::rfc3161::TimeStampReq,
+    request: &TimeStampReq,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
 
@@ -193,7 +195,7 @@ fn time_stamp_request_http(
 pub(crate) fn time_stamp_message_http(
     message: &[u8],
     digest_algorithm: DigestAlgorithm,
-) -> Result<crate::asn1::rfc3161::TimeStampReq> {
+) -> Result<TimeStampReq> {
     use rand::{thread_rng, Rng};
 
     let mut h = digest_algorithm.digester();
@@ -205,9 +207,9 @@ pub(crate) fn time_stamp_message_http(
         .try_fill(&mut random)
         .map_err(|_| Error::CoseTimeStampGeneration)?;
 
-    let request = crate::asn1::rfc3161::TimeStampReq {
+    let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),
-        message_imprint: crate::asn1::rfc3161::MessageImprint {
+        message_imprint: MessageImprint {
             hash_algorithm: digest_algorithm.into(),
             hashed_message: bcder::OctetString::new(bytes::Bytes::copy_from_slice(digest.as_ref())),
         },
@@ -236,8 +238,7 @@ impl TimeStampResponse {
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
-            crate::asn1::rfc3161::PkiStatus::Granted
-                | crate::asn1::rfc3161::PkiStatus::GrantedWithMods
+            PkiStatus::Granted | PkiStatus::GrantedWithMods
         )
     }
 
@@ -301,7 +302,6 @@ pub fn default_rfc3161_request(
     data: &[u8],
     message: &[u8],
 ) -> Result<Vec<u8>> {
-    use crate::asn1::rfc3161::TimeStampReq;
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
         bcder::Mode::Der,
@@ -388,16 +388,16 @@ fn get_local_validator(
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es256)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es256)
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es384)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es384)
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            crate::validator::get_validator(crate::SigningAlg::Es512)
+            crate::validator::get_validator(c2pa_crypto::SigningAlg::Es512)
         } else {
             return Err(Error::CoseTimeStampAuthority);
         }
     } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        crate::validator::get_validator(crate::SigningAlg::Ed25519)
+        crate::validator::get_validator(c2pa_crypto::SigningAlg::Ed25519)
     } else {
         return Err(Error::CoseTimeStampAuthority);
     };
@@ -429,16 +429,16 @@ fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<Str
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Some(crate::SigningAlg::Es256.to_string())
+            Some(c2pa_crypto::SigningAlg::Es256.to_string())
         } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Some(crate::SigningAlg::Es384.to_string())
+            Some(c2pa_crypto::SigningAlg::Es384.to_string())
         } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Some(crate::SigningAlg::Es512.to_string())
+            Some(c2pa_crypto::SigningAlg::Es512.to_string())
         } else {
             None
         }
     } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        Some(crate::SigningAlg::Ed25519.to_string())
+        Some(c2pa_crypto::SigningAlg::Ed25519.to_string())
     } else {
         None
     }
@@ -468,7 +468,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                 };
 
                 match &signer_info.sid {
-                    crate::asn1::rfc5652::SignerIdentifier::IssuerAndSerialNumber(sn) => {
+                    SignerIdentifier::IssuerAndSerialNumber(sn) => {
                         if sn.issuer == c.tbs_certificate.issuer
                             && sn.serial_number == c.tbs_certificate.serial_number
                         {
@@ -477,7 +477,7 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
                             None
                         }
                     }
-                    crate::asn1::rfc5652::SignerIdentifier::SubjectKeyIdentifier(ski) => {
+                    SignerIdentifier::SubjectKeyIdentifier(ski) => {
                         const SKI_OID: ConstOid = bcder::Oid(&[2, 5, 29, 14]);
                         if let Some(extensions) = &c.tbs_certificate.extensions {
                             if extensions.iter().any(|e| {

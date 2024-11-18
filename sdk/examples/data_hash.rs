@@ -26,8 +26,10 @@ use c2pa::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
     },
     create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
-    Relationship, Result, SigningAlg,
+    Relationship, Result,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use c2pa_crypto::SigningAlg;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");

@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa};
 
-use crate::{validator::CoseValidator, Error, Result, SigningAlg};
+use crate::{validator::CoseValidator, Error, Result};
 
 pub struct RsaValidator {
     alg: SigningAlg,
@@ -27,7 +28,7 @@ impl RsaValidator {
 
 impl CoseValidator for RsaValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let rsa = Rsa::public_key_from_der(pkey)?;
 

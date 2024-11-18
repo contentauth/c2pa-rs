@@ -2,7 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/*! Holds Rust struct definitions for various ASN.1 primitives. */
+#![allow(missing_docs)]
+
+//! Holds Rust struct definitions for various ASN.1 primitives.
 
 // This code is copied from a subset of version 0.22.0 of the
 // cryptographic-message-syntax crate located at:

@@ -11,9 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::pkey::PKey;
 
-use crate::{validator::CoseValidator, Error, Result, SigningAlg};
+use crate::{validator::CoseValidator, Error, Result};
 
 pub struct EdValidator {
     _alg: SigningAlg,
@@ -27,7 +28,7 @@ impl EdValidator {
 
 impl CoseValidator for EdValidator {
     fn validate(&self, sig: &[u8], data: &[u8], pkey: &[u8]) -> Result<bool> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let public_key = PKey::public_key_from_der(pkey).map_err(|_err| Error::CoseSignature)?;
 
