@@ -151,7 +151,7 @@ fn ps256_bad_signature() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps256_bad_data() {
     let signature = include_bytes!("../fixtures/raw_signature/ps256.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps256.pub_key");
@@ -168,7 +168,7 @@ fn ps256_bad_data() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps384() {
     let signature = include_bytes!("../fixtures/raw_signature/ps384.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps384.pub_key");
@@ -179,8 +179,7 @@ fn ps384() {
 }
 
 #[test]
-// #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)] // ES512 not
-// implemented
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn ps512() {
     let signature = include_bytes!("../fixtures/raw_signature/ps512.raw_sig");
     let pub_key = include_bytes!("../fixtures/raw_signature/ps512.pub_key");

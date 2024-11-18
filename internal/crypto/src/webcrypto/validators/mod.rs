@@ -22,16 +22,18 @@ pub use ecdsa_validator::EcdsaValidator;
 mod ed25519_validator;
 pub use ed25519_validator::Ed25519Validator;
 
-// mod rsa_validator;
-// pub use rsa_validator::{RsaLegacyValidator, RsaValidator}; // ???
+mod rsa_validator;
+pub use rsa_validator::RsaValidator;
 
 /// Return a validator for the given signing algorithm.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
     match alg {
         SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
         SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
-        // SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
+        SigningAlg::Es512 => None, /* why is this unimplemented? */
         SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
-        _ => unimplemented!(),
+        SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
+        SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
+        SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
     }
 }

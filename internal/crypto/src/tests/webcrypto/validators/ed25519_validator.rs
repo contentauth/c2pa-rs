@@ -20,8 +20,7 @@ use crate::{
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-#[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 fn good() {
     let signature = include_bytes!("../../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ed25519.pub_key");
@@ -31,8 +30,7 @@ fn good() {
         .unwrap();
 }
 
-#[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[wasm_bindgen_test]
 fn bad_data() {
     let signature = include_bytes!("../../fixtures/raw_signature/ed25519.raw_sig");
     let pub_key = include_bytes!("../../fixtures/raw_signature/ed25519.pub_key");
