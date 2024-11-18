@@ -1,12 +1,15 @@
 # Release notes
 
-## Version 1.0
+## New API 
 
-The version 1.0 release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but are deprecated.  To use the deprecated API, enable the `v1_api` feature; for example:
+The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  
 
-```
-c2pa = {version="1.0.0", features=["v1_api"]}
-```
+The new API focuses on streaming I/O and supports the following structs:
+- [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html)
+- [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
+- [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
+
+### Goals
 
 The goals of this release are to provide a consistent, flexible, well-tested API; specifically:
 
@@ -20,19 +23,20 @@ The goals of this release are to provide a consistent, flexible, well-tested API
 - Provide a consistent model for setting runtime options.
 - Keep porting as simple as possible.
 
-The new API focuses on streaming I/O and supports the following structs:
-- [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html)
-- [Reader](https://docs.rs/c2pa/latest/c2pa/struct.Reader.html)
-- [ManifestDefinition](https://docs.rs/c2pa/latest/c2pa/struct.ManifestDefinition.html)
-
 ### Enabling 
 
 <!-- This requirement should go away with actual 1.0 release, right? -->
 
-To use this API, enable the `unstable_api` feature; for example:
+To use the new API, enable the `unstable_api` feature; for example:
 
 ```
-c2pa = {version="1.0.0", features=["unstable_api"]}
+c2pa = {version="0.39.0", features=["unstable_api"]}
+```
+
+When version 1.0 of the library is released, the new API will become the default, but you will still be able to use the deprecated API by enabling the `v1_api` feature; for example:
+
+```
+c2pa = {version="0.39.0", features=["v1_api"]}
 ```
 
 ## Language binding support

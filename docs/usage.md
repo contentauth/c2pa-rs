@@ -27,7 +27,7 @@ To read or write a manifest file, add the `file_io` dependency to your `Cargo.to
 Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG files. For example:
 
 ```
-c2pa = { version = "0.25.0", features = ["file_io", "add_thumbnails"] }
+c2pa = { version = "0.39.0", features = ["file_io", "add_thumbnails"] }
 ```
 
 NOTE: If you are building for WASM, omit the `file_io` dependency.
@@ -44,6 +44,26 @@ The Rust library crate provides the following capabilities:
 * `json_schema` is used by `make schema` to produce a JSON schema document that represents the `ManifestStore` data structures.
 * `psxxx_ocsp_stapling_experimental` enables a demonstration feature that attempts to fetch the OCSP data from the OCSP responders listed in the manifest signing certificate.  The response becomes part of the manifest and is used to prove the certificate was not revoked at the time of signing.  This is only implemented for PS256, PS384 and PS512 signatures and is intended as a demonstration.
 * `openssl_ffi_mutex` prevents multiple threads from accessing the C OpenSSL library simultaneously. (This library is not re-entrant.) In a multi-threaded process (such as Cargo's test runner), this can lead to unpredictable behavior.
+
+### New API
+
+### Enabling 
+
+<!-- This requirement should go away with actual 1.0 release -->
+
+The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  
+
+To use the new API, enable the `unstable_api` feature; for example:
+
+```
+c2pa = {version="0.39.0", features=["unstable_api"]}
+```
+
+When version 1.0 of the library is released, the new API will become the default, but you will still be able to use the deprecated API by enabling the `v1_api` feature; for example:
+
+```
+c2pa = {version="0.39.0", features=["v1_api"]}
+```
 
 ### Resource references
 
