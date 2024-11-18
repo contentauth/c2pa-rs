@@ -12,7 +12,7 @@
 // each license.
 
 use rsa::{
-    pss::Signature,
+    pss::{Signature, VerifyingKey},
     sha2::{Sha256, Sha384, Sha512},
     signature::Verifier,
     BigUint, RsaPublicKey,
@@ -61,15 +61,15 @@ impl RawSignatureValidator for RsaValidator {
 
         let result = match self {
             Self::Ps256 => {
-                let vk = rsa::pss::VerifyingKey::<Sha256>::new(public_key);
+                let vk = VerifyingKey::<Sha256>::new(public_key);
                 vk.verify(&data, &signature)
             }
             Self::Ps384 => {
-                let vk = rsa::pss::VerifyingKey::<Sha384>::new(public_key);
+                let vk = VerifyingKey::<Sha384>::new(public_key);
                 vk.verify(&data, &signature)
             }
             Self::Ps512 => {
-                let vk = rsa::pss::VerifyingKey::<Sha512>::new(public_key);
+                let vk = VerifyingKey::<Sha512>::new(public_key);
                 vk.verify(&data, &signature)
             }
         };
