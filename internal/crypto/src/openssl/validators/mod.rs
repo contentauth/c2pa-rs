@@ -22,8 +22,11 @@ pub use ecdsa_validator::EcdsaValidator;
 mod ed25519_validator;
 pub use ed25519_validator::Ed25519Validator;
 
-// mod rsa_validator;
-// pub use rsa_validator::{RsaLegacyValidator, RsaValidator}; // ???
+// mod rsa_legacy_validator;
+// pub use rsa_legacy_validator::RsaLegacyValidator; // ???
+
+mod rsa_validator;
+pub use rsa_validator::RsaValidator;
 
 /// Return a validator for the given signing algorithm.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {

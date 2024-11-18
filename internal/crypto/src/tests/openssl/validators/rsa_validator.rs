@@ -11,97 +11,88 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use openssl::x509::X509;
+
+use crate::{
+    openssl::validators::RsaValidator,
+    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
+};
+
+const SAMPLE_DATA: &[u8] = b"some sample content to sign";
+
 #[test]
-fn verify_rsa_signatures() {
-    let cert_bytes = include_bytes!("../../tests/fixtures/temp_cert.data");
-    let key_bytes = include_bytes!("../../tests/fixtures/temp_priv_key.data");
+fn ps256() {
+    let signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig");
 
-    let signcert = openssl::x509::X509::from_pem(cert_bytes).unwrap();
-    let pkey = signcert.public_key().unwrap().public_key_to_der().unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/ps256.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap();
+    let pub_key = pub_key.public_key_to_der().unwrap();
 
-    let data = b"some sample content to sign";
+    RsaValidator::Ps256
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
+}
 
-    // println!("Test RS256");
-    // let mut signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-    //     cert_bytes,
-    //     key_bytes,
-    //     "rs256".to_string(),
-    //     None,
-    // )
-    // .unwrap();
+#[test]
+fn ps256_bad_signature() {
+    let mut signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig").to_vec();
+    assert_ne!(signature[10], 10);
+    signature[10] = 10;
 
-    // let mut signature = signer.sign(data).unwrap();
-    // println!("signature len = {}", signature.len());
-    // let mut validator = RsaValidator::new("rs256");
-    // assert!(validator.validate(&signature, data, &pkey).unwrap());
+    let cert = include_bytes!("../../fixtures/raw_signature/ps256.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    // println!("Test RS384");
-    // signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-    //     cert_bytes,
-    //     key_bytes,
-    //     "rs384".to_string(),
-    //     None,
-    // )
-    // .unwrap();
+    assert_eq!(
+        RsaValidator::Ps256
+            .validate(&signature, SAMPLE_DATA, &pub_key)
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
-    // signature = signer.sign(data).unwrap();
-    // println!("signature len = {}", signature.len());
-    // validator = RsaValidator::new("rs384");
-    // assert!(validator.validate(&signature, data, &pkey).unwrap());
+#[test]
+fn ps256_bad_data() {
+    let signature = include_bytes!("../../fixtures/raw_signature/ps256.raw_sig");
 
-    // println!("Test RS512");
-    // signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-    //     cert_bytes,
-    //     key_bytes,
-    //     "rs512".to_string(),
-    //     None,
-    // )
-    // .unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/ps256.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    // signature = signer.sign(data).unwrap();
-    // println!("signature len = {}", signature.len());
-    // validator = RsaValidator::new("rs512");
-    // assert!(validator.validate(&signature, data, &pkey).unwrap());
+    let mut data = SAMPLE_DATA.to_vec();
+    data[10] = 0;
 
-    println!("Test PS256");
-    let mut signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-        cert_bytes,
-        key_bytes,
-        SigningAlg::Ps256,
-        None,
-    )
-    .unwrap();
+    assert_eq!(
+        RsaValidator::Ps256
+            .validate(signature, &data, &pub_key)
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
-    let mut signature = signer.sign(data).unwrap();
-    println!("signature len = {}", signature.len());
-    let mut validator = RsaValidator::new(SigningAlg::Ps256);
-    assert!(validator.validate(&signature, data, &pkey).unwrap());
+#[test]
+fn ps384() {
+    let signature = include_bytes!("../../fixtures/raw_signature/ps384.raw_sig");
 
-    println!("Test PS384");
-    signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-        cert_bytes,
-        key_bytes,
-        SigningAlg::Ps384,
-        None,
-    )
-    .unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/ps384.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-    signature = signer.sign(data).unwrap();
-    println!("signature len = {}", signature.len());
-    validator = RsaValidator::new(SigningAlg::Ps384);
-    assert!(validator.validate(&signature, data, &pkey).unwrap());
+    RsaValidator::Ps384
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
+}
 
-    println!("Test PS512");
-    signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-        cert_bytes,
-        key_bytes,
-        SigningAlg::Ps512,
-        None,
-    )
-    .unwrap();
+#[test]
+fn ps512() {
+    let signature = include_bytes!("../../fixtures/raw_signature/ps512.raw_sig");
 
-    signature = signer.sign(data).unwrap();
-    println!("signature len = {}", signature.len());
-    validator = RsaValidator::new(SigningAlg::Ps512);
-    assert!(validator.validate(&signature, data, &pkey).unwrap());
+    let cert = include_bytes!("../../fixtures/raw_signature/ps512.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+
+    RsaValidator::Ps512
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
 }
