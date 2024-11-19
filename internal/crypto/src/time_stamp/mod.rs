@@ -16,7 +16,7 @@
 //! [RFC 3161]: https://www.ietf.org/rfc/rfc3161.txt
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(self) mod http_request;
+mod http_request;
 
 mod provider;
 pub use provider::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider};
