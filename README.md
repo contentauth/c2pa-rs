@@ -11,7 +11,7 @@ Additional documentation:
 - [Usage](docs/usage.md)
 - [Supported formats](docs/supported-formats.md)
 - [Release notes](docs/release-notes.md)
-- [Testing](docs/testing.md)
+- [Contributing to the project](docs/project-contributions.md)
 
 </div>
 
@@ -26,15 +26,13 @@ The library enables a desktop, mobile, or embedded application to:
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_hard_bindings).
 
-
-
 For details on what you can do with the library, see [Using the Rust library](docs/usage.md).
 
 ## State of the project
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.  
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
+NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. 
 
 ### Contributions and feedback
 
@@ -46,24 +44,6 @@ The `c2pa` crate is distributed under the terms of both the [MIT license](https:
 
 Some components and dependent crates are licensed under different terms; please check their licenses for details.
 
-## Nightly builds
 
-In most cases, you should depend on this crate as published via [crates.io](https://crates.io/crates/c2pa).
-
-The Adobe team produces nightly snapshots of this crate via a `nightly` branch, which we use for testing the impact of pending changes to upstream dependencies.
-
-You may wish to use these builds for your own testing ahead of our releases, you may include the library via the following `Cargo.toml` entry:
-
-```toml
-c2pa = { git = "https://github.com/contentauth/c2pa-rs.git", branch = "nightly", features = [...]}
-```
-
-Commits in this branch have a modified `sdk/Cargo.toml` entry which includes a version number similar to the following:
-
-```toml
-version = "0.25.3-nightly+2023-08-28-2f33ab3"
-```
-
-Please note that there is no formal support for code from a nightly release, but if you become aware of any issues, we would appreciate a bug report including this version number.
 
 

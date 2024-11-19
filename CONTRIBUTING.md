@@ -46,7 +46,7 @@ as part of the project. [Sign our CLA](https://opensource.adobe.com/cla.html). Y
 only need to submit an Adobe CLA one time, so if you have submitted one previously,
 you are good to go!
 
-## Code reviews
+### Code reviews
 
 All submissions should come in the form of pull requests and need to be reviewed
 by project committers. Read [GitHub's pull request documentation](https://help.github.com/articles/about-pull-requests/)
@@ -88,7 +88,9 @@ feat(api): Introduce a new API to validate 1.0 claims
 Repurpose existing v2 API for 0.8 compatibility (read: no validation) mode.
 ```
 
-The conventional commit message requirement does not apply to individual commits within a pull request, provided that those commits will be squashed when the PR is merged and the resulting squash commit does follow the conventional commit requirement. This may require the person merging the PR to verify the commit message syntax when performing the squash merge.  TIP: For single-commit PRs, ensure the commit message conforms to the conventional commit requirement, since by default that will also be the title of the PR.
+The conventional commit message requirement does not apply to individual commits within a pull request, provided that those commits will be squashed when the PR is merged and the resulting squash commit does follow the conventional commit requirement. This may require the person merging the PR to verify the commit message syntax when performing the squash merge.  
+
+TIP: For single-commit PRs, ensure the commit message conforms to the conventional commit requirement, since by default that will also be the title of the PR.
 
 ## From contributor to committer
 

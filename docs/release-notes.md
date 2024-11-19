@@ -1,5 +1,7 @@
 # Release notes
 
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
+
 ## New API 
 
 The current release has a new API that replaces the previous methods of reading and writing C2PA data, which are still supported but will be deprecated.  
