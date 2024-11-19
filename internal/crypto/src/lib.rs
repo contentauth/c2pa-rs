@@ -23,7 +23,6 @@ pub mod asn1;
 pub mod base64;
 pub mod hash;
 pub(crate) mod internal;
-
 pub mod ocsp;
 
 #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
