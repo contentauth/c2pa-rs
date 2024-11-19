@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(missing_docs)]
-
 use std::{fmt, str::FromStr};
 
 #[cfg(feature = "json_schema")]
@@ -21,11 +19,13 @@ use serde::{Deserialize, Serialize};
 
 /// Describes the digital signature algorithms allowed by the C2PA spec.
 ///
-/// Per <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_digital_signatures>:
+/// Per [§13.2, “Digital Signatures”]:
 ///
-/// > All digital signatures that are stored in a C2PA Manifest shall
-/// > be generated using one of the digital signature algorithms and
-/// > key types listed as described in this section.
+/// > All digital signatures applied as per the technical requirements of this
+/// > specification shall be generated using one of the digital signature
+/// > algorithms and key types listed as described in this section.
+///
+/// [§13.2, “Digital Signatures”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_digital_signatures
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum SigningAlg {
@@ -92,7 +92,7 @@ impl fmt::Display for SigningAlg {
 ///
 /// The string must be one of "es256", "es384", "es512", "ps256", "ps384",
 /// "ps512", or "ed25519".
-pub struct UnknownAlgorithmError(String);
+pub struct UnknownAlgorithmError(pub String);
 
 impl fmt::Display for UnknownAlgorithmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
@@ -101,44 +101,3 @@ impl fmt::Display for UnknownAlgorithmError {
 }
 
 impl std::error::Error for UnknownAlgorithmError {}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::unwrap_used)]
-
-    use super::*;
-
-    #[test]
-    fn alg_from_str() {
-        assert_eq!("es256".parse(), Ok(SigningAlg::Es256));
-        assert_eq!("es384".parse(), Ok(SigningAlg::Es384));
-        assert_eq!("es512".parse(), Ok(SigningAlg::Es512));
-        assert_eq!("ps256".parse(), Ok(SigningAlg::Ps256));
-        assert_eq!("ps384".parse(), Ok(SigningAlg::Ps384));
-        assert_eq!("ps512".parse(), Ok(SigningAlg::Ps512));
-        assert_eq!("ed25519".parse(), Ok(SigningAlg::Ed25519));
-
-        let r: Result<SigningAlg, UnknownAlgorithmError> = "bogus".parse();
-        assert_eq!(r, Err(UnknownAlgorithmError("bogus".to_string())));
-    }
-
-    #[test]
-    fn signing_alg_impl_display() {
-        assert_eq!(format!("{}", SigningAlg::Es256), "es256");
-        assert_eq!(format!("{}", SigningAlg::Es384), "es384");
-        assert_eq!(format!("{}", SigningAlg::Es512), "es512");
-        assert_eq!(format!("{}", SigningAlg::Ps256), "ps256");
-        assert_eq!(format!("{}", SigningAlg::Ps384), "ps384");
-        assert_eq!(format!("{}", SigningAlg::Ps512), "ps512");
-        assert_eq!(format!("{}", SigningAlg::Ed25519), "ed25519");
-    }
-
-    #[test]
-    fn err_impl_display() {
-        assert_eq!(
-            format!("{}", UnknownAlgorithmError("bogus".to_owned())),
-            "UnknownAlgorithmError(bogus)"
-        );
-    }
-}

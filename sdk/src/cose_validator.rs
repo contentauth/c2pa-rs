@@ -15,7 +15,12 @@ use std::io::Cursor;
 
 use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
-use c2pa_crypto::{asn1::rfc3161::TstInfo, ocsp::OcspResponse};
+use c2pa_crypto::{
+    asn1::rfc3161::TstInfo,
+    ocsp::OcspResponse,
+    raw_signature::{validator_for_signing_alg, RawSignatureValidator},
+    SigningAlg,
+};
 use c2pa_status_tracker::{log_item, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
@@ -32,8 +37,6 @@ use x509_parser::{
 
 #[cfg(feature = "openssl")]
 use crate::openssl::verify_trust;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::validator::{get_validator, CoseValidator};
 use crate::{
     error::{Error, Result},
     settings::get_settings_value,
@@ -42,7 +45,6 @@ use crate::{
     utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
-    SigningAlg,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::{
@@ -60,6 +62,7 @@ pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113
 pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
 pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+#[allow(dead_code)] // used only in WASM build
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
 pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
@@ -1156,7 +1159,6 @@ pub(crate) fn get_signing_info(
 /// data:  data that was used to create the cose_bytes, these must match
 /// addition_data: additional optional data that may have been used during signing
 /// returns - Ok on success
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn verify_cose(
     cose_bytes: &[u8],
     data: &[u8],
@@ -1182,7 +1184,9 @@ pub(crate) fn verify_cose(
         }
     };
 
-    let validator = get_validator(alg);
+    let Some(validator) = validator_for_signing_alg(alg) else {
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    };
 
     // build result structure
     let mut result = ValidationInfo::default();
@@ -1283,21 +1287,8 @@ pub(crate) fn verify_cose(
     Ok(result)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn verify_cose(
-    _cose_bytes: &[u8],
-    _data: &[u8],
-    _additional_data: &[u8],
-    _cert_check: bool,
-    _th: &dyn TrustHandlerConfig,
-    _validation_log: &mut impl StatusTracker,
-) -> Result<ValidationInfo> {
-    Err(Error::CoseVerifier)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn validate_with_cert(
-    validator: Box<dyn CoseValidator>,
+    validator: Box<dyn RawSignatureValidator>,
     sig: &[u8],
     data: &[u8],
     der_bytes: &[u8],
@@ -1308,14 +1299,12 @@ fn validate_with_cert(
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
-    if validator.validate(sig, data, pk_der)? {
-        Ok(CertInfo {
-            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
-            serial_number: extract_serial_from_cert(&signcert),
-        })
-    } else {
-        Err(Error::CoseSignature)
-    }
+    validator.validate(sig, data, pk_der)?;
+
+    Ok(CertInfo {
+        subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+        serial_number: extract_serial_from_cert(&signcert),
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1347,23 +1336,13 @@ async fn validate_with_cert_async(
     data: &[u8],
     der_bytes: &[u8],
 ) -> Result<CertInfo> {
-    // get the cert in der format
-    let (_rem, signcert) =
-        X509Certificate::from_der(der_bytes).map_err(|_err| Error::CoseInvalidCert)?;
-    let pk = signcert.public_key();
-    let pk_der = pk.raw;
+    let Some(validator) = validator_for_signing_alg(signing_alg) else {
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    };
 
-    let validator = get_validator(signing_alg);
-
-    if validator.validate(sig, data, pk_der)? {
-        Ok(CertInfo {
-            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
-            serial_number: extract_serial_from_cert(&signcert),
-        })
-    } else {
-        Err(Error::CoseSignature)
-    }
+    validate_with_cert(validator, sig, data, der_bytes)
 }
+
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
@@ -1397,62 +1376,6 @@ pub mod tests {
                 Some(validation_status::SIGNING_CREDENTIAL_EXPIRED.into())
             );
         }
-    }
-
-    #[test]
-    fn test_verify_cose_good() {
-        let validator = get_validator(SigningAlg::Ps256);
-
-        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
-
-        assert!(validator
-            .validate(sig_bytes, data_bytes, key_bytes)
-            .unwrap());
-    }
-
-    #[test]
-    fn test_verify_ec_good() {
-        // EC signatures
-        let mut validator = get_validator(SigningAlg::Es384);
-
-        let sig_es384_bytes = include_bytes!("../tests/fixtures/sig_es384.data");
-        let data_es384_bytes = include_bytes!("../tests/fixtures/data_es384.data");
-        let key_es384_bytes = include_bytes!("../tests/fixtures/key_es384.data");
-
-        assert!(validator
-            .validate(sig_es384_bytes, data_es384_bytes, key_es384_bytes)
-            .unwrap());
-
-        validator = get_validator(SigningAlg::Es512);
-
-        let sig_es512_bytes = include_bytes!("../tests/fixtures/sig_es512.data");
-        let data_es512_bytes = include_bytes!("../tests/fixtures/data_es512.data");
-        let key_es512_bytes = include_bytes!("../tests/fixtures/key_es512.data");
-
-        assert!(validator
-            .validate(sig_es512_bytes, data_es512_bytes, key_es512_bytes)
-            .unwrap());
-    }
-
-    #[test]
-    fn test_verify_cose_bad() {
-        let validator = get_validator(SigningAlg::Ps256);
-
-        let sig_bytes = include_bytes!("../tests/fixtures/sig_ps256.data");
-        let data_bytes = include_bytes!("../tests/fixtures/data_ps256.data");
-        let key_bytes = include_bytes!("../tests/fixtures/key_ps256.data");
-
-        let mut bad_bytes = data_bytes.to_vec();
-        bad_bytes[0] = b'c';
-        bad_bytes[1] = b'2';
-        bad_bytes[2] = b'p';
-        bad_bytes[3] = b'a';
-
-        assert!(!validator
-            .validate(sig_bytes, &bad_bytes, key_bytes)
-            .unwrap());
     }
 
     #[test]
