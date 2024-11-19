@@ -43,7 +43,7 @@ pub enum Relationship {
 }
 
 /// An ingredient assertion
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Ingredient {
     pub title: Option<String>,
     pub format: Option<String>,
@@ -240,8 +240,11 @@ impl Ingredient {
         if let Some(cm) = &self.c2pa_manifest {
             ingredient_map.serialize_field("c2pa_manifest", cm)?;
         }
-        if let Some(huri) = &self.thumbnail {
-            ingredient_map.serialize_field("thumbnail", huri)?;
+        if let Some(thumbnail) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", thumbnail)?;
+        }
+        if let Some(vs) = &self.validation_status {
+            ingredient_map.serialize_field("validationStatus", vs)?;
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
@@ -325,8 +328,8 @@ impl Ingredient {
         if let Some(cm) = &self.c2pa_manifest {
             ingredient_map.serialize_field("c2pa_manifest", cm)?;
         }
-        if let Some(huri) = &self.thumbnail {
-            ingredient_map.serialize_field("thumbnail", huri)?;
+        if let Some(thumbnail) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", thumbnail)?;
         }
         if let Some(vs) = &self.validation_status {
             ingredient_map.serialize_field("validationStatus", vs)?;
@@ -415,7 +418,7 @@ impl Ingredient {
             ingredient_map.serialize_field("dc:format", format)?;
         }
         if let Some(vr) = &self.validation_results {
-            ingredient_map.serialize_field("validationStatus", vr)?;
+            ingredient_map.serialize_field("validationResults", vr)?;
         }
         if let Some(instance_id) = &self.instance_id {
             ingredient_map.serialize_field("instanceID", instance_id)?;
@@ -432,8 +435,8 @@ impl Ingredient {
         if let Some(cs) = &self.claim_signature {
             ingredient_map.serialize_field("claimSignature", cs)?;
         }
-        if let Some(huri) = &self.thumbnail {
-            ingredient_map.serialize_field("thumbnail", huri)?;
+        if let Some(thumbnail) = &self.thumbnail {
+            ingredient_map.serialize_field("thumbnail", thumbnail)?;
         }
         if let Some(desc) = &self.description {
             ingredient_map.serialize_field("description", desc)?;
@@ -528,7 +531,7 @@ impl AssertionBase for Ingredient {
             "validationResults",
             "instanceID",
             "data",
-            "data_types",
+            "dataTypes",
             "activeManifest",
             "claimSignature",
             "thumbnail",
@@ -707,7 +710,7 @@ impl AssertionBase for Ingredient {
                 let instance_id: Option<String> = map_cbor_to_type("instanceID", &ingredient_value);
                 let data: Option<HashedUri> = map_cbor_to_type("data", &ingredient_value);
                 let data_types: Option<Vec<AssetType>> =
-                    map_cbor_to_type("data_types", &ingredient_value);
+                    map_cbor_to_type("dataTypes", &ingredient_value);
                 let active_manifest: Option<HashedUri> =
                     map_cbor_to_type("activeManifest", &ingredient_value);
                 let claim_signature: Option<HashedUri> =
@@ -754,7 +757,11 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertion::AssertionData;
+    use crate::{
+        assertion::AssertionData,
+        assertions::AssetTypeEnum,
+        validation_results::{IngredientDeltaValidationResultMap, StatusCodesMap, StatusMap},
+    };
 
     #[test]
     fn assertion_ingredient() {
@@ -879,5 +886,142 @@ pub mod tests {
         );
         assert_eq!(reviews[0].explanation, "a 3rd party plugin was used");
         assert_eq!(reviews[0].value, 1);
+    }
+
+    #[test]
+    fn test_serialization() {
+        let validation_status = vec![ValidationStatus::new("claimSignature.validated")];
+
+        let active_manifest_codes = StatusCodesMap::default()
+            .add_success_val(StatusMap::new("claimSignature.validated").set_url(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
+            ))
+            .add_success_val(StatusMap::new("claimSignature.trusted").set_url(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
+            ))
+            .add_informational_val(StatusMap::new("signingCredential.ocsp.skipped").set_url(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature",
+            ));
+
+        let ingredient_deltas = IngredientDeltaValidationResultMap::new(
+            "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.assertions/c2pa.ingredient.v3", 
+            StatusCodesMap::default()
+                .add_failure_val(StatusMap::new("assertion.hashedURI.mismatch")
+                    .set_url("self#jumbf=c2pa/urn:c2pa:F095F30E-6CD5-4BF7-8C44-CE8420CA9FB7/c2pa.assertions/c2pa.metadata"))
+        );
+
+        let validation_results = ValidationResultsMap::default()
+            .add_active_manifest(active_manifest_codes)
+            .add_ingredient_delta(ingredient_deltas);
+
+        let review_rating = ReviewRating::new("Content bindings validated", None, 5);
+
+        let metadata = Metadata::new()
+            .set_date_time("2021-06-28T16:49:32.874Z".to_owned())
+            .add_review(review_rating);
+
+        let data_types = vec![AssetType::new(
+            AssetTypeEnum::GeneratorPrompt,
+            Some("1.0.0".into()),
+        )];
+
+        let mut all_vals = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpg".to_owned()),
+            document_id: Some("12345".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            validation_status: Some(validation_status.clone()),
+            relationship: Relationship::ParentOf,
+            thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            metadata: Some(metadata.clone()),
+            data: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.databoxes/c2pa.data".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            description: Some("Some ingredient description".to_owned()),
+            informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
+            data_types: Some(data_types.clone()),
+            validation_results: Some(validation_results.clone()),
+            active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            version: 1,
+        };
+
+        // Save as V1
+        let v1 = all_vals.to_assertion().unwrap();
+
+        // Save as V2
+        all_vals.version = 2;
+        let v2 = all_vals.to_assertion().unwrap();
+
+        // Save as V3
+        all_vals.version = 3;
+        let v3 = all_vals.to_assertion().unwrap();
+
+        // test v1
+        let v1_decoded = Ingredient::from_assertion(&v1).unwrap();
+        let v1_expected = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpg".to_owned()),
+            document_id: Some("12345".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            validation_status: Some(validation_status.clone()),
+            relationship: Relationship::ParentOf,
+            thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            metadata: Some(metadata.clone()),
+            version: 1,
+            ..Default::default()
+        };
+        assert_eq!(v1_decoded, v1_expected);
+        assert!(v1_decoded.is_v1_compatible());
+        assert!(v1_decoded.is_v2_compatible());
+        assert!(!v1_decoded.is_v3_compatible());
+
+        // test v2
+        let v2_decoded = Ingredient::from_assertion(&v2).unwrap();
+        let v2_expected = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpg".to_owned()),
+            document_id: Some("12345".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            c2pa_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            validation_status: Some(validation_status.clone()),
+            relationship: Relationship::ParentOf,
+            thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            metadata: Some(metadata.clone()),
+            data: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.databoxes/c2pa.data".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            description: Some("Some ingredient description".to_owned()),
+            informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
+            data_types: Some(data_types.clone()),
+            version: 2,
+            ..Default::default()
+        };
+        assert_eq!(v2_decoded, v2_expected);
+        assert!(!v2_decoded.is_v1_compatible());
+        assert!(v2_decoded.is_v2_compatible());
+        assert!(!v2_decoded.is_v3_compatible());
+
+        // test v3
+        let v3_decoded = Ingredient::from_assertion(&v3).unwrap();
+        let v3_expected = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpg".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            relationship: Relationship::ParentOf,
+            thumbnail: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.thumbnail.ingredient_1.jpg".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            metadata: Some(metadata),
+            data: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.databoxes/c2pa.data".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            description: Some("Some ingredient description".to_owned()),
+            informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
+            data_types: Some(data_types),
+            validation_results: Some(validation_results),
+            active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            version: 3,
+            ..Default::default()
+        };
+        assert_eq!(v3_decoded, v3_expected);
+        assert!(!v3_decoded.is_v1_compatible());
+        assert!(!v3_decoded.is_v2_compatible());
+        assert!(v3_decoded.is_v3_compatible());
     }
 }

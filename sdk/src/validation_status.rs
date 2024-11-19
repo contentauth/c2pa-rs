@@ -39,6 +39,10 @@ pub struct ValidationStatus {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     explanation: Option<String>,
+
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    success: Option<bool>, // deprecated in 2.x, allow reading for compatibility
 }
 
 impl ValidationStatus {
@@ -47,6 +51,7 @@ impl ValidationStatus {
             code: code.into(),
             url: None,
             explanation: None,
+            success: None,
         }
     }
 
