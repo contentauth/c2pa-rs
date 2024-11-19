@@ -300,6 +300,9 @@ pub enum Error {
 
     #[error("parameters out of range")]
     OutOfRange,
+
+    #[error(transparent)]
+    RawSignatureValidationError(#[from] c2pa_crypto::raw_signature::RawSignatureValidationError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
