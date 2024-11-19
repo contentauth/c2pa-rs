@@ -100,3 +100,17 @@ fn rs512() {
         .validate(signature, SAMPLE_DATA, &pub_key)
         .unwrap();
 }
+
+#[test]
+fn sha1() {
+    let signature = include_bytes!("../../fixtures/raw_signature/legacy/sha1.raw_sig");
+
+    let cert = include_bytes!("../../fixtures/raw_signature/legacy/sha1.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap();
+    let pub_key = pub_key.public_key_to_der().unwrap();
+
+    RsaLegacyValidator::Sha1
+        .validate(signature, SAMPLE_DATA, &pub_key)
+        .unwrap();
+}
