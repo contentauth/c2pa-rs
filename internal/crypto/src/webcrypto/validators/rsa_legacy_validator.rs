@@ -27,7 +27,6 @@ use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
 /// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
 /// providers issue these signatures, which is why it's supported here.)
 pub(crate) enum RsaLegacyValidator {
-    Sha1,
     Rsa256,
     Rsa384,
     Rsa512,
@@ -57,10 +56,6 @@ impl RawSignatureValidator for RsaLegacyValidator {
             .map_err(|_| RawSignatureValidationError::InvalidPublicKey)?;
 
         let result = match self {
-            Self::Sha1 => {
-                unimplemented!();
-            }
-
             Self::Rsa256 => {
                 let vk = VerifyingKey::<Sha256>::new(public_key);
                 vk.verify(&data, &signature)
