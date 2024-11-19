@@ -11,15 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! This module provides functions for working with the [`SubtleCrypto`] library
-//! typically available in web browser environments.
-//!
-//! It is only available when this crate is compiled for `wasm` architecture and
-//! not `wasi` target.
-//!
-//! [`SubtleCrypto`]: https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.SubtleCrypto.html
+use wasm_bindgen_test::wasm_bindgen_test;
 
-pub mod validators;
+use crate::webcrypto::WindowOrWorker;
 
-mod window_or_worker;
-pub use window_or_worker::WindowOrWorker;
+#[wasm_bindgen_test]
+fn has_crypto_library() {
+    WindowOrWorker::new().unwrap().crypto().unwrap();
+}
