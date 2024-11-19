@@ -15,7 +15,7 @@ use openssl::x509::X509;
 
 use crate::{
     openssl::validators::RsaLegacyValidator,
-    raw_signature::{/* RawSignatureValidationError, */ RawSignatureValidator},
+    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
@@ -34,44 +34,43 @@ fn rs256() {
         .unwrap();
 }
 
-// #[test]
-// fn rs256_bad_signature() {
-//     let mut signature =
-// include_bytes!("../../fixtures/raw_signature/rs256.raw_sig").to_vec();
-//     assert_ne!(signature[10], 10);
-//     signature[10] = 10;
+#[test]
+fn rs256_bad_signature() {
+    let mut signature =
+        include_bytes!("../../fixtures/raw_signature/legacy/rs256.raw_sig").to_vec();
+    assert_ne!(signature[10], 10);
+    signature[10] = 10;
 
-//     let cert = include_bytes!("../../fixtures/raw_signature/rs256.pub");
-//     let cert = X509::from_pem(cert).unwrap();
-//     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/legacy/rs256.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-//     assert_eq!(
-//         RsaValidator::rs256
-//             .validate(&signature, SAMPLE_DATA, &pub_key)
-//             .unwrap_err(),
-//         RawSignatureValidationError::SignatureMismatch
-//     );
-// }
+    assert_eq!(
+        RsaLegacyValidator::Rsa256
+            .validate(&signature, SAMPLE_DATA, &pub_key)
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
-// #[test]
-// fn rs256_bad_data() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/rs256.raw_sig");
+#[test]
+fn rs256_bad_data() {
+    let signature = include_bytes!("../../fixtures/raw_signature/legacy/rs256.raw_sig");
 
-//     let cert = include_bytes!("../../fixtures/raw_signature/rs256.pub");
-//     let cert = X509::from_pem(cert).unwrap();
-//     let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
+    let cert = include_bytes!("../../fixtures/raw_signature/legacy/rs256.pub");
+    let cert = X509::from_pem(cert).unwrap();
+    let pub_key = cert.public_key().unwrap().public_key_to_der().unwrap();
 
-//     let mut data = SAMPLE_DATA.to_vec();
-//     data[10] = 0;
+    let mut data = SAMPLE_DATA.to_vec();
+    data[10] = 0;
 
-//     assert_eq!(
-//         RsaValidator::rs256
-//             .validate(signature, &data, &pub_key)
-//             .unwrap_err(),
-//         RawSignatureValidationError::SignatureMismatch
-//     );
-// }
+    assert_eq!(
+        RsaLegacyValidator::Rsa256
+            .validate(signature, &data, &pub_key)
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
 #[test]
 fn rs384() {
