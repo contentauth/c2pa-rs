@@ -669,7 +669,7 @@ fn validate_timestamp_sig(
     };
 
     validator
-        .validate(&sig_val.to_bytes(), &tbs, signing_key_der)
+        .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| Error::CoseTimeStampMismatch)?;
 
     Ok(())
