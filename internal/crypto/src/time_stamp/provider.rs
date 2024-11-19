@@ -14,10 +14,9 @@
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
-use thiserror::Error;
 use x509_certificate::DigestAlgorithm;
 
-use crate::asn1::rfc3161::TimeStampReq;
+use crate::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError};
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -122,40 +121,6 @@ pub trait AsyncTimeStampProvider: Sync {
 
         None
     }
-}
-
-/// Describes errors that can occur when requesting an RFC 3161
-/// time stamp.
-#[derive(Debug, Error)]
-pub enum TimeStampError {
-    /// An error was encountered when decoding the time stamp response.
-    #[error("Decode error ({0})")]
-    DecodeError(String),
-
-    /// An I/O error occurred while processing the HTTPS time stamp response.
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-
-    /// The time stamp service did not respond with the same nonce as provided.
-    #[error("Nonce mismatch")]
-    NonceMismatch,
-
-    /// The time stamp service responded with an error condition.
-    #[error("Service responded with an HTTP error (status = {0}, content-type = {1})")]
-    HttpErrorResponse(u16, String),
-
-    /// Unable to complete the HTTPS time stamp request.
-    ///
-    /// This error should be used _only_ if no response is received from the
-    /// time stamp service. Any error response from the service should be
-    /// described using `HttpRequestError`.
-    #[error("Unable to complete HTTP request ({0})")]
-    HttpConnectionError(String),
-
-    /// An unexpected internal error occured whiel requesting the time stamp
-    /// response.
-    #[error("Internal error ({0})")]
-    InternalError(&'static str),
 }
 
 fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
