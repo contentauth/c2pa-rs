@@ -22,4 +22,4 @@
 pub mod validators;
 
 mod window_or_worker;
-pub use window_or_worker::WindowOrWorker;
+pub use window_or_worker::{WasmCryptoError, WindowOrWorker};
