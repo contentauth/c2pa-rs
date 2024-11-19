@@ -11,26 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+//! This module provides functions for working with the [`SubtleCrypto`] library
+//! typically available in web browser environments.
+//!
+//! It is only available when this crate is compiled for `wasm` architecture and
+//! not `wasi` target.
+//!
+//! [`SubtleCrypto`]: https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.SubtleCrypto.html
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-mod base64;
-mod hash;
-mod internal;
-mod ocsp;
-
-#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-mod openssl;
-
-mod raw_signature;
-mod signing_alg;
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-mod webcrypto;
+pub mod validators;

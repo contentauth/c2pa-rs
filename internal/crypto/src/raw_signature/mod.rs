@@ -11,26 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Tests are grouped under this module so as to avoid
-// having the test code itself included in coverage numbers.
+//! Tools for working with raw signature algorithms.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
+pub(crate) mod oids;
 
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-mod base64;
-mod hash;
-mod internal;
-mod ocsp;
-
-#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
-mod openssl;
-
-mod raw_signature;
-mod signing_alg;
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-mod webcrypto;
+mod validator;
+pub use validator::{
+    validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
+    RawSignatureValidator,
+};
