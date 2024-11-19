@@ -109,7 +109,7 @@ fn time_stamp_request_http(
 
         Ok(response_bytes)
     } else {
-        Err(TimeStampError::HttpRequestError(
+        Err(TimeStampError::HttpErrorResponse(
             response.status(),
             response.content_type().to_string(),
         ))
@@ -175,5 +175,14 @@ impl TimeStampResponse {
         } else {
             Ok(None)
         }
+    }
+}
+
+impl From<ureq::Error> for TimeStampError {
+    fn from(err: ureq::Error) -> Self {
+        // The `ureq::Error` type is very large (272 bytes on aarch64), which makes
+        // Clippy complain. Rather than carrying that forward, we capture the
+        // description from the error in the otherwise smaller `TimeStampError` type.
+        Self::HttpConnectionError(err.to_string())
     }
 }
