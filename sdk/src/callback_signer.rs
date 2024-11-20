@@ -16,16 +16,19 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
+use c2pa_crypto::SigningAlg;
+
 use crate::{
     error::{Error, Result},
-    AsyncSigner, Signer, SigningAlg,
+    AsyncSigner, Signer,
 };
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
 /// The callback should return a signature for the given data.
 /// The callback should return an error if the data cannot be signed.
-pub type CallbackFunc = dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error>;
+pub type CallbackFunc =
+    dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync;
 
 /// Defines a signer that uses a callback to sign data.
 ///
@@ -58,7 +61,7 @@ impl CallbackSigner {
     /// Create a new callback signer.
     pub fn new<F, T>(callback: F, alg: SigningAlg, certs: T) -> Self
     where
-        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + 'static,
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync + 'static,
         T: Into<Vec<u8>>,
     {
         let certs = certs.into();

@@ -119,8 +119,10 @@ pub use assertions::Relationship;
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
 pub use builder::{Builder, ManifestDefinition};
+pub use c2pa_crypto::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
+pub use dynamic_assertion::DynamicAssertion;
 pub use error::{Error, Result};
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
@@ -137,12 +139,9 @@ pub use manifest_store_report::ManifestStoreReport;
 pub use reader::Reader;
 pub use resource_store::{ResourceRef, ResourceStore};
 pub use signer::{AsyncSigner, RemoteSigner, Signer};
-pub use signing_alg::SigningAlg;
 pub use utils::mime::format_from_path;
 
 // Internal modules
-#[allow(dead_code, clippy::enum_variant_names)]
-pub(crate) mod asn1;
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
@@ -152,6 +151,7 @@ pub(crate) mod callback_signer;
 pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod cose_validator;
+pub(crate) mod dynamic_assertion;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
@@ -164,7 +164,6 @@ pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
-pub(crate) mod ocsp_utils;
 #[cfg(feature = "openssl")]
 pub(crate) mod openssl;
 #[allow(dead_code)]
@@ -173,7 +172,6 @@ pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
-pub(crate) mod signing_alg;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
 pub(crate) mod trust_handler;

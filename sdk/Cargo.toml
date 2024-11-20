@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.38.0"
+version = "0.39.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -33,12 +33,12 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl_sign = ["openssl"]
+openssl = ["dep:openssl", "c2pa-crypto/openssl"]
+openssl_sign = ["openssl", "c2pa-crypto/openssl"]
 json_schema = ["dep:schemars"]
 pdf = ["dep:lopdf"]
 v1_api = []
 unstable_api = []
-openssl_ffi_mutex = []
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -60,7 +60,6 @@ required-features = ["unstable_api"]
 name = "v2api"
 required-features = ["unstable_api"]
 
-
 [lib]
 crate-type = ["lib"]
 
@@ -70,11 +69,11 @@ async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
 atree = "0.5.2"
-base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
+c2pa-crypto = { path = "../internal/crypto", version = "0.1.2" }
 c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.1.0" }
 chrono = { version = "0.4.38", default-features = false, features = [
     "serde",
@@ -170,7 +169,6 @@ c2pa = { path = ".", features = [
 ] } # allow integration tests to use the new API
 glob = "0.3.1"
 jumbf = "0.4.0"
-
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3.31"

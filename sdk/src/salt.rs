@@ -15,7 +15,6 @@
 /// a function to generate a salt value used when hashing
 /// data.  Providing a unique salt ensures a unique hash for
 /// a given data set.
-
 pub trait SaltGenerator {
     /// generate a salt vector
     fn generate_salt(&self) -> Option<Vec<u8>>;

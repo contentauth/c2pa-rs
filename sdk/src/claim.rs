@@ -16,6 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
+use c2pa_crypto::base64;
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -53,10 +54,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
     trust_handler::TrustHandlerConfig,
-    utils::{
-        base64,
-        hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
-    },
+    utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status,
     validator::ValidationInfo,
     ClaimGeneratorInfo,
@@ -1622,7 +1620,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    pub(crate) async fn verify_claim_async<'a>(
+    pub(crate) async fn verify_claim_async(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,

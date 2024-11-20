@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-//use extfmt::Hexlify;
+use c2pa_crypto::{ocsp::OcspResponse, openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -22,7 +22,7 @@ use openssl::{
 };
 
 use super::check_chain_order;
-use crate::{ocsp_utils::OcspData, signer::ConfigurableSigner, Error, Result, Signer, SigningAlg};
+use crate::{signer::ConfigurableSigner, Error, Result, Signer};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// SHA256 + RSA encryption.
@@ -36,7 +36,7 @@ pub struct RsaSigner {
 
     alg: SigningAlg,
     tsa_url: Option<String>,
-    ocsp_rsp: Cell<OcspData>,
+    ocsp_rsp: Cell<OcspResponse>,
 }
 
 impl RsaSigner {
@@ -59,16 +59,14 @@ impl RsaSigner {
             #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
             {
                 if let Ok(certs) = self.certs_internal() {
-                    if let Some(ocsp_rsp) = crate::ocsp_utils::fetch_ocsp_response(&certs) {
+                    if let Some(ocsp_rsp) = c2pa_crypto::ocsp::fetch_ocsp_response(&certs) {
                         self.ocsp_size.set(ocsp_rsp.len());
                         let mut validation_log =
                             c2pa_status_tracker::DetailedStatusTracker::default();
-                        if let Ok(ocsp_data) = crate::ocsp_utils::check_ocsp_response(
-                            &ocsp_rsp,
-                            None,
-                            &mut validation_log,
-                        ) {
-                            self.ocsp_rsp.set(ocsp_data);
+                        if let Ok(ocsp_response) =
+                            OcspResponse::from_der_checked(&ocsp_rsp, None, &mut validation_log)
+                        {
+                            self.ocsp_rsp.set(ocsp_response);
                         }
                     }
                 }
@@ -99,7 +97,7 @@ impl ConfigurableSigner for RsaSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
         let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
@@ -152,7 +150,7 @@ impl ConfigurableSigner for RsaSigner {
             ocsp_size: Cell::new(0),
             alg,
             tsa_url,
-            ocsp_rsp: Cell::new(OcspData::new()),
+            ocsp_rsp: Cell::new(OcspResponse::default()),
         };
 
         // get OCSP if possible
@@ -213,7 +211,7 @@ impl Signer for RsaSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
         self.certs_internal()
     }
 
@@ -226,7 +224,7 @@ impl Signer for RsaSigner {
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
-        let _openssl = super::OpenSslMutex::acquire().ok()?;
+        let _openssl = OpenSslMutex::acquire().ok()?;
 
         // update OCSP if needed
         self.update_ocsp();

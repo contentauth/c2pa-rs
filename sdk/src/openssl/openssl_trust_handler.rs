@@ -18,12 +18,12 @@ use std::{
 };
 
 use asn1_rs::Oid;
+use c2pa_crypto::{base64, openssl::OpenSslMutex};
 use openssl::x509::verify::X509VerifyFlags;
 
 use crate::{
     hash_utils::hash_sha256,
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
-    utils::base64,
     Error, Result,
 };
 
@@ -43,7 +43,7 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
 }
 
 fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
-    let _openssl = super::OpenSslMutex::acquire()?;
+    let _openssl = OpenSslMutex::acquire()?;
     openssl::x509::X509::stack_from_pem(trust_data).map_err(Error::OpenSslError)
 }
 
@@ -75,7 +75,7 @@ impl OpenSSLTrustHandlerConfig {
     }
 
     fn update_store(&mut self) -> Result<()> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let mut builder =
             openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
@@ -143,7 +143,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
         allowed_list.read_to_end(&mut buffer)?;
 
         {
-            let _openssl = super::OpenSslMutex::acquire()?;
+            let _openssl = OpenSslMutex::acquire()?;
             if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
                 for cert in &cert_list {
                     let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
@@ -249,7 +249,7 @@ pub(crate) fn verify_trust(
         return Ok(true);
     }
 
-    let _openssl = super::OpenSslMutex::acquire()?;
+    let _openssl = OpenSslMutex::acquire()?;
 
     let mut cert_chain = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
     let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(Error::OpenSslError)?;
@@ -308,10 +308,12 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_crypto::SigningAlg;
+
     use super::*;
     use crate::{
         openssl::temp_signer::{self},
-        Signer, SigningAlg,
+        Signer,
     };
 
     #[test]

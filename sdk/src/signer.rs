@@ -10,7 +10,10 @@
 // implied. See the LICENSE-MIT and LICENSE-APACHE files for the
 // specific language governing permissions and limitations under
 // each license.
-use crate::{Result, SigningAlg};
+
+use c2pa_crypto::SigningAlg;
+
+use crate::{DynamicAssertion, Result};
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -85,6 +88,11 @@ pub trait Signer {
     /// Not recommended for general use.
     fn direct_cose_handling(&self) -> bool {
         false
+    }
+
+    /// Returns a list of dynamic assertions that should be included in the manifest.
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        Vec::new()
     }
 }
 
@@ -194,6 +202,11 @@ pub trait AsyncSigner: Sync {
     fn direct_cose_handling(&self) -> bool {
         false
     }
+
+    /// Returns a list of dynamic assertions that should be included in the manifest.
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        Vec::new()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -246,6 +259,11 @@ pub trait AsyncSigner {
     /// Not recommended for general use.
     fn direct_cose_handling(&self) -> bool {
         false
+    }
+
+    /// Returns a list of dynamic assertions that should be included in the manifest.
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        Vec::new()
     }
 }
 
@@ -305,5 +323,9 @@ impl Signer for Box<dyn Signer + Send + Sync> {
 
     fn direct_cose_handling(&self) -> bool {
         (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
     }
 }
