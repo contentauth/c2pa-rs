@@ -13,6 +13,8 @@ Additional documentation:
 - [Release notes](docs/release-notes.md)
 - [Contributing to the project](docs/project-contributions.md)
 
+For additional documentation, please see the [CAI open-source SDK documentation](https://opensource.contentauthenticity.org/docs/introduction/).
+
 </div>
 
 ## Key features
