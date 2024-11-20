@@ -126,9 +126,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        rust_version: [stable]
-        experimental: [false]
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        rust_version: [ stable ]
+        experimental: [ false ]
         include:
           - os: macos-latest
             artifact_name: c2patool_mac_universal.zip
@@ -152,6 +152,12 @@ jobs:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
+      - name: Install cargo-sbom
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-sbom
+          version: '0.9.1'
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
@@ -166,3 +172,16 @@ jobs:
           asset_name: ${{ matrix.uploaded_asset_name }}
           tag: ${{ needs.repo-prep.outputs.new-tag }}
           overwrite: true
+
+      - name: Generate SBOM
+        run: cargo sbom > c2patool.${{ matrix.os }}.sbom.json
+
+      - name: Upload SBOM to Github
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: c2patool.${{ matrix.os }}.sbom.json
+          asset_name: c2patool-${{ needs.repo-prep.outputs.new-tag }}-sbom.json
+          tag: ${{ needs.repo-prep.outputs.new-tag }}
+          overwrite: true
+
