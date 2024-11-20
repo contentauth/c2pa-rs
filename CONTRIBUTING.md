@@ -18,8 +18,8 @@ consensus around project direction and issue solutions within issue threads
 
 ### Current areas of work
 
-The Adobe CAI team has been using this crate as the foundation of Adobe's Content Authenticity Initiative-related products and services since late 2020. We're aware that there is quite a bit of work to do for a robust 1.0 release. 
-Some broad categories of work (and thus things you might expect to change) are:
+The Adobe CAI team has been using this crate as the foundation of Adobe's Content Authenticity Initiative-related products and services since late 2020. 
+Groad categories of work (and thus things you might expect to change) are:
 
 * We'll be reviewing and refining our APIs for ease of use and comprehension. We'd appreciate feedback on areas that you find confusing or unnecessarily difficult.
 * We'll also be reviewing our APIs for compliance with Rust community best practices. There are some areas (for example, use of public fields and how we take ownership vs references) where we know some work is required.
@@ -59,8 +59,6 @@ We encourage you to raise an issue in GitHub before starting work on a major add
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
 
 ### Pull request titles
-
-The build process automatically adds a pull request (PR) to the [CHANGELOG](CHANGELOG.md) unless the title of the PR begins with `(IGNORE)`. 
 
 Titles of pull requests that target a long-lived branch such as _main_ or a release-specific branch should follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/#specification). This means that the first word of the pull request title should be one of the following:
 
