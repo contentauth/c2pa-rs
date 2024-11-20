@@ -23,8 +23,8 @@ The C2PA Rust library implements a subset of the [C2PA technical specification](
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_manifests).
-* Embed manifests in certain file formats.
-* Parse and validate manifests found in certain file formats.
+* Embed manifests in [supported file formats](docs/supported-formats.md).
+* Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_hard_bindings).
 
@@ -34,11 +34,13 @@ For details on what you can do with the library, see [Using the Rust library](do
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.  
 
+### New API
+
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. 
 
 ### Contributions and feedback
 
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).
+We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on nightly builds and testing, see [Contributing to the project](docs/project-contributions.md).
 
 ## License
 
