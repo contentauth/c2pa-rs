@@ -20,3 +20,6 @@
 //! [`SubtleCrypto`]: https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.SubtleCrypto.html
 
 pub mod validators;
+
+mod window_or_worker;
+pub use window_or_worker::{WasmCryptoError, WindowOrWorker};

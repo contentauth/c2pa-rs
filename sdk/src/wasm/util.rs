@@ -1,6 +1,7 @@
+use c2pa_crypto::webcrypto::WindowOrWorker;
 use web_sys::Crypto;
 
-use crate::{wasm::context::WindowOrWorker, Error, Result};
+use crate::{Error, Result};
 
 pub fn get_random_values(len: usize) -> Result<Vec<u8>> {
     let context = WindowOrWorker::new();

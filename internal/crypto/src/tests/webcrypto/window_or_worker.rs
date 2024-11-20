@@ -11,5 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod validators;
-mod window_or_worker;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+use crate::webcrypto::WindowOrWorker;
+
+#[wasm_bindgen_test]
+fn has_crypto_library() {
+    WindowOrWorker::new().unwrap().crypto().unwrap();
+}
