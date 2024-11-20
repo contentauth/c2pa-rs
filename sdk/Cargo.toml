@@ -25,9 +25,6 @@ exclude = ["tests/fixtures"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[package.metadata.cargo-udeps.ignore]
-normal = ["unicode-ident"]
-
 [features]
 default = ["v1_api"]
 add_thumbnails = ["image"]
@@ -127,8 +124,7 @@ sha2 = "0.10.6"
 tempfile = "3.10.1"
 thiserror = "1.0.61"
 treeline = "0.1.0"
-unicode-ident = "=1.0.13" # Can't advance to 1.0.14 until Unicode-3.0 license is reviewed.
-url = "=2.5.2" # Can't advance to 2.5.3 until Unicode-3.0 license is reviewed.
+url = "2.5.3"
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
