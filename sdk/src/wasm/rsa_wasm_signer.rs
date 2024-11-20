@@ -14,6 +14,7 @@
 use core::str;
 
 use async_trait::async_trait;
+use c2pa_crypto::SigningAlg;
 use rsa::{
     pkcs8::DecodePrivateKey,
     pss::SigningKey,
@@ -22,7 +23,7 @@ use rsa::{
     RsaPrivateKey,
 };
 
-use crate::{signer::ConfigurableSigner, AsyncSigner, Error, Result, Signer, SigningAlg};
+use crate::{signer::ConfigurableSigner, AsyncSigner, Error, Result, Signer};
 
 // Implements `Signer` trait using rsa crate implementation of
 // SHA256 + RSA encryption.  This implementation is only used for cross
@@ -301,6 +302,7 @@ impl AsyncSigner for RsaWasmSignerAsync {
 #[cfg(test)]
 mod tests {
     use asn1_rs::FromDer;
+    use c2pa_crypto::SigningAlg;
     use rsa::{
         pss::{Signature, VerifyingKey},
         sha2::{Digest, Sha256},
@@ -311,7 +313,7 @@ mod tests {
     use super::*;
     use crate::{
         utils::test::{fixture_path, temp_signer},
-        Signer, SigningAlg,
+        Signer,
     };
 
     #[test]

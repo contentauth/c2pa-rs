@@ -20,6 +20,7 @@ use std::{
     path::PathBuf,
 };
 
+use c2pa_crypto::SigningAlg;
 use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
@@ -32,7 +33,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    RemoteSigner, Result, Signer, SigningAlg,
+    RemoteSigner, Result, Signer,
 };
 #[cfg(feature = "openssl_sign")]
 use crate::{
@@ -495,11 +496,10 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     }
 
     async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+        use c2pa_crypto::webcrypto::WindowOrWorker;
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen_futures::JsFuture;
         use web_sys::CryptoKey;
-
-        use crate::wasm::context::WindowOrWorker;
         let context = WindowOrWorker::new().unwrap();
         let crypto = context.subtle_crypto().unwrap();
 

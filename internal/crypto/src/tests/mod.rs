@@ -25,3 +25,12 @@ mod base64;
 mod hash;
 mod internal;
 mod ocsp;
+
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+mod openssl;
+
+mod raw_signature;
+mod signing_alg;
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+mod webcrypto;

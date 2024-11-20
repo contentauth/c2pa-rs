@@ -21,8 +21,9 @@ mod integration_1 {
         assertions::{c2pa_action, Action, Actions},
         create_signer,
         settings::load_settings_from_str,
-        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer, SigningAlg,
+        Builder, ClaimGeneratorInfo, Ingredient, Reader, Result, Signer,
     };
+    use c2pa_crypto::SigningAlg;
     use tempfile::tempdir;
 
     //const GENERATOR: &str = "app";
