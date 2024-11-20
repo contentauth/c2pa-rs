@@ -18,11 +18,13 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+use c2pa_crypto::SigningAlg;
+
 use crate::{
     error::Result,
     openssl::{EcSigner, EdSigner, RsaSigner},
     signer::ConfigurableSigner,
-    Signer, SigningAlg,
+    Signer,
 };
 
 /// Creates a [`Signer`] instance using signing certificate and private key

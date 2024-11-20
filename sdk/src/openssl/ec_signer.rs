@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -23,7 +24,7 @@ use crate::{
     error::{Error, Result},
     signer::ConfigurableSigner,
     utils::sig_utils::der_to_p1363,
-    Signer, SigningAlg,
+    Signer,
 };
 
 /// Implements `Signer` trait using OpenSSL's implementation of
@@ -46,7 +47,7 @@ impl ConfigurableSigner for EcSigner {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let certs_size = signcert.len();
         let pkey = EcKey::private_key_from_pem(pkey).map_err(Error::OpenSslError)?;
@@ -72,7 +73,7 @@ impl ConfigurableSigner for EcSigner {
 
 impl Signer for EcSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let key = PKey::from_ec_key(self.pkey.clone()).map_err(Error::OpenSslError)?;
 
@@ -94,7 +95,7 @@ impl Signer for EcSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let _openssl = super::OpenSslMutex::acquire()?;
+        let _openssl = OpenSslMutex::acquire()?;
 
         let mut certs: Vec<Vec<u8>> = Vec::new();
 

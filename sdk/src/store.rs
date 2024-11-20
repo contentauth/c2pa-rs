@@ -3618,6 +3618,7 @@ pub mod tests {
 
     use std::io::Write;
 
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3639,7 +3640,6 @@ pub mod tests {
                 write_jpeg_placeholder_file,
             },
         },
-        SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
