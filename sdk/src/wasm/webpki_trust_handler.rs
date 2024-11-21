@@ -18,7 +18,10 @@ use std::{
 };
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
-use c2pa_crypto::{base64, SigningAlg};
+use c2pa_crypto::{
+    base64, raw_signature::RawSignatureValidationError, webcrypto::async_validator_for_signing_alg,
+    SigningAlg,
+};
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
     prelude::*,
@@ -31,7 +34,6 @@ use crate::{
     trust_handler::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
-    wasm::webcrypto_validator::async_validate,
 };
 
 // Struct to handle verification of trust chains using WebPki
@@ -305,46 +307,44 @@ pub(crate) async fn verify_data(
 
     let certificate_public_key = cert.public_key();
 
-    if let Some(cert_alg_string) = sig_alg {
-        let (algo, hash, salt_len) = match cert_alg_string.as_str() {
-            "rsa256" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-256".to_string(), 0),
-            "rsa384" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-384".to_string(), 0),
-            "rsa512" => ("RSASSA-PKCS1-v1_5".to_string(), "SHA-512".to_string(), 0),
-            "es256" => ("ECDSA".to_string(), "SHA-256".to_string().to_string(), 0),
-            "es384" => ("ECDSA".to_string(), "SHA-384".to_string(), 0),
-            "es512" => ("ECDSA".to_string(), "SHA-512".to_string(), 0),
-            "ps256" => ("RSA-PSS".to_string(), "SHA-256".to_string(), 32),
-            "ps384" => ("RSA-PSS".to_string(), "SHA-384".to_string(), 48),
-            "ps512" => ("RSA-PSS".to_string(), "SHA-512".to_string(), 64),
-            "ed25519" => ("ED25519".to_string(), "SHA-512".to_string(), 0),
-            _ => return Err(Error::UnsupportedType),
-        };
-
-        let adjusted_sig = if cert_alg_string.starts_with("es") {
-            let parsed_alg_string: SigningAlg = cert_alg_string
-                .parse()
-                .map_err(|_| Error::UnknownAlgorithm)?;
-            match der_to_p1363(&sig, parsed_alg_string) {
-                Some(p1363) => p1363,
-                None => sig,
-            }
-        } else {
-            sig
-        };
-
-        async_validate(
-            algo,
-            hash,
-            salt_len,
-            certificate_public_key.raw.to_vec(),
-            adjusted_sig,
-            data,
-        )
-        .await
-    } else {
+    let Some(cert_alg_string) = sig_alg else {
         return Err(Error::BadParam("unknown alg processing cert".to_string()));
+    };
+
+    let signing_alg: SigningAlg = cert_alg_string
+        .parse()
+        .map_err(|_| Error::UnknownAlgorithm)?;
+
+    // Not sure this is needed any more. Leaving this for now, but I think this should be handled in c2pa_crypto's raw signature code.
+    let adjusted_sig = if cert_alg_string.starts_with("es") {
+        match der_to_p1363(&sig, signing_alg) {
+            Some(p1363) => p1363,
+            None => sig,
+        }
+    } else {
+        sig
+    };
+
+    let Some(validator) = async_validator_for_signing_alg(signing_alg) else {
+        return Err(Error::UnknownAlgorithm);
+    };
+
+    let result = validator
+        .validate_async(
+            &adjusted_sig,
+            &data,
+            certificate_public_key.subject_public_key.as_ref(),
+        )
+        .await;
+
+    match result {
+        Ok(()) => Ok(true),
+        Err(RawSignatureValidationError::SignatureMismatch) => Ok(false),
+        _ => Err(Error::CoseSignature),
+        // TO DO (maybe): More nuanced conversion of error responses?
     }
 }
+
 // convert der signatures to P1363 format: r | s
 fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     // handle if this is a der sequence
