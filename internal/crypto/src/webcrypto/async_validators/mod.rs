@@ -32,7 +32,7 @@ use crate::{
 /// this implementation.
 ///
 /// [`RawSignatureValidator`]: crate::raw_signature::RawSignatureValidator
-#[async_trait]
+#[async_trait(?Send)]
 pub trait AsyncRawSignatureValidator {
     /// Return `true` if the signature `sig` is valid for the raw content `data`
     /// and the public key `public_key`.
@@ -44,19 +44,18 @@ pub trait AsyncRawSignatureValidator {
     ) -> Result<(), RawSignatureValidationError>;
 }
 
-/// Return an async validator for the given signing and hash algorithm.
+/// Return an async validator for the given signing algorithm.
 pub fn async_validator_for_signing_alg(
     alg: SigningAlg,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {
     match alg {
-        // SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
-        // SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
-        // SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
+        SigningAlg::Es256 => Some(Box::new(EcdsaValidator::Es256)),
+        SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
+        SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
         SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
         SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
         SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
         SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
-        _ => unimplemented!(),
     }
 }
 
@@ -88,20 +87,22 @@ pub fn async_validator_for_sig_and_hash_algs(
         || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
         || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
     {
-        unimplemented!();
-        // if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-        //     return validator_for_signing_alg(SigningAlg::Es256);
-        // } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-        //     return validator_for_signing_alg(SigningAlg::Es384);
-        // } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-        //     return validator_for_signing_alg(SigningAlg::Es512);
-        // }
+        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
+            return async_validator_for_signing_alg(SigningAlg::Es256);
+        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
+            return async_validator_for_signing_alg(SigningAlg::Es384);
+        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
+            return async_validator_for_signing_alg(SigningAlg::Es512);
+        }
     } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
         return async_validator_for_signing_alg(SigningAlg::Ed25519);
     }
 
     None
 }
+
+pub(crate) mod ecdsa_validator;
+use ecdsa_validator::EcdsaValidator;
 
 pub(crate) mod ed25519_validator;
 use ed25519_validator::Ed25519Validator;

@@ -27,7 +27,7 @@ pub(crate) enum RsaLegacyValidator {
     Rsa512,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl AsyncRawSignatureValidator for RsaLegacyValidator {
     async fn validate_async(
         &self,

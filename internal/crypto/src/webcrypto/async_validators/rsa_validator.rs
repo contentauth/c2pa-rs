@@ -32,7 +32,7 @@ pub enum RsaValidator {
     Ps512,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl AsyncRawSignatureValidator for RsaValidator {
     async fn validate_async(
         &self,

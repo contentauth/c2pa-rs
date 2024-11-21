@@ -22,7 +22,7 @@ use crate::{
 /// algorithm.
 pub struct Ed25519Validator {}
 
-#[async_trait]
+#[async_trait(?Send)]
 impl AsyncRawSignatureValidator for Ed25519Validator {
     async fn validate_async(
         &self,

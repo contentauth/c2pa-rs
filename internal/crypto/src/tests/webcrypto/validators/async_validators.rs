@@ -25,85 +25,82 @@ use crate::{
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";
 
-// #[wasm_bindgen_test]
-// async fn es256() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/es256.raw_sig");     let cert =
-// include_bytes!("../../fixtures/raw_signature/es256.pub");
+#[wasm_bindgen_test]
+async fn es256() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
-//     assert!(verify_data_async(
-//         cert.to_vec(),
-//         Some("es256".to_string()),
-//         signature.to_vec(),
-//         SAMPLE_DATA.to_vec()
-//     )
-//     .await
-//     .unwrap());
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
-//     // let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
+}
 
-//     // validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-// }
+#[wasm_bindgen_test]
+async fn es256_bad_signature() {
+    let mut signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig").to_vec();
+    assert_ne!(signature[10], 10);
+    signature[10] = 10;
 
-// #[wasm_bindgen_test]
-// async fn es256_bad_signature() {
-//     let mut signature =
-// include_bytes!("../../fixtures/raw_signature/es256.raw_sig").to_vec();
-//     assert_ne!(signature[10], 10);
-//     signature[10] = 10;
+    let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
-//     let pub_key =
-// include_bytes!("../../fixtures/raw_signature/es256.pub_key");
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
-//     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    assert_eq!(
+        validator
+            .validate_async(&signature, SAMPLE_DATA, pub_key)
+            .await
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
-//     assert_eq!(
-//         validator
-//             .validate(&signature, SAMPLE_DATA, pub_key)
-//             .unwrap_err(),
-//         RawSignatureValidationError::SignatureMismatch
-//     );
-// }
+#[wasm_bindgen_test]
+async fn es256_bad_data() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es256.raw_sig");
+    let pub_key = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
 
-// #[wasm_bindgen_test]
-// async fn es256_bad_data() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/es256.raw_sig");     let pub_key
-// = include_bytes!("../../fixtures/raw_signature/es256.pub_key");
+    let mut data = SAMPLE_DATA.to_vec();
+    data[10] = 0;
 
-//     let mut data = SAMPLE_DATA.to_vec();
-//     data[10] = 0;
+    let validator = async_validator_for_signing_alg(SigningAlg::Es256).unwrap();
 
-//     let validator = validator_for_signing_alg(SigningAlg::Es256).unwrap();
+    assert_eq!(
+        validator
+            .validate_async(signature, &data, pub_key)
+            .await
+            .unwrap_err(),
+        RawSignatureValidationError::SignatureMismatch
+    );
+}
 
-//     assert_eq!(
-//         validator.validate(signature, &data, pub_key).unwrap_err(),
-//         RawSignatureValidationError::SignatureMismatch
-//     );
-// }
+#[wasm_bindgen_test]
+async fn es384() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es384.raw_sig");
+    let pub_key = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
 
-// #[wasm_bindgen_test]
-// async fn es384() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/es384.raw_sig");     let pub_key
-// = include_bytes!("../../fixtures/raw_signature/es384.pub_key");
+    let validator = async_validator_for_signing_alg(SigningAlg::Es384).unwrap();
 
-//     let validator = validator_for_signing_alg(SigningAlg::Es384).unwrap();
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
+}
 
-//     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-// }
+#[wasm_bindgen_test]
+async fn es512() {
+    let signature = include_bytes!("../../fixtures/raw_signature/es512.raw_sig");
+    let pub_key = include_bytes!("../../fixtures/raw_signature/es512.pub_key");
 
-// // #[wasm_bindgen_test] // ES512 not
-// // implemented
-// async fn es512() {
-//     let signature =
-// include_bytes!("../../fixtures/raw_signature/es512.raw_sig");     let pub_key
-// = include_bytes!("../../fixtures/raw_signature/es512.pub_key");
+    let validator = async_validator_for_signing_alg(SigningAlg::Es512).unwrap();
 
-//     let validator = validator_for_signing_alg(SigningAlg::Es512).unwrap();
-
-//     validator.validate(signature, SAMPLE_DATA, pub_key).unwrap();
-// }
+    validator
+        .validate_async(signature, SAMPLE_DATA, pub_key)
+        .await
+        .unwrap();
+}
 
 #[wasm_bindgen_test]
 async fn ed25519() {
