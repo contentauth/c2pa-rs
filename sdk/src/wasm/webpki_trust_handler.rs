@@ -294,7 +294,7 @@ fn cert_signing_alg(cert: &x509_parser::certificate::X509Certificate) -> Option<
     Some(signing_alg)
 }
 
-pub(crate) async fn verify_data(
+async fn verify_data(
     cert_der: Vec<u8>,
     sig_alg: Option<String>,
     sig: Vec<u8>,
