@@ -31,7 +31,7 @@ use crate::{
     assertions::{
         self,
         labels::{ACTIONS, BMFF_HASH},
-        AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
+        Actions, AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
@@ -71,7 +71,7 @@ const GH_UA: &str = "Sec-CH-UA";
 const C2PA_NAMESPACE_V2: &str = "urn:c2pa:";
 const C2PA_NAMESPACE_V1: &str = "urn:uuid";
 
-static V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
+static _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
     "stds.iptc",
     "stds.iptc.photo-metadata",
     "stds.exif",
@@ -1140,6 +1140,45 @@ impl Claim {
         self.add_assertion_with_salt_impl(assertion_builder, salt_generator, self.version() > 1)
     }
 
+    fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
+        let assertion_version = assertion.get_ver();
+        let assertion_label = assertion.label();
+
+        if assertion_label == ACTIONS {
+            // check for actions V1
+            if assertion_version < 1 {
+                return Err(Error::VersionCompatibility(
+                    "action assertion version too low".into(),
+                ));
+            }
+
+            // check for deprecated actions
+            if V2_DEPRECATED_ACTIONS.contains(&assertion.label().as_str()) {
+                return Err(Error::VersionCompatibility(
+                    "action assertion has been deprecated".into(),
+                ));
+            }
+        }
+
+        // version 1 BMFF hash is deprecated
+        if assertion_label == BMFF_HASH && assertion_version < 2 {
+            return Err(Error::VersionCompatibility(
+                "BMFF hash assertion version too low".into(),
+            ));
+        }
+
+        /*
+        // only allow deprecated assertions in created_assertion list
+        if V2_SPEC_DEPRECATED_ASSERTIONS.contains(&assertion.label().as_str()) {
+            return Err(Error::VersionCompatibility(
+                "C2PA deprecated assertion should be added to gather_assertions".into(),
+            ));
+        }
+        */
+
+        Ok(())
+    }
+
     fn add_assertion_with_salt_impl(
         &mut self,
         assertion_builder: &impl AssertionBase,
@@ -1148,7 +1187,6 @@ impl Claim {
     ) -> Result<C2PAAssertion> {
         // make sure the assertion is valid
         let assertion = assertion_builder.to_assertion()?;
-        let assertion_version = assertion.get_ver();
         let assertion_label = assertion.label();
 
         // Update label if there are multiple instances of
@@ -1157,35 +1195,7 @@ impl Claim {
 
         // check for deprecated assertions when using Claims > V1
         if self.version() > 1 {
-            if assertion_label == ACTIONS {
-                // check for deprecated actions
-                if V2_DEPRECATED_ACTIONS.contains(&assertion.label().as_str()) {
-                    return Err(Error::VersionCompatibility(
-                        "action assertion has been deprecated".into(),
-                    ));
-                }
-
-                // check for actions V1
-                if assertion_version < 1 {
-                    return Err(Error::VersionCompatibility(
-                        "action assertion version too low".into(),
-                    ));
-                }
-            }
-
-            // version 1 BMFF hash is deprecated
-            if assertion_label == BMFF_HASH && assertion_version < 2 {
-                return Err(Error::VersionCompatibility(
-                    "BMFF hash assertion version too low".into(),
-                ));
-            }
-
-            // only allow deprecated assertions in created_assertion list
-            if V2_SPEC_DEPRECATED_ASSERTIONS.contains(&assertion.label().as_str()) {
-                return Err(Error::VersionCompatibility(
-                    "C2PA deprecated assertion should be added to gather_assertions".into(),
-                ));
-            }
+            self.compatibility_checks(&assertion)?
         }
 
         // Get salted hash of the assertion's contents.
@@ -1203,7 +1213,7 @@ impl Claim {
         // Add to assertion store.
         let (_l, instance) = Claim::assertion_label_from_link(&as_label);
         let ca = ClaimAssertion::new(
-            assertion,
+            assertion.clone(),
             instance,
             &hash,
             self.alg(),
@@ -1213,6 +1223,34 @@ impl Claim {
         self.assertion_store.push(ca);
         self.assertions.push(c2pa_assertion.clone());
         if add_as_created_assertion {
+            // enforce actions assertion generation rules during creation
+            if assertion_label == ACTIONS {
+                let actions_list = self.assertions_by_type(&assertion);
+
+                let ac = Actions::from_assertion(&assertion)?;
+
+                if self.created_assertions.len() == 0 && actions_list.len() == 1 {
+                    if let Some(first_action) = ac.actions().first() {
+                        if first_action.action() != "c2pa.created"
+                            || first_action.action() != "c2pa.opened"
+                        {
+                            return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                        }
+                    } else {
+                        // must have an action
+                        return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                    }
+                } else {
+                    // any other added actions cannot be created or opened
+                    let current_action = Actions::from_assertion(&assertion)?;
+                    if current_action.actions().iter().any(|a| {
+                        a.action() == "c2pa.created" || a.action() == "c2pa.opened"
+                    }) {
+                        return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
+                    }
+                }
+            }
+
             // add to created assertions list
             self.created_assertions.push(c2pa_assertion.clone());
         }
@@ -1854,6 +1892,17 @@ impl Claim {
                 log_item!(claim.uri(), "claim missing data binding", "verify_internal")
                     .validation_status(validation_status::HARD_BINDINGS_MISSING)
                     .failure(validation_log, Error::ClaimMissingHardBinding)?;
+            }
+
+            // must have exactly one hard binding for normal manifests
+            if claim.hash_assertions().len() != 1 && !claim.update_manifest() {
+                log_item!(
+                    claim.uri(),
+                    "claim has multiple data bindings",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::HARD_BINDINGS_MULTIPLE)
+                .failure(validation_log, Error::ClaimMultipleHardBinding)?;
             }
 
             // update manifests cannot have data hashes

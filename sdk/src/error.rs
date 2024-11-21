@@ -83,6 +83,9 @@ pub enum Error {
     #[error("claim missing hard binding")]
     ClaimMissingHardBinding,
 
+    #[error("claim contains multiple hard bindings")]
+    ClaimMultipleHardBinding,
+
     #[error("claim contains self redactions")]
     ClaimSelfRedact,
 

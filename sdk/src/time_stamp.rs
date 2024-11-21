@@ -23,7 +23,10 @@ use bcder::{
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa_crypto::asn1::rfc3161::PkiStatus;
 use c2pa_crypto::asn1::{
-    rfc3161::{MessageImprint, TimeStampReq, TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+    rfc3161::{
+        MessageImprint, TimeStampReq, TimeStampResp, TimeStampToken, TstInfo,
+        OID_CONTENT_TYPE_TST_INFO,
+    },
     rfc5652::{
         CertificateChoices::Certificate, SignedData, SignerIdentifier, OID_ID_SIGNED_DATA,
         OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
@@ -434,7 +437,6 @@ pub(crate) fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
 #[allow(unused_variables)]
 #[async_generic]
 pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
-   
     // check for timestamp expiration during stamping
     let Ok(Some(sd)) = get_timestamp_signed_data(ts) else {
         return Err(Error::CoseInvalidTimeStamp);
