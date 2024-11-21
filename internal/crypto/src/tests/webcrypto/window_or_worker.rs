@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,23 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+use wasm_bindgen_test::wasm_bindgen_test;
 
-mod log;
-pub use log::{LogItem, LogKind};
+use crate::webcrypto::WindowOrWorker;
 
-mod status_tracker;
-pub use status_tracker::{
-    detailed::DetailedStatusTracker, one_shot::OneShotStatusTracker, StatusTracker,
-};
-
-pub mod validation_codes;
-
-#[cfg(test)]
-pub(crate) mod tests;
+#[wasm_bindgen_test]
+fn has_crypto_library() {
+    WindowOrWorker::new().unwrap().crypto().unwrap();
+}
