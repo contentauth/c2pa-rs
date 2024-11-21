@@ -16,13 +16,17 @@ Other libraries in the SDK support the same set of formats, unless noted otherwi
  | `jpg`, `jpeg` | `image/jpeg`                                                                  |
  | `m4a`         | `audio/mp4`                                                                   |
  | `mp3`         | `audio/mpeg`                                                                  |
- | `mp4`         | `video/mp4`, `application/mp4`                                                |
+ | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>                                   |
  | `mov`         | `video/quicktime`                                                             |
+ | `pdf`         | `application/pdf` <sup>**</sup>                                               |
  | `png`         | `image/png`                                                                   |
  | `svg`         | `image/svg+xml`                                                               |
  | `tif`,`tiff`  | `image/tiff`                                                                  |
  | `wav`         | `audio/wav`                                                                   |
  | `webp`        | `image/webp`                                                                  |
 
+NOTES:
+<sup>*</sup> Fragmented MP4 is not yet supported.
 
+<sup>**</sup> Read-only
 
