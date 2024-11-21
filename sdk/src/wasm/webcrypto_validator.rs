@@ -13,7 +13,7 @@
 
 use std::convert::TryFrom;
 
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{webcrypto::WindowOrWorker, SigningAlg};
 use js_sys::{Array, ArrayBuffer, Object, Reflect, Uint8Array};
 use spki::SubjectPublicKeyInfoRef;
 use wasm_bindgen::prelude::*;
@@ -21,7 +21,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{CryptoKey, SubtleCrypto};
 use x509_parser::der_parser::ber::{parse_ber_sequence, BerObject};
 
-use crate::{wasm::context::WindowOrWorker, Error, Result};
+use crate::{Error, Result};
 
 pub struct EcKeyImportParams {
     name: String,
