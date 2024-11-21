@@ -296,7 +296,7 @@ pub const GENERAL_ERROR: &str = "general.error";
 /// # Examples
 ///
 /// ```
-/// use c2pa_crypto::validation_codes::*;
+/// use c2pa_status_tracker::validation_codes::*;
 ///
 /// assert!(is_success(CLAIM_SIGNATURE_VALIDATED));
 /// assert!(!is_success(SIGNING_CREDENTIAL_REVOKED));

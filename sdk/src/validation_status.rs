@@ -17,7 +17,7 @@
 
 #![deny(missing_docs)]
 
-pub use c2pa_crypto::validation_codes::*;
+pub use c2pa_status_tracker::validation_codes::*;
 use c2pa_status_tracker::{LogItem, StatusTracker};
 use log::debug;
 #[cfg(feature = "json_schema")]
