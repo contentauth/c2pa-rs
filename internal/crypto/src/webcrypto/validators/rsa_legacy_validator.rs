@@ -18,7 +18,7 @@ use rsa::{
     RsaPublicKey,
 };
 use spki::SubjectPublicKeyInfoRef;
-use x509_parser::der_parser::ber::{parse_ber_sequence /* BerObject */};
+use x509_parser::der_parser::ber::parse_ber_sequence;
 
 use super::rsa_validator::biguint_val;
 use crate::raw_signature::{RawSignatureValidationError, RawSignatureValidator};
