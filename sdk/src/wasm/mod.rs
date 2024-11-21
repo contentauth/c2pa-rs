@@ -21,8 +21,6 @@ pub(crate) mod util;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod webcrypto_validator;
 #[cfg(target_arch = "wasm32")]
-pub use webcrypto_validator::validate_async;
-#[cfg(target_arch = "wasm32")]
 pub(crate) mod webpki_trust_handler;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use webpki_trust_handler::verify_data;
