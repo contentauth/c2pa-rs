@@ -13,13 +13,13 @@
 
 //! Tools for working with OCSP responses.
 
-use c2pa_status_tracker::{log_item, DetailedStatusTracker, StatusTracker};
+use c2pa_status_tracker::{log_item, validation_codes, DetailedStatusTracker, StatusTracker};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
-use crate::{internal::time, validation_codes};
+use crate::internal::time;
 
 /// OcspResponse - struct to contain the OCSPResponse DER and the time
 /// for the next OCSP check

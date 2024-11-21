@@ -37,8 +37,6 @@ pub mod raw_signature;
 mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
-pub mod validation_codes;
-
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub mod webcrypto;
 
