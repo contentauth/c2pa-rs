@@ -340,8 +340,7 @@ pub(crate) async fn verify_data(
     match result {
         Ok(()) => Ok(true),
         Err(RawSignatureValidationError::SignatureMismatch) => Ok(false),
-        _ => Err(Error::CoseSignature),
-        // TO DO (maybe): More nuanced conversion of error responses?
+        Err(err) => Err(err.into()),
     }
 }
 
