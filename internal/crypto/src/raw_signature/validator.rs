@@ -133,11 +133,34 @@ pub enum RawSignatureValidationError {
     /// An invalid signature value was provided.
     #[error("invalid signature value")]
     InvalidSignature,
+
+    /// The time stamp uses an unsupported signing or hash algorithm.
+    #[error("signature uses an unsupported algorithm")]
+    UnsupportedAlgorithm,
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(&'static str),
 }
 
 #[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::OpenSslError(err.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
+    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+        match err {
+            crate::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::InternalError("unknown WASM context")
+            }
+            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::InternalError("WASM crypto unavailable")
+            }
+        }
     }
 }
