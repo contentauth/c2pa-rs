@@ -53,9 +53,9 @@ pub fn async_validator_for_signing_alg(
         // SigningAlg::Es384 => Some(Box::new(EcdsaValidator::Es384)),
         // SigningAlg::Es512 => Some(Box::new(EcdsaValidator::Es512)),
         SigningAlg::Ed25519 => Some(Box::new(Ed25519Validator {})),
-        // SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
-        // SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
-        // SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
+        SigningAlg::Ps256 => Some(Box::new(RsaValidator::Ps256)),
+        SigningAlg::Ps384 => Some(Box::new(RsaValidator::Ps384)),
+        SigningAlg::Ps512 => Some(Box::new(RsaValidator::Ps512)),
         _ => unimplemented!(),
     }
 }
@@ -77,13 +77,6 @@ pub fn async_validator_for_sig_and_hash_algs(
         unimplemented!();
         // // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use
         // case?
-
-        // #[cfg(feature = "openssl")]
-        // if let Some(validator) =
-        //     crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-        // {
-        //     return Some(validator);
-        // }
 
         // // Not sure yet if we'll need legacy validators for WASM.
         // #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -114,3 +107,6 @@ pub fn async_validator_for_sig_and_hash_algs(
 
 pub(crate) mod ed25519_validator;
 use ed25519_validator::Ed25519Validator;
+
+pub(crate) mod rsa_validator;
+use rsa_validator::RsaValidator;
