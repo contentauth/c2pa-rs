@@ -330,11 +330,7 @@ pub(crate) async fn verify_data(
     };
 
     let result = validator
-        .validate_async(
-            &adjusted_sig,
-            &data,
-            certificate_public_key.subject_public_key.as_ref(),
-        )
+        .validate_async(&adjusted_sig, &data, certificate_public_key.raw.as_ref())
         .await;
 
     match result {
