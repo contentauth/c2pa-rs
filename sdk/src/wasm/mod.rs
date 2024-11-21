@@ -21,6 +21,4 @@ pub(crate) mod util;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod webpki_trust_handler;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use webpki_trust_handler::verify_data;
-#[cfg(target_arch = "wasm32")]
 pub(crate) use webpki_trust_handler::WebTrustHandlerConfig;
