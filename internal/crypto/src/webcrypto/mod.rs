@@ -19,4 +19,13 @@
 //!
 //! [`SubtleCrypto`]: https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.SubtleCrypto.html
 
+pub(crate) mod async_validators;
+pub use async_validators::{
+    async_validator_for_sig_and_hash_algs, async_validator_for_signing_alg,
+    AsyncRawSignatureValidator,
+};
+
 pub mod validators;
+
+mod window_or_worker;
+pub use window_or_worker::{WasmCryptoError, WindowOrWorker};
