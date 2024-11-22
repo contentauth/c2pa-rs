@@ -26,7 +26,7 @@ Other libraries in the SDK support the same set of formats, unless noted otherwi
  | `webp`        | `image/webp`                                                                  |
 
 NOTES:
-<sup>*</sup> Fragmented MP4 is not yet supported.
+<sup>*</sup> Fragmented MP4 (DASH) is supported only for file-based operations from the Rust library.
 
 <sup>**</sup> Read-only
 
