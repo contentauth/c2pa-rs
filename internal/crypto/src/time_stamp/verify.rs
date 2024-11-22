@@ -294,7 +294,7 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
         h.update(data);
 
         let digest = h.finish();
-        if digest.as_ref() != &mi.hashed_message.to_bytes() {
+        if digest.as_ref() != mi.hashed_message.to_bytes() {
             last_err = TimeStampError::InvalidData;
             continue;
         }
