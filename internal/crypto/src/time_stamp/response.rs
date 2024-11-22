@@ -26,7 +26,8 @@ use crate::{
 pub(crate) struct TimeStampResponse(pub(crate) TimeStampResp);
 
 impl TimeStampResponse {
-    // Returns `true` if the time stamp request was successful.
+    /// Returns `true` if the time stamp request was successful.
+    #[allow(unused)]
     pub(crate) fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,

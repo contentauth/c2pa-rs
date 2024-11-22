@@ -37,8 +37,10 @@ use crate::{
 };
 
 /// Decode the TimeStampToken info and verify it against the supplied data.
+///
+/// TEMPORARILY PUBLIC while refactoring
 #[async_generic]
-pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
+pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
     let ts_resp = decode_timestamp_response(ts)?;
 
     // Did the time stamp expire between issuance and verification?
@@ -247,25 +249,22 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
             #[cfg(target_arch = "wasm32")]
             {
                 if _sync {
+                    // IMPORTANT: The synchronous implementation of validate_timestamp_sync
+                    // on WASM is unable to support _some_ signature algorithms. The async path
+                    // should be used whenever possible.
                     validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
                 } else {
                     // NOTE: We're keeping the WASM-specific async path alive for now because it
                     // supports more signature algorithms. Look for future WASM platform to provide
                     // the opportunity to unify.
-                    let mut certificate_der = Vec::<u8>::new();
-                    cert.encode_ref()
-                        .write_encoded(bcder::Mode::Der, &mut certificate_der)?;
-
-                    if !crate::wasm::verify_data(
-                        certificate_der,
-                        get_validator_type(sig_alg, hash_alg),
-                        sig_val.to_bytes().to_vec(),
-                        tbs,
+                    validate_timestamp_sig_async(
+                        sig_alg,
+                        hash_alg,
+                        sig_val,
+                        &tbs,
+                        &signing_key_der,
                     )
-                    .await?
-                    {
-                        return Err(Error::CoseTimeStampMismatch);
-                    }
+                    .await?;
                 }
             }
 
@@ -293,8 +292,8 @@ pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeS
 
         let mut h = digest_algorithm.digester();
         h.update(data);
-        let digest = h.finish();
 
+        let digest = h.finish();
         if digest.as_ref() != &mi.hashed_message.to_bytes() {
             last_err = TimeStampError::InvalidData;
             continue;
@@ -338,6 +337,13 @@ fn timestamp_to_generalized_time(dt: i64) -> Option<GeneralizedTime> {
     }
 }
 
+fn time_to_datetime(t: Time) -> DateTime<Utc> {
+    match t {
+        Time::UtcTime(u) => *u,
+        Time::GeneralTime(gt) => generalized_time_to_datetime(gt),
+    }
+}
+
 fn validate_timestamp_sig(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
@@ -354,9 +360,24 @@ fn validate_timestamp_sig(
         .map_err(|_| TimeStampError::InvalidData)
 }
 
-fn time_to_datetime(t: Time) -> DateTime<Utc> {
-    match t {
-        Time::UtcTime(u) => *u,
-        Time::GeneralTime(gt) => generalized_time_to_datetime(gt),
-    }
+#[cfg(target_arch = "wasm32")]
+async fn validate_timestamp_sig_async(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    sig_val: &OctetString,
+    tbs: &[u8],
+    signing_key_der: &[u8],
+) -> Result<(), TimeStampError> {
+    let Some(validator) =
+        crate::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    else {
+        return Err(TimeStampError::UnsupportedAlgorithm);
+    };
+
+    validator
+        .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
+        .await
+        .map_err(|_| TimeStampError::InvalidData)?;
+
+    Ok(())
 }

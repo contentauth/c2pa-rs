@@ -27,3 +27,5 @@ pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
 pub(crate) mod response;
 
 mod verify;
+/// TEMPORARILY PUBLIC while refactoring
+pub use verify::{verify_time_stamp, verify_time_stamp_async};
