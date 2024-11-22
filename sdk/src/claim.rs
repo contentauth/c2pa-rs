@@ -44,7 +44,8 @@ use crate::{
     jumbf::{
         self,
         boxes::{
-            CAICBORAssertionBox, CAIJSONAssertionBox, CAIUUIDAssertionBox, JumbfEmbeddedFileBox,
+            BMFFBox, CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox,
+            CAIUUIDAssertionBox, JUMBFCBORContentBox, JumbfEmbeddedFileBox,
         },
         labels::{
             box_name_from_uri, manifest_label_from_uri, manifest_label_to_parts, to_absolute_uri,
@@ -1072,6 +1073,21 @@ impl Claim {
         self.claim_generator_hints.as_ref()
     }
 
+    pub fn calc_sig_box_hash(claim: &Claim, alg: &str) -> Result<Vec<u8>> {
+        let mut hash_bytes = Vec::with_capacity(2048);
+
+        // create a signature and add placeholder data to the CAI store.
+        let mut sigb = CAISignatureBox::new();
+        let signed_data = claim.signature_val().clone();
+
+        let sigc = JUMBFCBORContentBox::new(signed_data);
+        sigb.add_signature(Box::new(sigc));
+
+        sigb.write_box_payload(&mut hash_bytes)?;
+
+        Ok(hash_by_alg(alg, &hash_bytes, None))
+    }
+
     pub fn calc_assertion_box_hash(
         label: &str,
         assertion: &Assertion,
@@ -1229,7 +1245,7 @@ impl Claim {
 
                 let ac = Actions::from_assertion(&assertion)?;
 
-                if self.created_assertions.len() == 0 && actions_list.len() == 1 {
+                if self.created_assertions.is_empty() && actions_list.len() == 1 {
                     if let Some(first_action) = ac.actions().first() {
                         if first_action.action() != "c2pa.created"
                             || first_action.action() != "c2pa.opened"
@@ -1243,9 +1259,11 @@ impl Claim {
                 } else {
                     // any other added actions cannot be created or opened
                     let current_action = Actions::from_assertion(&assertion)?;
-                    if current_action.actions().iter().any(|a| {
-                        a.action() == "c2pa.created" || a.action() == "c2pa.opened"
-                    }) {
+                    if current_action
+                        .actions()
+                        .iter()
+                        .any(|a| a.action() == "c2pa.created" || a.action() == "c2pa.opened")
+                    {
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 }

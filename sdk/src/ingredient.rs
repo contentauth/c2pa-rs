@@ -1167,8 +1167,14 @@ impl Ingredient {
                             .iter()
                             .find(|c| c.label() == manifest_label)
                         {
-                            let hash =
-                                ingredient_store.get_manifest_box_hash(ingredient_active_claim); // get C2PA 1.2 JUMBF box hash
+                            let hash = ingredient_store
+                                .get_manifest_box_hashes(ingredient_active_claim)
+                                .manifest_box_hash; // get C2PA 1.2 JUMBF box hash
+
+                            // todo: must use this when making v3
+                            let _sig_hash = ingredient_store
+                                .get_manifest_box_hashes(ingredient_active_claim)
+                                .signature_box_hash; // needed for v3 ingredients
 
                             let uri = jumbf::labels::to_manifest_uri(&manifest_label);
 

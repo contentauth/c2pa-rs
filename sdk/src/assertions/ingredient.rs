@@ -367,6 +367,15 @@ impl Ingredient {
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
+        // check rules
+        if self.active_manifest.is_none() && self.validation_results.is_some()
+            || self.active_manifest.is_some() && self.validation_results.is_none()
+        {
+            return Err(serde::ser::Error::custom(
+                "Ingredient has incompatible fields",
+            ));
+        }
+
         let mut ingredient_map_len = 1;
         if self.title.is_some() {
             ingredient_map_len += 1

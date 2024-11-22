@@ -74,13 +74,18 @@ use crate::{
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
 
+pub(crate) struct ManifestHashes {
+    pub manifest_box_hash: Vec<u8>,
+    pub signature_box_hash: Vec<u8>,
+}
+
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
 #[derive(Debug)]
 pub struct Store {
     claims_map: HashMap<String, usize>,
-    manifest_box_hash_cache: HashMap<String, Vec<u8>>,
+    manifest_box_hash_cache: HashMap<String, (Vec<u8>, Vec<u8>)>,
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
@@ -231,12 +236,20 @@ impl Store {
         &self.claims
     }
 
-    /// the JUMBF manifest box hash (spec 1.2)
-    pub fn get_manifest_box_hash(&self, claim: &Claim) -> Vec<u8> {
-        if let Some(bh) = self.manifest_box_hash_cache.get(claim.label()) {
-            bh.clone()
+    /// the JUMBF manifest box hash (spec 1.2) and signature box hash (2.x)
+    pub(crate) fn get_manifest_box_hashes(&self, claim: &Claim) -> ManifestHashes {
+        if let Some((mbh, sbh)) = self.manifest_box_hash_cache.get(claim.label()) {
+            ManifestHashes {
+                manifest_box_hash: mbh.clone(),
+                signature_box_hash: sbh.clone(),
+            }
         } else {
-            Store::calc_manifest_box_hash(claim, None, claim.alg()).unwrap_or_default()
+            ManifestHashes {
+                manifest_box_hash: Store::calc_manifest_box_hash(claim, None, claim.alg())
+                    .unwrap_or_default(),
+                signature_box_hash: Claim::calc_sig_box_hash(claim, claim.alg())
+                    .unwrap_or_default(),
+            }
         }
     }
 
@@ -1246,9 +1259,13 @@ impl Store {
             }
 
             // save the hash of the loaded manifest for ingredient validation
+            // and the signature box for Ingredient_v3
             store.manifest_box_hash_cache.insert(
                 claim.label().to_owned(),
-                Store::calc_manifest_box_hash(&claim, None, claim.alg())?,
+                (
+                    Store::calc_manifest_box_hash(&claim, None, claim.alg())?,
+                    Claim::calc_sig_box_hash(&claim, claim.alg())?,
+                ),
             );
 
             // add claim to store
@@ -1296,7 +1313,7 @@ impl Store {
                     };
 
                     // get the 1.1-1.2 box hash
-                    let box_hash = store.get_manifest_box_hash(ingredient);
+                    let box_hash = store.get_manifest_box_hashes(ingredient).manifest_box_hash;
 
                     // test for 1.1 hash then 1.0 version
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
@@ -1400,7 +1417,7 @@ impl Store {
                     };
 
                     // get the 1.1-1.2 box hash
-                    let box_hash = store.get_manifest_box_hash(ingredient);
+                    let box_hash = store.get_manifest_box_hashes(ingredient).manifest_box_hash;
 
                     // test for 1.1 hash then 1.0 version
                     if !vec_compare(&c2pa_manifest.hash(), &box_hash)
@@ -2390,7 +2407,9 @@ impl Store {
                         };
 
                         // get the 1.1-1.2 box hash
-                        let box_hash = new_store.get_manifest_box_hash(&ingredient.clone());
+                        let box_hash = new_store
+                            .get_manifest_box_hashes(&ingredient.clone())
+                            .manifest_box_hash;
 
                         // test for 1.1 hash then 1.0 version
                         if !vec_compare(&c2pa_manifest.hash(), &box_hash)
