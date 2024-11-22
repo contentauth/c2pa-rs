@@ -27,5 +27,7 @@ pub use status_tracker::{
     detailed::DetailedStatusTracker, one_shot::OneShotStatusTracker, StatusTracker,
 };
 
+pub mod validation_codes;
+
 #[cfg(test)]
 pub(crate) mod tests;
