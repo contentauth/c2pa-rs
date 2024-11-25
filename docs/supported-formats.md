@@ -1,7 +1,6 @@
 # Supported file formats
 
-The following table summarizes the media (asset) file formats that the CAI Rust library supports.
-Other libraries in the SDK support the same set of formats, unless noted otherwise.
+The following table summarizes the supported media (asset) file formats.  This information is based on what the Rust library supports; other libraries in the SDK support the same formats, unless noted otherwise.
 
 
  | Extensions    | MIME type                                                                     |
@@ -27,6 +26,6 @@ Other libraries in the SDK support the same set of formats, unless noted otherwi
 
 NOTES:
 <sup>*</sup> Fragmented MP4 (DASH) is supported only for file-based operations from the Rust library.
-
+<br/>
 <sup>**</sup> Read-only
 
