@@ -175,6 +175,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
     async fn test_v2_api() -> Result<()> {
         main()
     }

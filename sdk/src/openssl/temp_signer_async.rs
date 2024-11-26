@@ -22,7 +22,7 @@
 #[cfg(feature = "openssl_sign")]
 use c2pa_crypto::SigningAlg;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
 fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {
     let cert_dir = crate::utils::test::fixture_path("certs");
 
@@ -51,7 +51,7 @@ pub struct AsyncSignerAdapter {
     ocsp_val: Option<Vec<u8>>,
 }
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
 impl AsyncSignerAdapter {
     pub fn new(alg: SigningAlg) -> Self {
         let signer = get_local_signer(alg);
@@ -67,7 +67,7 @@ impl AsyncSignerAdapter {
 }
 
 #[cfg(test)]
-#[cfg(feature = "openssl_sign")]
+#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
 #[async_trait::async_trait]
 impl crate::AsyncSigner for AsyncSignerAdapter {
     async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {

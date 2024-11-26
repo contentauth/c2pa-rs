@@ -362,6 +362,7 @@ mod tests {
     use crate::{claim::Claim, utils::test::temp_signer};
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_sign_claim() {
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
         claim.build().unwrap();
@@ -376,8 +377,7 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "openssl")]
+    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     #[actix::test]
     async fn test_sign_claim_async() {
         use crate::{

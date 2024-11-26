@@ -56,7 +56,7 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
@@ -68,7 +68,7 @@ pub trait Signer {
         }
         None
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(not(feature = "openssl"))]
     fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
