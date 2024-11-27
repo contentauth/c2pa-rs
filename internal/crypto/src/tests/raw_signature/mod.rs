@@ -11,5 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(any(target_arch = "wasm32", feature = "openssl"))]
+#[cfg(any(target_arch = "wasm32", feature = "_anyssl"))]
 mod validator;

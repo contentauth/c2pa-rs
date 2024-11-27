@@ -40,7 +40,7 @@ pub trait RawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "_anyssl")]
     if let Some(validator) = crate::openssl::validators::validator_for_signing_alg(alg) {
         return Some(validator);
     }
@@ -73,7 +73,7 @@ pub fn validator_for_sig_and_hash_algs(
     {
         // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
 
-        #[cfg(feature = "openssl")]
+        #[cfg(feature = "_anyssl")]
         if let Some(validator) =
             crate::openssl::validators::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
         {
@@ -118,12 +118,12 @@ pub enum RawSignatureValidationError {
     ///
     /// NOTE: We do not directly capture the OpenSSL error itself because it
     /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "_anyssl")]
     #[error("an error was reported by OpenSSL native code: {0}")]
     OpenSslError(String),
 
     /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "_anyssl")]
     #[error(transparent)]
     OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
 
@@ -145,7 +145,7 @@ pub enum RawSignatureValidationError {
     InternalError(&'static str),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::OpenSslError(err.to_string())

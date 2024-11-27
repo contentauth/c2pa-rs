@@ -35,7 +35,7 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 use crate::openssl::verify_trust;
 #[cfg(target_arch = "wasm32")]
 use crate::wasm::webpki_trust_handler::verify_trust_async;
@@ -847,14 +847,14 @@ fn check_trust(
     // is the certificate trusted
 
     let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl"))]
+        #[cfg(not(feature = "_anyssl"))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
             ))
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(feature = "_anyssl")]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
@@ -864,12 +864,12 @@ fn check_trust(
             verify_trust_async(th, chain_der, cert_der, signing_time_epoc).await
         }
 
-        #[cfg(feature = "openssl")]
+        #[cfg(feature = "_anyssl")]
         {
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
-        #[cfg(not(any(feature = "openssl", target_arch = "wasm32")))]
+        #[cfg(not(any(feature = "_anyssl", target_arch = "wasm32")))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
@@ -1346,7 +1346,7 @@ async fn validate_with_cert_async(
 
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 #[cfg(test)]
 pub mod tests {
     use c2pa_status_tracker::DetailedStatusTracker;
@@ -1380,7 +1380,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+    #[cfg(all(feature = "_anyssl_sign", feature = "file_io"))]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
@@ -1443,7 +1443,7 @@ pub mod tests {
         assert_eq!(signing_time, None);
     }
     #[test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "_anyssl_sign")]
     fn test_stapled_ocsp() {
         let mut validation_log = DetailedStatusTracker::default();
 

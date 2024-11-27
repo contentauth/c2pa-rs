@@ -33,8 +33,8 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["dep:openssl", "c2pa-crypto/openssl"]
-openssl_sign = ["openssl", "c2pa-crypto/openssl"]
+openssl = ["dep:openssl", "c2pa-crypto/openssl", "_anyssl"]
+openssl_sign = ["openssl", "c2pa-crypto/openssl", "_anyssl_sign"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
@@ -43,6 +43,11 @@ unstable_api = []
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
+
+# Internal-only. Use the `openssl` feature to enable it.
+_anyssl = []
+# Internal-only. Use the `openssl_sign` feature to enable it.
+_anyssl_sign = []
 
 [[example]]
 name = "client"

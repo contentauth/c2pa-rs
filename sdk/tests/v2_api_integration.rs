@@ -108,7 +108,7 @@ mod integration_v2 {
     }
 
     #[test]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "_anyssl")), ignore)]
     fn test_v2_integration() -> Result<()> {
         let title = "CA.jpg";
         let format = "image/jpeg";
