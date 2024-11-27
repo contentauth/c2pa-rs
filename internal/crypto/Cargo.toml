@@ -27,7 +27,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 json_schema = ["dep:schemars"]
-openssl = ["dep:openssl"]
+openssl = ["dep:openssl", "_anyssl"]
+
+# Internal-only. Use the `openssl` feature to enable it.
+_anyssl = []
 
 [dependencies]
 base64 = "0.22.1"

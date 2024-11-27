@@ -157,9 +157,9 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// #[cfg(feature = "openssl")]
+// #[cfg(feature = "_anyssl")]
 // use openssl::{error::ErrorStack, pkey::PKey};
-// #[cfg(feature = "openssl")]
+// #[cfg(feature = "_anyssl")]
 // fn ed_sign(data: &[u8], pkey: &[u8]) -> std::result::Result<Vec<u8>, ErrorStack> {
 //     let pkey = PKey::private_key_from_pem(pkey)?;
 //     let mut signer = openssl::sign::Signer::new_without_digest(&pkey)?;
@@ -175,7 +175,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl")), ignore)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "_anyssl")), ignore)]
     async fn test_v2_api() -> Result<()> {
         main()
     }

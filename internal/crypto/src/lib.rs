@@ -26,10 +26,10 @@ pub(crate) mod internal;
 
 pub mod ocsp;
 
-#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
+#[cfg(all(feature = "_anyssl", target_arch = "wasm32"))]
 compile_error!("OpenSSL feature is not compatible with WASM platform");
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 pub mod openssl;
 
 pub mod raw_signature;

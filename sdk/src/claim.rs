@@ -1980,7 +1980,7 @@ impl Claim {
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

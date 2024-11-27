@@ -1853,7 +1853,7 @@ pub mod tests {
     use super::*;
     use crate::utils::test::{fixture_path, temp_dir_path};
 
-    #[cfg(all(feature = "openssl", feature = "file_io"))]
+    #[cfg(all(feature = "_anyssl", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
         use c2pa_status_tracker::DetailedStatusTracker;

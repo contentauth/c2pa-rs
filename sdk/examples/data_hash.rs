@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 use c2pa::create_signer;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,10 +37,10 @@ use c2pa_crypto::SigningAlg;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");
 
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+    #[cfg(all(feature = "_anyssl_sign", feature = "file_io"))]
     user_data_hash_with_sdk_hashing()?;
     println!("Done with SDK hashing1");
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+    #[cfg(all(feature = "_anyssl_sign", feature = "file_io"))]
     user_data_hash_with_user_hashing()?;
     println!("Done with SDK hashing2");
     Ok(())
@@ -89,7 +89,7 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     Ok(builder)
 }
 
-#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+#[cfg(all(feature = "_anyssl_sign", feature = "file_io"))]
 fn user_data_hash_with_sdk_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
@@ -149,7 +149,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
+#[cfg(all(feature = "_anyssl_sign", feature = "file_io"))]
 fn user_data_hash_with_user_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";

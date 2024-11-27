@@ -281,11 +281,11 @@ pub enum Error {
     #[error(transparent)]
     CborError(#[from] serde_cbor::Error),
 
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "_anyssl")]
     #[error("could not acquire OpenSSL FFI mutex")]
     OpenSslMutexError,
 
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "_anyssl")]
     #[error(transparent)]
     OpenSslError(#[from] openssl::error::ErrorStack),
 
@@ -308,7 +308,7 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 impl From<c2pa_crypto::openssl::OpenSslMutexUnavailable> for Error {
     fn from(_err: c2pa_crypto::openssl::OpenSslMutexUnavailable) -> Self {
         Self::OpenSslMutexError
