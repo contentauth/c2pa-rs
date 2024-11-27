@@ -3867,15 +3867,18 @@ pub mod tests {
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
 
-        // Create a new claim.
-        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 2);
-        create_editing_claim(&mut claim2).unwrap();
-        claim2.add_claim_generator_info(cgi.clone());
-
         // Create a 3rd party claim
         let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
-        claim_capture.add_claim_generator_info(cgi);
+        claim_capture.add_claim_generator_info(cgi.clone());
+
+        // Create a new v2 claim.
+        let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
+        // first assertion must be Actiion c2pa.opened, c2pa.created
+        let action = Actions::new().add_action(Action::new("c2pa.opened"));
+        claimv2.add_assertion(&action).unwrap();
+        create_editing_claim(&mut claimv2).unwrap();
+        claimv2.add_claim_generator_info(cgi);
 
         // Do we generate JUMBF?
         let signer = temp_signer();
@@ -3883,14 +3886,14 @@ pub mod tests {
         // Test generate JUMBF
         // Get labels for label test
         let capture = claim_capture.label().to_string();
-        let claim2_label = claim2.label().to_string();
+        let claim2_label = claimv2.label().to_string();
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         //store.commit_claim(claim1).unwrap();
         //store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
         store.commit_claim(claim_capture).unwrap();
         store.save_to_asset(&ap, signer.as_ref(), &op).unwrap();
-        store.commit_claim(claim2).unwrap();
+        store.commit_claim(claimv2).unwrap();
         store.save_to_asset(&op, signer.as_ref(), &op).unwrap();
 
         // test finding claims by label
@@ -3911,12 +3914,6 @@ pub mod tests {
 
         let errors = report.take_errors();
         assert!(errors.is_empty());
-
-        // can  we get by the ingredient data back
-        let _some_binary_data: Vec<u8> = vec![
-            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
-            0x0b, 0x0e,
-        ];
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -3947,6 +3944,27 @@ pub mod tests {
             }
         }
     }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_bad_claim_v2_generation() {
+        // first assertion must be Actiion c2pa.opened, c2pa.created
+        let action = Actions::new().add_action(Action::new("c2pa.opened"));
+
+        let my_content = r#"{"my_tag": "some value I will replace"}"#;
+        let my_label = "com.mycompany.myassertion";
+        let user = crate::assertions::User::new(my_label, my_content);
+
+        // test adding non opened or created assertion first
+        let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
+        claimv2.add_assertion(&user).unwrap_err();
+
+        // test adding mulitple opened or created
+        let mut claimv2 = Claim::new("Photoshop", Some("Adobe"), 2);
+        claimv2.add_assertion(&action).unwrap();
+        claimv2.add_assertion(&action).unwrap_err();
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_unknown_asset_type_generation() {

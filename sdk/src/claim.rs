@@ -1236,19 +1236,16 @@ impl Claim {
             salt,
             ClaimAssertionType::V1,
         );
-        self.assertion_store.push(ca);
-        self.assertions.push(c2pa_assertion.clone());
+
         if add_as_created_assertion {
             // enforce actions assertion generation rules during creation
             if assertion_label == ACTIONS {
-                let actions_list = self.assertions_by_type(&assertion);
-
                 let ac = Actions::from_assertion(&assertion)?;
 
-                if self.created_assertions.is_empty() && actions_list.len() == 1 {
+                if self.created_assertions.is_empty() {
                     if let Some(first_action) = ac.actions().first() {
                         if first_action.action() != "c2pa.created"
-                            || first_action.action() != "c2pa.opened"
+                            && first_action.action() != "c2pa.opened"
                         {
                             return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                         }
@@ -1267,11 +1264,16 @@ impl Claim {
                         return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
                     }
                 }
+            } else if self.created_assertions.is_empty() {
+                return Err(Error::AssertionEncoding); // todo: placeholder until we have 2.x error codes
             }
 
             // add to created assertions list
             self.created_assertions.push(c2pa_assertion.clone());
         }
+
+        self.assertion_store.push(ca);
+        self.assertions.push(c2pa_assertion.clone());
 
         Ok(c2pa_assertion)
     }
