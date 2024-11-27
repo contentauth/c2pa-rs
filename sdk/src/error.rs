@@ -13,6 +13,8 @@
 
 // #![deny(missing_docs)] (we'll turn this on once fully documented)
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use thiserror::Error;
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.

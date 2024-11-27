@@ -12,6 +12,8 @@
 // each license.
 
 use bcder::Oid;
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use thiserror::Error;
 
 use super::oids::*;

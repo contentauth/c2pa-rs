@@ -57,6 +57,9 @@ impl SaltGenerator for DefaultSalt {
     fn generate_salt(&self) -> Option<Vec<u8>> {
         #[cfg(feature = "_anyssl_sign")]
         {
+            #[cfg(feature = "boringssl")]
+            use boring as openssl;
+
             let mut salt = vec![0u8; self.salt_len];
             openssl::rand::rand_bytes(&mut salt).ok()?;
 

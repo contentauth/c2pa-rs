@@ -13,6 +13,8 @@
 
 #![allow(missing_docs)] // REMOVE once this becomes `pub(crate)`
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use openssl::{hash::MessageDigest, pkey::PKey, rsa::Rsa, sign::Verifier};
 
 use crate::{
