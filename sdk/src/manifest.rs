@@ -2146,7 +2146,10 @@ pub(crate) mod tests {
 
     #[cfg_attr(feature = "_anyssl_sign", actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg(any(target_arch = "wasm32", all(feature = "_anyssl_sign", feature = "file_io")))]
+    #[cfg(any(
+        target_arch = "wasm32",
+        all(feature = "_anyssl_sign", feature = "file_io")
+    ))]
     async fn test_embed_from_memory_async() {
         use crate::{assertions::User, utils::test::temp_async_signer};
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");

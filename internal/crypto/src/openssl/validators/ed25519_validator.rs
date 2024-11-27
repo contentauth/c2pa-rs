@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use openssl::{pkey::PKey, sign::Verifier};
 
 use crate::{

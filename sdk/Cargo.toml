@@ -35,6 +35,8 @@ no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
 openssl = ["dep:openssl", "c2pa-crypto/openssl", "_anyssl"]
 openssl_sign = ["openssl", "c2pa-crypto/openssl", "_anyssl_sign"]
+boringssl = ["dep:boring", "c2pa-crypto/boringssl", "_anyssl"]
+boringssl_sign = ["boringssl", "c2pa-crypto/boringssl", "_anyssl_sign"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
 v1_api = []
@@ -142,6 +144,7 @@ image = { version = "0.24.7", default-features = false, features = [
     "png",
 ], optional = true }
 instant = "0.1.12"
+boring = { version = "4.13", optional = true }
 openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

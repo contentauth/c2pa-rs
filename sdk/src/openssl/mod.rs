@@ -40,6 +40,8 @@ pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 pub(crate) mod temp_signer_async;
 
 #[cfg(feature = "_anyssl")]
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]

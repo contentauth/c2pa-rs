@@ -13,6 +13,8 @@
 
 use std::cell::Cell;
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use c2pa_crypto::{ocsp::OcspResponse, openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     hash::MessageDigest,

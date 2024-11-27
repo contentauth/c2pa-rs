@@ -1561,7 +1561,10 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[cfg(any(target_arch = "wasm32", all(feature = "_anyssl_sign", feature = "file_io")))]
+    #[cfg(any(
+        target_arch = "wasm32",
+        all(feature = "_anyssl_sign", feature = "file_io")
+    ))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
