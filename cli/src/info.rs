@@ -10,10 +10,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::Path;
+use std::{io::Cursor, path::Path};
 
 use anyhow::Result;
-use c2pa::{IngredientOptions, ManifestStore};
+use c2pa::{IngredientOptions, Reader};
 
 /// display additional C2PA information about the asset (not json formatted)
 pub fn info(path: &Path) -> Result<()> {
@@ -60,8 +60,10 @@ pub fn info(path: &Path) -> Result<()> {
         } else {
             println!("Validated");
         }
-        let manifest_store = ManifestStore::from_bytes("c2pa", &manifest_data, false)?;
-        match manifest_store.manifests().len() {
+        let reader = Reader::from_stream("c2pa", Cursor::new(manifest_data.into_owned()))?;
+
+        let manifests: Vec<_> = reader.iter_manifests().collect();
+        match manifests.len() {
             0 => println!("No manifests"),
             1 => println!("One manifest"),
             n => println!("{n} manifests"),
