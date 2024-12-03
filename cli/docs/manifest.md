@@ -1,9 +1,20 @@
 # Manifest definition file
 
-The c2patool reads a manifest definition JSON file with a `.json` extension.  This file defines a single manifest to be added to an asset's manifest store.
+C2PA Tool reads a manifest definition JSON file with a `.json` extension. This file defines a single manifest to be added to an asset's manifest store.
 In the manifest definition file, file paths are relative to the location of the file unless you specify a `base_path` field.
 
-### Adding a claim generator icon
+## JSON format
+
+The C2PA specification describes a manifest that has a binary structure in JPEG universal metadata box format (JUMBF).  However, C2PA Tool works with a JSON manifest structure that's easier to understand and work with.  It's a declarative language for representing and creating a manifest in binary format. For more information on the JSON manifest, see [Working with manifests](https://opensource.contentauthenticity.org/docs/manifest/understanding-manifest).
+
+See also:
+
+* <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-ref" target="_self">Manifest store reference</a>
+* <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-json-schema" target="_self">Manifest store schema</a>
+* <a href="https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json" target="_self">Manifest definition schema</a>
+* <a href="https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json" target="_self">Ingredient schema</a>
+
+## Adding a claim generator icon
 
 You can specify an icon to be displayed by tools such as [Verify](https://contentcredentials.org/verify) to indicate the signer of the manifest.
 
@@ -72,11 +83,3 @@ The following manifest properties are specific to c2patool and used for signing 
     ]
 }
 ```
-
-## JSON schemas
-
-* [Manifest store schema](https://opensource.contentauthenticity.org/docs/manifest/manifest-json-schema)
-
-* [Manifest definition schema](https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json)
-
-* [Ingredient schema](https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json)

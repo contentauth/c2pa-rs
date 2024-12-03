@@ -4,6 +4,34 @@ This page highlights noteworthy changes in each release.
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes.
 
+## 0.9.x
+
+* Update c2pa-rs for RegionOfInterest support. ([#269](https://github.com/contentauth/c2patool/pull/269))
+* Fix broken link that was causing os site workflow to fail ([#266](https://github.com/contentauth/c2patool/pull/266))
+* Document fragment subcommand ([#236](https://github.com/contentauth/c2patool/pull/236))
+* Initial fragment support ([#230](https://github.com/contentauth/c2patool/pull/230))
+* Add warning about accessing a private key directly ([#218](https://github.com/contentauth/c2patool/pull/218))
+* Update c2patool with c2pa-rs fixes ([#190](https://github.com/contentauth/c2patool/pull/190)):
+    - Merkle trees with empty proofs
+    - Support for missing metadata for Claims object
+    - OCSP fixes
+* Document how to specify an icon ([#182](https://github.com/contentauth/c2patool/pull/182))
+* Add better support for cargo-binstall ([#177](https://github.com/contentauth/c2patool/pull/177))
+* Add HTTP source option for trust config ([#174](https://github.com/contentauth/c2patool/pull/174))
+
+## 0.8.x
+
+* fixed c2patool asset name ([#171](https://github.com/contentauth/c2patool/pull/171))
+* Allow clients to sign with a process outside of c2patool ([#169](https://github.com/contentauth/c2patool/pull/169))
+* Add trust and verification options to c2pa_tool ([#168](https://github.com/contentauth/c2patool/pull/168))
+* Add version to c2patool artifact names ([#158](https://github.com/contentauth/c2patool/pull/158))
+
+## 0.7.x
+
+* Update to c2pa-rs v0.28.2 ([#153](https://github.com/contentauth/c2patool/pull/153))
+* Fix windows release ([#132](https://github.com/contentauth/c2patool/pull/132))
+* Use compress-archive instead of tar ([#130](https://github.com/contentauth/c2patool/pull/130))
+
 ## 0.6.0
 
 * Validates 1.3 signatures but will not generate them.
