@@ -11,8 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod async_validators;
-mod ecdsa_validator;
-mod ed25519_validator;
-mod rsa_legacy_validator;
-mod rsa_validator;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+use crate::webcrypto::WindowOrWorker;
+
+#[wasm_bindgen_test]
+fn has_crypto_library() {
+    WindowOrWorker::new().unwrap().crypto().unwrap();
+}

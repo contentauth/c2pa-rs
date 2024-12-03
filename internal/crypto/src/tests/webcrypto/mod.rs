@@ -12,3 +12,4 @@
 // each license.
 
 mod validators;
+mod window_or_worker;

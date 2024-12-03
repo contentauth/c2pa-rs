@@ -317,3 +317,13 @@ impl From<c2pa_crypto::openssl::OpenSslMutexUnavailable> for Error {
         Self::OpenSslMutexError
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
+    fn from(err: c2pa_crypto::webcrypto::WasmCryptoError) -> Self {
+        match err {
+            c2pa_crypto::webcrypto::WasmCryptoError::UnknownContext => Self::WasmInvalidContext,
+            c2pa_crypto::webcrypto::WasmCryptoError::NoCryptoAvailable => Self::WasmNoCrypto,
+        }
+    }
+}

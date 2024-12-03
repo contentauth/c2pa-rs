@@ -506,11 +506,10 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     }
 
     async fn sign(&self, claim_bytes: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+        use c2pa_crypto::webcrypto::WindowOrWorker;
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen_futures::JsFuture;
         use web_sys::CryptoKey;
-
-        use crate::wasm::context::WindowOrWorker;
         let context = WindowOrWorker::new().unwrap();
         let crypto = context.subtle_crypto().unwrap();
 
