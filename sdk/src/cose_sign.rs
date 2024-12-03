@@ -18,6 +18,7 @@
 use std::io::Cursor;
 
 use async_generic::async_generic;
+use c2pa_crypto::SigningAlg;
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -35,7 +36,7 @@ use crate::{
     },
     trust_handler::TrustHandlerConfig,
     utils::sig_utils::{der_to_p1363, parse_ec_der_sig},
-    AsyncSigner, Error, Result, Signer, SigningAlg,
+    AsyncSigner, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -414,8 +415,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> crate::SigningAlg {
-            crate::SigningAlg::Ps256
+        fn alg(&self) -> c2pa_crypto::SigningAlg {
+            c2pa_crypto::SigningAlg::Ps256
         }
 
         fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {

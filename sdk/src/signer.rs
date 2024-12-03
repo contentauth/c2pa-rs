@@ -11,10 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider};
+use c2pa_crypto::{
+    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+    SigningAlg,
+};
 
-use crate::{DynamicAssertion, Result, SigningAlg};
-
+use crate::{DynamicAssertion, Result};
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.

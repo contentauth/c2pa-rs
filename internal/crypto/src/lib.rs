@@ -23,10 +23,24 @@ pub mod asn1;
 pub mod base64;
 pub mod hash;
 pub(crate) mod internal;
-
 pub mod ocsp;
+
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+pub mod openssl;
+
+#[cfg(all(feature = "openssl", target_arch = "wasm32"))]
+compile_error!("OpenSSL feature is not compatible with WASM platform");
+
+pub mod raw_signature;
+
+mod signing_alg;
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
+
 pub mod time_stamp;
 pub mod validation_codes;
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub mod webcrypto;
 
 #[cfg(test)]
 pub(crate) mod tests;

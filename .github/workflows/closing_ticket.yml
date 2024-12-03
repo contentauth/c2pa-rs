@@ -1,4 +1,4 @@
-name: closing-ticket
+name: Closing ticket
 on:
   issues:
     types: [closed]

@@ -134,11 +134,6 @@ pub enum TimeStampError {
     #[error("Decode error ({0})")]
     DecodeError(String),
 
-    /// Unable to send the HTTPS time stamp response.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error(transparent)]
-    HttpError(#[from] Box<ureq::Error>),
-
     /// An I/O error occurred while processing the HTTPS time stamp response.
     #[error(transparent)]
     IoError(#[from] std::io::Error),
@@ -148,8 +143,16 @@ pub enum TimeStampError {
     NonceMismatch,
 
     /// The time stamp service responded with an error condition.
-    #[error("HTTP request failed (status = {0}, content-type = {1})")]
-    HttpRequestError(u16, String),
+    #[error("Service responded with an HTTP error (status = {0}, content-type = {1})")]
+    HttpErrorResponse(u16, String),
+
+    /// Unable to complete the HTTPS time stamp request.
+    ///
+    /// This error should be used _only_ if no response is received from the
+    /// time stamp service. Any error response from the service should be
+    /// described using `HttpRequestError`.
+    #[error("Unable to complete HTTP request ({0})")]
+    HttpConnectionError(String),
 
     /// An unexpected internal error occured whiel requesting the time stamp
     /// response.
