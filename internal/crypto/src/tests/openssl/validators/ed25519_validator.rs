@@ -11,6 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
+
 use crate::{
     openssl::validators::Ed25519Validator,
     raw_signature::{RawSignatureValidationError, RawSignatureValidator},

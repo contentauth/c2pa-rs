@@ -539,10 +539,10 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             .write_encoded(bcder::Mode::Der, &mut signing_key_der)?;
 
         // Verify signature of timestamp signature.
-        #[cfg(feature = "openssl")]
+        #[cfg(feature = "_anyssl")]
         validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
 
-        #[cfg(not(feature = "openssl"))]
+        #[cfg(not(feature = "_anyssl"))]
         {
             #[cfg(target_arch = "wasm32")]
             {

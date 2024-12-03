@@ -1258,7 +1258,7 @@ pub mod tests {
     //use super::*;
     use crate::utils::test::fixture_path;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "_anyssl")]
     #[test]
     fn test_fragemented_mp4() {
         use crate::{

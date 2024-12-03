@@ -19,6 +19,7 @@ mod common;
 use common::{compare_stream_to_known_good, fixtures_path, test_signer};
 
 #[test]
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "_anyssl")), ignore)]
 fn test_builder_ca_jpg() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;
@@ -42,6 +43,7 @@ fn test_builder_ca_jpg() -> Result<()> {
 
 // Source: https://github.com/contentauth/c2pa-rs/issues/530
 #[test]
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "_anyssl")), ignore)]
 fn test_builder_riff() -> Result<()> {
     let manifest_def = include_str!("fixtures/simple_manifest.json");
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
@@ -119,6 +121,7 @@ fn test_builder_fragmented() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "_anyssl")), ignore)]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
     let mut builder = Builder::from_json(&manifest_def)?;

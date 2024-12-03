@@ -11,42 +11,44 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 mod rsa_signer;
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 pub(crate) use rsa_signer::RsaSigner;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 mod ec_signer;
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 pub(crate) use ec_signer::EcSigner;
 
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 mod ed_signer;
-#[cfg(feature = "openssl_sign")]
+#[cfg(feature = "_anyssl_sign")]
 pub(crate) use ed_signer::EdSigner;
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 mod openssl_trust_handler;
 #[cfg(test)]
 pub(crate) mod temp_signer;
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 pub(crate) use openssl_trust_handler::verify_trust;
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl_sign")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 fn check_chain_order(certs: &[X509]) -> bool {
     // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
     // don't make this pub or pub(crate) without finding a way to ensure that
@@ -74,12 +76,12 @@ fn check_chain_order(certs: &[X509]) -> bool {
     }
 }
 
-#[cfg(not(feature = "openssl"))]
+#[cfg(not(feature = "_anyssl"))]
 fn check_chain_order(certs: &[X509]) -> bool {
     true
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(feature = "_anyssl")]
 #[allow(dead_code)]
 fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
@@ -98,7 +100,7 @@ fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     check_chain_order(&certs)
 }
 
-#[cfg(not(feature = "openssl"))]
+#[cfg(not(feature = "_anyssl"))]
 fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
     true
 }

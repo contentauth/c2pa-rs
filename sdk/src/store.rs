@@ -128,11 +128,11 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            #[cfg(feature = "openssl")]
+            #[cfg(feature = "_anyssl")]
             trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
+            #[cfg(target_arch = "wasm32")]
             trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+            #[cfg(not(any(feature = "_anyssl", target_arch = "wasm32")))]
             trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
             provenance_path: None,
             //dynamic_assertions: Vec::new(),
@@ -5920,7 +5920,7 @@ pub mod tests {
     }
 
     #[actix::test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(feature = "_anyssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
 

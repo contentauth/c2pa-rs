@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "boringssl")]
+use boring as openssl;
 use std::{
     collections::HashSet,
     io::{BufRead, BufReader, Cursor, Read},
@@ -267,6 +269,7 @@ pub(crate) fn verify_trust(
     if let Some(st) = signing_time_epoc {
         verify_param.set_time(st);
     } else {
+        #[cfg(feature = "openssl")]
         verify_param
             .set_flags(X509VerifyFlags::NO_CHECK_TIME)
             .map_err(Error::OpenSslError)?;
@@ -295,6 +298,7 @@ pub(crate) fn verify_trust(
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
