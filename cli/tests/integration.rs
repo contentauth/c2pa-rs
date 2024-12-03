@@ -171,3 +171,31 @@ fn tool_load_trust_settings_from_url_env_untrusted() -> Result<(), Box<dyn Error
 
     Ok(())
 }
+
+#[test]
+// c2patool tests/fixtures/C.jpg --tree
+fn tool_tree() -> Result<(), Box<dyn Error>> {
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("--tree")
+        .assert()
+        .success()
+        .stdout(str::contains("Asset:C.jpg, Manifest:contentauth:urn:uuid:"))
+        .stdout(str::contains("Assertion:c2pa.actions"));
+    Ok(())
+}
+
+#[test]
+// c2patool tests/fixtures/C.jpg --info
+fn tool_info() -> Result<(), Box<dyn Error>> {
+    Command::cargo_bin("c2patool")?
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("--info")
+        .assert()
+        .success()
+        .stdout(str::contains(
+            "Provenance URI = self#jumbf=/c2pa/contentauth:urn:uuid:",
+        ))
+        .stdout(str::contains("Manifest store size = 51217"));
+    Ok(())
+}

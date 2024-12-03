@@ -25,7 +25,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{Error, Ingredient, Manifest, ManifestStore, ManifestStoreReport, Signer};
+use c2pa::{Builder, ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer};
 use clap::{Parser, Subcommand};
 use log::debug;
 use serde::Deserialize;
@@ -38,6 +38,7 @@ use crate::{
 };
 
 mod info;
+mod tree;
 
 mod callback_signer;
 mod signer;
@@ -188,7 +189,7 @@ enum Commands {
 // Add fields that are not part of the standard Manifest
 struct ManifestDef {
     #[serde(flatten)]
-    manifest: Manifest,
+    manifest: ManifestDefinition,
     // allows adding ingredients with file paths
     ingredient_paths: Option<Vec<PathBuf>>,
 }
@@ -326,7 +327,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
 }
 
 fn sign_fragmented(
-    manifest: &mut Manifest,
+    builder: &mut Builder,
     signer: &dyn Signer,
     init_pattern: &Path,
     frag_pattern: &PathBuf,
@@ -358,7 +359,7 @@ fn sign_fragmented(
                 println!("Adding manifest to: {:?}", p);
                 let new_output_path =
                     output_path.join(init_dir.file_name().context("invalid file name")?);
-                manifest.embed_to_bmff_fragmented(&p, &fragments, &new_output_path, signer)?;
+                builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
 
                 count += 1;
             }
@@ -371,8 +372,8 @@ fn sign_fragmented(
     Ok(())
 }
 
-fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<ManifestStore>> {
-    let mut stores = Vec::new();
+fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Reader>> {
+    let mut readers = Vec::new();
 
     let ip = init_pattern
         .to_str()
@@ -399,15 +400,15 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Man
                 }
 
                 println!("Verifying manifest: {:?}", p);
-                let store = ManifestStore::from_fragments(p, &fragments, true)?;
-                if let Some(vs) = store.validation_status() {
+                let reader = Reader::from_fragmented_files(p, &fragments)?;
+                if let Some(vs) = reader.validation_status() {
                     if let Some(e) = vs.iter().find(|v| !v.passed()) {
                         eprintln!("Error validating segments: {:?}", e);
-                        return Ok(stores);
+                        return Ok(readers);
                     }
                 }
 
-                stores.push(store);
+                readers.push(reader);
 
                 count += 1;
             }
@@ -419,7 +420,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Man
         println!("No files matching pattern: {}", ip);
     }
 
-    Ok(stores)
+    Ok(readers)
 }
 
 fn main() -> Result<()> {
@@ -438,12 +439,19 @@ fn main() -> Result<()> {
     }
 
     if args.cert_chain {
-        ManifestStoreReport::dump_cert_chain(path)?;
-        return Ok(());
+        let reader = Reader::from_file(path).map_err(special_errs)?;
+        if let Some(manifest) = reader.active_manifest() {
+            if let Some(si) = manifest.signature_info() {
+                println!("{}", si.cert_chain());
+                // todo: add ocsp validation info
+                return Ok(());
+            }
+        }
+        bail!("No certificate chain found");
     }
 
     if args.tree {
-        ManifestStoreReport::dump_tree(path)?;
+        println!("{}", tree::tree(path)?);
         return Ok(());
     }
 
@@ -500,19 +508,23 @@ fn main() -> Result<()> {
 
         // read the manifest information
         let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+        let mut builder = Builder::from_json(&json)?;
         let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
-        let tool_generator = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        if manifest.claim_generator.starts_with("c2pa/") {
-            manifest.claim_generator = tool_generator // just replace the default generator
+        let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+        tool_generator.set_version(env!("CARGO_PKG_VERSION"));
+        if !manifest.claim_generator_info.is_empty()
+            || manifest.claim_generator_info[0].name == "c2pa-rs"
+        {
+            manifest.claim_generator_info = vec![tool_generator];
         } else {
-            manifest.claim_generator = format!("{} {}", manifest.claim_generator, tool_generator);
+            manifest.claim_generator_info.insert(1, tool_generator);
         }
-
+        println!("claim generator {:?}", manifest.claim_generator_info);
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
-            manifest.with_base_path(base)?;
+            builder.base_path = Some(base.clone());
             sign_config.set_base_path(base);
         }
 
@@ -526,32 +538,36 @@ fn main() -> Result<()> {
                     }
                 }
                 let ingredient = load_ingredient(&path)?;
-                manifest.add_ingredient(ingredient);
+                builder.add_ingredient(ingredient);
             }
         }
 
         if let Some(parent_path) = args.parent {
-            let ingredient = load_ingredient(&parent_path)?;
-            manifest.set_parent(ingredient)?;
+            let mut ingredient = load_ingredient(&parent_path)?;
+            ingredient.set_is_parent();
+            builder.add_ingredient(ingredient);
         }
 
         // If the source file has a manifest store, and no parent is specified treat the source as a parent.
         // note: This could be treated as an update manifest eventually since the image is the same
-        if manifest.parent().is_none() && !is_fragment {
-            let source_ingredient = Ingredient::from_file(&args.path)?;
+        let has_parent = builder.definition.ingredients.iter().any(|i| i.is_parent());
+        if !has_parent && !is_fragment {
+            let mut source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
-                manifest.set_parent(source_ingredient)?;
+                source_ingredient.set_is_parent();
+                builder.add_ingredient(source_ingredient);
             }
         }
 
         if let Some(remote) = args.remote {
             if args.sidecar {
-                manifest.set_remote_manifest(remote);
+                builder.set_no_embed(true);
+                builder.set_remote_url(remote);
             } else {
-                manifest.set_embedded_manifest_with_remote_ref(remote);
+                builder.set_remote_url(remote);
             }
         } else if args.sidecar {
-            manifest.set_sidecar_manifest();
+            builder.set_no_embed(true);
         }
 
         let signer = if let Some(signer_process_name) = args.signer_path {
@@ -576,13 +592,7 @@ fn main() -> Result<()> {
                 }
 
                 if let Some(fg) = &fragments_glob {
-                    return sign_fragmented(
-                        &mut manifest,
-                        signer.as_ref(),
-                        &args.path,
-                        fg,
-                        &output,
-                    );
+                    return sign_fragmented(&mut builder, signer.as_ref(), &args.path, fg, &output);
                 } else {
                     bail!("fragments_glob must be set");
                 }
@@ -602,21 +612,16 @@ fn main() -> Result<()> {
                 }
 
                 #[allow(deprecated)] // todo: remove when we can
-                manifest
-                    .embed(&args.path, &output, signer.as_ref())
+                builder
+                    .sign_file(signer.as_ref(), &args.path, &output)
                     .context("embedding manifest")?;
 
                 // generate a report on the output file
+                let reader = Reader::from_file(&output).map_err(special_errs)?;
                 if args.detailed {
-                    println!(
-                        "{}",
-                        ManifestStoreReport::from_file(&output).map_err(special_errs)?
-                    );
+                    println!("{:#?}", reader);
                 } else {
-                    println!(
-                        "{}",
-                        ManifestStore::from_file(&output).map_err(special_errs)?
-                    )
+                    println!("{}", reader)
                 }
             }
         } else {
@@ -643,15 +648,16 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let report = ManifestStore::from_file_with_resources(&args.path, &output)
-                .map_err(special_errs)?
-                .to_string();
+            let reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            reader.to_folder(&output)?;
+            let report = reader.to_string();
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
-                let detailed = ManifestStoreReport::from_file(&args.path)
-                    .map_err(special_errs)?
-                    .to_string();
+                let detailed = format!(
+                    "{:#?}",
+                    Reader::from_file(&args.path).map_err(special_errs)?
+                );
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
@@ -664,8 +670,8 @@ fn main() -> Result<()> {
         )
     } else if args.detailed {
         println!(
-            "{}",
-            ManifestStoreReport::from_file(&args.path).map_err(special_errs)?
+            "{:#?}",
+            Reader::from_file(&args.path).map_err(special_errs)?
         )
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
@@ -678,10 +684,7 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        println!(
-            "{}",
-            ManifestStore::from_file(&args.path).map_err(special_errs)?
-        )
+        println!("{}", Reader::from_file(&args.path).map_err(special_errs)?)
     }
 
     Ok(())
@@ -711,7 +714,8 @@ pub mod tests {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
         const OUTPUT_PATH: &str = "target/tmp/unit_out.jpg";
         create_dir_all("target/tmp").expect("create_dir");
-        let mut manifest = Manifest::from_json(CONFIG).expect("from_json");
+        std::fs::remove_file(OUTPUT_PATH).ok(); // remove output file if it exists
+        let mut builder = Builder::from_json(CONFIG).expect("from_json");
 
         let signer = SignConfig::from_json(CONFIG)
             .unwrap()
@@ -720,13 +724,14 @@ pub mod tests {
             .expect("get_signer");
 
         #[allow(deprecated)] // todo: remove when we can
-        let _result = manifest
-            .embed(SOURCE_PATH, OUTPUT_PATH, signer.as_ref())
+        let _result = builder
+            .sign_file(signer.as_ref(), SOURCE_PATH, OUTPUT_PATH)
             .expect("embed");
 
-        let ms = ManifestStore::from_file(OUTPUT_PATH)
+        let ms = Reader::from_file(OUTPUT_PATH)
             .expect("from_file")
             .to_string();
+        println!("{}", ms);
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
         assert!(ms.contains("my_key"));
     }

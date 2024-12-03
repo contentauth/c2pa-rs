@@ -18,6 +18,7 @@ yanked = "deny"
 ignore = [
   "RUSTSEC-2021-0127", # serde_cbor
   "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
+  "RUSTSEC-2024-0384", # instant (https://github.com/contentauth/c2pa-rs/issues/663)
 ]
 # Deny multiple versions unless explicitly skipped.
 [bans]

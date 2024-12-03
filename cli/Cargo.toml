@@ -9,8 +9,8 @@ version = "0.9.12"
 
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
-	"Gavin Peacock <gpeacock@adobe.com>",
-	"Maurice Fisher <mfisher@adobe.com>",
+    "Gavin Peacock <gpeacock@adobe.com>",
+    "Maurice Fisher <mfisher@adobe.com>",
 ]
 license = "MIT OR Apache-2.0"
 documentation = "https://opensource.contentauthenticity.org/docs/c2patool"
@@ -22,11 +22,13 @@ repository = "https://github.com/contentauth/c2patool"
 
 [dependencies]
 anyhow = "1.0"
-c2pa = { version = "0.37.0", features = [
+atree = "0.5.2"
+c2pa = { version = "0.38.0", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",
 	"pdf",
+	"unstable_api",
 ] }
 clap = { version = "4.5.10", features = ["derive", "env"] }
 env_logger = "0.11.4"
@@ -36,6 +38,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 tempfile = "3.3"
+treeline = "0.1.0"
 pem = "3.0.3"
 openssl = { version = "0.10.61", features = ["vendored"] }
 reqwest = { version = "0.12.4", features = ["blocking"] }
