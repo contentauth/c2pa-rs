@@ -1169,10 +1169,13 @@ impl Claim {
             }
 
             // check for deprecated actions
-            if V2_DEPRECATED_ACTIONS.contains(&assertion.label().as_str()) {
-                return Err(Error::VersionCompatibility(
-                    "action assertion has been deprecated".into(),
-                ));
+            let ac = Actions::from_assertion(&assertion)?;
+            for action in ac.actions() {
+                if V2_DEPRECATED_ACTIONS.contains(&action.action()) {
+                    return Err(Error::VersionCompatibility(
+                        "action assertion has been deprecated".into(),
+                    ));
+                }
             }
         }
 
