@@ -33,8 +33,7 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
-    /// TO REVIEW: Does this need to be public?
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Return `true` if the request was successful.
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
