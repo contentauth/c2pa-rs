@@ -170,3 +170,23 @@ pub fn signed_data_from_time_stamp_response(
             .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?,
     ))
 }
+
+/// TO REVIEW: Does this need to be public after refactoring?
+pub fn tst_info_from_signed_data(
+    signed_data: &SignedData,
+) -> Result<Option<TstInfo>, TimeStampError> {
+    if signed_data.content_info.content_type != OID_CONTENT_TYPE_TST_INFO {
+        return Ok(None);
+    }
+
+    let Some(content) = &signed_data.content_info.content else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        Constructed::decode(content.to_bytes(), bcder::Mode::Der, |cons| {
+            TstInfo::take_from(cons)
+        })
+        .map_err(|err| TimeStampError::DecodeError(err.to_string()))?,
+    ))
+}

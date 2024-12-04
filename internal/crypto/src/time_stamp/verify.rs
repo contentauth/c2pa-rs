@@ -14,11 +14,7 @@
 use std::ops::Deref;
 
 use async_generic::async_generic;
-use bcder::{
-    decode::{Constructed, SliceSource},
-    encode::Values,
-    ConstOid, OctetString,
-};
+use bcder::{decode::SliceSource, encode::Values, ConstOid, OctetString};
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
 use x509_certificate::{
     asn1time::{GeneralizedTime, GeneralizedTimeAllowedTimezone, Time},
@@ -27,13 +23,16 @@ use x509_certificate::{
 
 use crate::{
     asn1::{
-        rfc3161::{TimeStampResp, TstInfo},
+        rfc3161::TstInfo,
         rfc5652::{
             CertificateChoices::Certificate, SignerIdentifier, OID_MESSAGE_DIGEST, OID_SIGNING_TIME,
         },
     },
     raw_signature::validator_for_sig_and_hash_algs,
-    time_stamp::{response::TimeStampResponse, TimeStampError},
+    time_stamp::{
+        response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
+        TimeStampError,
+    },
 };
 
 /// Decode the TimeStampToken info and verify it against the supplied data.
@@ -41,10 +40,8 @@ use crate::{
 /// TEMPORARILY PUBLIC while refactoring
 #[async_generic]
 pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
-    let ts_resp = decode_timestamp_response(ts)?;
-
     // Did the time stamp expire between issuance and verification?
-    let Some(sd) = &ts_resp.signed_data()? else {
+    let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Err(TimeStampError::DecodeError(
             "unable to find signed data".to_string(),
         ));
@@ -101,7 +98,7 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
 
         // Load unprotected TstInfo. We will verify its contents below against signed
         // values.
-        let tst_opt = ts_resp.tst_info()?;
+        let tst_opt = tst_info_from_signed_data(&sd)?;
         let mut tst = tst_opt.ok_or(TimeStampError::DecodeError(
             "unable to read unprotected TstInfo".to_string(),
         ))?;
@@ -304,17 +301,6 @@ pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampErr
     }
 
     Err(last_err)
-}
-
-fn decode_timestamp_response(tsresp: &[u8]) -> Result<TimeStampResponse, TimeStampError> {
-    let ts = TimeStampResponse(
-        Constructed::decode(tsresp, bcder::Mode::Der, |cons| {
-            TimeStampResp::take_from(cons)
-        })
-        .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
-    );
-
-    Ok(ts)
 }
 
 fn generalized_time_to_datetime(gt: GeneralizedTime) -> DateTime<Utc> {
