@@ -35,6 +35,19 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
+    /// Convert a DER-encoded `TimeStampRes` structure to a `TimeStampResponse`
+    /// struct.
+    ///
+    /// TO REVIEW: Does this need to be public after refactoring?
+    pub fn parse_der(ts_response: &[u8]) -> Result<Self, TimeStampError> {
+        Ok(Self(
+            Constructed::decode(ts_response, bcder::Mode::Der, |cons| {
+                TimeStampResp::take_from(cons)
+            })
+            .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
+        ))
+    }
+
     /// Return `true` if the request was successful.
     pub fn is_success(&self) -> bool {
         matches!(
