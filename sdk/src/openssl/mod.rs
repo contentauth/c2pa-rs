@@ -43,7 +43,7 @@ pub(crate) mod temp_signer_async;
 use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
-#[cfg(feature = "openssl")]
+#[cfg(feature = "openssl_sign")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
 
 #[cfg(feature = "openssl")]

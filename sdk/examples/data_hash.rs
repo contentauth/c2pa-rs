@@ -20,13 +20,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "openssl_sign")]
+use c2pa::create_signer;
+
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::{
     assertions::{
         c2pa_action, labels::*, Action, Actions, CreativeWork, DataHash, Exif, SchemaDotOrgPerson,
     },
-    create_signer, hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader,
-    Relationship, Result,
+    hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Ingredient, Reader, Relationship,
+    Result,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa_crypto::SigningAlg;
@@ -34,16 +37,16 @@ use c2pa_crypto::SigningAlg;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     user_data_hash_with_sdk_hashing()?;
     println!("Done with SDK hashing1");
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     user_data_hash_with_user_hashing()?;
     println!("Done with SDK hashing2");
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "file_io")]
 fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     let mut parent = Ingredient::from_file(source.as_ref())?;
     parent.set_relationship(Relationship::ParentOf);
@@ -86,7 +89,7 @@ fn builder_from_source<S: AsRef<Path>>(source: S) -> Result<Builder> {
     Ok(builder)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
 fn user_data_hash_with_sdk_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";
@@ -146,7 +149,7 @@ fn user_data_hash_with_sdk_hashing() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "openssl_sign", feature = "file_io"))]
 fn user_data_hash_with_user_hashing() -> Result<()> {
     // You will often implement your own Signer trait to perform on device signing
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";

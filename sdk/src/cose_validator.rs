@@ -869,7 +869,7 @@ fn check_trust(
             verify_trust(th, chain_der, cert_der, signing_time_epoc)
         }
 
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(not(any(feature = "openssl", target_arch = "wasm32")))]
         {
             Err(Error::NotImplemented(
                 "no trust handler for this feature".to_string(),
@@ -1380,7 +1380,7 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "openssl_sign")]
+    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     fn test_cert_algorithms() {
         let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
