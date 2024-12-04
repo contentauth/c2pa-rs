@@ -29,7 +29,7 @@ pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
 // ^^ TO REVIEW before merging: Still need to be public?
 
 mod response;
-pub use response::{signed_data_from_time_stamp_response, TimeStampResponse};
+pub use response::signed_data_from_time_stamp_response;
 
 mod verify;
 /// TEMPORARILY PUBLIC while refactoring

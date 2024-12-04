@@ -11,7 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use asn1_rs::nom::AsBytes;
 use bcder::decode::Constructed;
 use rasn::{AsnType, Decode, Encode};
 
@@ -23,8 +22,7 @@ use crate::{
     time_stamp::TimeStampError,
 };
 
-/// TO REVIEW: Does this need to be public?
-pub struct TimeStampResponse(pub TimeStampResp);
+pub(crate) struct TimeStampResponse(pub TimeStampResp);
 
 impl std::ops::Deref for TimeStampResponse {
     type Target = TimeStampResp;
@@ -35,29 +33,15 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
-    /// Convert a DER-encoded `TimeStampRes` structure to a `TimeStampResponse`
-    /// struct.
-    ///
-    /// TO REVIEW: Does this need to be public after refactoring?
-    pub fn parse_der(ts_response: &[u8]) -> Result<Self, TimeStampError> {
-        Ok(Self(
-            Constructed::decode(ts_response, bcder::Mode::Der, |cons| {
-                TimeStampResp::take_from(cons)
-            })
-            .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
-        ))
-    }
-
     /// Return `true` if the request was successful.
-    pub fn is_success(&self) -> bool {
+    pub(crate) fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
             PkiStatus::Granted | PkiStatus::GrantedWithMods
         )
     }
 
-    /// TO REVIEW: Does this need to be public?
-    pub fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
+    pub(crate) fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
                 Ok(Some(
@@ -77,8 +61,7 @@ impl TimeStampResponse {
         }
     }
 
-    /// TO REVIEW: Does this need to be public?
-    pub fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
+    pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
                 if let Some(content) = signed_data.content_info.content {
@@ -97,30 +80,6 @@ impl TimeStampResponse {
         } else {
             Ok(None)
         }
-    }
-
-    /// Convert this time stamp response to a time stamp token.
-    pub fn time_stamp_token(&self) -> Option<Vec<u8>> {
-        let tst = self.0.time_stamp_token.as_ref()?;
-
-        let arcs: Result<Vec<u32>, TimeStampError> = tst
-            .content_type
-            .iter()
-            .map(|v| {
-                v.to_u32().ok_or(TimeStampError::DecodeError(
-                    "no content type specified".to_string(),
-                ))
-            })
-            .collect();
-
-        let arcs = arcs.ok()?;
-
-        let ci = ContentInfo {
-            content_type: rasn::types::ObjectIdentifier::new(arcs)?,
-            content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
-        };
-
-        rasn::der::encode(&ci).ok()
     }
 }
 
