@@ -25,7 +25,6 @@ mod provider;
 pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
 
 mod response;
-pub use response::signed_data_from_time_stamp_response;
 
 mod verify;
 /// TEMPORARILY PUBLIC while refactoring

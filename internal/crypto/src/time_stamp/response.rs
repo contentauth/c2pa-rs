@@ -92,7 +92,7 @@ struct ContentInfo {
 }
 
 /// TO REVIEW: Does this need to be public after refactoring?
-pub fn signed_data_from_time_stamp_response(
+pub(crate) fn signed_data_from_time_stamp_response(
     ts_resp: &[u8],
 ) -> Result<Option<SignedData>, TimeStampError> {
     let time_stamp_token = if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
