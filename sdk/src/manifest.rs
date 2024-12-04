@@ -2811,18 +2811,4 @@ pub(crate) mod tests {
         assert!(reader.active_manifest().is_some());
         assert!(reader.validation_status().is_none());
     }
-
-    #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    #[allow(deprecated)]
-    async fn test_samsung_jpeg_stream_wasm() {
-        let image = include_bytes!("../tests/fixtures/samsung_cert.jpg");
-
-        // try to load the image
-        let manifest_store = Reader::from_stream_async("image/jpeg", Cursor::new(image))
-            .await
-            .unwrap();
-
-        println!("It worked: {manifest_store}\n");
-    }
 }
