@@ -17,7 +17,7 @@ use rasn::{AsnType, Decode, Encode};
 
 use crate::{
     asn1::{
-        rfc3161::{PkiStatus, TimeStampResp, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+        rfc3161::{PkiStatus, TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{SignedData, OID_ID_SIGNED_DATA},
     },
     time_stamp::TimeStampError,
@@ -115,4 +115,45 @@ struct ContentInfo {
 
     #[rasn(tag(explicit(0)))]
     content: rasn::types::Any,
+}
+
+/// TO REVIEW: Does this need to be public after refactoring?
+pub fn signed_data_from_time_stamp_response(
+    ts_resp: &[u8],
+) -> Result<Option<SignedData>, TimeStampError> {
+    let time_stamp_token = if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
+        TimeStampResp::take_from(cons)
+    })
+    .map_err(|e| TimeStampError::DecodeError(e.to_string()))
+    {
+        ts.time_stamp_token
+    } else if let Ok(ts) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
+        TimeStampToken::take_opt_from(cons)
+    }) {
+        ts
+    } else {
+        return Err(TimeStampError::DecodeError(
+            "no time stamp found".to_string(),
+        ));
+    };
+
+    if let Some(token) = &time_stamp_token {
+        if token.content_type == OID_ID_SIGNED_DATA {
+            Ok(Some(
+                token
+                    .content
+                    .clone()
+                    .decode(SignedData::take_from)
+                    .map_err(|_err| {
+                        TimeStampError::DecodeError("time stamp invalid".to_string())
+                    })?,
+            ))
+        } else {
+            Err(TimeStampError::DecodeError(
+                "time stamp has invalid OID".to_string(),
+            ))
+        }
+    } else {
+        Ok(None)
+    }
 }
