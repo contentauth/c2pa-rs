@@ -19,6 +19,7 @@ use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     ocsp::OcspResponse,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
+    time_stamp::TimeStampError,
     SigningAlg,
 };
 use c2pa_status_tracker::{log_item, StatusTracker};
@@ -1003,7 +1004,8 @@ pub(crate) async fn verify_cose_async(
                 // log timestamp errors
                 match e {
                     Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
-                    Error::CoseTimeStampMismatch => {
+
+                    Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
                             "Cose_Sign1",
                             "timestamp message imprint did not match",
@@ -1012,11 +1014,13 @@ pub(crate) async fn verify_cose_async(
                         .validation_status(validation_status::TIMESTAMP_MISMATCH)
                         .failure(validation_log, Error::CoseTimeStampMismatch)?;
                     }
+
                     Error::CoseTimeStampValidity => {
                         log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
                             .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY)
                             .failure(validation_log, Error::CoseTimeStampValidity)?;
                     }
+
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                             .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
@@ -1205,7 +1209,8 @@ pub(crate) fn verify_cose(
                 // log timestamp errors
                 match e {
                     Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
-                    Error::CoseTimeStampMismatch => {
+
+                    Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
                             "Cose_Sign1",
                             "timestamp did not match signed data",
@@ -1216,6 +1221,7 @@ pub(crate) fn verify_cose(
 
                         return Err(Error::CoseTimeStampMismatch);
                     }
+
                     Error::CoseTimeStampValidity => {
                         log_item!(
                             "Cose_Sign1",
@@ -1227,6 +1233,7 @@ pub(crate) fn verify_cose(
 
                         return Err(Error::CoseTimeStampValidity);
                     }
+                    
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                             .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
