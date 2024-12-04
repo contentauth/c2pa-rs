@@ -1233,7 +1233,7 @@ pub(crate) fn verify_cose(
 
                         return Err(Error::CoseTimeStampValidity);
                     }
-                    
+
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                             .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
