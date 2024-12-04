@@ -103,7 +103,7 @@ impl TimeStampResponse {
     pub fn time_stamp_token(&self) -> Option<Vec<u8>> {
         let tst = self.0.time_stamp_token.as_ref()?;
 
-        let a: Result<Vec<u32>, TimeStampError> = tst
+        let arcs: Result<Vec<u32>, TimeStampError> = tst
             .content_type
             .iter()
             .map(|v| {
@@ -113,8 +113,10 @@ impl TimeStampResponse {
             })
             .collect();
 
+        let arcs = arcs.ok()?;
+
         let ci = ContentInfo {
-            content_type: rasn::types::ObjectIdentifier::new(a.ok()?)?,
+            content_type: rasn::types::ObjectIdentifier::new(arcs)?,
             content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
         };
 
