@@ -37,12 +37,6 @@ use rasn::{AsnType, Decode, Encode};
 use serde::{Deserialize, Serialize};
 use x509_certificate::DigestAlgorithm::{self};
 
-#[cfg(target_arch = "wasm32")]
-use crate::cose_validator::{
-    ECDSA_WITH_SHA256_OID, ECDSA_WITH_SHA384_OID, ECDSA_WITH_SHA512_OID, EC_PUBLICKEY_OID,
-    ED25519_OID, RSA_OID, SHA1_OID, SHA256_OID, SHA256_WITH_RSAENCRYPTION_OID, SHA384_OID,
-    SHA384_WITH_RSAENCRYPTION_OID, SHA512_OID, SHA512_WITH_RSAENCRYPTION_OID,
-};
 use crate::{
     error::{Error, Result},
     hash_utils::vec_compare,
@@ -368,45 +362,6 @@ fn time_to_datetime(t: x509_certificate::asn1time::Time) -> chrono::DateTime<chr
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn get_validator_type(sig_alg: &bcder::Oid, hash_alg: &bcder::Oid) -> Option<String> {
-    if sig_alg.as_ref() == RSA_OID.as_bytes()
-        || sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes()
-        || sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA1_OID.as_bytes() {
-            Some("sha1".to_string())
-        } else if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Some("rsa256".to_string())
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Some("rsa384".to_string())
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Some("rsa512".to_string())
-        } else {
-            None
-        }
-    } else if sig_alg.as_ref() == EC_PUBLICKEY_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes()
-        || sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes()
-    {
-        if hash_alg.as_ref() == SHA256_OID.as_bytes() {
-            Some(c2pa_crypto::SigningAlg::Es256.to_string())
-        } else if hash_alg.as_ref() == SHA384_OID.as_bytes() {
-            Some(c2pa_crypto::SigningAlg::Es384.to_string())
-        } else if hash_alg.as_ref() == SHA512_OID.as_bytes() {
-            Some(c2pa_crypto::SigningAlg::Es512.to_string())
-        } else {
-            None
-        }
-    } else if sig_alg.as_ref() == ED25519_OID.as_bytes() {
-        Some(c2pa_crypto::SigningAlg::Ed25519.to_string())
-    } else {
-        None
-    }
-}
-
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ContentInfo {
     pub content_type: rasn::types::ObjectIdentifier,
@@ -623,23 +578,19 @@ pub(crate) fn verify_timestamp(ts: &[u8], data: &[u8]) -> Result<TstInfo> {
             #[cfg(target_arch = "wasm32")]
             {
                 if _sync {
+                    // IMPORTANT: The synchronous implementation of validate_timestamp_sync
+                    // on WASM is unable to support _some_ signature algorithms. The async path
+                    // should be used whenever possible.
                     validate_timestamp_sig(sig_alg, hash_alg, sig_val, &tbs, &signing_key_der)?;
                 } else {
-                    // TO REVIEW: Worth keeping this WASM-specific async path alive, or can we fully switch over to the synchronous path? (I'd prefer the latter.)
-                    let mut certificate_der = Vec::<u8>::new();
-                    cert.encode_ref()
-                        .write_encoded(bcder::Mode::Der, &mut certificate_der)?;
-
-                    if !crate::wasm::verify_data(
-                        certificate_der,
-                        get_validator_type(sig_alg, hash_alg),
-                        sig_val.to_bytes().to_vec(),
-                        tbs,
+                    validate_timestamp_sig_async(
+                        sig_alg,
+                        hash_alg,
+                        sig_val,
+                        &tbs,
+                        &signing_key_der,
                     )
-                    .await?
-                    {
-                        return Err(Error::CoseTimeStampMismatch);
-                    }
+                    .await?;
                 }
             }
 
@@ -701,6 +652,28 @@ fn validate_timestamp_sig(
 
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
+        .map_err(|_| Error::CoseTimeStampMismatch)?;
+
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn validate_timestamp_sig_async(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    sig_val: &OctetString,
+    tbs: &[u8],
+    signing_key_der: &[u8],
+) -> Result<()> {
+    let Some(validator) =
+        c2pa_crypto::webcrypto::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    else {
+        return Err(Error::CoseSignatureAlgorithmNotSupported);
+    };
+
+    validator
+        .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
+        .await
         .map_err(|_| Error::CoseTimeStampMismatch)?;
 
     Ok(())

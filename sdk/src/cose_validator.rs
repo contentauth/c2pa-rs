@@ -38,6 +38,8 @@ use x509_parser::{
 
 #[cfg(feature = "openssl")]
 use crate::openssl::verify_trust;
+#[cfg(target_arch = "wasm32")]
+use crate::wasm::webpki_trust_handler::verify_trust_async;
 use crate::{
     error::{Error, Result},
     settings::get_settings_value,
@@ -46,10 +48,6 @@ use crate::{
     utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
-};
-#[cfg(target_arch = "wasm32")]
-use crate::{
-    wasm::webcrypto_validator::validate_async, wasm::webpki_trust_handler::verify_trust_async,
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -1343,14 +1341,17 @@ async fn validate_with_cert_async(
     let pk = signcert.public_key();
     let pk_der = pk.raw;
 
-    if validate_async(signing_alg, sig, data, pk_der).await? {
-        Ok(CertInfo {
-            subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
-            serial_number: extract_serial_from_cert(&signcert),
-        })
-    } else {
-        Err(Error::CoseSignature)
-    }
+    let Some(validator) = c2pa_crypto::webcrypto::async_validator_for_signing_alg(signing_alg)
+    else {
+        return Err(Error::UnknownAlgorithm);
+    };
+
+    validator.validate_async(sig, data, pk_der).await?;
+
+    Ok(CertInfo {
+        subject: extract_subject_from_cert(&signcert).unwrap_or_default(),
+        serial_number: extract_serial_from_cert(&signcert),
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]

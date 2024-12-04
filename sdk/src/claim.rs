@@ -1169,7 +1169,7 @@ impl Claim {
             }
 
             // check for deprecated actions
-            let ac = Actions::from_assertion(&assertion)?;
+            let ac = Actions::from_assertion(assertion)?;
             for action in ac.actions() {
                 if V2_DEPRECATED_ACTIONS.contains(&action.action()) {
                     return Err(Error::VersionCompatibility(
