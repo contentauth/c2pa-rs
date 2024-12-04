@@ -12,7 +12,6 @@ on:
     branches:
       - main
       - nightly
-      - follow-ts-changes-through
   schedule:
     - cron: "0 18 * * 1,4,6" # 1800 UTC every Monday, Thursday, Saturday
 
