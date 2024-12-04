@@ -137,23 +137,21 @@ pub fn signed_data_from_time_stamp_response(
         ));
     };
 
-    if let Some(token) = &time_stamp_token {
-        if token.content_type == OID_ID_SIGNED_DATA {
-            Ok(Some(
-                token
-                    .content
-                    .clone()
-                    .decode(SignedData::take_from)
-                    .map_err(|_err| {
-                        TimeStampError::DecodeError("time stamp invalid".to_string())
-                    })?,
-            ))
-        } else {
-            Err(TimeStampError::DecodeError(
-                "time stamp has invalid OID".to_string(),
-            ))
-        }
-    } else {
-        Ok(None)
+    let Some(token) = &time_stamp_token else {
+        return Ok(None);
+    };
+
+    if token.content_type != OID_ID_SIGNED_DATA {
+        return Err(TimeStampError::DecodeError(
+            "time stamp has invalid OID".to_string(),
+        ));
     }
+
+    Ok(Some(
+        token
+            .content
+            .clone()
+            .decode(SignedData::take_from)
+            .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?,
+    ))
 }
