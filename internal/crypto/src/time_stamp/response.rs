@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::nom::AsBytes;
 use bcder::decode::Constructed;
+use rasn::{AsnType, Decode, Encode};
 
 use crate::{
     asn1::{
@@ -83,4 +85,34 @@ impl TimeStampResponse {
             Ok(None)
         }
     }
+
+    /// Convert this time stamp response to a time stamp token.
+    pub fn time_stamp_token(&self) -> Option<Vec<u8>> {
+        let tst = self.0.time_stamp_token.as_ref()?;
+
+        let a: Result<Vec<u32>, TimeStampError> = tst
+            .content_type
+            .iter()
+            .map(|v| {
+                v.to_u32().ok_or(TimeStampError::DecodeError(
+                    "no content type specified".to_string(),
+                ))
+            })
+            .collect();
+
+        let ci = ContentInfo {
+            content_type: rasn::types::ObjectIdentifier::new(a.ok()?)?,
+            content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+        };
+
+        rasn::der::encode(&ci).ok()
+    }
+}
+
+#[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct ContentInfo {
+    content_type: rasn::types::ObjectIdentifier,
+
+    #[rasn(tag(explicit(0)))]
+    content: rasn::types::Any,
 }
