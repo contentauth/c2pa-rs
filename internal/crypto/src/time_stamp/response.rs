@@ -14,16 +14,20 @@
 use bcder::decode::Constructed;
 use rasn::{AsnType, Decode, Encode};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::asn1::rfc3161::PkiStatus;
 use crate::{
     asn1::{
-        rfc3161::{PkiStatus, TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
+        rfc3161::{TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
         rfc5652::{SignedData, OID_ID_SIGNED_DATA},
     },
     time_stamp::TimeStampError,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct TimeStampResponse(pub TimeStampResp);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::ops::Deref for TimeStampResponse {
     type Target = TimeStampResp;
 
@@ -32,6 +36,7 @@ impl std::ops::Deref for TimeStampResponse {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TimeStampResponse {
     /// Return `true` if the request was successful.
     pub(crate) fn is_success(&self) -> bool {
