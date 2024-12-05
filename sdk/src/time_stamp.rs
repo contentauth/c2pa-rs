@@ -114,12 +114,6 @@ pub fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>
     }
 }
 
-pub fn gt_to_datetime(
-    gt: x509_certificate::asn1time::GeneralizedTime,
-) -> chrono::DateTime<chrono::Utc> {
-    gt.into()
-}
-
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
 pub struct TstToken {
     #[serde(with = "serde_bytes")]
