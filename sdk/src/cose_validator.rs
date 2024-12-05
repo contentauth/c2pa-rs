@@ -17,6 +17,7 @@ use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
+    cose::{parse_and_validate_sigtst, parse_and_validate_sigtst_async},
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
@@ -811,10 +812,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     {
         let time_cbor = serde_cbor::to_vec(t)?;
         let tst_infos = if _sync {
-            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?
+            parse_and_validate_sigtst(&time_cbor, data, &sign1.protected)?
         } else {
-            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, data, &sign1.protected)
-                .await?
+            parse_and_validate_sigtst_async(&time_cbor, data, &sign1.protected).await?
         };
 
         // there should only be one but consider handling more in the future since it is technically ok
