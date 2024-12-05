@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
+use c2pa_crypto::{openssl::OpenSslMutex, time_stamp::TimeStampProvider, SigningAlg};
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
@@ -97,12 +97,14 @@ impl Signer for EdSigner {
         Ok(certs)
     }
 
-    fn time_authority_url(&self) -> Option<String> {
-        self.tsa_url.clone()
-    }
-
     fn reserve_size(&self) -> usize {
         1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
+    }
+}
+
+impl TimeStampProvider for EdSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }
 

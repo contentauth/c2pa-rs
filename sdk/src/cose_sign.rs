@@ -18,7 +18,7 @@
 use std::io::Cursor;
 
 use async_generic::async_generic;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{time_stamp::ts_token_from_time_stamp_response, SigningAlg};
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -34,7 +34,6 @@ use crate::{
     settings::get_settings_value,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
-        timestamptoken_from_timestamprsp,
     },
     trust_handler::TrustHandlerConfig,
     utils::sig_utils::{der_to_p1363, parse_ec_der_sig},
@@ -334,7 +333,7 @@ fn build_unprotected_headers(
 
         if v2 {
             // we use the timestamptoken and not TimeStampRsp for sigTst2
-            cts = timestamptoken_from_timestamprsp(&cts).ok_or(Error::CoseTimeStampGeneration)?;
+            cts = ts_token_from_time_stamp_response(&cts).ok_or(Error::CoseTimeStampGeneration)?;
         }
 
         let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
@@ -448,6 +447,8 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_crypto::time_stamp::{TimeStampError, TimeStampProvider};
+
     use super::sign_claim;
     use crate::{claim::Claim, utils::test::temp_signer};
 
@@ -516,8 +517,13 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
+    }
 
-        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+    impl TimeStampProvider for BogusSigner {
+        fn send_time_stamp_request(
+            &self,
+            _message: &[u8],
+        ) -> Option<Result<Vec<u8>, TimeStampError>> {
             Some(Ok(Vec::new()))
         }
     }

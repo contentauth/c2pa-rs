@@ -298,6 +298,7 @@ where
 }
 
 pub(crate) struct TestGoodSigner {}
+
 impl crate::Signer for TestGoodSigner {
     fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
@@ -314,8 +315,13 @@ impl crate::Signer for TestGoodSigner {
     fn reserve_size(&self) -> usize {
         1024
     }
+}
 
-    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+impl c2pa_crypto::time_stamp::TimeStampProvider for TestGoodSigner {
+    fn send_time_stamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
         Some(Ok(Vec::new()))
     }
 }
@@ -340,11 +346,15 @@ impl crate::AsyncSigner for AsyncTestGoodSigner {
     fn reserve_size(&self) -> usize {
         1024
     }
+}
 
-    async fn send_timestamp_request(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for AsyncTestGoodSigner {
+    async fn send_time_stamp_request(
         &self,
         _message: &[u8],
-    ) -> Option<crate::error::Result<Vec<u8>>> {
+    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
         Some(Ok(Vec::new()))
     }
 }
@@ -554,8 +564,15 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     fn reserve_size(&self) -> usize {
         10000
     }
+}
 
-    async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
+#[cfg(target_arch = "wasm32")]
+#[async_trait::async_trait(?Send)]
+impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for WebCryptoSigner {
+    async fn send_time_stamp_request(
+        &self,
+        _: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
         None
     }
 }
@@ -623,11 +640,15 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
     fn reserve_size(&self) -> usize {
         10000
     }
+}
 
-    async fn send_timestamp_request(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for TempAsyncRemoteSigner {
+    async fn send_time_stamp_request(
         &self,
         _message: &[u8],
-    ) -> Option<crate::error::Result<Vec<u8>>> {
+    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
         Some(Ok(Vec::new()))
     }
 }
