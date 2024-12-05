@@ -45,9 +45,8 @@ use crate::{
     // c2pa-crypto migration plans (2024-12-05)
     error::{Error, Result},                               // DON'T MOVE
     settings::get_settings_value,                         // DON'T MOVE
-    time_stamp::gt_to_datetime, // already moved (duplicated?) to c2pa-crypto
     trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
-    validator::ValidationInfo,  // Eli to move to c2pa-status-tracker
+    validator::ValidationInfo,                            // Eli to move to c2pa-status-tracker
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -1349,6 +1348,12 @@ async fn validate_with_cert_async(
     };
 
     validate_with_cert(validator, sig, data, der_bytes)
+}
+
+fn gt_to_datetime(
+    gt: x509_certificate::asn1time::GeneralizedTime,
+) -> chrono::DateTime<chrono::Utc> {
+    gt.into()
 }
 
 #[allow(unused_imports)]
