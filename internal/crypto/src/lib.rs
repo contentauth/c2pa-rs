@@ -21,6 +21,7 @@
 
 pub mod asn1;
 pub mod base64;
+pub mod cose;
 pub mod hash;
 pub(crate) mod internal;
 pub mod ocsp;
