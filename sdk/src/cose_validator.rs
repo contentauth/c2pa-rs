@@ -18,6 +18,7 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     ocsp::OcspResponse,
+    p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
     SigningAlg,
@@ -45,7 +46,6 @@ use crate::{
     settings::get_settings_value,
     time_stamp::gt_to_datetime,
     trust_handler::{has_allowed_oid, TrustHandlerConfig},
-    utils::sig_utils::parse_ec_der_sig,
     validation_status,
     validator::ValidationInfo,
 };
