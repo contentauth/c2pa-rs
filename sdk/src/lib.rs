@@ -108,6 +108,7 @@ pub mod cose_sign;
 pub mod create_signer;
 pub mod jumbf_io;
 pub mod settings;
+pub mod validation_results;
 pub mod validation_status;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

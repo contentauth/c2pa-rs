@@ -233,10 +233,15 @@ impl ManifestStoreReport {
 
                 if let Some(ingredient_claim) = store.get_claim(&label) {
                     // create new node
-                    let data = if name_only {
-                        format!("{}_{}", ingredient_assertion.title, Hexlify(hash))
+                    let title = if let Some(title) = &ingredient_assertion.title {
+                        title.to_owned()
                     } else {
-                        format!("Asset:{}, Manifest:{}", ingredient_assertion.title, label)
+                        "No title".into()
+                    };
+                    let data = if name_only {
+                        format!("{}_{}", title, Hexlify(hash))
+                    } else {
+                        format!("Asset:{}, Manifest:{}", title, label)
                     };
 
                     let new_token = current_token.append(tree, data);
@@ -250,9 +255,13 @@ impl ManifestStoreReport {
                     )?;
                 }
             } else {
-                let asset_name = &ingredient_assertion.title;
+                let asset_name = if let Some(title) = &ingredient_assertion.title {
+                    title.to_owned()
+                } else {
+                    "No title".into()
+                };
                 let data = if name_only {
-                    asset_name.to_string()
+                    asset_name
                 } else {
                     format!("Asset:{asset_name}")
                 };

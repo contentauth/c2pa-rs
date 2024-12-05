@@ -34,6 +34,9 @@ pub struct ClaimGeneratorInfo {
     /// hashed URI to the icon (either embedded or remote)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<UriOrResource>,
+    /// A human readable string of the OS the claim generator is running on
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operating_system: Option<String>,
     // Any other values that are not part of the standard
     #[serde(flatten)]
     other: HashMap<String, Value>,
@@ -45,6 +48,7 @@ impl Default for ClaimGeneratorInfo {
             name: crate::NAME.to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             icon: None,
+            operating_system: None,
             other: HashMap::new(),
         }
     }
@@ -56,6 +60,7 @@ impl ClaimGeneratorInfo {
             name: name.into(),
             version: None,
             icon: None,
+            operating_system: None, // todo: decide if we want to fill in this value
             other: HashMap::new(),
         }
     }

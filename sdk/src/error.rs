@@ -83,6 +83,9 @@ pub enum Error {
     #[error("claim missing hard binding")]
     ClaimMissingHardBinding,
 
+    #[error("claim contains multiple hard bindings")]
+    ClaimMultipleHardBinding,
+
     #[error("claim contains self redactions")]
     ClaimSelfRedact,
 
@@ -294,6 +297,9 @@ pub enum Error {
 
     #[error("prerelease content detected")]
     PrereleaseError,
+
+    #[error("capability is not supported by this version")]
+    VersionCompatibility(String),
 
     #[error("insufficient memory space for operation")]
     InsufficientMemory,

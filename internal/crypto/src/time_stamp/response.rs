@@ -13,6 +13,7 @@
 
 use bcder::decode::Constructed;
 use rasn::{AsnType, Decode, Encode};
+use x509_parser::nom::AsBytes;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::asn1::rfc3161::PkiStatus;
@@ -153,4 +154,29 @@ pub fn tst_info_from_signed_data(
         })
         .map_err(|err| TimeStampError::DecodeError(err.to_string()))?,
     ))
+}
+
+/// TO REVIEW: Does this need to be public after refactoring?
+pub fn ts_token_from_time_stamp_response(ts_resp: &[u8]) -> Option<Vec<u8>> {
+    let Ok(ts_resp) = Constructed::decode(ts_resp, bcder::Mode::Der, |cons| {
+        TimeStampResp::take_from(cons)
+    }) else {
+        return None;
+    };
+
+    let tst = ts_resp.time_stamp_token?;
+
+    let arcs = tst
+        .content_type
+        .iter()
+        .map(|v| v.to_u32().ok_or(TimeStampError::InvalidData))
+        .collect::<Result<Vec<u32>, TimeStampError>>()
+        .ok()?;
+
+    let ci = ContentInfo {
+        content_type: rasn::types::ObjectIdentifier::new(arcs)?,
+        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+    };
+
+    rasn::der::encode(&ci).ok()
 }

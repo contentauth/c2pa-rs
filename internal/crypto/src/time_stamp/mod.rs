@@ -25,6 +25,8 @@ mod provider;
 pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
 
 mod response;
+pub use response::ts_token_from_time_stamp_response;
+// ^^ TO REVIEW: Does this need to be public after refactoring?
 
 mod verify;
 /// TEMPORARILY PUBLIC while refactoring

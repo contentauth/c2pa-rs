@@ -766,8 +766,8 @@ impl Manifest {
         );
 
         let mut claim = match self.label() {
-            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string()),
-            None => Claim::new(&generator, self.vendor.as_deref()),
+            Some(label) => Claim::new_with_user_guid(&generator, &label.to_string(), 1)?,
+            None => Claim::new(&generator, self.vendor.as_deref(), 1),
         };
 
         if let Some(info_vec) = self.claim_generator_info.as_ref() {
@@ -1520,7 +1520,7 @@ pub(crate) mod tests {
         ingredient::Ingredient,
         reader::Reader,
         store::Store,
-        utils::test::{temp_remote_signer, temp_signer, TEST_VC},
+        utils::test::{static_test_uuid, temp_remote_signer, temp_signer, TEST_VC},
         Manifest, Result,
     };
     #[cfg(feature = "file_io")]
@@ -1938,10 +1938,12 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
+        let my_guid = static_test_uuid();
+
         let signer = temp_signer();
 
         let mut manifest = test_manifest();
-        manifest.set_label("MyLabel");
+        manifest.set_label(my_guid);
         manifest
             .embed(&output, &output, signer.as_ref())
             .expect("embed");
@@ -1966,7 +1968,7 @@ pub(crate) mod tests {
         let signer = temp_signer();
 
         let mut manifest = test_manifest();
-        manifest.set_label("MyLabel");
+        manifest.set_label(static_test_uuid());
         manifest.set_remote_manifest(url);
         let c2pa_data = manifest
             .embed(&output, &output, signer.as_ref())

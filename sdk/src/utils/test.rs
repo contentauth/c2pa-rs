@@ -70,9 +70,23 @@ pub const TEST_VC: &str = r#"{
     }
 }"#;
 
+/// Create new C2PA compatible UUID
+pub(crate) fn gen_c2pa_uuid() -> String {
+    let guid = uuid::Uuid::new_v4();
+    guid.hyphenated()
+        .encode_lower(&mut uuid::Uuid::encode_buffer())
+        .to_owned()
+}
+
+// Returns a non-changing C2PA compatible UUID for testing
+pub(crate) fn static_test_uuid() -> &'static str {
+    const TEST_GUID: &str = "f75ddc48-cdc8-4723-bcfe-77a8d68a5920";
+    TEST_GUID
+}
+
 /// creates a claim for testing
 pub fn create_test_claim() -> Result<Claim> {
-    let mut claim = Claim::new("adobe unit test", Some("adobe"));
+    let mut claim = Claim::new("adobe unit test", Some("adobe"), 1);
 
     // add some data boxes
     let _db_uri = claim.add_databox("text/plain", "this is a test".as_bytes().to_vec(), None)?;
@@ -358,9 +372,13 @@ pub(crate) fn temp_signer() -> Box<dyn Signer> {
         let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
         let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
 
-        let signer =
-            RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-                .expect("get_temp_signer");
+        let signer = RsaSigner::from_signcert_and_pkey(
+            &sign_cert,
+            &pem_key,
+            SigningAlg::Ps256,
+            None, // Some("http://timestamp.digicert.com".into()),
+        )
+        .expect("get_temp_signer");
 
         Box::new(signer)
     }
@@ -426,7 +444,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size(), 1).await
         }
         #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
         {
@@ -444,7 +462,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
         {
             let signer = crate::wasm::RsaWasmSignerAsync::new();
 
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size(), 1).await
         }
     }
 
@@ -584,12 +602,12 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size(), 1).await
         }
         #[cfg(target_arch = "wasm32")]
         {
             let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size(), 1).await
         }
 
         #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]

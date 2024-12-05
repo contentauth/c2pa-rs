@@ -1224,7 +1224,7 @@ impl AssertionBase for BmffHash {
 
     fn from_assertion(assertion: &Assertion) -> crate::error::Result<Self> {
         let mut bmff_hash = Self::from_cbor_assertion(assertion)?;
-        bmff_hash.set_bmff_version(assertion.get_ver().unwrap_or(1));
+        bmff_hash.set_bmff_version(assertion.get_ver());
 
         Ok(bmff_hash)
     }

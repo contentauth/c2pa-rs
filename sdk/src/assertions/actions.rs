@@ -64,9 +64,20 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
+    "c2pa.copied",
+    "c2pa.formatted",
+    "c2pa.version_updated",
+    "c2pa.printed",
+    "c2pa.managed",
+    "c2pa.produced",
+    "c2pa.saved",
+];
+
 /// We use this to allow SourceAgent to be either a string or a ClaimGeneratorInfo
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum SoftwareAgent {
     String(String),
     ClaimGeneratorInfo(ClaimGeneratorInfo),
