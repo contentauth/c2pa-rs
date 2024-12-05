@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.2...c2pa-crypto-v0.2.0)
+_05 December 2024_
+
+### Added
+
+* Move time stamp code into c2pa-crypto ([#696](https://github.com/contentauth/c2pa-rs/pull/696))
+
+### Fixed
+
+* Treat Unicode-3.0 license as approved; unpin related dependencies ([#693](https://github.com/contentauth/c2pa-rs/pull/693))
+
 ## [0.1.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.1...c2pa-crypto-v0.1.2)
 _24 October 2024_
 

@@ -6,6 +6,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.40.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.39.0...c2pa-v0.40.0)
+_05 December 2024_
+
+### Added
+
+* Move time stamp code into c2pa-crypto ([#696](https://github.com/contentauth/c2pa-rs/pull/696))
+* Adds ValidationState support ([#701](https://github.com/contentauth/c2pa-rs/pull/701))
+* Introduce `DynamicAssertion` trait ([#566](https://github.com/contentauth/c2pa-rs/pull/566))
+
+### Fixed
+
+* Add support for MP3 without ID3 header ([#652](https://github.com/contentauth/c2pa-rs/pull/652))
+* Treat Unicode-3.0 license as approved; unpin related dependencies ([#693](https://github.com/contentauth/c2pa-rs/pull/693))
+* Remote manifest fetch test was not using full path ([#675](https://github.com/contentauth/c2pa-rs/pull/675))
+* Fix [#624](https://github.com/contentauth/c2pa-rs/pull/624) (edge cases when combining the box hashes) ([#625](https://github.com/contentauth/c2pa-rs/pull/625))
+* For Issue 672, Callback is unsound ([#674](https://github.com/contentauth/c2pa-rs/pull/674))
+* For Issue 672, Callback is unsound
+* Support "remote_manifest_fetch" verify setting ([#667](https://github.com/contentauth/c2pa-rs/pull/667))
+
 ## [0.39.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.38.0...c2pa-v0.39.0)
 _13 November 2024_
 
