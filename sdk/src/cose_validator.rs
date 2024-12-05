@@ -38,16 +38,17 @@ use x509_parser::{
 };
 
 #[cfg(feature = "openssl")]
-use crate::openssl::verify_trust;
+use crate::openssl::verify_trust; // Eric to investigate
 #[cfg(target_arch = "wasm32")]
-use crate::wasm::webpki_trust_handler::verify_trust_async;
+use crate::wasm::webpki_trust_handler::verify_trust_async; // Eric to investigate
 use crate::{
-    error::{Error, Result},
-    settings::get_settings_value,
-    time_stamp::gt_to_datetime,
-    trust_handler::{has_allowed_oid, TrustHandlerConfig},
-    validation_status,
-    validator::ValidationInfo,
+    // c2pa-crypto migration plans (2024-12-05)
+    error::{Error, Result}, // DON'T MOVE
+    settings::get_settings_value, // DON'T MOVE
+    time_stamp::gt_to_datetime, // already moved (duplicated?) to c2pa-crypto
+    trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
+    validation_status, // Eric to move to c2pa-crypto
+    validator::ValidationInfo, // Eli to move to c2pa-status-tracker
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
