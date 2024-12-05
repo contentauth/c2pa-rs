@@ -18,11 +18,10 @@ use std::{
 };
 
 use asn1_rs::Oid;
-use c2pa_crypto::{base64, openssl::OpenSslMutex};
+use c2pa_crypto::{base64, hash::sha256, openssl::OpenSslMutex};
 use openssl::x509::verify::X509VerifyFlags;
 
 use crate::{
-    hash_utils::hash_sha256,
     trust_handler::{load_eku_configuration, TrustHandlerConfig},
     Error, Result,
 };
@@ -147,7 +146,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
             if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
                 for cert in &cert_list {
                     let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
-                    let cert_sha256 = hash_sha256(&cert_der);
+                    let cert_sha256 = sha256(&cert_der);
                     let cert_hash_base64 = base64::encode(&cert_sha256);
 
                     self.allowed_cert_set.insert(cert_hash_base64);
@@ -243,7 +242,7 @@ pub(crate) fn verify_trust(
     signing_time_epoc: Option<i64>,
 ) -> Result<bool> {
     // check the cert against the allowed list first
-    let cert_sha256 = hash_sha256(cert_der);
+    let cert_sha256 = sha256(cert_der);
     let cert_hash_base64 = base64::encode(&cert_sha256);
     if th.get_allowed_list().contains(&cert_hash_base64) {
         return Ok(true);

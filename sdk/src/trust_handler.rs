@@ -19,9 +19,9 @@ use std::{
 };
 
 use asn1_rs::{oid, Oid};
-use c2pa_crypto::base64;
+use c2pa_crypto::{base64, hash::sha256};
 
-use crate::{hash_utils::hash_sha256, Error, Result};
+use crate::{Error, Result};
 
 pub(crate) static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
 pub(crate) static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
@@ -195,7 +195,7 @@ impl TrustHandlerConfig for TrustPassThrough {
 
         if let Ok(cert_list) = load_trust_from_data(&buffer) {
             for cert_der in &cert_list {
-                let cert_sha256 = hash_sha256(cert_der);
+                let cert_sha256 = sha256(cert_der);
                 let cert_hash_base64 = base64::encode(&cert_sha256);
 
                 self.allowed_cert_set.insert(cert_hash_base64);
