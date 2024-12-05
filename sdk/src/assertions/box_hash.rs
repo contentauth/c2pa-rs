@@ -13,6 +13,7 @@
 
 use std::{fs::File, io::Cursor, path::*};
 
+use c2pa_status_tracker::validation_codes::ASSERTION_BOXHASH_UNKNOWN;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -22,7 +23,6 @@ use crate::{
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
-    validation_status::ASSERTION_BOXHASH_UNKNOWN,
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
