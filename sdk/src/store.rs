@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
+use c2pa_crypto::hash::sha256;
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -64,11 +65,7 @@ use crate::{
     salt::DefaultSalt,
     settings::get_settings_value,
     trust_handler::TrustHandlerConfig,
-    utils::{
-        hash_utils::{hash_sha256, HashRange},
-        io_utils::stream_len,
-        patch::patch_bytes,
-    },
+    utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, RemoteSigner, Signer,
 };
 
@@ -438,7 +435,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
+        let mut placeholder = sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
