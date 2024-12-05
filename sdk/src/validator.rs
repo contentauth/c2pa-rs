@@ -23,5 +23,6 @@ pub struct ValidationInfo {
     pub issuer_org: Option<String>,
     pub validated: bool,     // claim signature is valid
     pub cert_chain: Vec<u8>, // certificate chain used to validate signature
-    pub revocation_status: Option<bool>,
+    pub revocation_date: Option<DateTime<Utc>>,
+    pub ocsp_next_update: Option<DateTime<Utc>>,
 }

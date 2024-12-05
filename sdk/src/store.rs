@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::hash::sha256;
+use c2pa_crypto::{hash::sha256, ocsp::OcspResponse};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -200,7 +200,7 @@ impl Store {
         self.trust_handler.clear();
     }
 
-    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
+    pub(crate) fn trust_handler(&self) -> &dyn TrustHandlerConfig {
         self.trust_handler.as_ref()
     }
 
@@ -448,7 +448,7 @@ impl Store {
     pub(crate) fn get_provenance_cert_chain(&self) -> Result<String> {
         let claim = self.provenance_claim().ok_or(Error::ProvenanceMissing)?;
 
-        match claim.get_cert_chain() {
+        match claim.get_cert_chain(self.trust_handler()) {
             Ok(chain) => String::from_utf8(chain).map_err(|_e| Error::CoseInvalidCert),
             Err(e) => Err(e),
         }
@@ -458,31 +458,19 @@ impl Store {
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
-    pub(crate) fn get_ocsp_status(&self) -> Option<String> {
+    pub(crate) fn get_ocsp_status(&self, manifest_label: &str) -> Option<OcspResponse> {
         let claim = self
-            .provenance_claim()
-            .ok_or(Error::ProvenanceMissing)
+            .get_claim(manifest_label)
+            .ok_or(Error::ClaimMissing {
+                label: manifest_label.to_string(),
+            })
             .ok()?;
 
         let sig = claim.signature_val();
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
-            if let Some(revoked_at) = &info.revoked_at {
-                Some(format!(
-                    "Certificate Status: Revoked, revoked at: {}",
-                    revoked_at
-                ))
-            } else {
-                Some(format!(
-                    "Certificate Status: Good, next update: {}",
-                    info.next_update
-                ))
-            }
-        } else {
-            None
-        }
+        check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log).ok()
     }
 
     /// Sign the claim and return signature.

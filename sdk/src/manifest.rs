@@ -702,9 +702,9 @@ impl Manifest {
 
         // get verified signing info
         let si = if _sync {
-            claim.signature_info()
+            claim.signature_info(store.trust_handler())
         } else {
-            claim.signature_info_async().await
+            claim.signature_info_async(store.trust_handler()).await
         };
 
         manifest.signature_info = match si {
@@ -715,7 +715,8 @@ impl Manifest {
                 cert_serial_number: signature_info.cert_serial_number.map(|s| s.to_string()),
                 cert_chain: String::from_utf8(signature_info.cert_chain)
                     .map_err(|_e| Error::CoseInvalidCert)?,
-                revocation_status: signature_info.revocation_status,
+                revocation_date: signature_info.revocation_date.map(|d| d.to_rfc3339()),
+                ocsp_next_update: signature_info.ocsp_next_update.map(|d| d.to_rfc3339()),
             }),
             None => None,
         };
@@ -1481,17 +1482,21 @@ pub struct SignatureInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<String>,
 
-    /// Revocation status of the certificate.
+    // The date the certificate was revoked.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub revocation_status: Option<bool>,
+    pub revocation_date: Option<String>,
+
+    // The date the OCSP response should be updated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ocsp_next_update: Option<String>,
 
     /// The cert chain for this claim.
     #[serde(skip)] // don't serialize this, let someone ask for it
-    cert_chain: String,
+    pub cert_chain: String,
 }
 
 impl SignatureInfo {
-    // returns the cert chain for this signature
+    /// Returns the cert chain for this signature.
     pub fn cert_chain(&self) -> &str {
         &self.cert_chain
     }

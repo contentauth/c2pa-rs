@@ -965,6 +965,8 @@ pub(crate) async fn verify_cose_async(
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
+    let oscp_info = check_ocsp_status_async(&cose_bytes, &data, th, validation_log).await?;
+
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
@@ -1093,6 +1095,11 @@ pub(crate) async fn verify_cose_async(
 
         // return cert chain
         result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
+
+        // return revocation status and update info
+        result.revocation_date = oscp_info.revoked_at;
+
+        result.ocsp_next_update = Some(oscp_info.next_update);
     }
 
     Ok(result)
@@ -1103,12 +1110,19 @@ pub(crate) async fn verify_cose_async(
 pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
+    th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> ValidationInfo {
     let mut date = None;
     let mut issuer_org = None;
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
+
+    let (revocation_date, ocsp_next_update) =
+        match check_ocsp_status(cose_bytes, data, th, validation_log) {
+            Ok(oscp_info) => (oscp_info.revoked_at, Some(oscp_info.next_update)),
+            Err(_) => (None, None),
+        };
 
     let sign1 = match get_cose_sign1(cose_bytes, data, validation_log) {
         Ok(sign1) => {
@@ -1151,7 +1165,8 @@ pub(crate) fn get_signing_info(
         validated: false,
         cert_chain: certs,
         cert_serial_number,
-        revocation_status: None,
+        revocation_date,
+        ocsp_next_update,
     }
 }
 
@@ -1168,6 +1183,9 @@ pub(crate) fn verify_cose(
     th: &dyn TrustHandlerConfig,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
+    // check certificate revocation
+    let oscp_info = check_ocsp_status(cose_bytes, data, th, validation_log)?;
+
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
@@ -1282,7 +1300,9 @@ pub(crate) fn verify_cose(
             // return cert chain
             result.cert_chain = dump_cert_chain(&certs)?;
 
-            result.revocation_status = Some(true);
+            result.revocation_date = oscp_info.revoked_at;
+
+            result.ocsp_next_update = Some(oscp_info.next_update);
         }
         // Note: not adding validation_log entry here since caller will supply claim specific info to log
         Ok(())

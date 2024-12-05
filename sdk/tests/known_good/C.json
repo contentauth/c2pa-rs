@@ -56,7 +56,8 @@
         "alg": "Ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
-        "time": "2024-08-06T21:53:37+00:00"
+        "time": "2024-08-06T21:53:37+00:00",
+        "ocsp_next_update": "2024-11-20T00:15:54.189494+00:00"
       },
       "label": "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3"
     }

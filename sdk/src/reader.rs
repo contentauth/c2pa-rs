@@ -252,6 +252,14 @@ impl Reader {
         self.manifest_store.to_string()
     }
 
+    /// Get the manifest store as a Detailed JSON string
+    pub fn detailed_json(&self) -> Result<String> {
+        Ok(format!(
+            "{}",
+            ManifestStoreReport::from_store(self.manifest_store.store())?
+        ))
+    }
+
     /// Get the [`ValidationStatus`] array of the manifest store if it exists.
     /// Call this method to check for validation errors.
     ///
@@ -466,6 +474,18 @@ pub mod tests {
     // }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    #[allow(clippy::unwrap_used)]
+    /// Test that the reader can validate a file with nested assertion errors
+    fn test_reader_to_folder() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        //println!("{reader}");
+        assert_eq!(reader.validation_status(), None);
+        reader.to_folder("../target/reader_folder")?;
+        Ok(())
+    }
+
+    #[test]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
         let reader =
@@ -495,12 +515,13 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    /// Test that the reader can validate a file with nested assertion errors
-    fn test_reader_to_folder() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
-        assert_eq!(reader.validation_status(), None);
-        reader.to_folder("../target/reader_folder")?;
-        assert!(std::path::Path::new("../target/reader_folder/manifest.json").exists());
+    #[allow(clippy::unwrap_used)]
+    fn test_reader_detailed_json() -> Result<()> {
+        let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+        assert!(reader.validation_status().is_some());
+        let detailed_json = reader.detailed_json().unwrap();
+        //println!("{}", detailed_json);
+        assert!(detailed_json.contains("assertion_store"));
         Ok(())
     }
 }

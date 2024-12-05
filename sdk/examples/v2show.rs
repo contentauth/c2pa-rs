@@ -57,6 +57,7 @@ fn main() -> Result<()> {
             Err(e) => Err(e),
         }?;
         println!("{reader}");
+        //println!("\n\n{:#?}", reader);
     } else {
         println!("Prints a manifest report (requires a file path argument)")
     }

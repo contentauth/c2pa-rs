@@ -45,7 +45,10 @@ impl ManifestStoreReport {
     pub(crate) fn from_store(store: &Store) -> Result<Self> {
         let mut manifests = HashMap::<String, ManifestReport>::new();
         for claim in store.claims() {
-            manifests.insert(claim.label().to_owned(), ManifestReport::from_claim(claim)?);
+            manifests.insert(
+                claim.label().to_owned(),
+                ManifestReport::from_claim(claim, store)?,
+            );
         }
 
         Ok(ManifestStoreReport {
@@ -105,8 +108,18 @@ impl ManifestStoreReport {
         let cert_str = store.get_provenance_cert_chain()?;
         println!("{cert_str}\n\n");
 
-        if let Some(ocsp_info) = store.get_ocsp_status() {
-            println!("{ocsp_info}");
+        let claim_label = store
+            .provenance_path()
+            .ok_or(crate::Error::ProvenanceMissing)?;
+        if let Some(ocsp_info) = store.get_ocsp_status(&claim_label) {
+            if let Some(revoked_at) = &ocsp_info.revoked_at {
+                println!("Certificate Status: Revoked, revoked at: {}", revoked_at);
+            } else {
+                println!(
+                    "Certificate Status: Good, next update: {}",
+                    ocsp_info.next_update
+                );
+            }
         }
 
         Ok(())
@@ -298,7 +311,7 @@ struct ManifestReport {
 }
 
 impl ManifestReport {
-    fn from_claim(claim: &Claim) -> Result<Self> {
+    fn from_claim(claim: &Claim, store: &Store) -> Result<Self> {
         let mut assertion_store = HashMap::<String, Value>::new();
         let claim_assertions = claim.claim_assertion_store();
         for claim_assertion in claim_assertions.iter() {
@@ -329,11 +342,18 @@ impl ManifestReport {
             })
             .collect();
 
-        let signature = match claim.signature_info() {
+        let signature = match claim.signature_info(store.trust_handler()) {
             Some(info) => SignatureReport {
                 alg: info.alg.map_or_else(String::new, |a| a.to_string()),
                 issuer: info.issuer_org,
                 time: info.date.map(|d| d.to_rfc3339()),
+                cert_serial_number: info.cert_serial_number.map(|s| s.to_string()),
+                cert_chain: Some(
+                    String::from_utf8(info.cert_chain)
+                        .map_err(|_e| crate::Error::CoseInvalidCert)?,
+                ),
+                revocation_date: info.revocation_date.map(|d| d.to_rfc3339()),
+                ocsp_next_update: info.ocsp_next_update.map(|d| d.to_rfc3339()),
             },
             None => SignatureReport::default(),
         };
@@ -373,9 +393,26 @@ struct SignatureReport {
     // human readable issuing authority for this signature
     #[serde(skip_serializing_if = "Option::is_none")]
     issuer: Option<String>,
-    // the time the signature was created
+
+    /// The serial number of the certificate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cert_serial_number: Option<String>,
+
+    /// The time the signature was created.
     #[serde(skip_serializing_if = "Option::is_none")]
     time: Option<String>,
+
+    // The date the certificate was revoked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revocation_date: Option<String>,
+
+    // The date the OCSP response should be updated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ocsp_next_update: Option<String>,
+
+    /// The cert chain for this claim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cert_chain: Option<String>,
 }
 
 // replace the value of any field in the json string with a given key with the string <omitted>

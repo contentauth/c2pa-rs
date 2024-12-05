@@ -18,7 +18,6 @@ use std::{collections::HashMap, fmt};
 use async_generic::async_generic;
 use c2pa_crypto::base64;
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -34,10 +33,7 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
-    cose_validator::{
-        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
-        verify_cose, verify_cose_async,
-    },
+    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -996,42 +992,17 @@ impl Claim {
         }
     }
 
-    /// Return the signing date and time for this claim, if there is one.
-    pub fn signing_time(&self) -> Option<DateTime<Utc>> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.date
-        } else {
-            None
-        }
-    }
-
-    /// Return the signing issuer for this claim, if there is one.
-    pub fn signing_issuer(&self) -> Option<String> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.issuer_org
-        } else {
-            None
-        }
-    }
-
-    /// Return the cert's serial number, if there is one.
-    pub fn signing_cert_serial(&self) -> Option<String> {
-        self.signature_info()
-            .and_then(|validation_info| validation_info.cert_serial_number)
-            .map(|serial| serial.to_string())
-    }
-
     /// Return information about the signature
     #[async_generic]
-    pub fn signature_info(&self) -> Option<ValidationInfo> {
+    pub(crate) fn signature_info(&self, th: &dyn TrustHandlerConfig) -> Option<ValidationInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log))
+            Some(get_signing_info(sig, &data, th, &mut validation_log))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log).await)
+            Some(get_signing_info_async(sig, &data, th, &mut validation_log).await)
         }
     }
 
@@ -1069,9 +1040,6 @@ impl Claim {
             .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
-
-        // check certificate revocation
-        check_ocsp_status_async(&sig, &data, th, validation_log).await?;
 
         let verified =
             verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
@@ -1115,21 +1083,19 @@ impl Claim {
             return Err(Error::ClaimDecoding);
         };
 
-        // check certificate revocation
-        check_ocsp_status(sig, data, th, validation_log)?;
-
         let verified = verify_cose(sig, data, &additional_bytes, cert_check, th, validation_log);
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
 
     /// Get the signing certificate chain as PEM bytes
-    pub fn get_cert_chain(&self) -> Result<Vec<u8>> {
+    #[cfg(feature = "v1_api")]
+    pub(crate) fn get_cert_chain(&self, th: &dyn TrustHandlerConfig) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        let vi = get_signing_info(sig, &data, &mut validation_log);
+        let vi = get_signing_info(sig, &data, th, &mut validation_log);
 
         Ok(vi.cert_chain)
     }

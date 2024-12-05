@@ -41,7 +41,8 @@
       "signature_info": {
         "alg": "Ed25519",
         "issuer": "C2PA Test Signing Cert",
-        "cert_serial_number": "638838410810235485828984295321338730070538954823"
+        "cert_serial_number": "638838410810235485828984295321338730070538954823",
+        "ocsp_next_update": "2024-11-20T00:15:54.189494+00:00"
       },
       "label": "urn:uuid:b6eb5aed-cc20-469f-b23a-88eb3b43775b"
     }
