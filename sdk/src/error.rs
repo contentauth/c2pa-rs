@@ -302,6 +302,9 @@ pub enum Error {
     OutOfRange,
 
     #[error(transparent)]
+    TimeStampError(#[from] c2pa_crypto::time_stamp::TimeStampError),
+
+    #[error(transparent)]
     RawSignatureValidationError(#[from] c2pa_crypto::raw_signature::RawSignatureValidationError),
 }
 
