@@ -11,26 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(clippy::expect_used)]
-#![deny(clippy::panic)]
-#![deny(clippy::unwrap_used)]
-#![deny(missing_docs)]
-#![deny(warnings)]
-#![doc = include_str!("../README.md")]
+// Tests are grouped under this module so as to avoid
+// having the test code itself included in coverage numbers.
 
-pub mod builder;
-pub mod claim_aggregation;
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod builder;
+mod claim_aggregation;
+pub(crate) mod fixtures;
 mod identity_assertion;
-pub use identity_assertion::{
-    named_actor::{NamedActor, VerifiedIdentity, VerifiedIdentityType},
-    signature_handler::SignatureHandler,
-    signer_payload::{HashedUri, SignerPayload},
-    validation_error::{ValidationError, ValidationResult},
-    IdentityAssertion, IdentityAssertionReport,
-};
+mod internal;
 
-pub(crate) mod internal;
-
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(target_arch = "wasm32")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
