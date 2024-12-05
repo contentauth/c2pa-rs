@@ -32,6 +32,8 @@ pub mod openssl;
 compile_error!("OpenSSL feature is not compatible with WASM platform");
 
 pub mod p1363;
+// ^^ TO REVIEW: Can this be made pub(crate) once refactoring is done?
+
 pub mod raw_signature;
 
 mod signing_alg;
