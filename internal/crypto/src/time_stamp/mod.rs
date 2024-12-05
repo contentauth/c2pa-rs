@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,22 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Hash convenience functions.
+//! Functions for working with [RFC 3161] time stamp service providers.
+//!
+//! [RFC 3161]: https://www.ietf.org/rfc/rfc3161.txt
 
-/// Given a byte slice, return the SHA-1 hash of that content.
-pub fn sha1(data: &[u8]) -> Vec<u8> {
-    use sha1::{Digest, Sha1};
+mod error;
+pub use error::TimeStampError;
 
-    let mut hasher = Sha1::default();
-    hasher.update(data);
-    hasher.finalize().to_vec()
-}
+#[cfg(not(target_arch = "wasm32"))]
+mod http_request;
 
-/// Given a byte slice, return the SHA-256 hash of that content.
-pub fn sha256(data: &[u8]) -> Vec<u8> {
-    use sha2::{Digest, Sha256};
+mod provider;
+pub use provider::{AsyncTimeStampProvider, TimeStampProvider};
 
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().to_vec()
-}
+mod response;
+
+mod verify;
+/// TEMPORARILY PUBLIC while refactoring
+pub use verify::{verify_time_stamp, verify_time_stamp_async};

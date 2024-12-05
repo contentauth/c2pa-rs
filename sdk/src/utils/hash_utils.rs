@@ -442,14 +442,6 @@ where
     }
 }
 
-/// Return a Sha256 hash of array of bytes
-#[allow(dead_code)]
-pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
-    let mut hasher = Hasher::SHA256(Sha256::new());
-    hasher.update(data);
-    Hasher::finalize(hasher)
-}
-
 // Used by Merkle tree calculations to generate the pair wise hash
 pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> {
     let mut temp = left.to_vec();
