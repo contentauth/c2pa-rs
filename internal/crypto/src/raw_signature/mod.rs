@@ -13,6 +13,9 @@
 
 //! Tools for working with raw signature algorithms.
 
+pub(crate) mod signer;
+pub use signer::{AsyncRawSigner, RawSigner, RawSignerError};
+
 pub(crate) mod oids;
 
 mod validator;
