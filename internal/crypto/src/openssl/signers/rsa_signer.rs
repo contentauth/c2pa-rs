@@ -144,23 +144,27 @@ impl RsaSigner {
         // precondition.
 
         // Is it time for an OCSP update?
-        let now = chrono::offset::Utc::now();
-        let ocsp_data = self.ocsp_response.take();
-        let next_update = ocsp_data.next_update;
-        self.ocsp_response.set(ocsp_data);
 
         #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
-        if now > next_update {
-            if let Ok(certs) = self.certs_internal() {
-                if let Some(ocsp_rsp) = crate::ocsp::fetch_ocsp_response(&certs) {
-                    self.ocsp_size.set(ocsp_rsp.len());
+        {
+            let ocsp_data = self.ocsp_response.take();
+            let next_update = ocsp_data.next_update;
+            self.ocsp_response.set(ocsp_data);
 
-                    let mut validation_log = c2pa_status_tracker::DetailedStatusTracker::default();
+            let now = chrono::offset::Utc::now();
+            if now > next_update {
+                if let Ok(certs) = self.certs_internal() {
+                    if let Some(ocsp_rsp) = crate::ocsp::fetch_ocsp_response(&certs) {
+                        self.ocsp_size.set(ocsp_rsp.len());
 
-                    if let Ok(ocsp_response) =
-                        OcspResponse::from_der_checked(&ocsp_rsp, None, &mut validation_log)
-                    {
-                        self.ocsp_response.set(ocsp_response);
+                        let mut validation_log =
+                            c2pa_status_tracker::DetailedStatusTracker::default();
+
+                        if let Ok(ocsp_response) =
+                            OcspResponse::from_der_checked(&ocsp_rsp, None, &mut validation_log)
+                        {
+                            self.ocsp_response.set(ocsp_response);
+                        }
                     }
                 }
             }
