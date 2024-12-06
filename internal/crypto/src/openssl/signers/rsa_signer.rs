@@ -71,7 +71,6 @@ impl RsaSigner {
         }
 
         // Rebuild RSA keys to eliminate incompatible values.
-
         let private_key = Rsa::private_key_from_pem(private_key)?;
 
         let n = private_key.n().to_owned()?;

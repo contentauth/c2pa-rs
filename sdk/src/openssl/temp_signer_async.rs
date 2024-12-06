@@ -23,6 +23,7 @@
 use c2pa_crypto::SigningAlg;
 
 use crate::AsyncSigner;
+use crate::Result;
 
 #[cfg(feature = "openssl_sign")]
 fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {
@@ -71,7 +72,7 @@ impl AsyncSignerAdapter {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AsyncSigner for AsyncSignerAdapter {
-    async fn sign(&self, data: Vec<u8>) -> crate::Result<Vec<u8>> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         let signer = get_local_signer(self.alg);
         signer.sign(&data)
     }

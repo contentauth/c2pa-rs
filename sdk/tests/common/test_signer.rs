@@ -23,12 +23,12 @@ pub fn test_signer() -> CallbackSigner {
         .set_context("test" as *const _ as *const ())
 }
 
-fn ed_sign(data: &[u8], private_key: &[u8]) -> crate::Result<Vec<u8>> {
+fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
     use ed25519_dalek::{Signature, Signer, SigningKey};
     use pem::parse;
 
     // Parse the PEM data to get the private key
-    let pem = parse(private_key).map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+    let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
 
     // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
     let key_bytes = &pem.contents()[16..];

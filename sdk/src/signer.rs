@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
-use crate::{DynamicAssertion, Result};
+use crate::{DynamicAssertion, Error, Result};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -106,9 +106,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         pkey_path: P,
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> crate::Result<Self> {
-        use crate::Error;
-
+    ) -> Result<Self> {
         let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
         let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
 
@@ -121,7 +119,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         pkey: &[u8],
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> crate::Result<Self>;
+    ) -> Result<Self>;
 }
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
@@ -291,7 +289,7 @@ pub trait RemoteSigner: Sync {
     /// The size of returned `Vec` must match the value returned by `reserve_size`.
     /// This data will be embedded in the JUMBF `c2pa.signature` box of the manifest.
     /// `data` are the bytes of the claim to be remotely signed.
-    async fn sign_remote(&self, data: &[u8]) -> crate::Result<Vec<u8>>;
+    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
 
     /// Returns the size in bytes of the largest possible expected signature.
     ///
@@ -301,7 +299,7 @@ pub trait RemoteSigner: Sync {
 }
 
 impl Signer for Box<dyn Signer> {
-    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         (**self).sign(data)
     }
 
@@ -309,7 +307,7 @@ impl Signer for Box<dyn Signer> {
         (**self).alg()
     }
 
-    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         (**self).certs()
     }
 
@@ -350,7 +348,7 @@ impl Signer for Box<dyn Signer> {
 pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
 
 impl Signer for RawSignerWrapper {
-    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         self.0.sign(data).map_err(|e| e.into())
     }
 
@@ -358,7 +356,7 @@ impl Signer for RawSignerWrapper {
         self.0.alg()
     }
 
-    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         self.0.cert_chain().map_err(|e| e.into())
     }
 
@@ -378,13 +376,13 @@ impl Signer for RawSignerWrapper {
         self.0.time_stamp_request_headers()
     }
 
-    fn timestamp_request_body(&self, message: &[u8]) -> crate::Result<Vec<u8>> {
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
         self.0
             .time_stamp_request_body(message)
             .map_err(|e| e.into())
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<crate::Result<Vec<u8>>> {
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         self.0
             .send_time_stamp_request(message)
             .map(|r| r.map_err(|e| e.into()))

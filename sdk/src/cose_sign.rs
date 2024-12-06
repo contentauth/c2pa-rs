@@ -359,7 +359,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer, Signer};
+    use crate::{claim::Claim, utils::test::temp_signer, Signer, Result};
 
     #[test]
     fn test_sign_claim() {
@@ -408,7 +408,7 @@ mod tests {
     }
 
     impl Signer for BogusSigner {
-        fn sign(&self, _data: &[u8]) -> crate::Result<Vec<u8>> {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             eprintln!("Canary, canary, please cause this deploy to fail!");
             Ok(b"totally bogus signature".to_vec())
         }
@@ -417,7 +417,7 @@ mod tests {
             c2pa_crypto::SigningAlg::Ps256
         }
 
-        fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
             let cert_vec: Vec<u8> = Vec::new();
             let certs = vec![cert_vec];
             Ok(certs)

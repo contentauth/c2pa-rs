@@ -250,12 +250,12 @@ pub(crate) fn verify_trust(
 
     let _openssl = OpenSslMutex::acquire()?;
 
-    let mut certs = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
+    let mut cert_chain = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
     let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(Error::OpenSslError)?;
 
     let chain = certs_der_to_x509(chain_der)?;
     for c in chain {
-        certs.push(c).map_err(Error::OpenSslError)?;
+        cert_chain.push(c).map_err(Error::OpenSslError)?;
     }
     let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
@@ -287,7 +287,7 @@ pub(crate) fn verify_trust(
     // finalize store
     let store = builder.build();
 
-    match store_ctx.init(&store, cert.as_ref(), &certs, |f| f.verify_cert()) {
+    match store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
         Ok(trust) => Ok(trust),
         Err(_) => Ok(false),
     }

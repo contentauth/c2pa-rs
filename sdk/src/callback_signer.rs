@@ -19,7 +19,7 @@
 use async_trait::async_trait;
 use c2pa_crypto::{raw_signature::RawSignerError, SigningAlg};
 
-use crate::{AsyncSigner, Error, Signer};
+use crate::{AsyncSigner, Error, Result, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
@@ -107,17 +107,17 @@ impl CallbackSigner {
     ///     |_context: *const _, data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
     /// let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
     /// ```
-    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> crate::Result<Vec<u8>> {
+    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
         use ed25519_dalek::{Signature, Signer, SigningKey};
         use pem::parse;
 
         // Parse the PEM data to get the private key
-        let pem = parse(private_key).map_err(|e| Error::BadParam(e.to_string()))?;
+        let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
         let signing_key =
-            SigningKey::try_from(key_bytes).map_err(|e| Error::BadParam(e.to_string()))?;
+        SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // Sign the data
         let signature: Signature = signing_key.sign(data);
@@ -140,7 +140,7 @@ impl Default for CallbackSigner {
 }
 
 impl Signer for CallbackSigner {
-    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         (self.callback)(self.context, data)
     }
 
@@ -148,10 +148,8 @@ impl Signer for CallbackSigner {
         self.alg
     }
 
-    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
-        let pems = pem::parse_many(&self.certs)
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
-
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
 
@@ -167,7 +165,7 @@ impl Signer for CallbackSigner {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncSigner for CallbackSigner {
-    async fn sign(&self, data: Vec<u8>) -> crate::Result<Vec<u8>> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         (self.callback)(self.context, &data)
     }
 
@@ -175,7 +173,7 @@ impl AsyncSigner for CallbackSigner {
         self.alg
     }
 
-    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
@@ -189,7 +187,7 @@ impl AsyncSigner for CallbackSigner {
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::Result<Vec<u8>>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
