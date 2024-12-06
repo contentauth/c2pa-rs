@@ -1457,7 +1457,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
-        use c2pa_crypto::raw_signature::{RawSigner, RawSignerError};
+        use c2pa_crypto::raw_signature::{
+            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError,
+        };
 
         let mut validation_log = DetailedStatusTracker::default();
 
@@ -1470,13 +1472,9 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            &sign_cert,
-            &pem_key,
-            SigningAlg::Ps256,
-            None,
-        )
-        .unwrap();
+        let signer =
+            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
@@ -1511,7 +1509,7 @@ pub mod tests {
         impl c2pa_crypto::time_stamp::TimeStampProvider for OcspSigner {}
 
         let ocsp_signer = OcspSigner {
-            signer: Box::new(signer),
+            signer: Box::new(crate::signer::RawSignerWrapper(signer)),
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 

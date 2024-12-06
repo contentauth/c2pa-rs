@@ -106,7 +106,7 @@ pub trait RemoteSigner: Sync {
     fn reserve_size(&self) -> usize;
 }
 
-impl Signer for Box<dyn Signer + Send + Sync> {
+impl Signer for Box<dyn Signer> {
     fn direct_cose_handling(&self) -> bool {
         (**self).direct_cose_handling()
     }
@@ -116,7 +116,7 @@ impl Signer for Box<dyn Signer + Send + Sync> {
     }
 }
 
-impl RawSigner for Box<dyn Signer + Send + Sync> {
+impl RawSigner for Box<dyn Signer> {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
         (**self).sign(data)
     }
@@ -138,7 +138,7 @@ impl RawSigner for Box<dyn Signer + Send + Sync> {
     }
 }
 
-impl TimeStampProvider for Box<dyn Signer + Send + Sync> {
+impl TimeStampProvider for Box<dyn Signer> {
     fn time_stamp_service_url(&self) -> Option<String> {
         (**self).time_stamp_service_url()
     }
@@ -159,5 +159,55 @@ impl TimeStampProvider for Box<dyn Signer + Send + Sync> {
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         (**self).send_time_stamp_request(message)
+    }
+}
+
+pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
+
+impl Signer for RawSignerWrapper {}
+
+impl RawSigner for RawSignerWrapper {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+        self.0.sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+        self.0.cert_chain()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
+    }
+}
+
+impl TimeStampProvider for RawSignerWrapper {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        self.0.time_stamp_request_body(message)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0.send_time_stamp_request(message)
     }
 }

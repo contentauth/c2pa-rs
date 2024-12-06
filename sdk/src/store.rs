@@ -3903,7 +3903,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+        use c2pa_crypto::SigningAlg;
+
+        use crate::create_signer;
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -3917,7 +3919,7 @@ pub mod tests {
         let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
         let pkey_path = fixture_path("rsa-pss256-expired.pem");
         let signer =
-            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
+            create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
 
         store.commit_claim(claim).unwrap();
 

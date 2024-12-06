@@ -32,7 +32,7 @@ fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {
     match alg {
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
             let (s, _k) = super::temp_signer::get_rsa_signer(&cert_dir, alg, None);
-            Box::new(s)
+            s
         }
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
             let (s, _k) = super::temp_signer::get_ec_signer(&cert_dir, alg, None);

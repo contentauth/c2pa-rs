@@ -39,7 +39,7 @@ use c2pa_crypto::SigningAlg;
 
 #[cfg(feature = "file_io")]
 use crate::{
-    openssl::{EcSigner, EdSigner, RsaSigner},
+    openssl::{EcSigner, EdSigner},
     signer::ConfigurableSigner,
 };
 
@@ -153,7 +153,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> (RsaSigner, PathBuf) {
+) -> (Box<dyn crate::Signer>, PathBuf) {
     match alg {
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => (),
         _ => {
@@ -178,7 +178,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     }
 
     (
-        RsaSigner::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
+        crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
         sign_cert_path,
     )
 }

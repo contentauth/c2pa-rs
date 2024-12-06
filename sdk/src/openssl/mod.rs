@@ -11,10 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "openssl_sign")]
-mod rsa_signer;
-#[cfg(feature = "openssl_sign")]
-pub(crate) use rsa_signer::RsaSigner;
+// #[cfg(feature = "openssl_sign")]
+// mod rsa_signer;
+// #[cfg(feature = "openssl_sign")]
+// pub(crate) use rsa_signer::RsaSigner;
 
 #[cfg(feature = "openssl_sign")]
 mod ec_signer;

@@ -28,6 +28,8 @@ use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
 use crate::create_signer;
+#[cfg(feature = "openssl_sign")]
+use crate::openssl::AsyncSignerAdapter;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     asset_io::CAIReadWrite,
@@ -37,11 +39,6 @@ use crate::{
     salt::DefaultSalt,
     store::Store,
     AsyncSigner, RemoteSigner, Result, Signer,
-};
-#[cfg(feature = "openssl_sign")]
-use crate::{
-    openssl::{AsyncSignerAdapter, RsaSigner},
-    signer::ConfigurableSigner,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -215,7 +212,7 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 /// Can panic if the certs cannot be read. (This function should only
 /// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
-pub fn temp_signer_file() -> RsaSigner {
+pub fn temp_signer_file() -> Box<dyn Signer> {
     #![allow(clippy::expect_used)]
     let mut sign_cert_path = fixture_path("certs");
     sign_cert_path.push("ps256");
@@ -225,7 +222,7 @@ pub fn temp_signer_file() -> RsaSigner {
     pem_key_path.push("ps256");
     pem_key_path.set_extension("pem");
 
-    RsaSigner::from_files(&sign_cert_path, &pem_key_path, SigningAlg::Ps256, None)
+    crate::create_signer::from_files(&sign_cert_path, &pem_key_path, SigningAlg::Ps256, None)
         .expect("get_temp_signer")
 }
 
@@ -365,11 +362,8 @@ pub(crate) fn temp_signer() -> Box<dyn Signer> {
         let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
         let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
 
-        let signer =
-            RsaSigner::from_signcert_and_pkey(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-                .expect("get_temp_signer");
-
-        Box::new(signer)
+        crate::create_signer::from_keys(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+            .expect("get_temp_signer")
     }
 
     // todo: the will be a RustTLS signer shortly
@@ -600,10 +594,10 @@ impl AsyncRawSigner for TempAsyncRemoteSigner {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size())
                 .await
-                .map_err(|_e| {
-                    RawSignerError::InternalError(
-                        "TO DO: figure out better error mapping".to_string(),
-                    )
+                .map_err(|e| {
+                    RawSignerError::InternalError(format!(
+                        "TO DO: figure out better error mapping: {e}"
+                    ))
                 })
         }
         #[cfg(target_arch = "wasm32")]
