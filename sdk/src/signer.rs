@@ -12,37 +12,17 @@
 // each license.
 
 use c2pa_crypto::{
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     SigningAlg,
 };
+use x509_certificate::Sign;
 
 use crate::{DynamicAssertion, Result};
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
-pub trait Signer: TimeStampProvider {
-    /// Returns a new byte array which is a signature over the original.
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>>;
-
-    /// Returns the algorithm of the Signer.
-    fn alg(&self) -> SigningAlg;
-
-    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
-    fn certs(&self) -> Result<Vec<Vec<u8>>>;
-
-    /// Returns the size in bytes of the largest possible expected signature.
-    /// Signing will fail if the result of the `sign` function is larger
-    /// than this value.
-    fn reserve_size(&self) -> usize;
-
-    /// OCSP response for the signing cert if available
-    /// This is the only C2PA supported cert revocation method.
-    /// By pre-querying the value for a your signing cert the value can
-    /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
-        None
-    }
-
+pub trait Signer: RawSigner + TimeStampProvider {
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -92,70 +72,9 @@ use async_trait::async_trait;
 /// This trait exists to allow the signature mechanism to be extended.
 ///
 /// Use this when the implementation is asynchronous.
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-pub trait AsyncSigner: Sync + AsyncTimeStampProvider {
-    /// Returns a new byte array which is a signature over the original.
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
-
-    /// Returns the algorithm of the Signer.
-    fn alg(&self) -> SigningAlg;
-
-    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
-    fn certs(&self) -> Result<Vec<Vec<u8>>>;
-
-    /// Returns the size in bytes of the largest possible expected signature.
-    /// Signing will fail if the result of the `sign` function is larger
-    /// than this value.
-    fn reserve_size(&self) -> usize;
-
-    /// OCSP response for the signing cert if available
-    /// This is the only C2PA supported cert revocation method.
-    /// By pre-querying the value for a your signing cert the value can
-    /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        None
-    }
-
-    /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
-    ///
-    /// This is useful for cases where the signer needs to handle the COSE structure directly.
-    /// Not recommended for general use.
-    fn direct_cose_handling(&self) -> bool {
-        false
-    }
-
-    /// Returns a list of dynamic assertions that should be included in the manifest.
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        Vec::new()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[async_trait(?Send)]
-pub trait AsyncSigner: AsyncTimeStampProvider {
-    /// Returns a new byte array which is a signature over the original.
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
-
-    /// Returns the algorithm of the Signer.
-    fn alg(&self) -> SigningAlg;
-
-    /// Returns the certificates as a Vec containing a Vec of DER bytes for each certificate.
-    fn certs(&self) -> Result<Vec<Vec<u8>>>;
-
-    /// Returns the size in bytes of the largest possible expected signature.
-    /// Signing will fail if the result of the `sign` function is larger
-    /// than this value.
-    fn reserve_size(&self) -> usize;
-
-    /// OCSP response for the signing cert if available
-    /// This is the only C2PA supported cert revocation method.
-    /// By pre-querying the value for a your signing cert the value can
-    /// be cached taking pressure off of the CA (recommended by C2PA spec)
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        None
-    }
-
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait AsyncSigner: Sync + AsyncRawSigner + AsyncTimeStampProvider {
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -188,7 +107,17 @@ pub trait RemoteSigner: Sync {
 }
 
 impl Signer for Box<dyn Signer + Send + Sync> {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
+impl RawSigner for Box<dyn Signer + Send + Sync> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
         (**self).sign(data)
     }
 
@@ -196,8 +125,8 @@ impl Signer for Box<dyn Signer + Send + Sync> {
         (**self).alg()
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        (**self).certs()
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+        (**self).cert_chain()
     }
 
     fn reserve_size(&self) -> usize {
@@ -206,14 +135,6 @@ impl Signer for Box<dyn Signer + Send + Sync> {
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         (**self).ocsp_val()
-    }
-
-    fn direct_cose_handling(&self) -> bool {
-        (**self).direct_cose_handling()
-    }
-
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        (**self).dynamic_assertions()
     }
 }
 
