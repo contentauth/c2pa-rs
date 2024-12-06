@@ -1457,6 +1457,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
+        use c2pa_crypto::raw_signature::{RawSigner, RawSignerError};
+
         let mut validation_log = DetailedStatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
@@ -1482,8 +1484,10 @@ pub mod tests {
             pub ocsp_rsp: Vec<u8>,
         }
 
-        impl crate::Signer for OcspSigner {
-            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        impl Signer for OcspSigner {}
+
+        impl RawSigner for OcspSigner {
+            fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
                 self.signer.sign(data)
             }
 
@@ -1491,15 +1495,15 @@ pub mod tests {
                 SigningAlg::Ps256
             }
 
-            fn certs(&self) -> Result<Vec<Vec<u8>>> {
-                self.signer.certs()
+            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+                self.signer.cert_chain()
             }
 
             fn reserve_size(&self) -> usize {
                 self.signer.reserve_size()
             }
 
-            fn ocsp_val(&self) -> Option<Vec<u8>> {
+            fn ocsp_response(&self) -> Option<Vec<u8>> {
                 Some(self.ocsp_rsp.clone())
             }
         }

@@ -299,13 +299,10 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
     use super::*;
-    use crate::{
-        openssl::temp_signer::{self},
-        Signer,
-    };
+    use crate::openssl::temp_signer::{self};
 
     #[test]
     fn test_trust_store() {
@@ -325,13 +322,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let ed25519_certs = ed25519.certs().unwrap();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
@@ -363,13 +360,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let ed25519_certs = ed25519.certs().unwrap();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
         assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
@@ -405,13 +402,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let ed25519_certs = ed25519.certs().unwrap();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
@@ -446,13 +443,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let ed25519_certs = ed25519.certs().unwrap();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());

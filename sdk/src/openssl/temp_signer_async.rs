@@ -19,8 +19,11 @@
 //! the asynchronous signing of claims.
 //! This module should be used only for testing purposes.
 
+use c2pa_crypto::raw_signature::{AsyncRawSigner, RawSignerError};
 #[cfg(feature = "openssl_sign")]
 use c2pa_crypto::SigningAlg;
+
+use crate::AsyncSigner;
 
 #[cfg(feature = "openssl_sign")]
 fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {
@@ -58,19 +61,21 @@ impl AsyncSignerAdapter {
 
         AsyncSignerAdapter {
             alg,
-            certs: signer.certs().unwrap_or_default(),
+            certs: signer.cert_chain().unwrap_or_default(),
             reserve_size: signer.reserve_size(),
             tsa_url: signer.time_stamp_service_url(),
-            ocsp_val: signer.ocsp_val(),
+            ocsp_val: signer.ocsp_response(),
         }
     }
 }
 
 #[cfg(test)]
-#[cfg(feature = "openssl_sign")]
+impl AsyncSigner for AsyncSignerAdapter {}
+
+#[cfg(test)]
 #[async_trait::async_trait]
-impl crate::AsyncSigner for AsyncSignerAdapter {
-    async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
+impl AsyncRawSigner for AsyncSignerAdapter {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
         let signer = get_local_signer(self.alg);
         signer.sign(&data)
     }
@@ -79,7 +84,7 @@ impl crate::AsyncSigner for AsyncSignerAdapter {
         self.alg
     }
 
-    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let mut output: Vec<Vec<u8>> = Vec::new();
         for v in &self.certs {
             output.push(v.clone());
@@ -91,7 +96,7 @@ impl crate::AsyncSigner for AsyncSignerAdapter {
         self.reserve_size
     }
 
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
         self.ocsp_val.clone()
     }
 }

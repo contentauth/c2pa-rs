@@ -11,14 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{p1363::parse_ec_der_sig, SigningAlg};
+use c2pa_crypto::{p1363::parse_ec_der_sig, raw_signature::RawSignerError, SigningAlg};
 
-use crate::{Error, Result};
-
-pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
+pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawSignerError> {
     // P1363 format: r | s
 
-    let (_, p) = parse_ec_der_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
+    let (_, p) = parse_ec_der_sig(data)
+        .map_err(|err| RawSignerError::InvalidSigningCredentials(err.to_string()))?;
 
     let mut r = extfmt::Hexlify(p.r).to_string();
     let mut s = extfmt::Hexlify(p.s).to_string();
@@ -27,7 +26,11 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
         SigningAlg::Es256 => 64,
         SigningAlg::Es384 => 96,
         SigningAlg::Es512 => 132,
-        _ => return Err(Error::UnsupportedType),
+        _ => {
+            return Err(RawSignerError::InternalError(
+                "unexpected signing alg".to_string(),
+            ))
+        }
     };
 
     // pad or truncate as needed
@@ -56,7 +59,9 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
     };
 
     if rp.len() != sig_len || rp.len() != sp.len() {
-        return Err(Error::InvalidEcdsaSignature);
+        return Err(RawSignerError::InternalError(
+            "unexpected signature length".to_string(),
+        ));
     }
 
     // merge r and s strings
@@ -67,7 +72,9 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
     (0..new_sig.len())
         .step_by(2)
         .map(|i| {
-            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
+            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| {
+                RawSignerError::InternalError("failed to convert hex string".to_string())
+            })
         })
         .collect()
 }

@@ -20,7 +20,10 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    SigningAlg,
+};
 use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
@@ -33,7 +36,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    RemoteSigner, Result, Signer,
+    AsyncSigner, RemoteSigner, Result, Signer,
 };
 #[cfg(feature = "openssl_sign")]
 use crate::{
@@ -285,8 +288,10 @@ where
 
 pub(crate) struct TestGoodSigner {}
 
-impl crate::Signer for TestGoodSigner {
-    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+impl Signer for TestGoodSigner {}
+
+impl RawSigner for TestGoodSigner {
+    fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -294,7 +299,7 @@ impl crate::Signer for TestGoodSigner {
         SigningAlg::Ps256
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
         Ok(Vec::new())
     }
 
@@ -314,10 +319,12 @@ impl c2pa_crypto::time_stamp::TimeStampProvider for TestGoodSigner {
 
 pub(crate) struct AsyncTestGoodSigner {}
 
+impl AsyncSigner for AsyncTestGoodSigner {}
+
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl crate::AsyncSigner for AsyncTestGoodSigner {
-    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+impl AsyncRawSigner for AsyncTestGoodSigner {
+    async fn sign(&self, _data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -325,7 +332,7 @@ impl crate::AsyncSigner for AsyncTestGoodSigner {
         SigningAlg::Ps256
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
         Ok(Vec::new())
     }
 
@@ -573,18 +580,31 @@ struct TempAsyncRemoteSigner {
     signer: TempRemoteSigner,
 }
 
+impl AsyncSigner for TempAsyncRemoteSigner {
+    // signer will return a COSE structure
+    fn direct_cose_handling(&self) -> bool {
+        true
+    }
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
+impl AsyncRawSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
+    async fn sign(&self, claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         #[cfg(feature = "openssl_sign")]
         {
             let signer =
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size())
+                .await
+                .map_err(|_e| {
+                    RawSignerError::InternalError(
+                        "TO DO: figure out better error mapping".to_string(),
+                    )
+                })
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -606,16 +626,11 @@ impl crate::signer::AsyncSigner for TempAsyncRemoteSigner {
         }
     }
 
-    // signer will return a COSE structure
-    fn direct_cose_handling(&self) -> bool {
-        true
-    }
-
     fn alg(&self) -> SigningAlg {
         SigningAlg::Ps256
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
         Ok(Vec::new())
     }
 

@@ -11,14 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{openssl::OpenSslMutex, time_stamp::TimeStampProvider, SigningAlg};
+use c2pa_crypto::{
+    openssl::OpenSslMutex,
+    raw_signature::{RawSigner, RawSignerError},
+    time_stamp::TimeStampProvider,
+    SigningAlg,
+};
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
 };
 
 use super::check_chain_order;
-use crate::{signer::ConfigurableSigner, Error, Result, Signer};
+use crate::{signer::ConfigurableSigner, Error, Signer};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// Edwards Curve encryption.
@@ -39,7 +44,7 @@ impl ConfigurableSigner for EdSigner {
         pkey: &[u8],
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self> {
+    ) -> crate::Result<Self> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let certs_size = signcert.len();
@@ -68,15 +73,15 @@ impl ConfigurableSigner for EdSigner {
     }
 }
 
-impl Signer for EdSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+impl Signer for EdSigner {}
+
+impl RawSigner for EdSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        let mut signer =
-            openssl::sign::Signer::new_without_digest(&self.pkey).map_err(Error::OpenSslError)?;
+        let mut signer = openssl::sign::Signer::new_without_digest(&self.pkey)?;
 
         let signed_data = signer.sign_oneshot_to_vec(data)?;
-
         Ok(signed_data)
     }
 
@@ -84,13 +89,13 @@ impl Signer for EdSigner {
         self.alg
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(Error::OpenSslError)?;
+            let cert = c.to_der()?;
             certs.push(cert);
         }
 

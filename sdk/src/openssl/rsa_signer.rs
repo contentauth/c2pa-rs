@@ -14,7 +14,11 @@
 use std::cell::Cell;
 
 use c2pa_crypto::{
-    ocsp::OcspResponse, openssl::OpenSslMutex, time_stamp::TimeStampProvider, SigningAlg,
+    ocsp::OcspResponse,
+    openssl::OpenSslMutex,
+    raw_signature::{RawSigner, RawSignerError},
+    time_stamp::TimeStampProvider,
+    SigningAlg,
 };
 use openssl::{
     hash::MessageDigest,
@@ -24,7 +28,7 @@ use openssl::{
 };
 
 use super::check_chain_order;
-use crate::{signer::ConfigurableSigner, Error, Result, Signer};
+use crate::{signer::ConfigurableSigner, Error, Signer};
 
 /// Implements `Signer` trait using OpenSSL's implementation of
 /// SHA256 + RSA encryption.
@@ -76,7 +80,7 @@ impl RsaSigner {
         }
     }
 
-    fn certs_internal(&self) -> Result<Vec<Vec<u8>>> {
+    fn certs_internal(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
         // don't make this pub or pub(crate) without finding a way to ensure that
         // precondition.
@@ -84,7 +88,7 @@ impl RsaSigner {
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der().map_err(wrap_openssl_err)?;
+            let cert = c.to_der()?;
             certs.push(cert);
         }
 
@@ -98,7 +102,7 @@ impl ConfigurableSigner for RsaSigner {
         pkey: &[u8],
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self> {
+    ) -> crate::Result<Self> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
@@ -162,43 +166,39 @@ impl ConfigurableSigner for RsaSigner {
     }
 }
 
-impl Signer for RsaSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+impl Signer for RsaSigner {}
+
+impl RawSigner for RsaSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
         let mut signer = match self.alg {
             SigningAlg::Ps256 => {
-                let mut signer = openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)
-                    .map_err(wrap_openssl_err)?;
+                let mut signer = openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)?;
 
                 signer.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 signer.set_rsa_mgf1_md(MessageDigest::sha256())?;
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
+
             SigningAlg::Ps384 => {
-                let mut signer = openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)
-                    .map_err(wrap_openssl_err)?;
+                let mut signer = openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)?;
 
                 signer.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 signer.set_rsa_mgf1_md(MessageDigest::sha384())?;
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
+
             SigningAlg::Ps512 => {
-                let mut signer = openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)
-                    .map_err(wrap_openssl_err)?;
+                let mut signer = openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)?;
 
                 signer.set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)?; // use C2PA recommended padding
                 signer.set_rsa_mgf1_md(MessageDigest::sha512())?;
                 signer.set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)?;
                 signer
             }
-            // "rs256" => openssl::sign::Signer::new(MessageDigest::sha256(), &self.pkey)
-            //     .map_err(wrap_openssl_err)?,
-            // "rs384" => openssl::sign::Signer::new(MessageDigest::sha384(), &self.pkey)
-            //     .map_err(wrap_openssl_err)?,
-            // "rs512" => openssl::sign::Signer::new(MessageDigest::sha512(), &self.pkey)
-            //     .map_err(wrap_openssl_err)?,
-            _ => return Err(Error::UnsupportedType),
+
+            _ => unreachable!(),
         };
 
         let signed_data = signer.sign_oneshot_to_vec(data)?;
@@ -212,7 +212,7 @@ impl Signer for RsaSigner {
         1024 + self.certs_size + self.timestamp_size + self.ocsp_size.get() // the Cose_Sign1 contains complete certs, timestamps and ocsp so account for size
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
         self.certs_internal()
     }
@@ -221,7 +221,7 @@ impl Signer for RsaSigner {
         self.alg
     }
 
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
         let _openssl = OpenSslMutex::acquire().ok()?;
 
         // update OCSP if needed

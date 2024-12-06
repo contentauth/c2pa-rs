@@ -17,7 +17,8 @@ use c2pa_crypto::{
     SigningAlg,
 };
 
-use crate::{DynamicAssertion, Result};
+use crate::DynamicAssertion;
+
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -46,7 +47,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         pkey_path: P,
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self> {
+    ) -> crate::Result<Self> {
         use crate::Error;
 
         let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
@@ -61,7 +62,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         pkey: &[u8],
         alg: SigningAlg,
         tsa_url: Option<String>,
-    ) -> Result<Self>;
+    ) -> crate::Result<Self>;
 }
 
 use async_trait::async_trait;
@@ -96,7 +97,7 @@ pub trait RemoteSigner: Sync {
     /// The size of returned `Vec` must match the value returned by `reserve_size`.
     /// This data will be embedded in the JUMBF `c2pa.signature` box of the manifest.
     /// `data` are the bytes of the claim to be remotely signed.
-    async fn sign_remote(&self, data: &[u8]) -> Result<Vec<u8>>;
+    async fn sign_remote(&self, data: &[u8]) -> crate::Result<Vec<u8>>;
 
     /// Returns the size in bytes of the largest possible expected signature.
     ///
@@ -133,7 +134,7 @@ impl RawSigner for Box<dyn Signer + Send + Sync> {
     }
 
     fn ocsp_response(&self) -> Option<Vec<u8>> {
-        (**self).ocsp_val()
+        (**self).ocsp_response()
     }
 }
 

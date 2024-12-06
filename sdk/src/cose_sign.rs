@@ -145,7 +145,7 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     */
 
     // make sure the signing cert is valid
-    let certs = signer.certs()?;
+    let certs = signer.cert_chain()?;
     if let Some(signing_cert) = certs.first() {
         signing_cert_valid(signing_cert)?;
     } else {
@@ -218,12 +218,12 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
         SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
     };
 
-    let certs = signer.certs()?;
+    let certs = signer.cert_chain()?;
 
     let ocsp_val = if _sync {
-        signer.ocsp_val()
+        signer.ocsp_response()
     } else {
-        signer.ocsp_val().await
+        signer.ocsp_response().await
     };
 
     let sc_der_array_or_bytes = match certs.len() {
@@ -358,10 +358,13 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::time_stamp::{TimeStampError, TimeStampProvider};
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError},
+        time_stamp::{TimeStampError, TimeStampProvider},
+    };
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer};
+    use crate::{claim::Claim, utils::test::temp_signer, Signer};
 
     #[test]
     fn test_sign_claim() {
@@ -382,9 +385,9 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use crate::{
-            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
-        };
+        use c2pa_crypto::raw_signature::AsyncRawSigner;
+
+        use crate::{cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, SigningAlg};
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
         claim.build().unwrap();
@@ -409,8 +412,10 @@ mod tests {
         }
     }
 
-    impl crate::Signer for BogusSigner {
-        fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
+    impl Signer for BogusSigner {}
+
+    impl RawSigner for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
             eprintln!("Canary, canary, please cause this deploy to fail!");
             Ok(b"totally bogus signature".to_vec())
         }
@@ -419,7 +424,7 @@ mod tests {
             c2pa_crypto::SigningAlg::Ps256
         }
 
-        fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
+        fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
             let cert_vec: Vec<u8> = Vec::new();
             let certs = vec![cert_vec];
             Ok(certs)

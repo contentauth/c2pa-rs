@@ -93,6 +93,10 @@ pub trait AsyncRawSigner: Sync + AsyncTimeStampProvider {
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum RawSignerError {
+    /// The signing credentials are invalid.
+    #[error("invalid signing credentials ({0})")]
+    InvalidSigningCredentials(String),
+
     /// An I/O error occurred. This typically happens when loading
     /// public/private key material from files.
     ///
