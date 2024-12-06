@@ -50,30 +50,6 @@ pub trait RawSigner {
     }
 }
 
-/// This trait exists to allow the built-in [`RawSigner`] implementations to be
-/// configured from a private/public key pair.
-#[allow(dead_code)] // TEMPORARY while refactoring
-pub(crate) trait ConfigurableSigner: RawSigner + Sized {
-    fn from_signcert_and_pkey(
-        signcert: &[u8],
-        pkey: &[u8],
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self, RawSignerError>;
-
-    fn from_files<P: AsRef<std::path::Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self, RawSignerError> {
-        let signcert = std::fs::read(signcert_path)?;
-        let pkey = std::fs::read(pkey_path)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-}
-
 /// Implementations of the `AsyncRawSigner` trait generate a cryptographic
 /// signature over an arbitrary byte array.
 ///
@@ -165,5 +141,29 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
                 Self::InternalError("WASM crypto unavailable")
             }
         }
+    }
+}
+
+/// This trait exists to allow the built-in [`RawSigner`] implementations to be
+/// configured from a private/public key pair.
+#[allow(dead_code)] // TEMPORARY while refactoring
+pub(crate) trait ConfigurableSigner: RawSigner + Sized {
+    fn from_signcert_and_pkey(
+        signcert: &[u8],
+        pkey: &[u8],
+        alg: SigningAlg,
+        tsa_url: Option<String>,
+    ) -> Result<Self, RawSignerError>;
+
+    fn from_files<P: AsRef<std::path::Path>>(
+        signcert_path: P,
+        pkey_path: P,
+        alg: SigningAlg,
+        tsa_url: Option<String>,
+    ) -> Result<Self, RawSignerError> {
+        let signcert = std::fs::read(signcert_path)?;
+        let pkey = std::fs::read(pkey_path)?;
+
+        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }
 }
