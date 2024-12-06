@@ -45,7 +45,7 @@ pub trait RawSigner {
     /// By pre-querying the value for the signing certificate, the value can be
     /// cached which will reduce load on the certificate authority, as
     /// recommended by the C2PA spec.
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
         None
     }
 }
@@ -67,7 +67,7 @@ pub trait AsyncRawSigner: Sync {
     ///
     /// Each certificate should be encoded in DER format and sequenced from
     /// end-entity certificate to the outermost certificate authority.
-    fn certs(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
 
     /// Return the size in bytes of the largest possible expected signature.
     /// Signing will fail if the result of the [`sign`] function is larger
@@ -81,7 +81,7 @@ pub trait AsyncRawSigner: Sync {
     /// By pre-querying the value for the signing certificate, the value can be
     /// cached which will reduce load on the certificate authority, as
     /// recommended by the C2PA spec.
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
         None
     }
 }
@@ -114,7 +114,7 @@ pub enum RawSignerError {
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
     #[error("internal error ({0})")]
-    InternalError(&'static str),
+    InternalError(String),
 }
 
 impl From<std::io::Error> for RawSignerError {
