@@ -346,6 +346,7 @@ impl Signer for Box<dyn Signer> {
     }
 }
 
+#[allow(dead_code)] // TEMPORARY: Not used on WASM
 pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
 
 impl Signer for RawSignerWrapper {

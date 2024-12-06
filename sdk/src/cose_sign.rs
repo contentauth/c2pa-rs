@@ -359,7 +359,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer, AsyncSigner, Signer};
+    use crate::{claim::Claim, utils::test::temp_signer, Signer};
 
     #[test]
     fn test_sign_claim() {
@@ -380,7 +380,9 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use crate::{cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, SigningAlg};
+        use crate::{
+            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
+        };
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
         claim.build().unwrap();

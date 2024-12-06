@@ -189,7 +189,7 @@ impl AsyncSigner for CallbackSigner {
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::Result<Vec<u8>>> {
         None
     }
 }
