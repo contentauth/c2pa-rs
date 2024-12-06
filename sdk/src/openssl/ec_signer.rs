@@ -83,7 +83,7 @@ impl RawSigner for EcSigner {
             SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
             SigningAlg::Es384 => openssl::sign::Signer::new(MessageDigest::sha384(), &key)?,
             SigningAlg::Es512 => openssl::sign::Signer::new(MessageDigest::sha512(), &key)?,
-            _ => panic!("Shouldn't happen"),
+            _ => unreachable!(),
         };
 
         signer.update(data)?;
