@@ -49,14 +49,9 @@ pub(crate) fn cose_timestamp_countersign(
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8]))]
 fn timestamp_data(signer: &dyn Signer, data: &[u8]) -> Option<Result<Vec<u8>>> {
     if _sync {
-        signer
-            .send_time_stamp_request(data)
-            .map(|r| r.map_err(|e| e.into()))
+        signer.send_timestamp_request(data)
     } else {
-        signer
-            .send_time_stamp_request(data)
-            .await
-            .map(|r| r.map_err(|e| e.into()))
+        signer.send_timestamp_request(data).await
         // TO DO: Fix bug in async_generic. This .await
         // should be automatically removed.
     }

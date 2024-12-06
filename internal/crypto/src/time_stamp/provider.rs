@@ -125,7 +125,10 @@ pub trait AsyncTimeStampProvider {
     }
 }
 
-fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+/// Create an [RFC 3161] time stamp request message for a given piece of data.
+///
+/// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
+pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     let request = time_stamp_message_http(data, DigestAlgorithm::Sha256)?;
 
     let mut body = Vec::<u8>::new();
