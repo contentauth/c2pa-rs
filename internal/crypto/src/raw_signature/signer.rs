@@ -193,14 +193,16 @@ pub fn signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],
     private_key: &[u8],
     alg: SigningAlg,
-) -> Option<Result<Box<dyn RawSigner>, RawSignerError>> {
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn RawSigner>, RawSignerError> {
     #[cfg(feature = "openssl")]
-    if let Some(signer) = crate::openssl::signers::signer_from_cert_chain_and_private_key(
-        cert_chain,
-        private_key,
-        alg,
-    ) {
-        return Some(signer);
+    {
+        return crate::openssl::signers::signer_from_cert_chain_and_private_key(
+            cert_chain,
+            private_key,
+            alg,
+            time_stamp_service_url,
+        );
     }
 
     // TO DO: Do we need this for WASM or is it all async?
@@ -211,5 +213,7 @@ pub fn signer_from_cert_chain_and_private_key(
     //     return Some(validator);
     // }
 
-    None
+    Err(RawSignerError::InternalError(format!(
+        "unsupported algorithm: {alg}"
+    )))
 }

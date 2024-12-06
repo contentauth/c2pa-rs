@@ -19,6 +19,8 @@ use crate::{
     SigningAlg,
 };
 
+mod rsa_signer;
+
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
@@ -27,11 +29,24 @@ use crate::{
 ///
 /// Returns `None` if the signing algorithm is unsupported. May return an `Err`
 /// response if the certificate chain or private key are invalid.
-pub fn signer_from_cert_chain_and_private_key(
-    _cert_chain: &[u8],
-    _private_key: &[u8],
-    _alg: SigningAlg,
-) -> Option<Result<Box<dyn RawSigner>, RawSignerError>> {
-    // TEMPORARY: None implemented yet.
-    None
+pub(crate) fn signer_from_cert_chain_and_private_key(
+    cert_chain: &[u8],
+    private_key: &[u8],
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn RawSigner>, RawSignerError> {
+    match alg {
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Ok(Box::new(
+            rsa_signer::RsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                private_key,
+                alg,
+                time_stamp_service_url,
+            )?,
+        )),
+
+        _ => Err(RawSignerError::InvalidSigningCredentials(
+            "unsupported algorithm".to_string(),
+        )),
+    }
 }
