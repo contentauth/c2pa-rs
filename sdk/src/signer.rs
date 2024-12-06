@@ -16,7 +16,6 @@ use c2pa_crypto::{
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     SigningAlg,
 };
-use x509_certificate::Sign;
 
 use crate::{DynamicAssertion, Result};
 /// The `Signer` trait generates a cryptographic signature over a byte array.
@@ -133,7 +132,7 @@ impl RawSigner for Box<dyn Signer + Send + Sync> {
         (**self).reserve_size()
     }
 
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
         (**self).ocsp_val()
     }
 }

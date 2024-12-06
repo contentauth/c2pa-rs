@@ -14,13 +14,16 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::SigningAlg;
+use crate::{
+    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
+    SigningAlg,
+};
 
 /// Implementations of the `RawSigner` trait generate a cryptographic signature
 /// over an arbitrary byte array.
 ///
 /// If an implementation _can_ be asynchronous, that is preferred.
-pub trait RawSigner {
+pub trait RawSigner: TimeStampProvider {
     /// Return a raw signature over the original byte slice.
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError>;
 
@@ -56,7 +59,7 @@ pub trait RawSigner {
 /// Use this trait only when the implementation must be asynchronous.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait AsyncRawSigner: Sync {
+pub trait AsyncRawSigner: Sync + AsyncTimeStampProvider {
     /// Return a raw signature over the original byte slice.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
 
@@ -148,22 +151,61 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
 /// configured from a private/public key pair.
 #[allow(dead_code)] // TEMPORARY while refactoring
 pub(crate) trait ConfigurableSigner: RawSigner + Sized {
-    fn from_signcert_and_pkey(
-        signcert: &[u8],
-        pkey: &[u8],
+    fn from_cert_chain_and_private_key(
+        cert_chain: &[u8],
+        private_key: &[u8],
         alg: SigningAlg,
-        tsa_url: Option<String>,
+        time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError>;
 
     fn from_files<P: AsRef<std::path::Path>>(
-        signcert_path: P,
-        pkey_path: P,
+        cert_chain_path: P,
+        private_key_path: P,
         alg: SigningAlg,
-        tsa_url: Option<String>,
+        time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let signcert = std::fs::read(signcert_path)?;
-        let pkey = std::fs::read(pkey_path)?;
+        let cert_chain = std::fs::read(cert_chain_path)?;
+        let private_key = std::fs::read(private_key_path)?;
 
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
+        Self::from_cert_chain_and_private_key(
+            &cert_chain,
+            &private_key,
+            alg,
+            time_stamp_service_url,
+        )
     }
+}
+
+/// Return a built-in [`RawSigner`] instance using the provided signing
+/// certificate and private key.
+///
+/// Which signers are available may vary depending on the platform and which
+/// crate features were enabled.
+///
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain or private key are invalid.
+#[allow(unused)] // arguments may or may not be used depending on crate features
+pub fn signer_from_cert_chain_and_private_key(
+    cert_chain: &[u8],
+    private_key: &[u8],
+    alg: SigningAlg,
+) -> Option<Result<Box<dyn RawSigner>, RawSignerError>> {
+    #[cfg(feature = "openssl")]
+    if let Some(signer) = crate::openssl::signers::signer_from_cert_chain_and_private_key(
+        cert_chain,
+        private_key,
+        alg,
+    ) {
+        return Some(signer);
+    }
+
+    // TO DO: Do we need this for WASM or is it all async?
+    // #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    // if let Some(validator) =
+    //     crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg,
+    // hash_alg) {
+    //     return Some(validator);
+    // }
+
+    None
 }
