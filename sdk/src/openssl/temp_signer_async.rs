@@ -60,7 +60,7 @@ impl AsyncSignerAdapter {
             alg,
             certs: signer.certs().unwrap_or_default(),
             reserve_size: signer.reserve_size(),
-            tsa_url: signer.time_stamp_service_url(),
+            tsa_url: signer.time_authority_url(),
             ocsp_val: signer.ocsp_val(),
         }
     }
@@ -91,16 +91,11 @@ impl crate::AsyncSigner for AsyncSignerAdapter {
         self.reserve_size
     }
 
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
+
     async fn ocsp_val(&self) -> Option<Vec<u8>> {
         self.ocsp_val.clone()
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "openssl_sign")]
-#[async_trait::async_trait]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for AsyncSignerAdapter {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.tsa_url.clone()
     }
 }

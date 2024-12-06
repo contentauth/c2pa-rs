@@ -156,16 +156,13 @@ impl Signer for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
-}
 
-impl TimeStampProvider for CallbackSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 }
 
 use async_trait::async_trait;
-use c2pa_crypto::time_stamp::{AsyncTimeStampProvider, TimeStampProvider};
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -187,16 +184,13 @@ impl AsyncSigner for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncTimeStampProvider for CallbackSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn send_time_stamp_request(
+    async fn send_timestamp_request(
         &self,
         _message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {

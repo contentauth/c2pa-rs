@@ -358,8 +358,6 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::time_stamp::{TimeStampError, TimeStampProvider};
-
     use super::sign_claim;
     use crate::{claim::Claim, utils::test::temp_signer};
 
@@ -428,13 +426,8 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
-    }
 
-    impl TimeStampProvider for BogusSigner {
-        fn send_time_stamp_request(
-            &self,
-            _message: &[u8],
-        ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
             Some(Ok(Vec::new()))
         }
     }
