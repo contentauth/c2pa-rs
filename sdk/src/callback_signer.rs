@@ -16,12 +16,12 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
-use c2pa_crypto::SigningAlg;
-
-use crate::{
-    error::{Error, Result},
-    AsyncSigner, Signer,
+use c2pa_crypto::{
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    SigningAlg,
 };
+
+use crate::{error::Error, AsyncSigner, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
@@ -54,7 +54,6 @@ pub struct CallbackSigner {
 }
 
 unsafe impl Send for CallbackSigner {}
-
 unsafe impl Sync for CallbackSigner {}
 
 impl CallbackSigner {
@@ -139,8 +138,10 @@ impl Default for CallbackSigner {
     }
 }
 
-impl Signer for CallbackSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+impl Signer for CallbackSigner {}
+
+impl RawSigner for CallbackSigner {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         (self.callback)(self.context, data)
     }
 
@@ -148,8 +149,10 @@ impl Signer for CallbackSigner {
         self.alg
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        let pems = pem::parse_many(&self.certs)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
 
@@ -170,8 +173,10 @@ use c2pa_crypto::time_stamp::{AsyncTimeStampProvider, TimeStampProvider};
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 // I'm not sure if this is useful since the callback is still synchronous.
-impl AsyncSigner for CallbackSigner {
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+impl AsyncSigner for CallbackSigner {}
+
+impl AsyncRawSigner for CallbackSigner {
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         (self.callback)(self.context, &data)
     }
 
@@ -179,7 +184,7 @@ impl AsyncSigner for CallbackSigner {
         self.alg
     }
 
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
         let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
     }
