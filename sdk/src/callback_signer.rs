@@ -190,10 +190,7 @@ impl AsyncSigner for CallbackSigner {
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn send_timestamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }

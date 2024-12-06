@@ -14,10 +14,7 @@
 use core::str;
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-    SigningAlg,
-};
+use c2pa_crypto::SigningAlg;
 use rsa::{
     pkcs8::DecodePrivateKey,
     pss::SigningKey,
@@ -277,7 +274,7 @@ impl RsaWasmSignerAsync {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait(?Send)]
 impl AsyncSigner for RsaWasmSignerAsync {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         self.signer.sign(&data)
@@ -295,10 +292,7 @@ impl AsyncSigner for RsaWasmSignerAsync {
         self.signer.reserve_size()
     }
 
-    async fn send_timestamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }

@@ -537,15 +537,8 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     fn reserve_size(&self) -> usize {
         10000
     }
-}
 
-#[cfg(target_arch = "wasm32")]
-#[async_trait::async_trait(?Send)]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for WebCryptoSigner {
-    async fn send_time_stamp_request(
-        &self,
-        _: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
