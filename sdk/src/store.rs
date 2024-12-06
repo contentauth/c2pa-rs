@@ -3627,10 +3627,7 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::{
-        raw_signature::{RawSigner, RawSignerError},
-        SigningAlg,
-    };
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3854,10 +3851,8 @@ pub mod tests {
 
     struct BadSigner {}
 
-    impl Signer for BadSigner {}
-
-    impl RawSigner for BadSigner {
-        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+    impl Signer for BadSigner {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             Ok(b"not a valid signature".to_vec())
         }
 
@@ -3865,7 +3860,7 @@ pub mod tests {
             SigningAlg::Ps256
         }
 
-        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
             Ok(Vec::new())
         }
 
@@ -3873,8 +3868,6 @@ pub mod tests {
             42
         }
     }
-
-    impl c2pa_crypto::time_stamp::TimeStampProvider for BadSigner {}
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -5609,7 +5602,6 @@ pub mod tests {
         // test adding to actual image
         use std::io::SeekFrom;
 
-        use c2pa_crypto::raw_signature::AsyncRawSigner;
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
@@ -5931,7 +5923,6 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
-        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -5983,24 +5974,17 @@ pub mod tests {
                 let signer = temp_signer();
                 DynamicSigner {
                     alg: signer.alg(),
-                    certs: signer.cert_chain().unwrap_or_default(),
+                    certs: signer.certs().unwrap_or_default(),
                     reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_stamp_service_url(),
-                    ocsp_val: signer.ocsp_response(),
+                    tsa_url: signer.time_authority_url(),
+                    ocsp_val: signer.ocsp_val(),
                 }
             }
         }
 
-        impl AsyncSigner for DynamicSigner {
-            // Returns our dynamic assertion here.
-            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
-                vec![Box::new(TestDynamicAssertion {})]
-            }
-        }
-
         #[async_trait::async_trait]
-        impl AsyncRawSigner for DynamicSigner {
-            async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        impl crate::AsyncSigner for DynamicSigner {
+            async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
                 let signer = temp_signer();
                 signer.sign(&data)
             }
@@ -6009,7 +5993,7 @@ pub mod tests {
                 self.alg
             }
 
-            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
                 let mut output: Vec<Vec<u8>> = Vec::new();
                 for v in &self.certs {
                     output.push(v.clone());
@@ -6021,15 +6005,17 @@ pub mod tests {
                 self.reserve_size
             }
 
-            async fn ocsp_response(&self) -> Option<Vec<u8>> {
+            fn time_authority_url(&self) -> Option<String> {
+                self.tsa_url.clone()
+            }
+
+            async fn ocsp_val(&self) -> Option<Vec<u8>> {
                 self.ocsp_val.clone()
             }
-        }
 
-        #[async_trait::async_trait]
-        impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for DynamicSigner {
-            fn time_stamp_service_url(&self) -> Option<String> {
-                self.tsa_url.clone()
+            // Returns our dynamic assertion here.
+            fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
             }
         }
 

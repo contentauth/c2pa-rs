@@ -11,12 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSigner, RawSignerError},
-    time_stamp::TimeStampProvider,
-    SigningAlg,
-};
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     ec::EcKey,
     hash::MessageDigest,
@@ -71,24 +66,22 @@ impl ConfigurableSigner for EcSigner {
     }
 }
 
-impl Signer for EcSigner {}
-
-impl RawSigner for EcSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+impl Signer for EcSigner {
+    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        let key = PKey::from_ec_key(self.pkey.clone())?;
+        let key = PKey::from_ec_key(self.pkey.clone()).map_err(Error::OpenSslError)?;
 
         let mut signer = match self.alg {
             SigningAlg::Es256 => openssl::sign::Signer::new(MessageDigest::sha256(), &key)?,
             SigningAlg::Es384 => openssl::sign::Signer::new(MessageDigest::sha384(), &key)?,
             SigningAlg::Es512 => openssl::sign::Signer::new(MessageDigest::sha512(), &key)?,
-            _ => unreachable!(),
+            _ => return Err(Error::UnsupportedType),
         };
 
-        signer.update(data)?;
+        signer.update(data).map_err(Error::OpenSslError)?;
+        let der_sig = signer.sign_to_vec().map_err(Error::OpenSslError)?;
 
-        let der_sig = signer.sign_to_vec()?;
         der_to_p1363(&der_sig, self.alg)
     }
 
@@ -96,27 +89,25 @@ impl RawSigner for EcSigner {
         self.alg
     }
 
-    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let mut certs: Vec<Vec<u8>> = Vec::new();
 
         for c in &self.signcerts {
-            let cert = c.to_der()?;
+            let cert = c.to_der().map_err(Error::OpenSslError)?;
             certs.push(cert);
         }
 
         Ok(certs)
     }
 
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
+
     fn reserve_size(&self) -> usize {
         1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
-    }
-}
-
-impl TimeStampProvider for EcSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.tsa_url.clone()
     }
 }
 

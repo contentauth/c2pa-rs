@@ -19,7 +19,7 @@ mod integration_v2 {
 
     use anyhow::Result;
     use c2pa::{Builder, CallbackSigner, Reader};
-    use c2pa_crypto::{raw_signature::RawSignerError, SigningAlg};
+    use c2pa_crypto::SigningAlg;
     use serde_json::json;
 
     const PARENT_JSON: &str = r#"
@@ -174,17 +174,17 @@ mod integration_v2 {
         Ok(())
     }
 
-    fn ed_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+    fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
         use ed25519_dalek::{Signature, Signer, SigningKey};
         use pem::parse;
 
         // Parse the PEM data to get the private key
-        let pem = parse(private_key).map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+        let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
 
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
-        let signing_key = SigningKey::try_from(key_bytes)
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+        let signing_key =
+            SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
 
         // Sign the data
         let signature: Signature = signing_key.sign(data);

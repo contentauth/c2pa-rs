@@ -23,7 +23,7 @@ pub fn test_signer() -> CallbackSigner {
         .set_context("test" as *const _ as *const ())
 }
 
-fn ed_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+fn ed_sign(data: &[u8], private_key: &[u8]) -> crate::Result<Vec<u8>> {
     use ed25519_dalek::{Signature, Signer, SigningKey};
     use pem::parse;
 

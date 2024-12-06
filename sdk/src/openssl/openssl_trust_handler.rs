@@ -250,12 +250,12 @@ pub(crate) fn verify_trust(
 
     let _openssl = OpenSslMutex::acquire()?;
 
-    let mut cert_chain = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
+    let mut certs = openssl::stack::Stack::new().map_err(Error::OpenSslError)?;
     let mut store_ctx = openssl::x509::X509StoreContext::new().map_err(Error::OpenSslError)?;
 
     let chain = certs_der_to_x509(chain_der)?;
     for c in chain {
-        cert_chain.push(c).map_err(Error::OpenSslError)?;
+        certs.push(c).map_err(Error::OpenSslError)?;
     }
     let cert = openssl::x509::X509::from_der(cert_der).map_err(Error::OpenSslError)?;
 
@@ -287,7 +287,7 @@ pub(crate) fn verify_trust(
     // finalize store
     let store = builder.build();
 
-    match store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
+    match store_ctx.init(&store, cert.as_ref(), &certs, |f| f.verify_cert()) {
         Ok(trust) => Ok(trust),
         Err(_) => Ok(false),
     }
@@ -299,10 +299,13 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
+    use c2pa_crypto::SigningAlg;
 
     use super::*;
-    use crate::openssl::temp_signer::{self};
+    use crate::{
+        openssl::temp_signer::{self},
+        Signer,
+    };
 
     #[test]
     fn test_trust_store() {
@@ -322,13 +325,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.cert_chain().unwrap();
-        let ps384_certs = ps384.cert_chain().unwrap();
-        let ps512_certs = ps512.cert_chain().unwrap();
-        let es256_certs = es256.cert_chain().unwrap();
-        let es384_certs = es384.cert_chain().unwrap();
-        let es512_certs = es512.cert_chain().unwrap();
-        let ed25519_certs = ed25519.cert_chain().unwrap();
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
@@ -360,13 +363,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.cert_chain().unwrap();
-        let ps384_certs = ps384.cert_chain().unwrap();
-        let ps512_certs = ps512.cert_chain().unwrap();
-        let es256_certs = es256.cert_chain().unwrap();
-        let es384_certs = es384.cert_chain().unwrap();
-        let es512_certs = es512.cert_chain().unwrap();
-        let ed25519_certs = ed25519.cert_chain().unwrap();
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
 
         assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
         assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
@@ -402,13 +405,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.cert_chain().unwrap();
-        let ps384_certs = ps384.cert_chain().unwrap();
-        let ps512_certs = ps512.cert_chain().unwrap();
-        let es256_certs = es256.cert_chain().unwrap();
-        let es384_certs = es384.cert_chain().unwrap();
-        let es512_certs = es512.cert_chain().unwrap();
-        let ed25519_certs = ed25519.cert_chain().unwrap();
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
@@ -443,13 +446,13 @@ pub mod tests {
         let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
         let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
-        let ps256_certs = ps256.cert_chain().unwrap();
-        let ps384_certs = ps384.cert_chain().unwrap();
-        let ps512_certs = ps512.cert_chain().unwrap();
-        let es256_certs = es256.cert_chain().unwrap();
-        let es384_certs = es384.cert_chain().unwrap();
-        let es512_certs = es512.cert_chain().unwrap();
-        let ed25519_certs = ed25519.cert_chain().unwrap();
+        let ps256_certs = ps256.certs().unwrap();
+        let ps384_certs = ps384.certs().unwrap();
+        let ps512_certs = ps512.certs().unwrap();
+        let es256_certs = es256.certs().unwrap();
+        let es384_certs = es384.certs().unwrap();
+        let es512_certs = es512.certs().unwrap();
+        let ed25519_certs = ed25519.certs().unwrap();
 
         assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
         assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());

@@ -19,7 +19,6 @@
 //! the asynchronous signing of claims.
 //! This module should be used only for testing purposes.
 
-use c2pa_crypto::raw_signature::{AsyncRawSigner, RawSignerError};
 #[cfg(feature = "openssl_sign")]
 use c2pa_crypto::SigningAlg;
 
@@ -61,21 +60,18 @@ impl AsyncSignerAdapter {
 
         AsyncSignerAdapter {
             alg,
-            certs: signer.cert_chain().unwrap_or_default(),
+            certs: signer.certs().unwrap_or_default(),
             reserve_size: signer.reserve_size(),
-            tsa_url: signer.time_stamp_service_url(),
-            ocsp_val: signer.ocsp_response(),
+            tsa_url: signer.time_authority_url(),
+            ocsp_val: signer.ocsp_val(),
         }
     }
 }
 
 #[cfg(test)]
-impl AsyncSigner for AsyncSignerAdapter {}
-
-#[cfg(test)]
 #[async_trait::async_trait]
-impl AsyncRawSigner for AsyncSignerAdapter {
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
+impl AsyncSigner for AsyncSignerAdapter {
+    async fn sign(&self, data: Vec<u8>) -> crate::Result<Vec<u8>> {
         let signer = get_local_signer(self.alg);
         signer.sign(&data)
     }
@@ -84,7 +80,7 @@ impl AsyncRawSigner for AsyncSignerAdapter {
         self.alg
     }
 
-    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
         let mut output: Vec<Vec<u8>> = Vec::new();
         for v in &self.certs {
             output.push(v.clone());
@@ -96,16 +92,11 @@ impl AsyncRawSigner for AsyncSignerAdapter {
         self.reserve_size
     }
 
-    async fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.ocsp_val.clone()
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "openssl_sign")]
-#[async_trait::async_trait]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for AsyncSignerAdapter {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.ocsp_val.clone()
     }
 }

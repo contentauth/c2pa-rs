@@ -13,7 +13,9 @@
 
 use c2pa_crypto::{p1363::parse_ec_der_sig, raw_signature::RawSignerError, SigningAlg};
 
-pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawSignerError> {
+use crate::Error;
+
+pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> crate::Result<Vec<u8>> {
     // P1363 format: r | s
 
     let (_, p) = parse_ec_der_sig(data)
@@ -26,11 +28,7 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawS
         SigningAlg::Es256 => 64,
         SigningAlg::Es384 => 96,
         SigningAlg::Es512 => 132,
-        _ => {
-            return Err(RawSignerError::InternalError(
-                "unexpected signing alg".to_string(),
-            ))
-        }
+        _ => return Err(Error::BadParam("unexpected signing alg".to_string())),
     };
 
     // pad or truncate as needed
@@ -59,9 +57,7 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawS
     };
 
     if rp.len() != sig_len || rp.len() != sp.len() {
-        return Err(RawSignerError::InternalError(
-            "unexpected signature length".to_string(),
-        ));
+        return Err(Error::BadParam("unexpected signature length".to_string()));
     }
 
     // merge r and s strings
@@ -72,9 +68,8 @@ pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawS
     (0..new_sig.len())
         .step_by(2)
         .map(|i| {
-            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| {
-                RawSignerError::InternalError("failed to convert hex string".to_string())
-            })
+            u8::from_str_radix(&new_sig[i..i + 2], 16)
+                .map_err(|_err| Error::BadParam("failed to convert hex string".to_string()))
         })
         .collect()
 }

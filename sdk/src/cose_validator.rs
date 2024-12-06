@@ -1482,10 +1482,8 @@ pub mod tests {
             pub ocsp_rsp: Vec<u8>,
         }
 
-        impl Signer for OcspSigner {}
-
-        impl RawSigner for OcspSigner {
-            fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        impl crate::Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
                 self.signer.sign(data)
             }
 
@@ -1493,20 +1491,18 @@ pub mod tests {
                 SigningAlg::Ps256
             }
 
-            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-                self.signer.cert_chain()
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.signer.certs()
             }
 
             fn reserve_size(&self) -> usize {
                 self.signer.reserve_size()
             }
 
-            fn ocsp_response(&self) -> Option<Vec<u8>> {
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
                 Some(self.ocsp_rsp.clone())
             }
         }
-
-        impl c2pa_crypto::time_stamp::TimeStampProvider for OcspSigner {}
 
         let ocsp_signer = OcspSigner {
             signer: Box::new(crate::signer::RawSignerWrapper(signer)),

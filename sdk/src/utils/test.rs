@@ -20,10 +20,7 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa_crypto::{
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
-    SigningAlg,
-};
+use c2pa_crypto::SigningAlg;
 use tempfile::TempDir;
 
 #[cfg(feature = "file_io")]
@@ -285,10 +282,8 @@ where
 
 pub(crate) struct TestGoodSigner {}
 
-impl Signer for TestGoodSigner {}
-
-impl RawSigner for TestGoodSigner {
-    fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+impl crate::Signer for TestGoodSigner {
+    fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -296,32 +291,25 @@ impl RawSigner for TestGoodSigner {
         SigningAlg::Ps256
     }
 
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         Ok(Vec::new())
     }
 
     fn reserve_size(&self) -> usize {
         1024
     }
-}
 
-impl c2pa_crypto::time_stamp::TimeStampProvider for TestGoodSigner {
-    fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
 }
 
 pub(crate) struct AsyncTestGoodSigner {}
 
-impl AsyncSigner for AsyncTestGoodSigner {}
-
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl AsyncRawSigner for AsyncTestGoodSigner {
-    async fn sign(&self, _data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+impl AsyncSigner for AsyncTestGoodSigner {
+    async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
     }
 
@@ -329,22 +317,18 @@ impl AsyncRawSigner for AsyncTestGoodSigner {
         SigningAlg::Ps256
     }
 
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         Ok(Vec::new())
     }
 
     fn reserve_size(&self) -> usize {
         1024
     }
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for AsyncTestGoodSigner {
-    async fn send_time_stamp_request(
+    async fn send_timestamp_request(
         &self,
         _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
 }
@@ -547,15 +531,8 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     fn reserve_size(&self) -> usize {
         10000
     }
-}
 
-#[cfg(target_arch = "wasm32")]
-#[async_trait::async_trait(?Send)]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for WebCryptoSigner {
-    async fn send_time_stamp_request(
-        &self,
-        _: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
@@ -574,32 +551,20 @@ struct TempAsyncRemoteSigner {
     signer: TempRemoteSigner,
 }
 
-impl AsyncSigner for TempAsyncRemoteSigner {
-    // signer will return a COSE structure
-    fn direct_cose_handling(&self) -> bool {
-        true
-    }
-}
-
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl AsyncRawSigner for TempAsyncRemoteSigner {
+impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
-    async fn sign(&self, claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+    async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
         #[cfg(feature = "openssl_sign")]
         {
             let signer =
                 crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size())
-                .await
-                .map_err(|e| {
-                    RawSignerError::InternalError(format!(
-                        "TO DO: figure out better error mapping: {e}"
-                    ))
-                })
+            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
         }
+
         #[cfg(target_arch = "wasm32")]
         {
             let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
@@ -620,26 +585,27 @@ impl AsyncRawSigner for TempAsyncRemoteSigner {
         }
     }
 
+    // signer will return a COSE structure
+    fn direct_cose_handling(&self) -> bool {
+        true
+    }
+
     fn alg(&self) -> SigningAlg {
         SigningAlg::Ps256
     }
 
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
         Ok(Vec::new())
     }
 
     fn reserve_size(&self) -> usize {
         10000
     }
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for TempAsyncRemoteSigner {
-    async fn send_time_stamp_request(
+    async fn send_timestamp_request(
         &self,
         _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
 }

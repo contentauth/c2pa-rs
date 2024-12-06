@@ -11,12 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::{
-    openssl::OpenSslMutex,
-    raw_signature::{RawSigner, RawSignerError},
-    time_stamp::TimeStampProvider,
-    SigningAlg,
-};
+use c2pa_crypto::{openssl::OpenSslMutex, SigningAlg};
 use openssl::{
     pkey::{PKey, Private},
     x509::X509,
@@ -73,10 +68,8 @@ impl ConfigurableSigner for EdSigner {
     }
 }
 
-impl Signer for EdSigner {}
-
-impl RawSigner for EdSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+impl Signer for EdSigner {
+    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let mut signer = openssl::sign::Signer::new_without_digest(&self.pkey)?;
@@ -89,7 +82,7 @@ impl RawSigner for EdSigner {
         self.alg
     }
 
-    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
         let _openssl = OpenSslMutex::acquire()?;
 
         let mut certs: Vec<Vec<u8>> = Vec::new();
@@ -102,14 +95,12 @@ impl RawSigner for EdSigner {
         Ok(certs)
     }
 
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
+
     fn reserve_size(&self) -> usize {
         1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
-    }
-}
-
-impl TimeStampProvider for EdSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.tsa_url.clone()
     }
 }
 

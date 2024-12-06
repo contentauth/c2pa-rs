@@ -16,19 +16,17 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
-use c2pa_crypto::{
-    raw_signature::{RawSigner, RawSignerError},
-    time_stamp::TimeStampProvider,
-    SigningAlg,
-};
+use async_trait::async_trait;
+use c2pa_crypto::{raw_signature::RawSignerError, SigningAlg};
 
-use crate::Signer;
+use crate::{AsyncSigner, Error, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
 /// The callback should return a signature for the given data.
 /// The callback should return an error if the data cannot be signed.
-pub type CallbackFunc = dyn Fn(*const (), &[u8]) -> Result<Vec<u8>, RawSignerError> + Send + Sync;
+pub type CallbackFunc =
+    dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync;
 // TO REVIEW: Changing the error type to RawSignerError
 
 /// Defines a signer that uses a callback to sign data.
@@ -61,7 +59,7 @@ impl CallbackSigner {
     /// Create a new callback signer.
     pub fn new<F, T>(callback: F, alg: SigningAlg, certs: T) -> Self
     where
-        F: Fn(*const (), &[u8]) -> Result<Vec<u8>, RawSignerError> + Send + Sync + 'static,
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync + 'static,
         T: Into<Vec<u8>>,
     {
         let certs = certs.into();
@@ -109,18 +107,17 @@ impl CallbackSigner {
     ///     |_context: *const _, data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
     /// let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
     /// ```
-    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+    pub fn ed25519_sign(data: &[u8], private_key: &[u8]) -> crate::Result<Vec<u8>> {
         use ed25519_dalek::{Signature, Signer, SigningKey};
         use pem::parse;
 
         // Parse the PEM data to get the private key
-        let pem = parse(private_key)
-            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let pem = parse(private_key).map_err(|e| Error::BadParam(e.to_string()))?;
 
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
-        let signing_key = SigningKey::try_from(key_bytes)
-            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let signing_key =
+            SigningKey::try_from(key_bytes).map_err(|e| Error::BadParam(e.to_string()))?;
 
         // Sign the data
         let signature: Signature = signing_key.sign(data);
@@ -133,11 +130,7 @@ impl Default for CallbackSigner {
     fn default() -> Self {
         Self {
             context: std::ptr::null(),
-            callback: Box::new(|_, _| {
-                Err(RawSignerError::InternalError(
-                    "no callback provided".to_string(),
-                ))
-            }),
+            callback: Box::new(|_, _| Err(Error::UnsupportedType)),
             alg: SigningAlg::Es256,
             certs: Vec::new(),
             reserve_size: 10000,
@@ -146,10 +139,8 @@ impl Default for CallbackSigner {
     }
 }
 
-impl Signer for CallbackSigner {}
-
-impl RawSigner for CallbackSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+impl Signer for CallbackSigner {
+    fn sign(&self, data: &[u8]) -> crate::Result<Vec<u8>> {
         (self.callback)(self.context, data)
     }
 
@@ -157,7 +148,7 @@ impl RawSigner for CallbackSigner {
         self.alg
     }
 
-    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
         let pems = pem::parse_many(&self.certs)
             .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
 
@@ -167,51 +158,38 @@ impl RawSigner for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
-}
 
-impl TimeStampProvider for CallbackSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 }
 
-// TO REVIEW WITH GAVIN: Can we remove this impl? I don't see how it's useful and it's causing build errors with the new AsyncRawSigner trait.
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl AsyncSigner for CallbackSigner {
+    async fn sign(&self, data: Vec<u8>) -> crate::Result<Vec<u8>> {
+        (self.callback)(self.context, &data)
+    }
 
-// #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-// #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-// // I'm not sure if this is useful since the callback is still synchronous.
-// impl AsyncSigner for CallbackSigner {}
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
 
-// impl AsyncRawSigner for CallbackSigner {
-//     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
-//         (self.callback)(self.context, &data)
-//     }
+    fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+        let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
+        Ok(pems.into_iter().map(|p| p.into_contents()).collect())
+    }
 
-//     fn alg(&self) -> SigningAlg {
-//         self.alg
-//     }
+    fn reserve_size(&self) -> usize {
+        self.reserve_size
+    }
 
-//     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
-//         let pems = pem::parse_many(&self.certs).map_err(|e| Error::OtherError(Box::new(e)))?;
-//         Ok(pems.into_iter().map(|p| p.into_contents()).collect())
-//     }
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
 
-//     fn reserve_size(&self) -> usize {
-//         self.reserve_size
-//     }
-// }
-
-// #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-// impl AsyncTimeStampProvider for CallbackSigner {
-//     fn time_stamp_service_url(&self) -> Option<String> {
-//         self.tsa_url.clone()
-//     }
-
-//     #[cfg(target_arch = "wasm32")]
-//     async fn send_time_stamp_request(
-//         &self,
-//         _message: &[u8],
-//     ) -> Option<Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
-//         None
-//     }
-// }
+    #[cfg(target_arch = "wasm32")]
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
+}
