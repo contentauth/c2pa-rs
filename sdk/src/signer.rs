@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
-use crate::{DynamicAssertion, Error, Result};
+use crate::{DynamicAssertion, Result};
 
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
@@ -107,8 +107,8 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
-        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+        let signcert = std::fs::read(signcert_path).map_err(crate::Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(crate::Error::IoError)?;
 
         Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }

@@ -19,8 +19,6 @@ use x509_parser::der_parser::{
     error::BerResult,
 };
 
-use crate::{raw_signature::RawSignerError, SigningAlg};
-
 /// Parse an ASN.1 DER object that contains a P1363 format into its components.
 ///
 /// This format is used by C2PA to describe ECDSA signature keys.
@@ -46,6 +44,10 @@ pub struct EcSigComps<'a> {
     pub s: &'a [u8],
 }
 
+#[cfg(not(target_arch = "wasm32"))] // Maye will be used later?
+use crate::{raw_signature::RawSignerError, SigningAlg};
+
+#[cfg(not(target_arch = "wasm32"))] // Maye will be used later?
 pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawSignerError> {
     // P1363 format: r | s
 
