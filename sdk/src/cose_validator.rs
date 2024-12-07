@@ -1394,39 +1394,31 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut validation_log = DetailedStatusTracker::default();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(cert_path).unwrap();
+        let es256_cert = include_bytes!("../tests/fixtures/certs/es256.pub");
+        let es384_cert = include_bytes!("../tests/fixtures/certs/es384.pub");
+        let es512_cert = include_bytes!("../tests/fixtures/certs/es512.pub");
+        let rsa_pss256_cert = include_bytes!("../tests/fixtures/certs/ps256.pub");
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
