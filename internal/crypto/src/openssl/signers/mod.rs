@@ -20,6 +20,7 @@ use crate::{
 };
 
 mod ecdsa_signer;
+mod ed25519_signer;
 mod rsa_signer;
 
 /// Return a built-in [`RawSigner`] instance using the provided signing
@@ -46,6 +47,14 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
             )?,
         )),
 
+        SigningAlg::Ed25519 => Ok(Box::new(
+            ed25519_signer::Ed25519Signer::from_cert_chain_and_private_key(
+                cert_chain,
+                private_key,
+                time_stamp_service_url,
+            )?,
+        )),
+
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Ok(Box::new(
             rsa_signer::RsaSigner::from_cert_chain_and_private_key(
                 cert_chain,
@@ -53,10 +62,6 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
                 alg,
                 time_stamp_service_url,
             )?,
-        )),
-
-        _ => Err(RawSignerError::InvalidSigningCredentials(
-            "unsupported algorithm".to_string(),
         )),
     }
 }

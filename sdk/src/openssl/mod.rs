@@ -11,11 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "openssl_sign")]
-mod ed_signer;
-#[cfg(feature = "openssl_sign")]
-pub(crate) use ed_signer::EdSigner;
-
 #[cfg(feature = "openssl")]
 mod openssl_trust_handler;
 #[cfg(test)]
@@ -29,66 +24,7 @@ pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;
 #[cfg(test)]
 pub(crate) mod temp_signer_async;
 
-#[cfg(feature = "openssl")]
-use openssl::x509::X509;
 #[cfg(test)]
 #[allow(unused_imports)]
 #[cfg(feature = "openssl")]
 pub(crate) use temp_signer_async::AsyncSignerAdapter;
-
-#[cfg(feature = "openssl")]
-fn check_chain_order(certs: &[X509]) -> bool {
-    // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
-    // don't make this pub or pub(crate) without finding a way to ensure that
-    // precondition.
-
-    {
-        if certs.len() > 1 {
-            for (i, c) in certs.iter().enumerate() {
-                if let Some(next_c) = certs.get(i + 1) {
-                    if let Ok(pkey) = next_c.public_key() {
-                        if let Ok(verified) = c.verify(&pkey) {
-                            if !verified {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-            }
-        }
-        true
-    }
-}
-
-#[cfg(not(feature = "openssl"))]
-fn check_chain_order(certs: &[X509]) -> bool {
-    true
-}
-
-#[cfg(feature = "openssl")]
-#[allow(dead_code)]
-fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
-    // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
-    // don't make this pub or pub(crate) without finding a way to ensure that
-    // precondition.
-
-    let mut certs: Vec<X509> = Vec::new();
-    for cert_der in cert_ders {
-        if let Ok(cert) = X509::from_der(cert_der) {
-            certs.push(cert);
-        } else {
-            return false;
-        }
-    }
-
-    check_chain_order(&certs)
-}
-
-#[cfg(not(feature = "openssl"))]
-fn check_chain_order_der(cert_ders: &[Vec<u8>]) -> bool {
-    true
-}
