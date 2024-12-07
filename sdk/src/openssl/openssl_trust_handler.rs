@@ -317,13 +317,13 @@ pub mod tests {
         th.load_default_trust().unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let ps384 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let ps512 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let es256 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let es384 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let es512 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let ed25519 = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -355,13 +355,13 @@ pub mod tests {
         th.load_trust_anchors_from_data(&mut reader).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let ps384 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let ps512 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let es256 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let es384 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let es512 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let ed25519 = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -397,13 +397,13 @@ pub mod tests {
         th.load_allowed_list(&mut allowed_list).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let ps384 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let ps512 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let es256 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let es384 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let es512 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let ed25519 = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -438,13 +438,13 @@ pub mod tests {
         th.load_allowed_list(&mut allowed_list).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
+        let ps384 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
+        let ps512 = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
+        let es256 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
+        let es384 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
+        let es512 = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
+        let ed25519 = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();

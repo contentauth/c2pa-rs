@@ -32,7 +32,7 @@
 #![allow(clippy::unwrap_used)]
 
 #[cfg(feature = "file_io")]
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "file_io")]
 use c2pa_crypto::SigningAlg;
@@ -60,7 +60,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> (Box<dyn crate::Signer>, PathBuf) {
+) -> Box<dyn crate::Signer> {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => (),
         _ => {
@@ -76,10 +76,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     pem_key_path.push(alg.to_string());
     pem_key_path.set_extension("pem");
 
-    (
-        crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
-        sign_cert_path,
-    )
+    crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap()
 }
 
 /// Create an OpenSSL ES256 signer that can be used for testing purposes.
@@ -105,7 +102,7 @@ pub fn get_ed_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> (Box<dyn crate::Signer>, PathBuf) {
+) -> Box<dyn crate::Signer> {
     if alg != SigningAlg::Ed25519 {
         panic!("Unknown ED signer alg {alg:#?}");
     }
@@ -118,10 +115,7 @@ pub fn get_ed_signer<P: AsRef<Path>>(
     pem_key_path.push(alg.to_string());
     pem_key_path.set_extension("pem");
 
-    (
-        crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
-        sign_cert_path,
-    )
+    crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap()
 }
 
 /// Create an OpenSSL SHA+RSA signer that can be used for testing purposes.
@@ -147,7 +141,7 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> (Box<dyn crate::Signer>, PathBuf) {
+) -> Box<dyn crate::Signer> {
     match alg {
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => (),
         _ => {
@@ -171,8 +165,5 @@ pub fn get_rsa_signer<P: AsRef<Path>>(
         );
     }
 
-    (
-        crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
-        sign_cert_path,
-    )
+    crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap()
 }
