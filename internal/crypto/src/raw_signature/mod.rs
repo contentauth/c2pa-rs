@@ -15,7 +15,8 @@
 
 pub(crate) mod signer;
 pub use signer::{
-    signer_from_cert_chain_and_private_key, AsyncRawSigner, RawSigner, RawSignerError,
+    async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+    AsyncRawSigner, RawSigner, RawSignerError,
 };
 
 pub(crate) mod oids;

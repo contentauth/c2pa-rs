@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
+    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     SigningAlg,
 };
 
@@ -165,7 +165,7 @@ pub fn signer_from_cert_chain_and_private_key(
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
-) -> Result<Box<dyn RawSigner>, RawSignerError> {
+) -> Result<Box<dyn RawSigner + Sync>, RawSignerError> {
     #[cfg(feature = "openssl")]
     {
         return crate::openssl::signers::signer_from_cert_chain_and_private_key(
@@ -187,4 +187,81 @@ pub fn signer_from_cert_chain_and_private_key(
     Err(RawSignerError::InternalError(format!(
         "unsupported algorithm: {alg}"
     )))
+}
+
+/// Return a built-in [`AsyncRawSigner`] instance using the provided signing
+/// certificate and private key.
+///
+/// Which signers are available may vary depending on the platform and which
+/// crate features were enabled.
+///
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain or private key are invalid.
+#[allow(unused)] // arguments may or may not be used depending on crate features
+pub fn async_signer_from_cert_chain_and_private_key(
+    cert_chain: &[u8],
+    private_key: &[u8],
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn AsyncRawSigner>, RawSignerError> {
+    // TO DO: Preferentially use WASM-based signers, some of which are necessarily
+    // async.
+
+    let sync_signer = signer_from_cert_chain_and_private_key(
+        cert_chain,
+        private_key,
+        alg,
+        time_stamp_service_url,
+    )?;
+
+    Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
+}
+
+struct AsyncRawSignerWrapper(Box<dyn RawSigner + Sync>);
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl AsyncRawSigner for AsyncRawSignerWrapper {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
+        self.0.sign(&data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+        self.0.cert_chain()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
+        self.0.time_stamp_request_body(message)
+    }
+
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        self.0.send_time_stamp_request(message)
+    }
 }

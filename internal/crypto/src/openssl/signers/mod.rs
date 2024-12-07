@@ -36,7 +36,7 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
-) -> Result<Box<dyn RawSigner>, RawSignerError> {
+) -> Result<Box<dyn RawSigner + Sync>, RawSignerError> {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Ok(Box::new(
             ecdsa_signer::EcdsaSigner::from_cert_chain_and_private_key(
