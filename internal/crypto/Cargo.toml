@@ -28,7 +28,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 json_schema = ["dep:schemars"]
 openssl = ["dep:openssl"]
-psxxx_ocsp_stapling_experimental = ["dep:openssl"]
 
 [dependencies]
 async-generic = "1.1"

@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::cell::Cell;
-
 use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
@@ -22,7 +20,6 @@ use openssl::{
 };
 
 use crate::{
-    ocsp::OcspResponse,
     openssl::{cert_chain::check_chain_order, OpenSslMutex},
     raw_signature::{RawSigner, RawSignerError},
     time_stamp::TimeStampProvider,
@@ -47,9 +44,6 @@ pub(crate) struct RsaSigner {
 
     time_stamp_service_url: Option<String>,
     time_stamp_size: usize,
-
-    ocsp_size: Cell<usize>,
-    ocsp_response: Cell<OcspResponse>,
 }
 
 impl RsaSigner {
@@ -115,7 +109,7 @@ impl RsaSigner {
             }
         };
 
-        let signer = RsaSigner {
+        Ok(RsaSigner {
             alg,
             cert_chain,
             private_key,
@@ -123,65 +117,7 @@ impl RsaSigner {
             time_stamp_service_url,
             time_stamp_size: 10000,
             // TO DO: Call out to time stamp service to get actual time stamp and use that size?
-            ocsp_size: Cell::new(0),
-            ocsp_response: Cell::new(OcspResponse::default()),
-        };
-
-        // Acquire OCSP response if possible.
-        signer.update_ocsp();
-
-        Ok(signer)
-    }
-
-    // Sample of OCSP stapling while signing. This code is only for demo purposes
-    // and not for production use since there is no caching in the SDK and fetching
-    // is expensive. This is behind the feature flag
-    // 'psxxx_ocsp_stapling_experimental'.
-    fn update_ocsp(&self) {
-        // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
-        // don't make this pub or pub(crate) without finding a way to ensure that
-        // precondition.
-
-        // Is it time for an OCSP update?
-
-        #[cfg(feature = "psxxx_ocsp_stapling_experimental")]
-        {
-            let ocsp_data = self.ocsp_response.take();
-            let next_update = ocsp_data.next_update;
-            self.ocsp_response.set(ocsp_data);
-
-            let now = chrono::offset::Utc::now();
-            if now > next_update {
-                if let Ok(certs) = self.certs_internal() {
-                    if let Some(ocsp_rsp) = crate::ocsp::fetch_ocsp_response(&certs) {
-                        self.ocsp_size.set(ocsp_rsp.len());
-
-                        let mut validation_log =
-                            c2pa_status_tracker::DetailedStatusTracker::default();
-
-                        if let Ok(ocsp_response) =
-                            OcspResponse::from_der_checked(&ocsp_rsp, None, &mut validation_log)
-                        {
-                            self.ocsp_response.set(ocsp_response);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn certs_internal(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
-        // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
-        // don't make this pub or pub(crate) without finding a way to ensure that
-        // precondition.
-
-        self.cert_chain
-            .iter()
-            .map(|cert| {
-                cert.to_der()
-                    .map_err(|e| RawSignerError::OpenSslError(e.to_string()))
-            })
-            .collect()
+        })
     }
 }
 
@@ -219,13 +155,19 @@ impl RawSigner for RsaSigner {
     }
 
     fn reserve_size(&self) -> usize {
-        1024 + self.cert_chain_len + self.time_stamp_size + self.ocsp_size.get()
-        // The Cose_Sign1 contains complete certs, timestamps, and OCSP.
+        1024 + self.cert_chain_len + self.time_stamp_size
     }
 
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
-        self.certs_internal()
+
+        self.cert_chain
+            .iter()
+            .map(|cert| {
+                cert.to_der()
+                    .map_err(|e| RawSignerError::OpenSslError(e.to_string()))
+            })
+            .collect()
     }
 
     fn alg(&self) -> SigningAlg {
@@ -233,21 +175,6 @@ impl RawSigner for RsaSigner {
             RsaSigningAlg::Ps256 => SigningAlg::Ps256,
             RsaSigningAlg::Ps384 => SigningAlg::Ps384,
             RsaSigningAlg::Ps512 => SigningAlg::Ps512,
-        }
-    }
-
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        let _openssl = OpenSslMutex::acquire().ok()?;
-
-        self.update_ocsp();
-
-        let ocsp_data = self.ocsp_response.take();
-        let ocsp_response = ocsp_data.ocsp_der.clone();
-        self.ocsp_response.set(ocsp_data);
-        if !ocsp_response.is_empty() {
-            Some(ocsp_response)
-        } else {
-            None
         }
     }
 }
