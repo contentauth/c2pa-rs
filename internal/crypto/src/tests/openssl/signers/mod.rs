@@ -12,4 +12,5 @@
 // each license.
 
 mod ecdsa_signer;
+mod ed25519_signer;
 mod rsa_signer;
