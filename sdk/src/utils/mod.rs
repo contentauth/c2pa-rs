@@ -28,3 +28,6 @@ pub(crate) mod xmp_inmemory_utils;
 #[cfg(test)]
 #[allow(dead_code)] // for wasm build
 pub mod test;
+
+#[cfg(test)]
+pub(crate) mod test_signer;

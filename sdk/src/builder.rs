@@ -1083,6 +1083,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
+    use c2pa_crypto::SigningAlg;
     use serde_json::json;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
@@ -1092,7 +1093,10 @@ mod tests {
         assertions::BoxHash,
         asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
-        utils::test::{temp_signer, write_jpeg_placeholder_stream},
+        utils::{
+            test::{temp_signer, write_jpeg_placeholder_stream},
+            test_signer::test_signer,
+        },
         Reader,
     };
 
@@ -1305,7 +1309,7 @@ mod tests {
         let mut _builder = Builder::from_archive(&mut zipped).unwrap();
 
         // sign and write to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         builder
             .sign(signer.as_ref(), format, &mut source, &mut dest)
             .unwrap();
@@ -1337,7 +1341,7 @@ mod tests {
             .unwrap();
 
         // sign and write to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         builder.sign_file(signer.as_ref(), source, &dest).unwrap();
 
         // read and validate the signed manifest store
@@ -1389,7 +1393,7 @@ mod tests {
                 .unwrap();
 
             // sign and write to the output stream
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
             builder
                 .sign(signer.as_ref(), format, &mut source, &mut dest)
                 .unwrap();
@@ -1472,7 +1476,7 @@ mod tests {
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
@@ -1496,7 +1500,7 @@ mod tests {
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut builder = Builder::from_json(&simple_manifest()).unwrap();
 
@@ -1633,7 +1637,7 @@ mod tests {
         let mut builder = Builder::from_archive(&mut zipped).unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let _manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
@@ -1809,7 +1813,7 @@ mod tests {
         // convert buffer to cursor with Read/Write/Seek capability
         let mut input = Cursor::new(image.to_vec());
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder
