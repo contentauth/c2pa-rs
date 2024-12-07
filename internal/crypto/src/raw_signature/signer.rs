@@ -151,35 +151,6 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
     }
 }
 
-/// This trait exists to allow the built-in [`RawSigner`] implementations to be
-/// configured from a private/public key pair.
-#[allow(dead_code)] // TEMPORARY while refactoring
-pub(crate) trait ConfigurableSigner: RawSigner + Sized {
-    fn from_cert_chain_and_private_key(
-        cert_chain: &[u8],
-        private_key: &[u8],
-        alg: SigningAlg,
-        time_stamp_service_url: Option<String>,
-    ) -> Result<Self, RawSignerError>;
-
-    fn from_files<P: AsRef<std::path::Path>>(
-        cert_chain_path: P,
-        private_key_path: P,
-        alg: SigningAlg,
-        time_stamp_service_url: Option<String>,
-    ) -> Result<Self, RawSignerError> {
-        let cert_chain = std::fs::read(cert_chain_path)?;
-        let private_key = std::fs::read(private_key_path)?;
-
-        Self::from_cert_chain_and_private_key(
-            &cert_chain,
-            &private_key,
-            alg,
-            time_stamp_service_url,
-        )
-    }
-}
-
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
