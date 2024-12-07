@@ -11,32 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::SigningAlg;
-use x509_parser::der_parser::{self, der::parse_der_integer};
+use c2pa_crypto::{p1363::parse_ec_der_sig, SigningAlg};
 
 use crate::{Error, Result};
-
-// C2PA use P1363 format for EC signatures so we must
-// convert from ASN.1 DER to IEEE P1363 format to verify.
-pub(crate) struct ECSigComps<'a> {
-    r: &'a [u8],
-    s: &'a [u8],
-}
-
-pub(crate) fn parse_ec_der_sig(data: &[u8]) -> der_parser::error::BerResult<ECSigComps> {
-    x509_parser::der_parser::der::parse_der_sequence_defined_g(|content: &[u8], _| {
-        let (rem1, r) = parse_der_integer(content)?;
-        let (_rem2, s) = parse_der_integer(rem1)?;
-
-        Ok((
-            data,
-            ECSigComps {
-                r: r.as_slice()?,
-                s: s.as_slice()?,
-            },
-        ))
-    })(data)
-}
 
 pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
     // P1363 format: r | s

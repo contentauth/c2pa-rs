@@ -333,3 +333,13 @@ impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
         }
     }
 }
+
+impl From<c2pa_crypto::cose::CoseError> for Error {
+    fn from(err: c2pa_crypto::cose::CoseError) -> Self {
+        match err {
+            c2pa_crypto::cose::CoseError::NoTimeStampToken => Self::NotFound,
+            c2pa_crypto::cose::CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
+            c2pa_crypto::cose::CoseError::TimeStampError(e) => e.into(),
+        }
+    }
+}

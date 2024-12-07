@@ -18,7 +18,9 @@
 use std::io::Cursor;
 
 use async_generic::async_generic;
-use c2pa_crypto::{time_stamp::ts_token_from_time_stamp_response, SigningAlg};
+use c2pa_crypto::{
+    p1363::parse_ec_der_sig, time_stamp::ts_token_from_time_stamp_response, SigningAlg,
+};
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -36,7 +38,7 @@ use crate::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
     trust_handler::TrustHandlerConfig,
-    utils::sig_utils::{der_to_p1363, parse_ec_der_sig},
+    utils::sig_utils::der_to_p1363,
     AsyncSigner, Error, Result, Signer,
 };
 
@@ -447,8 +449,6 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::time_stamp::{TimeStampError, TimeStampProvider};
-
     use super::sign_claim;
     use crate::{claim::Claim, utils::test::temp_signer};
 
@@ -517,13 +517,8 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
-    }
 
-    impl TimeStampProvider for BogusSigner {
-        fn send_time_stamp_request(
-            &self,
-            _message: &[u8],
-        ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
             Some(Ok(Vec::new()))
         }
     }

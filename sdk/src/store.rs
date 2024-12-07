@@ -23,6 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
+use c2pa_crypto::hash::sha256;
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -64,11 +65,7 @@ use crate::{
     salt::DefaultSalt,
     settings::get_settings_value,
     trust_handler::TrustHandlerConfig,
-    utils::{
-        hash_utils::{hash_sha256, HashRange},
-        io_utils::stream_len,
-        patch::patch_bytes,
-    },
+    utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, RemoteSigner, Signer,
 };
 
@@ -451,7 +448,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
+        let mut placeholder = sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
@@ -4046,8 +4043,6 @@ pub mod tests {
         }
     }
 
-    impl c2pa_crypto::time_stamp::TimeStampProvider for BadSigner {}
-
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
@@ -6153,7 +6148,7 @@ pub mod tests {
                     alg: signer.alg(),
                     certs: signer.certs().unwrap_or_default(),
                     reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_stamp_service_url(),
+                    tsa_url: signer.time_authority_url(),
                     ocsp_val: signer.ocsp_val(),
                 }
             }
@@ -6182,6 +6177,10 @@ pub mod tests {
                 self.reserve_size
             }
 
+            fn time_authority_url(&self) -> Option<String> {
+                self.tsa_url.clone()
+            }
+
             async fn ocsp_val(&self) -> Option<Vec<u8>> {
                 self.ocsp_val.clone()
             }
@@ -6189,13 +6188,6 @@ pub mod tests {
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
-            }
-        }
-
-        #[async_trait::async_trait]
-        impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for DynamicSigner {
-            fn time_stamp_service_url(&self) -> Option<String> {
-                self.tsa_url.clone()
             }
         }
 
