@@ -12,11 +12,6 @@
 // each license.
 
 #[cfg(feature = "openssl_sign")]
-mod ec_signer;
-#[cfg(feature = "openssl_sign")]
-pub(crate) use ec_signer::EcSigner;
-
-#[cfg(feature = "openssl_sign")]
 mod ed_signer;
 #[cfg(feature = "openssl_sign")]
 pub(crate) use ed_signer::EdSigner;

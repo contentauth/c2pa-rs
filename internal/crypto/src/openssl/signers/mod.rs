@@ -19,6 +19,7 @@ use crate::{
     SigningAlg,
 };
 
+mod ecdsa_signer;
 mod rsa_signer;
 
 /// Return a built-in [`RawSigner`] instance using the provided signing
@@ -36,6 +37,15 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner>, RawSignerError> {
     match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Ok(Box::new(
+            ecdsa_signer::EcdsaSigner::from_cert_chain_and_private_key(
+                cert_chain,
+                private_key,
+                alg,
+                time_stamp_service_url,
+            )?,
+        )),
+
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Ok(Box::new(
             rsa_signer::RsaSigner::from_cert_chain_and_private_key(
                 cert_chain,

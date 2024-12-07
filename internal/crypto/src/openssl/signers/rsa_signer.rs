@@ -175,19 +175,20 @@ impl RsaSigner {
         // don't make this pub or pub(crate) without finding a way to ensure that
         // precondition.
 
-        let mut certs: Vec<Vec<u8>> = Vec::new();
-
-        for c in &self.cert_chain {
-            let cert = c.to_der()?;
-            certs.push(cert);
-        }
-
-        Ok(certs)
+        self.cert_chain
+            .iter()
+            .map(|cert| {
+                cert.to_der()
+                    .map_err(|e| RawSignerError::OpenSslError(e.to_string()))
+            })
+            .collect()
     }
 }
 
 impl RawSigner for RsaSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+        let _openssl = OpenSslMutex::acquire()?;
+
         let mut signer = match self.alg {
             RsaSigningAlg::Ps256 => {
                 let mut signer = Signer::new(MessageDigest::sha256(), &self.private_key)?;

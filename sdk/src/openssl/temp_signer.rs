@@ -38,10 +38,7 @@ use std::path::{Path, PathBuf};
 use c2pa_crypto::SigningAlg;
 
 #[cfg(feature = "file_io")]
-use crate::{
-    openssl::{EcSigner, EdSigner},
-    signer::ConfigurableSigner,
-};
+use crate::{openssl::EdSigner, signer::ConfigurableSigner};
 
 /// Create an OpenSSL ES256 signer that can be used for testing purposes.
 ///
@@ -66,7 +63,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> (EcSigner, PathBuf) {
+) -> (Box<dyn crate::Signer>, PathBuf) {
     match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => (),
         _ => {
@@ -83,7 +80,7 @@ pub fn get_ec_signer<P: AsRef<Path>>(
     pem_key_path.set_extension("pem");
 
     (
-        EcSigner::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
+        crate::create_signer::from_files(&sign_cert_path, &pem_key_path, alg, tsa_url).unwrap(),
         sign_cert_path,
     )
 }

@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod ecdsa_signer;
 mod rsa_signer;

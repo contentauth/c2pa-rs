@@ -35,7 +35,6 @@ use crate::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
     trust_handler::TrustHandlerConfig,
-    utils::sig_utils::der_to_p1363,
     AsyncSigner, Error, Result, Signer,
 };
 
@@ -206,6 +205,63 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     Ok(c2pa_sig_data)
 }
 
+fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
+    // P1363 format: r | s
+
+    let (_, p) = parse_ec_der_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
+
+    let mut r = extfmt::Hexlify(p.r).to_string();
+    let mut s = extfmt::Hexlify(p.s).to_string();
+
+    let sig_len: usize = match alg {
+        SigningAlg::Es256 => 64,
+        SigningAlg::Es384 => 96,
+        SigningAlg::Es512 => 132,
+        _ => return Err(Error::UnsupportedType),
+    };
+
+    // pad or truncate as needed
+    let rp = if r.len() > sig_len {
+        // truncate
+        let offset = r.len() - sig_len;
+        &r[offset..r.len()]
+    } else {
+        // pad
+        while r.len() != sig_len {
+            r.insert(0, '0');
+        }
+        r.as_ref()
+    };
+
+    let sp = if s.len() > sig_len {
+        // truncate
+        let offset = s.len() - sig_len;
+        &s[offset..s.len()]
+    } else {
+        // pad
+        while s.len() != sig_len {
+            s.insert(0, '0');
+        }
+        s.as_ref()
+    };
+
+    if rp.len() != sig_len || rp.len() != sp.len() {
+        return Err(Error::InvalidEcdsaSignature);
+    }
+
+    // merge r and s strings
+    let mut new_sig = rp.to_string();
+    new_sig.push_str(sp);
+
+    // convert back from hex string to byte array
+    (0..new_sig.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
+        })
+        .collect()
+}
+
 #[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8], alg: SigningAlg))]
 fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
     let mut protected_h = match alg {
@@ -359,7 +415,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer, Signer, Result};
+    use crate::{claim::Claim, utils::test::temp_signer, Result, Signer};
 
     #[test]
     fn test_sign_claim() {

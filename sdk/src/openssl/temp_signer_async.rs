@@ -22,8 +22,7 @@
 #[cfg(feature = "openssl_sign")]
 use c2pa_crypto::SigningAlg;
 
-use crate::AsyncSigner;
-use crate::Result;
+use crate::{AsyncSigner, Result};
 
 #[cfg(feature = "openssl_sign")]
 fn get_local_signer(alg: SigningAlg) -> Box<dyn crate::Signer> {

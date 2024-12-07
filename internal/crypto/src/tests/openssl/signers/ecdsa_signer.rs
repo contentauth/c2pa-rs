@@ -14,18 +14,18 @@
 use openssl::x509::X509;
 
 use crate::{
-    openssl::{signers::signer_from_cert_chain_and_private_key, validators::RsaValidator},
+    openssl::{signers::signer_from_cert_chain_and_private_key, validators::EcdsaValidator},
     raw_signature::RawSignatureValidator,
     SigningAlg,
 };
 
 #[test]
-fn ps256() {
-    let cert_chain = include_bytes!("../../fixtures/raw_signature/ps256.pub");
-    let private_key = include_bytes!("../../fixtures/raw_signature/ps256.priv");
+fn es256() {
+    let cert_chain = include_bytes!("../../fixtures/raw_signature/es256.pub");
+    let private_key = include_bytes!("../../fixtures/raw_signature/es256.priv");
 
     let signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps256, None)
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es256, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -38,18 +38,18 @@ fn ps256() {
     let pub_key = cert.public_key().unwrap();
     let pub_key = pub_key.public_key_to_der().unwrap();
 
-    RsaValidator::Ps256
+    EcdsaValidator::Es256
         .validate(&signature, data, &pub_key)
         .unwrap();
 }
 
 #[test]
-fn ps384() {
-    let cert_chain = include_bytes!("../../fixtures/raw_signature/ps384.pub");
-    let private_key = include_bytes!("../../fixtures/raw_signature/ps384.priv");
+fn es384() {
+    let cert_chain = include_bytes!("../../fixtures/raw_signature/es384.pub");
+    let private_key = include_bytes!("../../fixtures/raw_signature/es384.priv");
 
     let signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps384, None)
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es384, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -62,18 +62,18 @@ fn ps384() {
     let pub_key = cert.public_key().unwrap();
     let pub_key = pub_key.public_key_to_der().unwrap();
 
-    RsaValidator::Ps384
+    EcdsaValidator::Es384
         .validate(&signature, data, &pub_key)
         .unwrap();
 }
 
 #[test]
-fn ps512() {
-    let cert_chain = include_bytes!("../../fixtures/raw_signature/ps512.pub");
-    let private_key = include_bytes!("../../fixtures/raw_signature/ps512.priv");
+fn es512() {
+    let cert_chain = include_bytes!("../../fixtures/raw_signature/es512.pub");
+    let private_key = include_bytes!("../../fixtures/raw_signature/es512.priv");
 
     let signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Ps512, None)
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, SigningAlg::Es512, None)
             .unwrap();
 
     let data = b"some sample content to sign";
@@ -86,7 +86,7 @@ fn ps512() {
     let pub_key = cert.public_key().unwrap();
     let pub_key = pub_key.public_key_to_der().unwrap();
 
-    RsaValidator::Ps512
+    EcdsaValidator::Es512
         .validate(&signature, data, &pub_key)
         .unwrap();
 }

@@ -22,7 +22,7 @@ use c2pa_crypto::{raw_signature::signer_from_cert_chain_and_private_key, Signing
 
 use crate::{
     error::Result,
-    openssl::{EcSigner, EdSigner},
+    openssl::EdSigner,
     signer::{ConfigurableSigner, RawSignerWrapper},
     Signer,
 };
@@ -46,13 +46,14 @@ pub fn from_keys(
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
     Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(RawSignerWrapper(
-            signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
-        )),
-
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
-        ),
+        SigningAlg::Es256
+        | SigningAlg::Es384
+        | SigningAlg::Es512
+        | SigningAlg::Ps256
+        | SigningAlg::Ps384
+        | SigningAlg::Ps512 => Box::new(RawSignerWrapper(signer_from_cert_chain_and_private_key(
+            signcert, pkey, alg, tsa_url,
+        )?)),
 
         SigningAlg::Ed25519 => Box::new(EdSigner::from_signcert_and_pkey(
             signcert, pkey, alg, tsa_url,
@@ -77,7 +78,12 @@ pub fn from_files<P: AsRef<Path>>(
     tsa_url: Option<String>,
 ) -> Result<Box<dyn Signer>> {
     Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
+        SigningAlg::Es256
+        | SigningAlg::Es384
+        | SigningAlg::Es512
+        | SigningAlg::Ps256
+        | SigningAlg::Ps384
+        | SigningAlg::Ps512 => {
             let cert_chain = std::fs::read(signcert_path)?;
             let private_key = std::fs::read(pkey_path)?;
 
@@ -88,10 +94,6 @@ pub fn from_files<P: AsRef<Path>>(
                 tsa_url,
             )?))
         }
-
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
-        ),
 
         SigningAlg::Ed25519 => Box::new(EdSigner::from_files(
             &signcert_path,
