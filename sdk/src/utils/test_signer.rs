@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(clippy::unwrap_used)] // This mod is only used in test code.
+
 use async_trait::async_trait;
 use c2pa_crypto::{
     raw_signature::{
