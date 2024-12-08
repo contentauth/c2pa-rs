@@ -416,11 +416,9 @@ mod tests {
     use c2pa_crypto::SigningAlg;
 
     use super::sign_claim;
-    use crate::{
-        claim::Claim,
-        utils::test_signer::{async_test_signer, test_signer},
-        Result, Signer,
-    };
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
+    use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
     #[test]
     fn test_sign_claim() {

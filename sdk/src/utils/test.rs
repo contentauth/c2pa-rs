@@ -31,7 +31,7 @@ use crate::{
     jumbf_io::get_assetio_handler,
     salt::DefaultSalt,
     store::Store,
-    AsyncSigner, RemoteSigner, Result, Signer,
+    AsyncSigner, RemoteSigner, Result,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -205,7 +205,7 @@ pub fn temp_fixture_path(temp_dir: &TempDir, file_name: &str) -> PathBuf {
 /// Can panic if the certs cannot be read. (This function should only
 /// be used as part of testing infrastructure.)
 #[cfg(feature = "file_io")]
-pub fn temp_signer_file() -> Box<dyn Signer> {
+pub fn temp_signer_file() -> Box<dyn crate::Signer> {
     #![allow(clippy::expect_used)]
     let mut sign_cert_path = fixture_path("certs");
     sign_cert_path.push("ps256");

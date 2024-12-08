@@ -1504,7 +1504,7 @@ pub(crate) mod tests {
 
     use std::io::Cursor;
 
-    #[cfg(feature = "file_io")]
+    #[cfg(any(feature = "file_io", target_arch = "wasm32"))]
     use c2pa_crypto::SigningAlg;
     #[cfg(feature = "file_io")]
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
