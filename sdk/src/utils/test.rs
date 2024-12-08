@@ -23,10 +23,6 @@ use std::{
 use c2pa_crypto::SigningAlg;
 use tempfile::TempDir;
 
-#[cfg(feature = "file_io")]
-use crate::create_signer;
-#[cfg(feature = "openssl_sign")]
-use crate::openssl::AsyncSignerAdapter;
 use crate::{
     assertions::{labels, Action, Actions, Ingredient, ReviewRating, SchemaDotOrg, Thumbnail},
     asset_io::CAIReadWrite,
@@ -333,72 +329,6 @@ impl AsyncSigner for AsyncTestGoodSigner {
     }
 }
 
-/// Create a [`Signer`] instance that can be used for testing purposes using ps256 alg.
-///
-/// # Returns
-///
-/// Returns a boxed [`Signer`] instance.
-#[cfg(test)]
-pub(crate) fn temp_signer() -> Box<dyn Signer> {
-    #[cfg(feature = "openssl_sign")]
-    {
-        #![allow(clippy::expect_used)]
-        let sign_cert = include_bytes!("../../tests/fixtures/certs/ps256.pub").to_vec();
-        let pem_key = include_bytes!("../../tests/fixtures/certs/ps256.pem").to_vec();
-
-        crate::create_signer::from_keys(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-            .expect("get_temp_signer")
-    }
-
-    // todo: the will be a RustTLS signer shortly
-    #[cfg(not(feature = "openssl_sign"))]
-    {
-        Box::new(TestGoodSigner {})
-    }
-}
-
-#[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
-pub fn temp_async_signer() -> Box<dyn crate::signer::AsyncSigner> {
-    #[cfg(feature = "openssl_sign")]
-    {
-        Box::new(AsyncSignerAdapter::new(SigningAlg::Es256))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let sign_cert = include_str!("../../tests/fixtures/certs/es256.pub");
-        let pem_key = include_str!("../../tests/fixtures/certs/es256.pem");
-        let signer = WebCryptoSigner::new("es256", sign_cert, pem_key);
-        Box::new(signer)
-    }
-}
-
-/// Create a [`Signer`] instance for a specific algorithm that can be used for testing purposes.
-///
-/// # Returns
-///
-/// Returns a boxed [`Signer`] instance.
-///
-/// # Panics
-///
-/// Can panic if the certs cannot be read. (This function should only
-/// be used as part of testing infrastructure.)
-#[cfg(feature = "file_io")]
-pub fn temp_signer_with_alg(alg: SigningAlg) -> Box<dyn Signer> {
-    #![allow(clippy::expect_used)]
-    // sign and embed into the target file
-    let mut sign_cert_path = fixture_path("certs");
-    sign_cert_path.push(alg.to_string());
-    sign_cert_path.set_extension("pub");
-
-    let mut pem_key_path = fixture_path("certs");
-    pem_key_path.push(alg.to_string());
-    pem_key_path.set_extension("pem");
-
-    create_signer::from_files(sign_cert_path.clone(), pem_key_path, alg, None)
-        .expect("get_temp_signer_with_alg")
-}
-
 struct TempRemoteSigner {}
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -407,8 +337,7 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
         #[cfg(feature = "openssl_sign")]
         {
-            let signer =
-                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
@@ -558,8 +487,7 @@ impl AsyncSigner for TempAsyncRemoteSigner {
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
         #[cfg(feature = "openssl_sign")]
         {
-            let signer =
-                crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+            let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await

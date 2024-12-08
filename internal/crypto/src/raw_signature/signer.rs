@@ -165,7 +165,7 @@ pub fn signer_from_cert_chain_and_private_key(
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
-) -> Result<Box<dyn RawSigner + Sync>, RawSignerError> {
+) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
     #[cfg(feature = "openssl")]
     {
         return crate::openssl::signers::signer_from_cert_chain_and_private_key(
@@ -203,7 +203,7 @@ pub fn async_signer_from_cert_chain_and_private_key(
     private_key: &[u8],
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
-) -> Result<Box<dyn AsyncRawSigner>, RawSignerError> {
+) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
     // TO DO: Preferentially use WASM-based signers, some of which are necessarily
     // async.
 
@@ -217,7 +217,7 @@ pub fn async_signer_from_cert_chain_and_private_key(
     Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
 }
 
-struct AsyncRawSignerWrapper(Box<dyn RawSigner + Sync>);
+struct AsyncRawSignerWrapper(Box<dyn RawSigner + Send + Sync>);
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

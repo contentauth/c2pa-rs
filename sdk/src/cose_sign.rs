@@ -413,9 +413,14 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use c2pa_crypto::SigningAlg;
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer, Result, Signer};
+    use crate::{
+        claim::Claim,
+        utils::test_signer::{async_test_signer, test_signer},
+        Result, Signer,
+    };
 
     #[test]
     fn test_sign_claim() {
@@ -424,7 +429,7 @@ mod tests {
 
         let claim_bytes = claim.data().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
@@ -436,16 +441,16 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use crate::{
-            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
-        };
+        use c2pa_crypto::SigningAlg;
+
+        use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
 
-        let signer = AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)

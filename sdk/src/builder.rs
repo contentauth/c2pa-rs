@@ -1093,10 +1093,7 @@ mod tests {
         assertions::BoxHash,
         asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
-        utils::{
-            test::{temp_signer, write_jpeg_placeholder_stream},
-            test_signer::test_signer,
-        },
+        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         Reader,
     };
 
@@ -1573,7 +1570,7 @@ mod tests {
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
-        let signer = crate::utils::test::temp_async_signer();
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")

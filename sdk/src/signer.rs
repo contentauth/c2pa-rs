@@ -344,7 +344,102 @@ impl Signer for Box<dyn Signer> {
     }
 }
 
-#[allow(dead_code)] // TEMPORARY: Not used on WASM
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+impl AsyncSigner for Box<dyn AsyncSigner> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
 pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
 
 impl Signer for RawSignerWrapper {

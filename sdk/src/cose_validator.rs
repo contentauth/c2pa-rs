@@ -1361,11 +1361,12 @@ fn gt_to_datetime(
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{openssl::temp_signer, signer::ConfigurableSigner, Signer, SigningAlg};
+    use crate::{utils::test_signer::test_signer, Signer};
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -1435,7 +1436,7 @@ pub mod tests {
 
         let box_size = 10000;
 
-        let signer = crate::utils::test::temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
