@@ -3950,7 +3950,7 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
+        assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
     }
 
     #[actix::test]

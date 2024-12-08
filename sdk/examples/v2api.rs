@@ -151,7 +151,7 @@ fn main() -> Result<()> {
     }
 
     println!("{}", reader.json());
-    assert!(reader.validation_status().is_none());
+    assert_eq!(reader.validation_status(), None);
     assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
     Ok(())

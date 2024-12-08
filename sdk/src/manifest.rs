@@ -1612,7 +1612,7 @@ pub(crate) mod tests {
         if cfg!(feature = "add_thumbnails") {
             assert!(manifest.thumbnail().is_some());
         } else {
-            assert!(manifest.thumbnail().is_none());
+            assert_eq!(manifest.thumbnail(), None);
         }
         let ingredient = Ingredient::from_file(&test_output).expect("load_from_asset");
         assert!(ingredient.active_manifest().is_some());
@@ -1816,7 +1816,7 @@ pub(crate) mod tests {
         let redacted_uri = &claim2.redactions().unwrap()[0];
 
         let claim1 = store3.get_claim(&claim1_label).unwrap();
-        assert!(claim1.get_claim_assertion(redacted_uri, 0).is_none());
+        assert_eq!(claim1.get_claim_assertion(redacted_uri, 0), None);
     }
 
     #[test]
@@ -2587,7 +2587,7 @@ pub(crate) mod tests {
         assert!(manifest
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "foo"))
             .is_err());
-        assert!(manifest.thumbnail_ref().is_none());
+        assert_eq!(manifest.thumbnail_ref(), None);
         // verify we can set a references that do exist
         assert!(manifest
             .set_thumbnail_ref(ResourceRef::new("image/jpeg", "C.jpg"))
@@ -2619,7 +2619,7 @@ pub(crate) mod tests {
         // verify there is a thumbnail ref
         assert!(manifest.thumbnail_ref().is_some());
         // verify there is no thumbnail
-        assert!(manifest.thumbnail().is_none());
+        assert_eq!(manifest.thumbnail(), None);
 
         let signer = temp_signer();
         manifest
@@ -2629,8 +2629,8 @@ pub(crate) mod tests {
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
         let active_manifest = manifest_store.active_manifest().unwrap();
-        assert!(active_manifest.thumbnail_ref().is_none());
-        assert!(active_manifest.thumbnail().is_none());
+        assert_eq!(active_manifest.thumbnail_ref(), None);
+        assert_eq!(active_manifest.thumbnail(), None);
     }
 
     #[test]
@@ -2715,7 +2715,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
     }
 
     #[cfg(all(feature = "file_io", feature = "openssl_sign"))]
@@ -2774,7 +2774,7 @@ pub(crate) mod tests {
 
         let manifest_store = Reader::from_file(&output).expect("from_file");
         println!("{manifest_store}");
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
     }
 
     #[test]
@@ -2807,6 +2807,6 @@ pub(crate) mod tests {
         .unwrap();
         println!("{reader}");
         assert!(reader.active_manifest().is_some());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 }

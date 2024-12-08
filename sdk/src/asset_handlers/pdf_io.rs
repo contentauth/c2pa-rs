@@ -199,7 +199,7 @@ pub mod tests {
         mock_pdf.expect_read_xmp().returning(|| None);
 
         let pdf_io = PdfIO::new("pdf");
-        assert!(pdf_io.read_xmp_from_pdf(mock_pdf).is_none());
+        assert_eq!(pdf_io.read_xmp_from_pdf(mock_pdf), None);
     }
 
     #[test]

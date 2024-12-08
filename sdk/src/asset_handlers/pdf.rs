@@ -740,7 +740,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn test_read_xmp_on_pdf_with_none() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
-        assert!(pdf.read_xmp().is_none());
+        assert_eq!(pdf.read_xmp(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
