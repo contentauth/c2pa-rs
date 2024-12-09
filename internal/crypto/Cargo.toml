@@ -28,7 +28,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 json_schema = ["dep:schemars"]
 openssl = ["dep:openssl", "_anyssl"]
-boringssl = ["dep:boring", "_anyssl"]
+boringssl = ["dep:boring", "dep:pkcs8", "dep:pkcs1", "_anyssl"]
 
 # Internal-only. Use the `openssl` feature to enable it.
 _anyssl = []
@@ -50,6 +50,8 @@ x509-parser = "0.16.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 boring = { version = "4.13", optional = true }
+pkcs8 = { version = "0.10.2", features = ["std"], optional = true }
+pkcs1 = { version = "0.7.5", features = ["pem", "std"], optional = true }
 openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 ureq = "2.4.0"
 url = "2.5.3"

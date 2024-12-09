@@ -29,13 +29,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["v1_api"]
 add_thumbnails = ["image"]
 psxxx_ocsp_stapling_experimental = []
-file_io = ["openssl_sign"]
+file_io = ["boringssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
 openssl = ["dep:openssl", "c2pa-crypto/openssl", "_anyssl"]
 openssl_sign = ["openssl", "c2pa-crypto/openssl", "_anyssl_sign"]
-boringssl = ["dep:boring", "c2pa-crypto/boringssl", "_anyssl"]
+boringssl = ["dep:boring", "dep:pkcs8", "dep:pkcs1", "c2pa-crypto/boringssl", "_anyssl"]
 boringssl_sign = ["boringssl", "c2pa-crypto/boringssl", "_anyssl_sign"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
@@ -145,6 +145,8 @@ image = { version = "0.24.7", default-features = false, features = [
 ], optional = true }
 instant = "0.1.12"
 boring = { version = "4.13", optional = true }
+pkcs8 = { version = "0.10.2", features = ["std"], optional = true }
+pkcs1 = { version = "0.7.5", features = ["pem", "std"], optional = true }
 openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

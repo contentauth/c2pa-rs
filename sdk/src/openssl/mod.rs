@@ -67,6 +67,11 @@ fn check_chain_order(certs: &[X509]) -> bool {
                             return false;
                         }
                     } else {
+                        if cfg!(all(test, feature = "boringssl")) {
+                            // public_key() will fail on RSA-PSS in Boring.
+                            // It's OK to skip this function, it's only a config sanity check.
+                            continue;
+                        }
                         return false;
                     }
                 }

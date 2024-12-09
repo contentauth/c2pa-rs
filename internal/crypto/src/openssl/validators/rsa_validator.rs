@@ -47,7 +47,55 @@ impl RawSignatureValidator for RsaValidator {
         public_key: &[u8],
     ) -> Result<(), RawSignatureValidationError> {
         let _openssl = OpenSslMutex::acquire()?;
-        let rsa = Rsa::public_key_from_der(public_key)?;
+        let rsa = match Rsa::public_key_from_der(public_key) {
+            Ok(rsa) => rsa,
+            #[cfg(not(feature = "boringssl"))]
+            Err(err) => return Err(err.into()),
+            #[cfg(feature = "boringssl")]
+            Err(err) => {
+                use boring::bn::BigNum;
+                use pkcs8::der::asn1::BitStringRef;
+
+                // BoringSSL can't parse RSA-PSS parameters. This doesn't matter, because
+                // OpenSSL can't parse them either, and the C2PA SDK throws away
+                // "incompatible values" anyway.
+
+                // It's safe to ignore PSS parameters in signature verification:
+                // - the digest algorithm can't be changed, because the same algorithm is used
+                //   for the message digest.
+                // - the mask parameter is always MGF1
+                // - salt len defaults to hash output len, and the salt is never used directly,
+                //   only hashed.
+                //
+                // They're checked in this implementation anyway.
+
+                let pk = pkcs8::SubjectPublicKeyInfo::<pkcs1::RsaPssParams<'_>, BitStringRef<'_>>::try_from(public_key)
+                    .ok()
+                    .filter(|spki| {
+                        // OID for RSASSA-PSS ASN.1
+                        spki.algorithm.oid
+                            == pkcs8::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10")
+                    })
+                    .and_then(|spki| {
+                        let pss = spki.algorithm.parameters?;
+                        let required_salt_len = match self {
+                            Self::Ps256 => 32,
+                            Self::Ps384 => 48,
+                            Self::Ps512 => 64,
+                        };
+                        // OID for MGF1 ASN.1
+                        if pss.salt_len != required_salt_len || pss.mask_gen.oid != pkcs8::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.8") {
+                            return None;
+                        }
+                        pkcs1::RsaPublicKey::try_from(spki.subject_public_key.raw_bytes()).ok()
+                    })
+                    .ok_or(err)?;
+
+                let n = BigNum::from_slice(pk.modulus.as_bytes())?;
+                let e = BigNum::from_slice(pk.public_exponent.as_bytes())?;
+                Rsa::from_public_components(n, e)?
+            }
+        };
 
         // Rebuild RSA keys to eliminate incompatible values.
         let n = rsa.n().to_owned()?;

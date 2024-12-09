@@ -102,7 +102,51 @@ impl ConfigurableSigner for RsaSigner {
         let _openssl = OpenSslMutex::acquire()?;
 
         let signcerts = X509::stack_from_pem(signcert).map_err(wrap_openssl_err)?;
-        let rsa = Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err)?;
+
+        let rsa: Rsa<_> = match Rsa::private_key_from_pem(pkey).map_err(wrap_openssl_err) {
+            Ok(rsa) => rsa,
+            #[cfg(all(test, feature = "boringssl"))]
+            Err(err @ Error::OpenSslError(_)) => {
+                use boring::bn::BigNum;
+                use pkcs8::der::Decode;
+
+                // BoringSSL can't parse RSA-PSS parameters. This doesn't matter, because
+                // OpenSSL can't parse them either, and the C2PA SDK throws away
+                // "incompatible values" anyway.
+
+                // This signer is used only in tests.
+
+                let der = pem::parse(pkey)
+                    .ok()
+                    .filter(|der| der.tag() == "PRIVATE KEY");
+
+                let pk = der
+                    .as_ref()
+                    .and_then(|der| pkcs8::PrivateKeyInfo::from_der(der.contents()).ok())
+                    .filter(|pk| {
+                        // RSASSA-PSS ASN.1
+                        pk.algorithm.oid
+                            == pkcs8::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10")
+                    })
+                    .and_then(|pk| pkcs1::RsaPrivateKey::try_from(pk.private_key).ok())
+                    .ok_or(err)?;
+
+                let n = BigNum::from_slice(pk.modulus.as_bytes())?;
+                let e = BigNum::from_slice(pk.public_exponent.as_bytes())?;
+                let d = BigNum::from_slice(pk.private_exponent.as_bytes())?;
+                let p = BigNum::from_slice(pk.prime1.as_bytes())?;
+                let q = BigNum::from_slice(pk.prime2.as_bytes())?;
+                let dmp1 = BigNum::from_slice(pk.exponent1.as_bytes())?;
+                let dmq1 = BigNum::from_slice(pk.exponent2.as_bytes())?;
+                let iqmp = BigNum::from_slice(pk.coefficient.as_bytes())?;
+
+                RsaPrivateKeyBuilder::new(n, e, d)?
+                    .set_factors(p, q)?
+                    .set_crt_params(dmp1, dmq1, iqmp)?
+                    .build()
+            }
+            Err(err) => return Err(err),
+        };
 
         // make sure cert chains are in order
         if !check_chain_order(&signcerts) {
