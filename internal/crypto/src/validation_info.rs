@@ -11,12 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Describes a signature's validation information.
+//! Signature validation info.
 
-use c2pa_crypto::SigningAlg;
+use crate::SigningAlg;
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
+/// Describes a signature's validation data and status.
 #[derive(Debug, Default)]
 pub struct ValidationInfo {
     /// Algorithm used to validate the signature

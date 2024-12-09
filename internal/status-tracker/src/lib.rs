@@ -28,7 +28,6 @@ pub use status_tracker::{
 };
 
 pub mod validation_codes;
-pub mod validation_info;
 
 #[cfg(test)]
 pub(crate) mod tests;

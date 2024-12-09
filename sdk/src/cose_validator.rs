@@ -22,9 +22,9 @@ use c2pa_crypto::{
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
-    SigningAlg,
+    SigningAlg, ValidationInfo,
 };
-use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker, ValidationInfo};
+use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
 use coset::{

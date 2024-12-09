@@ -21,4 +21,3 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-c2pa-crypto = { path = "../crypto", version = "0.1.2" }
