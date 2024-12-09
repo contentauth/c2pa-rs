@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,17 +11,28 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::SigningAlg;
+//! Signature validation info.
+
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
+use crate::SigningAlg;
+
+/// Describes a signature's validation data and status.
 #[derive(Debug, Default)]
 pub struct ValidationInfo {
-    pub alg: Option<SigningAlg>, // validation algorithm
+    /// Algorithm used to validate the signature
+    pub alg: Option<SigningAlg>,
+    /// Date the signature was created
     pub date: Option<DateTime<Utc>>,
+    /// Certificate serial number
     pub cert_serial_number: Option<BigUint>,
+    /// Certificate issuer organization
     pub issuer_org: Option<String>,
-    pub validated: bool,     // claim signature is valid
-    pub cert_chain: Vec<u8>, // certificate chain used to validate signature
+    /// Signature validity
+    pub validated: bool,
+    /// Certificate chain used to validate the signature
+    pub cert_chain: Vec<u8>,
+    /// Signature revocation status
     pub revocation_status: Option<bool>,
 }

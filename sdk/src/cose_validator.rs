@@ -22,7 +22,7 @@ use c2pa_crypto::{
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
-    SigningAlg,
+    SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
@@ -47,7 +47,6 @@ use crate::{
     error::{Error, Result},                               // DON'T MOVE
     settings::get_settings_value,                         // DON'T MOVE
     trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
-    validator::ValidationInfo,                            // Eli to move to c2pa-status-tracker
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
