@@ -13,9 +13,10 @@
 
 //! Signature validation info.
 
-use crate::SigningAlg;
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
+
+use crate::SigningAlg;
 
 /// Describes a signature's validation data and status.
 #[derive(Debug, Default)]
