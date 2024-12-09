@@ -115,7 +115,7 @@ impl CallbackSigner {
         // Parse the PEM data to get the private key
         let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
-        let key_bytes = &pem.contents()[16..];
+        let key_bytes = pem.contents().get(16..).ok_or(Error::InvalidSigningKey)?;
         let signing_key =
             SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
         // Sign the data
