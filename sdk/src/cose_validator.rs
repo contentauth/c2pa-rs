@@ -1503,8 +1503,6 @@ pub mod tests {
             }
         }
 
-        impl c2pa_crypto::time_stamp::TimeStampProvider for OcspSigner {}
-
         let ocsp_signer = OcspSigner {
             signer: Box::new(signer),
             ocsp_rsp: ocsp_rsp_data.to_vec(),
