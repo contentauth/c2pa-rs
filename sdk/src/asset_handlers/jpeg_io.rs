@@ -310,7 +310,9 @@ impl CAIWriter for JpegIO {
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
-                let lbox_tbox = &store_bytes[..8];
+                let lbox_tbox = store_bytes
+                    .get(0..8)
+                    .ok_or(Error::InvalidAsset("Store bytes too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
             if seg_chucks.len() > 0 {
@@ -387,7 +389,12 @@ impl CAIWriter for JpegIO {
                                     positions.push(v);
                                 } else {
                                     // check if this is a CAI JUMBF block
-                                    let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
+                                    let jumb_type = raw_vec
+                                        .get(24..28)
+                                        .ok_or(Error::InvalidAsset(
+                                            "Invalid JPEG CAI JUMBF block".to_string(),
+                                        ))?
+                                        .to_vec();
                                     let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                                     if is_cai {
                                         cai_seg_cnt = 1;
@@ -804,11 +811,22 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     if cai_seg_cnt > 0 && is_cai_continuation {
                         cai_seg_cnt += 1;
 
-                        let cai_bm = &mut box_maps[cai_index];
-                        cai_bm.range_len += raw_bytes.len() + 4;
+                        if let Some(cai_bm) = box_maps.get_mut(cai_index) {
+                            cai_bm.range_len += raw_bytes.len() + 4;
+                        } else {
+                            return Err(Error::InvalidAsset(
+                                "CAI segment index out of bounds".to_string(),
+                            ));
+                        }
                     } else {
                         // check if this is a CAI JUMBF block
-                        let jumb_type = raw_vec.as_mut_slice()[24..28].to_vec();
+                        let jumb_type = raw_vec
+                            .as_mut_slice()
+                            .get(24..28)
+                            .ok_or(Error::InvalidAsset(
+                                "Invalid JPEG CAI JUMBF block".to_string(),
+                            ))?
+                            .to_vec();
                         let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
                         if is_cai {
                             cai_seg_cnt = 1;
@@ -1002,13 +1020,15 @@ impl AssetBoxHash for JpegIO {
         let mut box_maps = make_box_maps(input_stream)?;
 
         for bm in box_maps.iter_mut() {
-            if bm.names[0] == C2PA_BOXHASH {
-                continue;
+            if let Some(name) = bm.names.first() {
+                if name == C2PA_BOXHASH {
+                    continue;
+                }
             }
 
             input_stream.seek(std::io::SeekFrom::Start(bm.range_start as u64))?;
 
-            let size = if bm.names[0] == "SOS" {
+            let size = if bm.names.first().map_or(false, |name| name == "SOS") {
                 let mut size = get_seg_size(input_stream)?;
 
                 input_stream.seek(std::io::SeekFrom::Start((bm.range_start + size) as u64))?;
@@ -1060,7 +1080,9 @@ impl ComposedManifestRef for JpegIO {
             if seg > 1 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
-                let lbox_tbox = &manifest_data[..8];
+                let lbox_tbox = manifest_data
+                    .get(0..8)
+                    .ok_or(Error::InvalidAsset("Manifest data too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
             if seg_chucks.len() > 0 {
