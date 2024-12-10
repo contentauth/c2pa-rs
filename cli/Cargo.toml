@@ -18,7 +18,7 @@ readme = "README.md"
 keywords = ["c2pa", "xmp", "metadata"]
 edition = "2018"
 homepage = "https://contentauthenticity.org"
-repository = "https://github.com/contentauth/c2patool"
+repository = "https://github.com/contentauth/c2pa-rs/tree/main/cli"
 
 [dependencies]
 anyhow = "1.0"
