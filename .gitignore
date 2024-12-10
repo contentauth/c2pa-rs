@@ -11,3 +11,6 @@ Cargo.lock
 .vscode
 
 /semver-checks/target/
+
+# Unit test output lands here. TO DO: Fix
+cli/target
