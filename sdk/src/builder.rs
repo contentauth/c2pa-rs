@@ -1570,7 +1570,7 @@ mod tests {
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")

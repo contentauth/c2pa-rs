@@ -2145,7 +2145,7 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
         let mut output = Cursor::new(Vec::new());
 
         // Embed a manifest using the signer.
