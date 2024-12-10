@@ -1523,7 +1523,7 @@ pub(crate) mod tests {
         reader::Reader,
         store::Store,
         utils::test::{temp_remote_signer, TEST_VC},
-        utils::test_signer::test_signer,
+        utils::test_signer::{async_test_signer, test_signer},
         Manifest, Result,
     };
     #[cfg(feature = "file_io")]
@@ -1898,7 +1898,7 @@ pub(crate) mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let output = temp_fixture_path(&temp_dir, TEST_SMALL_JPEG);
 
-        let async_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
+        let async_signer = async_test_signer(SigningAlg::Ps256);
 
         let mut manifest = test_manifest();
         manifest
@@ -2145,7 +2145,7 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+        let signer = async_test_signer(SigningAlg::Ed25519);
         let mut output = Cursor::new(Vec::new());
 
         // Embed a manifest using the signer.
