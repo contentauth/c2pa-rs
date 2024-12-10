@@ -261,6 +261,9 @@ pub enum Error {
     #[error("unknown algorithm")]
     UnknownAlgorithm,
 
+    #[error("invalid signing key")]
+    InvalidSigningKey,
+
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
