@@ -17,7 +17,7 @@ on:
 
 jobs:
   tests:
-    name: Unit tests
+    name: Unit tests (libraries)
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -52,7 +52,59 @@ jobs:
       - name: Generate code coverage
         env:
           RUST_BACKTRACE: "1"
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --lib --all-features --lcov --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: |
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.author_association == 'COLLABORATOR' ||
+          github.event.pull_request.author_association == 'MEMBER' ||
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
+
+  tests-cli:
+    name: Unit tests (c2patool)
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test')
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        rust_version: [stable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo llvm-cov --bins --all-features --lcov --output-path lcov.info
 
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.

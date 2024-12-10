@@ -3,6 +3,7 @@ resolver = "2"
 
 members = [
     "cawg_identity",
+    "cli",
     "export_schema",
     "internal/crypto",
     "internal/status-tracker",
