@@ -274,7 +274,7 @@ impl RsaWasmSignerAsync {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait(?Send)]
 impl AsyncSigner for RsaWasmSignerAsync {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         self.signer.sign(&data)

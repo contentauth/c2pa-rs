@@ -284,6 +284,7 @@ where
 }
 
 pub(crate) struct TestGoodSigner {}
+
 impl crate::Signer for TestGoodSigner {
     fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         Ok(b"not a valid signature".to_vec())
