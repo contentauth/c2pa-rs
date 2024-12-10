@@ -27,7 +27,6 @@ use crate::{AsyncSigner, Error, Result, Signer};
 /// The callback should return an error if the data cannot be signed.
 pub type CallbackFunc =
     dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync;
-// TO REVIEW: Changing the error type to RawSignerError
 
 /// Defines a signer that uses a callback to sign data.
 ///
