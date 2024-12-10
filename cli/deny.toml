@@ -1,0 +1,57 @@
+# Configuration used for dependency checking with cargo-deny.
+#
+# For further details on all configuration options see:
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "wasm32-unknown-unknown" },
+]
+
+# Deny all advisories unless explicitly ignored.
+[advisories]
+yanked = "deny"
+ignore = [
+  "RUSTSEC-2021-0127", # serde_cbor
+  "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
+  "RUSTSEC-2024-0384", # instant (https://github.com/contentauth/c2pa-rs/issues/663)
+  "RUSTSEC-2024-0399", # tokio-rustls server: https://rustsec.org/advisories/RUSTSEC-2024-0399
+]
+# Deny multiple versions unless explicitly skipped.
+[bans]
+multiple-versions = "allow" # "deny" # TODO: Re-enable when possible.
+wildcards = "allow"
+
+# List of allowed licenses.
+[licenses]
+allow = [
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "LicenseRef-ring",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "ring"
+expression = "LicenseRef-ring"
+license-files = [
+  { path = "LICENSE", hash = 3171872035 }
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
