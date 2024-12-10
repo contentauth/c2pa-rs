@@ -25,8 +25,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[cfg(feature = "file_io")]
-use crate::utils::mime::extension_to_mime;
 #[cfg(doc)]
 use crate::Manifest;
 use crate::{
@@ -43,7 +41,7 @@ use crate::{
     jumbf_io::load_jumbf_from_stream,
     resource_store::{skip_serializing_resources, ResourceRef, ResourceStore},
     store::Store,
-    utils::xmp_inmemory_utils::XmpInfo,
+    utils::{mime::extension_to_mime, xmp_inmemory_utils::XmpInfo},
     validation_status::{self, status_for_store, ValidationStatus},
 };
 
@@ -600,8 +598,8 @@ impl Ingredient {
                             let format = hashed_uri
                                 .url()
                                 .rsplit_once('.')
-                                .map(|(_, ext)| format!("image/{}", ext))
-                                .unwrap_or_else(|| "image/jpeg".to_string()); // default to jpeg??
+                                .and_then(|(_, ext)| extension_to_mime(ext))
+                                .unwrap_or("image/jpeg"); // default to jpeg??
                             let mut thumb = crate::resource_store::ResourceRef::new(format, &uri);
                             // keep track of the alg and hash for reuse
                             thumb.alg = hashed_uri.alg();
@@ -691,11 +689,10 @@ impl Ingredient {
     }
 
     fn thumbnail_from_assertion(assertion: &Assertion) -> (String, Vec<u8>) {
+        let thumbnail_format =
+            extension_to_mime(get_thumbnail_image_type(&assertion.label_root()).as_str());
         (
-            format!(
-                "image/{}",
-                get_thumbnail_image_type(&assertion.label_root())
-            ),
+            thumbnail_format.unwrap_or("image/none").to_string(),
             assertion.data().to_vec(),
         )
     }
@@ -1656,7 +1653,7 @@ mod tests_file_io {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::test::fixture_path;
+    use crate::{assertion::AssertionData, utils::test::fixture_path};
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1952,5 +1949,17 @@ mod tests_file_io {
         ingredient.resources.set_base_path(folder);
         //let mut _data_ref = ResourceRef::new("image/jpg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];
+    }
+
+    #[test]
+    fn test_thumbnail_from_assertion_for_svg() {
+        let assertion = Assertion::new(
+            "c2pa.thumbnail.ingredient.svg",
+            None,
+            AssertionData::Binary(include_bytes!("../tests/fixtures/sample1.svg").to_vec()),
+        );
+        let (format, image) = Ingredient::thumbnail_from_assertion(&assertion);
+        assert_eq!(format, "image/svg+xml");
+        assert_eq!(image.len(), 22501);
     }
 }
