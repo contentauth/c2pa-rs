@@ -198,13 +198,13 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run cargo check
-      run: cargo check
+      run: cd cli && cargo check
 
     - name: Run cargo test --all
-      run: cargo test --all
+      run: cd cli && cargo test --all
 
     - name: Build nightly release artifacts
-      run: make release
+      run: cd cli && make release
 
     - name: Upload build as artifact
       uses: actions/upload-artifact@v3
