@@ -52,8 +52,3 @@ mockall = "0.13.0"
 
 [package.metadata.binstall]
 # Use defaults
-
-[profile.release]
-strip = true  # Automatically strip symbols from the binary. 
-opt-level = 3
-lto = "thin"  # Link time optimization.
