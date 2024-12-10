@@ -176,13 +176,15 @@ pub fn signer_from_cert_chain_and_private_key(
         );
     }
 
-    // TO DO: Do we need this for WASM or is it all async?
-    // #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-    // if let Some(validator) =
-    //     crate::webcrypto::validators::validator_for_sig_and_hash_algs(sig_alg,
-    // hash_alg) {
-    //     return Some(validator);
-    // }
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    {
+        return crate::webcrypto::signers::signer_from_cert_chain_and_private_key(
+            cert_chain,
+            private_key,
+            alg,
+            time_stamp_service_url,
+        );
+    }
 
     Err(RawSignerError::InternalError(format!(
         "unsupported algorithm: {alg}"

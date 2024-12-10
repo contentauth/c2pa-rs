@@ -11,6 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod signers;
-mod validators;
-mod window_or_worker;
+mod ed25519_signer;
