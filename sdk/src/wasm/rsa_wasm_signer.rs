@@ -311,10 +311,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        utils::test::{fixture_path, temp_signer},
-        Signer,
-    };
+    use crate::{utils::test::fixture_path, Signer};
 
     #[test]
     fn sign_ps256() {
