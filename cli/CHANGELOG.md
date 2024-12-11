@@ -4,7 +4,7 @@ All changes to this project are documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
-Since version 0.9.13, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 0.9.12
 _18 October 2024_
