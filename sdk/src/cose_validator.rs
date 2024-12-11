@@ -22,7 +22,7 @@ use c2pa_crypto::{
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
-    SigningAlg,
+    SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
@@ -47,7 +47,6 @@ use crate::{
     error::{Error, Result},                               // DON'T MOVE
     settings::get_settings_value,                         // DON'T MOVE
     trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
-    validator::ValidationInfo,                            // Eli to move to c2pa-status-tracker
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -1361,11 +1360,12 @@ fn gt_to_datetime(
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{openssl::temp_signer, signer::ConfigurableSigner, Signer, SigningAlg};
+    use crate::{utils::test_signer::test_signer, Signer};
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -1394,39 +1394,31 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_cert_algorithms() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut validation_log = DetailedStatusTracker::default();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(cert_path).unwrap();
+        let es256_cert = include_bytes!("../tests/fixtures/certs/es256.pub");
+        let es384_cert = include_bytes!("../tests/fixtures/certs/es384.pub");
+        let es512_cert = include_bytes!("../tests/fixtures/certs/es512.pub");
+        let rsa_pss256_cert = include_bytes!("../tests/fixtures/certs/ps256.pub");
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
@@ -1443,7 +1435,7 @@ pub mod tests {
 
         let box_size = 10000;
 
-        let signer = crate::utils::test::temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
@@ -1457,6 +1449,10 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
+        use c2pa_crypto::raw_signature::{
+            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError,
+        };
+
         let mut validation_log = DetailedStatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
@@ -1468,13 +1464,9 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            &sign_cert,
-            &pem_key,
-            SigningAlg::Ps256,
-            None,
-        )
-        .unwrap();
+        let signer =
+            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
@@ -1504,10 +1496,8 @@ pub mod tests {
             }
         }
 
-        impl c2pa_crypto::time_stamp::TimeStampProvider for OcspSigner {}
-
         let ocsp_signer = OcspSigner {
-            signer: Box::new(signer),
+            signer: Box::new(crate::signer::RawSignerWrapper(signer)),
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 

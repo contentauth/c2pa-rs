@@ -14,10 +14,7 @@
 use core::str;
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-    SigningAlg,
-};
+use c2pa_crypto::SigningAlg;
 use rsa::{
     pkcs8::DecodePrivateKey,
     pss::SigningKey,
@@ -115,14 +112,12 @@ impl Signer for RsaWasmSigner {
         self.alg
     }
 
+    fn time_authority_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
+
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
-    }
-}
-
-impl TimeStampProvider for RsaWasmSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.tsa_url.clone()
     }
 }
 
@@ -279,7 +274,7 @@ impl RsaWasmSignerAsync {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait(?Send)]
 impl AsyncSigner for RsaWasmSignerAsync {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         self.signer.sign(&data)
@@ -296,14 +291,8 @@ impl AsyncSigner for RsaWasmSignerAsync {
     fn reserve_size(&self) -> usize {
         self.signer.reserve_size()
     }
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncTimeStampProvider for RsaWasmSignerAsync {
-    async fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
@@ -322,10 +311,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        utils::test::{fixture_path, temp_signer},
-        Signer,
-    };
+    use crate::{utils::test::fixture_path, Signer};
 
     #[test]
     fn sign_ps256() {

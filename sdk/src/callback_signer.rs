@@ -16,12 +16,10 @@
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
 //! using a callback and public signing certificates.
 
+use async_trait::async_trait;
 use c2pa_crypto::SigningAlg;
 
-use crate::{
-    error::{Error, Result},
-    AsyncSigner, Signer,
-};
+use crate::{AsyncSigner, Error, Result, Signer};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
@@ -54,7 +52,6 @@ pub struct CallbackSigner {
 }
 
 unsafe impl Send for CallbackSigner {}
-
 unsafe impl Sync for CallbackSigner {}
 
 impl CallbackSigner {
@@ -66,6 +63,7 @@ impl CallbackSigner {
     {
         let certs = certs.into();
         let reserve_size = 10000 + certs.len();
+
         Self {
             context: std::ptr::null(),
             callback: Box::new(callback),
@@ -114,13 +112,14 @@ impl CallbackSigner {
 
         // Parse the PEM data to get the private key
         let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
+
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
         let signing_key =
             SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
+
         // Sign the data
         let signature: Signature = signing_key.sign(data);
-
         Ok(signature.to_bytes().to_vec())
     }
 }
@@ -156,20 +155,14 @@ impl Signer for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
-}
 
-impl TimeStampProvider for CallbackSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 }
 
-use async_trait::async_trait;
-use c2pa_crypto::time_stamp::{AsyncTimeStampProvider, TimeStampProvider};
-
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-// I'm not sure if this is useful since the callback is still synchronous.
 impl AsyncSigner for CallbackSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         (self.callback)(self.context, &data)
@@ -187,19 +180,13 @@ impl AsyncSigner for CallbackSigner {
     fn reserve_size(&self) -> usize {
         self.reserve_size
     }
-}
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncTimeStampProvider for CallbackSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
+    fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
 
     #[cfg(target_arch = "wasm32")]
-    async fn send_time_stamp_request(
-        &self,
-        _message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, c2pa_crypto::time_stamp::TimeStampError>> {
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 }
