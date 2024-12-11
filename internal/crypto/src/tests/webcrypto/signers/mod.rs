@@ -11,6 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod ffi_mutex;
-mod signers;
-mod validators;
+mod ed25519_signer;

@@ -25,6 +25,7 @@ pub use async_validators::{
     AsyncRawSignatureValidator,
 };
 
+pub(crate) mod signers;
 pub mod validators;
 
 mod window_or_worker;
