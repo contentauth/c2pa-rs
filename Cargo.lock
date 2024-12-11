@@ -699,7 +699,7 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "c2pa"
-version = "0.40.0"
+version = "0.40.0-nightly+2024-12-11-d8c5eef"
 dependencies = [
  "actix",
  "anyhow",
