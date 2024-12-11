@@ -63,7 +63,7 @@ required-features = ["unstable_api"]
 crate-type = ["lib"]
 
 [dependencies]
-asn1-rs = "0.5.2"
+asn1-rs = "0.6.2"
 async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
