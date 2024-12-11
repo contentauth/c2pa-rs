@@ -146,13 +146,17 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::OneShotStatusTracker;
     use tempfile::tempdir;
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         store::Store,
-        utils::test::{fixture_path, temp_dir_path, temp_signer},
+        utils::{
+            test::{fixture_path, temp_dir_path},
+            test_signer::test_signer,
+        },
     };
 
     #[test]
@@ -171,7 +175,7 @@ pub mod tests {
         let store = Store::load_from_asset(&temp_path, false, &mut OneShotStatusTracker::default())
             .expect("loading store");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);

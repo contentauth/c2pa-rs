@@ -12,7 +12,7 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
 use crate::{DynamicAssertion, Result};
 
@@ -107,10 +107,8 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        use crate::Error;
-
-        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
-        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+        let signcert = std::fs::read(signcert_path).map_err(crate::Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(crate::Error::IoError)?;
 
         Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }
@@ -300,7 +298,7 @@ pub trait RemoteSigner: Sync {
     fn reserve_size(&self) -> usize;
 }
 
-impl Signer for Box<dyn Signer + Send + Sync> {
+impl Signer for Box<dyn Signer> {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         (**self).sign(data)
     }
@@ -327,5 +325,162 @@ impl Signer for Box<dyn Signer + Send + Sync> {
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         (**self).dynamic_assertions()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+impl AsyncSigner for Box<dyn AsyncSigner> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
+
+impl Signer for RawSignerWrapper {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.0.sign(data).map_err(|e| e.into())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.0.cert_chain().map_err(|e| e.into())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.0
+            .time_stamp_request_body(message)
+            .map_err(|e| e.into())
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.0
+            .send_time_stamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
     }
 }

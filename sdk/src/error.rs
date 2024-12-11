@@ -306,6 +306,9 @@ pub enum Error {
 
     #[error(transparent)]
     RawSignatureValidationError(#[from] c2pa_crypto::raw_signature::RawSignatureValidationError),
+
+    #[error(transparent)]
+    RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

@@ -302,28 +302,23 @@ pub mod tests {
     use c2pa_crypto::SigningAlg;
 
     use super::*;
-    use crate::{
-        openssl::temp_signer::{self},
-        Signer,
-    };
+    use crate::{utils::test_signer::test_signer, Signer};
 
     #[test]
     fn test_trust_store() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
-
         let mut th = OpenSSLTrustHandlerConfig::new();
         th.clear();
 
         th.load_default_trust().unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -344,7 +339,6 @@ pub mod tests {
 
     #[test]
     fn test_broken_trust_chain() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
         let ta = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         let mut th = OpenSSLTrustHandlerConfig::new();
@@ -355,13 +349,13 @@ pub mod tests {
         th.load_trust_anchors_from_data(&mut reader).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -383,8 +377,6 @@ pub mod tests {
 
     #[test]
     fn test_allowed_list() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
-
         let mut th = OpenSSLTrustHandlerConfig::new();
         th.clear();
 
@@ -397,13 +389,13 @@ pub mod tests {
         th.load_allowed_list(&mut allowed_list).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
@@ -424,8 +416,6 @@ pub mod tests {
 
     #[test]
     fn test_allowed_list_hashes() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
-
         let mut th = OpenSSLTrustHandlerConfig::new();
         th.clear();
 
@@ -438,13 +428,13 @@ pub mod tests {
         th.load_allowed_list(&mut allowed_list).unwrap();
 
         // test all the certs
-        let (ps256, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let (ps384, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps384, None);
-        let (ps512, _) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps512, None);
-        let (es256, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let (es384, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let (es512, _) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let (ed25519, _) = temp_signer::get_ed_signer(&cert_dir, SigningAlg::Ed25519, None);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
         let ps256_certs = ps256.certs().unwrap();
         let ps384_certs = ps384.certs().unwrap();
