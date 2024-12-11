@@ -6,26 +6,6 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.10.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.9.12...c2patool-v0.10.0)
-_11 December 2024_
-
-### Added
-
-* Updates c2patool to use only the new Builder/Reader API (contentauth/c2patool#297)
-
-### Documented
-
-* Update Contributing guide, misc minor edits (contentauth/c2patool#296)
-
-### Other
-
-* Move profile settings to workspace Cargo.toml
-* Fix README links
-* Update repository link in cli/Cargo.toml
-* Fix formatting of cli/CHANGELOG.md
-* Merge branch 'c2patool-main' into c2patool-merge
-* Enlarged description of c2pa command-line behavior (contentauth/c2patool[#285](https://github.com/contentauth/c2pa-rs/pull/285))
-
 ## 0.9.12
 _18 October 2024_
 
