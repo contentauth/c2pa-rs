@@ -1,0 +1,132 @@
+{
+    "ta_url": "http://timestamp.digicert.com",
+    
+    "claim_generator": "TestApp",
+    "claim_generator_info": [{
+        "name": "Test App",
+        "version": "0.0.1",
+        "icon": {
+            "format": "image/png",
+            "identifier": "libpng-test.png"
+        }
+    }],
+    "thumbnail": {
+        "format": "image/jpeg",
+        "identifier": "earth_apollo17.jpg"
+    },
+    "assertions": [
+        {
+            "label": "c2pa.actions",
+            "data": {
+                "actions": [
+                    {
+                        "action": "c2pa.created",
+                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "something": "else"
+                        }
+                    },
+                    {
+                        "action": "c2pa.opened",
+                        "instanceId": "xmp.iid:7b57930e-2f23-47fc-affe-0400d70b738d",
+                        "parameters": {
+                            "description": "import"
+                        },
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+                        "softwareAgent": {
+                            "name": "TestApp",
+                            "version": "1.0",
+                            "icon": {
+                                "format": "image/svg+xml",
+                                "identifier": "sample1.svg"
+                            },
+                            "something": "else"
+                        },
+                        "changes": [
+                            {
+                                "region" : [
+                                    {
+                                        "type" : "temporal",
+                                        "time" : {}
+                                    },
+                                    {
+                                        "type" : "identified",
+                                        "item" : {
+                                        "identifier" : "https://bioportal.bioontology.org/ontologies/FMA",
+                                        "value" : "lips"
+                                        }
+                                    }
+                                ],
+                                "description": "lip synced area"
+                            }
+                        ]
+                    },
+                    {
+                        "action" : "c2pa.edited",
+                        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits",
+                        "changes" : [
+                            {
+                                "region" : [
+                                    {
+                                        "type" : "identified",
+                                        "item" : {
+                                            "identifier" : "track_id",
+                                            "value" : "transcript"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "label": "stds.schema-org.CreativeWork",
+            "data": {
+                "@context": "https://schema.org",
+                "@type": "CreativeWork",
+                "author": [
+                    {
+                        "@type": "Person",
+                        "name": "Joe Bloggs"
+                    }
+                ]
+            },
+            "kind": "Json"
+        },
+        {
+            "label": "cawg.training-mining",
+            "data": {
+                "entries": {
+                    "c2pa.ai_training" : {
+                        "use" : "allowed"
+                    },
+                    "c2pa.ai_generative_training" : {
+                        "use" : "notAllowed"
+                    }
+                }
+            }
+        }
+    ],
+    "ingredients": [
+        {
+            "title": "earth_apollo17.jpg",
+            "format": "image/jpeg",
+            "document_id": "adobe:docid:photoshop:e1c344db-c371-ef45-a4fe-9b5ba6346544",
+            "instance_id": "xmp.iid:9867c3b4-465e-42e4-8064-76c0c0fe3d16",
+            "thumbnail": {
+              "format": "image/jpeg",
+              "identifier": "verify.jpeg"
+            },
+            "relationship": "componentOf"
+        }
+    ],
+    "ingredient_paths": [
+        "C.jpg", "ingredient/ingredient.json"
+    ]
+}
+
