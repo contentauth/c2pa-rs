@@ -27,7 +27,6 @@ _11 December 2024_
 * Remote manifest fetch test was not using full path (#675)
 * Fix #624 (edge cases when combining the box hashes) (#625)
 * For Issue 672, Callback is unsound (#674)
-* For Issue 672, Callback is unsound
 * Support "remote_manifest_fetch" verify setting (#667)
 
 ### Updated dependencies
