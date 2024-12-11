@@ -318,7 +318,11 @@ impl CAIWriter for JpegIO {
 
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            if seg <= jpeg.segments().len() {
+                jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            } else {
+                return Err(Error::InvalidAsset("JPEG JUMPF segment error".to_owned()));
+            }
         }
 
         output_stream.rewind()?;
@@ -1280,5 +1284,19 @@ pub mod tests {
         let restored_manifest = jpeg_io.read_cai(&mut out_stream).unwrap();
 
         assert_eq!(&curr_manifest, &restored_manifest);
+    }
+
+    #[test]
+    fn test_crash_write_cai() {
+        let data = [
+            0xff, 0xd8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x06, 0xc9,
+        ];
+
+        let mut stream = Cursor::new(&data);
+
+        let jpeg_io = JpegIO {};
+
+        let result = jpeg_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 }
