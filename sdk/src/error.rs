@@ -302,7 +302,13 @@ pub enum Error {
     OutOfRange,
 
     #[error(transparent)]
+    TimeStampError(#[from] c2pa_crypto::time_stamp::TimeStampError),
+
+    #[error(transparent)]
     RawSignatureValidationError(#[from] c2pa_crypto::raw_signature::RawSignatureValidationError),
+
+    #[error(transparent)]
+    RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
@@ -321,6 +327,16 @@ impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
         match err {
             c2pa_crypto::webcrypto::WasmCryptoError::UnknownContext => Self::WasmInvalidContext,
             c2pa_crypto::webcrypto::WasmCryptoError::NoCryptoAvailable => Self::WasmNoCrypto,
+        }
+    }
+}
+
+impl From<c2pa_crypto::cose::CoseError> for Error {
+    fn from(err: c2pa_crypto::cose::CoseError) -> Self {
+        match err {
+            c2pa_crypto::cose::CoseError::NoTimeStampToken => Self::NotFound,
+            c2pa_crypto::cose::CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
+            c2pa_crypto::cose::CoseError::TimeStampError(e) => e.into(),
         }
     }
 }

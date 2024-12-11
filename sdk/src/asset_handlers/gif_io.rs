@@ -1461,7 +1461,7 @@ mod tests {
 
         let gif_io = GifIO {};
 
-        assert!(gif_io.read_xmp(&mut stream).is_none());
+        assert_eq!(gif_io.read_xmp(&mut stream), None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
         gif_io.embed_reference_to_stream(

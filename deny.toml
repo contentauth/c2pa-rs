@@ -14,15 +14,15 @@ targets = [
 
 [advisories]
 yanked = "deny"
-
 ignore = [
   "RUSTSEC-2021-0127", # serde_cbor
-  "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104),
+  "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
   "RUSTSEC-2024-0384", # instant (https://github.com/contentauth/c2pa-rs/issues/663)
+  "RUSTSEC-2024-0399", # tokio-rustls server: https://rustsec.org/advisories/RUSTSEC-2024-0399
 ]
 
 [bans]
-multiple-versions = "allow"
+multiple-versions = "allow" # "deny" # TODO: Re-enable when possible.
 
 [licenses]
 allow = [
@@ -34,8 +34,8 @@ allow = [
   "LicenseRef-ring",
   "MIT",
   "MPL-2.0",
-  "Unicode-DFS-2016",
   "Unicode-3.0",
+  "Unicode-DFS-2016",
   "Zlib",
 ]
 confidence-threshold = 0.9

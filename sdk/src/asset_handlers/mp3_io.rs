@@ -593,7 +593,7 @@ pub mod tests {
         let mp3_io = Mp3IO::new("mp3");
 
         let mut stream = File::open(fixture_path("sample1.mp3"))?;
-        assert!(mp3_io.read_xmp(&mut stream).is_none());
+        assert_eq!(mp3_io.read_xmp(&mut stream), None);
         stream.rewind()?;
 
         let mut output_stream1 = Cursor::new(Vec::new());

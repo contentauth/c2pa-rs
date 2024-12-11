@@ -19,8 +19,8 @@ use std::{
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
 use c2pa_crypto::{
-    base64, raw_signature::RawSignatureValidationError, webcrypto::async_validator_for_signing_alg,
-    SigningAlg,
+    base64, hash::sha256, raw_signature::RawSignatureValidationError,
+    webcrypto::async_validator_for_signing_alg, SigningAlg,
 };
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
@@ -30,7 +30,7 @@ use x509_parser::{
 use crate::{
     cose_validator::*,
     error::{Error, Result},
-    hash_utils::{hash_sha256, vec_compare},
+    hash_utils::vec_compare,
     trust_handler::{
         has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
     },
@@ -151,7 +151,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
 
         if let Ok(cert_list) = load_trust_from_data(&buffer) {
             for cert_der in &cert_list {
-                let cert_sha256 = hash_sha256(cert_der);
+                let cert_sha256 = sha256(cert_der);
                 let cert_hash_base64 = base64::encode(&cert_sha256);
 
                 self.allowed_cert_set.insert(cert_hash_base64);
@@ -456,7 +456,7 @@ async fn on_trust_list(
     use x509_parser::prelude::*;
 
     // check the cert against the allowed list first
-    let cert_sha256 = hash_sha256(ee_der);
+    let cert_sha256 = sha256(ee_der);
     let cert_hash_base64 = base64::encode(&cert_sha256);
     if th.get_allowed_list().contains(&cert_hash_base64) {
         return Ok(true);
