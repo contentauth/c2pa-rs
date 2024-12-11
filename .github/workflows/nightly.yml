@@ -150,7 +150,8 @@ jobs:
         sed -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cli/Cargo.toml
         
         cargo update -w
-        git add -f Cargo.lock
+        git add Cargo.lock
+        find . -name 'Cargo.toml' | xargs git add
 
         echo
         echo Proposed changes:
