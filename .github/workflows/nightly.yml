@@ -147,7 +147,8 @@ jobs:
         echo Will add nightly suffix $NIGHTLY_SUFFIX
 
         sed -i "s/^version = \"\\(.*\\)\"/version = \"\\1$NIGHTLY_SUFFIX\"/" sdk/Cargo.toml
-
+        set -i "s/path = \"..\/sdk\", version = \"\\(.*\\)\"/path = \"..\/sdk\", version = \"\\1$NIGHTLY_SUFFIX\"/" cli/Cargo.toml
+        
         cargo update -w
         git add -f Cargo.lock
 
