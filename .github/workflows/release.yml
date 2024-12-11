@@ -25,6 +25,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz
+        id: release-plz
         uses: MarcoIeni/release-plz-action@v0.5.86
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -40,8 +41,11 @@ jobs:
             xargs -I {} git push origin --delete {}
       
       - name: Identify c2patool release tag
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
           echo "TO DO: Identify c2patool release tag, if any"
+          echo $RELEASES
           exit 1
 
   # publish-c2patool-binaries:
