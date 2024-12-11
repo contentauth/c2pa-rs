@@ -6,6 +6,35 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.40.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.39.0...c2pa-v0.40.0)
+_11 December 2024_
+
+### Added
+
+* Add `RawSigner` trait to `c2pa-crypto` (derived from `c2pa::Signer`) (#716)
+* Move time stamp code into c2pa-crypto (#696)
+* Adds ValidationState support (#701)
+* Introduce `DynamicAssertion` trait (#566)
+
+### Fixed
+
+* Verbose assertions for `is_none()` (#704)
+* Remove `c2pa::Signer` dependency on `c2pa_crypto::TimeStampProvider` (#718)
+* Add support for MP3 without ID3 header (#652)
+* Treat Unicode-3.0 license as approved; unpin related dependencies (#693)
+* Remote manifest fetch test was not using full path (#675)
+* Fix #624 (edge cases when combining the box hashes) (#625)
+* For Issue 672, Callback is unsound (#674)
+* For Issue 672, Callback is unsound
+* Support "remote_manifest_fetch" verify setting (#667)
+
+### Updated dependencies
+
+* Bump chrono from 0.4.38 to 0.4.39 (#763)
+* Bump asn1-rs from 0.5.2 to 0.6.2 (#724)
+* Bump mockall requirement from 0.11.2 to 0.13.1 in /sdk (#685)
+* Update zip requirement from 0.6.6 to 2.2.1 in /sdk (#698)
+
 ## [0.39.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.38.0...c2pa-v0.39.0)
 _13 November 2024_
 
