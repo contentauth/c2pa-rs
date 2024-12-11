@@ -22,7 +22,7 @@ use c2pa_crypto::{
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
-    SigningAlg,
+    SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
@@ -45,11 +45,9 @@ use crate::openssl::verify_trust; // Eric to investigate
 use crate::wasm::webpki_trust_handler::verify_trust_async; // Eric to investigate
 use crate::{
     // c2pa-crypto migration plans (2024-12-05)
-    error::{Error, Result},
-    settings::get_settings_value,
-    trust_handler::{has_allowed_oid, TrustHandlerConfig},
-    validation_status,
-    validator::ValidationInfo, // Eli to move to c2pa-status-tracker
+    error::{Error, Result},                               // DON'T MOVE
+    settings::get_settings_value,                         // DON'T MOVE
+    trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -1216,7 +1214,7 @@ pub(crate) fn verify_cose(
     // check signature format
     if let Err(_e) = check_sig(&sign1.signature, alg) {
         log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
         // TO REVIEW: This could return e if OneShotStatusTracker is used. Hmmm.

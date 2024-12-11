@@ -178,5 +178,3 @@ pub(crate) mod trust_handler;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
-
-pub(crate) mod validator;
