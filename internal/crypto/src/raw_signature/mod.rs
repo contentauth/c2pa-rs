@@ -13,6 +13,12 @@
 
 //! Tools for working with raw signature algorithms.
 
+pub(crate) mod signer;
+pub use signer::{
+    async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+    AsyncRawSigner, RawSigner, RawSignerError,
+};
+
 pub(crate) mod oids;
 
 mod validator;
