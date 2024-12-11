@@ -24,8 +24,7 @@ _11 December 2024_
 * Treat Unicode-3.0 license as approved; unpin related dependencies (#693)
 * Remote manifest fetch test was not using full path (#675)
 * Fix #624 (edge cases when combining the box hashes) (#625)
-* For Issue 672, Callback is unsound (#674)
-* For Issue 672, Callback is unsound
+* Fix #672, Callback is unsound (#674)
 * Support "remote_manifest_fetch" verify setting (#667)
 
 ### Updated dependencies
