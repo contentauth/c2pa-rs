@@ -42,7 +42,7 @@ coset = "0.3.1"
 getrandom = { version = "0.2.7", features = ["js"] }
 hex = "0.4.3"
 rand = "0.8.5"
-rasn = "0.18.0"
+rasn = "0.22.0"
 rasn-ocsp = "0.18.0"
 rasn-pkix = "0.18.0"
 schemars = { version = "0.8.21", optional = true }
