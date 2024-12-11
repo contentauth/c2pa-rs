@@ -30,7 +30,7 @@ fn good() {
     let ocsp_data =
         OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
 
-    assert!(ocsp_data.revoked_at.is_none());
+    assert_eq!(ocsp_data.revoked_at, None);
     assert!(ocsp_data.ocsp_certs.is_some());
 }
 

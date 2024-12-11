@@ -1316,7 +1316,7 @@ mod tests {
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{}", manifest_store);
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
@@ -1345,7 +1345,7 @@ mod tests {
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
         println!("{}", manifest_store);
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
@@ -1402,7 +1402,7 @@ mod tests {
             println!("{}", manifest_store);
             if format != "c2pa" {
                 // c2pa files will not validate since they have no associated asset
-                assert!(manifest_store.validation_status().is_none());
+                assert_eq!(manifest_store.validation_status(), None);
             }
             assert_eq!(
                 manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -1489,7 +1489,7 @@ mod tests {
                 .expect("from_bytes");
 
         println!("{}", reader.json());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[test]
@@ -1548,7 +1548,7 @@ mod tests {
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
         #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1644,7 +1644,7 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
 
         //println!("{}", reader);
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
         assert_eq!(
             reader
                 .active_manifest()

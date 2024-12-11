@@ -258,7 +258,7 @@ pub mod tests {
             Some(assertion.to_string()),
             assertion_label_from_uri(&assertion_uri)
         );
-        assert_eq!(None, assertion_label_from_uri(&absolute_uri));
+        assert_eq!(assertion_label_from_uri(&absolute_uri), None);
 
         let assertion_relative = to_relative_uri(&assertion_uri);
 
