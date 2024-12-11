@@ -96,6 +96,11 @@ jobs:
             exit 0;
           fi
 
+          if echo "$PR_TITLE" | grep -E '^update: bump '; then
+            echo "Exception / OK: Dependabot update pattern"
+            exit 0;
+          fi
+
           echo "Installing commitlint-rs. Please wait 30-40 seconds ..."
           cargo install --quiet commitlint-rs
           set -e
