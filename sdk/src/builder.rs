@@ -24,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::FileOptions, ZipArchive, ZipWriter};
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionDecodeError,
@@ -453,7 +453,7 @@ impl Builder {
             {
                 let mut zip = ZipWriter::new(stream);
                 let options =
-                    FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
                 // write a version file
                 zip.start_file("version.txt", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
