@@ -14,6 +14,9 @@ jobs:
     name: Release-plz
     runs-on: ubuntu-latest
 
+    outputs:
+      c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,79 +42,81 @@ jobs:
             tail -n +2 |\
             sed 's/origin\///' |\
             xargs -I {} git push origin --delete {}
-      
-      - name: Identify c2patool release tag
-        env:
-          RELEASES: ${{ steps.release-plz.outputs.releases }}
+  
+      - name: Identify c2patool release
+        id: sniff-c2patool-release-tag
         run: |
-          echo "TO DO: Identify c2patool release tag, if any"
-          echo $RELEASES
-          exit 1
+          echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
+    
+  publish-c2patool-binaries:
+    name: Publish c2patool binaries
+    runs-on: ${{ matrix.os }}
+    needs: release-plz
 
-  # publish-c2patool-binaries:
-  #   name: Publish c2patool binaries
-  #   runs-on: ${{ matrix.os }}
-  #   needs: release-plz
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        rust_version: [ stable ]
+        experimental: [ false ]
+        include:
+          - os: macos-latest
+            artifact_name: c2patool_mac_universal.zip
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
+          - os: ubuntu-latest
+            artifact_name: c2patool_linux_intel.tar.gz
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-latest
+            artifact_name: c2patool_win_intel.zip
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
 
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       os: [ macos-latest, ubuntu-latest, windows-latest ]
-  #       rust_version: [ stable ]
-  #       experimental: [ false ]
-  #       include:
-  #         - os: macos-latest
-  #           artifact_name: c2patool_mac_universal.zip
-  #           uploaded_asset_name: c2patool-${{ needs.repo-prep.outputs.new-tag }}-universal-apple-darwin.zip
-  #         - os: ubuntu-latest
-  #           artifact_name: c2patool_linux_intel.tar.gz
-  #           uploaded_asset_name: c2patool-${{ needs.repo-prep.outputs.new-tag }}-x86_64-unknown-linux-gnu.tar.gz
-  #         - os: windows-latest
-  #           artifact_name: c2patool_win_intel.zip
-  #           uploaded_asset_name: c2patool-${{ needs.repo-prep.outputs.new-tag }}-x86_64-pc-windows-msvc.zip
+    steps:
+      - name: Checkout repository
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: actions/checkout@v4
 
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
-  #       with:
-  #         ref: ${{ needs.repo-prep.outputs.commit-hash }}
+      - name: Install Rust toolchain
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
 
-  #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@master
-  #       with:
-  #         toolchain: ${{ matrix.rust_version }}
-  #         components: llvm-tools-preview
+      - name: Install cargo-sbom
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-sbom
+          version: '0.9.1'
 
-  #     - name: Install cargo-sbom
-  #       uses: baptiste0928/cargo-install@v3
-  #       with:
-  #         crate: cargo-sbom
-  #         version: '0.9.1'
+      - name: Cache Rust dependencies
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: Swatinem/rust-cache@v2
 
-  #     - name: Cache Rust dependencies
-  #       uses: Swatinem/rust-cache@v2
+      - name: Run make release
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        run: make release
 
-  #     - name: Run make release
-  #       run: make release
+      - name: Upload binary to GitHub
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.uploaded_asset_name }}
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
 
-  #     - name: Upload binary to GitHub
-  #       uses: svenstaro/upload-release-action@v1-release
-  #       with:
-  #         repo_token: ${{ secrets.GITHUB_TOKEN }}
-  #         file: target/${{ matrix.artifact_name }}
-  #         asset_name: ${{ matrix.uploaded_asset_name }}
-  #         tag: ${{ needs.repo-prep.outputs.new-tag }}
-  #         overwrite: true
+      - name: Generate SBOM
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        run: cargo sbom > c2patool.${{ matrix.os }}.sbom.json
 
-  #     - name: Generate SBOM
-  #       run: cargo sbom > c2patool.${{ matrix.os }}.sbom.json
-
-  #     - name: Upload SBOM to Github
-  #       uses: svenstaro/upload-release-action@v1-release
-  #       with:
-  #         repo_token: ${{ secrets.GITHUB_TOKEN }}
-  #         file: c2patool.${{ matrix.os }}.sbom.json
-  #         asset_name: c2patool-${{ needs.repo-prep.outputs.new-tag }}-sbom.json
-  #         tag: ${{ needs.repo-prep.outputs.new-tag }}
-  #         overwrite: true
-
+      - name: Upload SBOM to Github
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: c2patool.${{ matrix.os }}.sbom.json
+          asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-sbom.json
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
