@@ -6,6 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.2...c2pa-crypto-v0.2.0)
+_11 December 2024_
+
+### Added
+
+* Add `RawSigner` trait to `c2pa-crypto` (derived from `c2pa::Signer`) (#716)
+* Move time stamp code into c2pa-crypto (#696)
+
+### Fixed
+
+* Verbose assertions for `is_none()` (#704)
+* Remove `c2pa::Signer` dependency on `c2pa_crypto::TimeStampProvider` (#718)
+* Treat Unicode-3.0 license as approved; unpin related dependencies (#693)
+
 ## [0.1.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.1...c2pa-crypto-v0.1.2)
 _24 October 2024_
 
