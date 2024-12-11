@@ -63,12 +63,12 @@ url = "2.5.3"
 normal = ["openssl"] # TEMPORARY: Remove after openssl transition complete.
 
 [dependencies.chrono]
-version = "0.4.38"
+version = "0.4.39"
 default-features = false
 features = ["wasmbind"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.chrono]
-version = "0.4.38"
+version = "0.4.39"
 default-features = false
 features = ["now", "wasmbind"]
 
