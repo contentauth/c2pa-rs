@@ -1570,7 +1570,7 @@ impl RemoteRefEmbed for TiffIO {
                 let xmp = match self.get_reader().read_xmp(source_stream) {
                     Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
                     None => {
-                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        let xmp = MIN_XMP.to_string();
                         add_provenance(&xmp, &manifest_uri)?
                     }
                 };
