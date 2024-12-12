@@ -976,4 +976,31 @@ pub mod tests {
         assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
         println!("{xmp}");
     }
+
+    #[test]
+    fn test_add_to_no_xmp_and_no_metadata_tag() {
+        let source = fixture_path("sample5.svg");
+        let mut stream = File::open(&source).unwrap();
+        let test_data = "http://mysite.com/somelink";
+        let mut output_stream = Cursor::new(Vec::new());
+
+        let svg_io = SvgIO::new("svg");
+
+        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        ref_writer
+            .embed_reference_to_stream(
+                &mut stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_data.to_string()),
+            )
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let xmp = svg_io.read_xmp(&mut output_stream).unwrap();
+
+        assert!(xmp.starts_with("<?xpacket"));
+        assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
+        assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
+        println!("{xmp}");
+    }
 }
