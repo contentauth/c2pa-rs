@@ -2,7 +2,7 @@
 name = "c2patool"
 default-run = "c2patool"
 
-version = "0.10.0"
+version = "0.10.2"
 
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
