@@ -95,6 +95,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -709,9 +715,9 @@ dependencies = [
  "rand_chacha",
  "rand_core 0.9.0-beta.1",
  "range-set",
- "rasn",
+ "rasn 0.18.0",
  "rasn-ocsp",
- "rasn-pkix",
+ "rasn-pkix 0.22.0",
  "riff",
  "rsa",
  "schemars",
@@ -766,9 +772,9 @@ dependencies = [
  "p256",
  "p384",
  "rand",
- "rasn",
+ "rasn 0.18.0",
  "rasn-ocsp",
- "rasn-pkix",
+ "rasn-pkix 0.22.0",
  "rsa",
  "schemars",
  "serde",
@@ -1779,6 +1785,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
+ "allocator-api2",
 ]
 
 [[package]]
@@ -3271,9 +3278,31 @@ dependencies = [
  "num-integer",
  "num-traits",
  "once_cell",
- "rasn-derive",
+ "rasn-derive 0.18.0",
  "serde_json",
- "snafu",
+ "snafu 0.7.5",
+]
+
+[[package]]
+name = "rasn"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f593394cad523914fcac9296bdb69701ad308589b3ea1e16d37b6f0c3cfad075"
+dependencies = [
+ "bitvec",
+ "bitvec-nom2",
+ "bytes",
+ "chrono",
+ "either",
+ "hashbrown 0.14.5",
+ "nom",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "once_cell",
+ "rasn-derive 0.22.0",
+ "serde_json",
+ "snafu 0.8.5",
 ]
 
 [[package]]
@@ -3292,13 +3321,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "rasn-derive"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f2c367bf1b9a9bc34d40b9c140b52d26b585d0c7755b18496ba061f50639082"
+dependencies = [
+ "proc-macro2",
+ "rasn-derive-impl",
+ "syn 2.0.90",
+]
+
+[[package]]
+name = "rasn-derive-impl"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a321099d2f0f08f0afb90e68a16015abea210d4734f7faf6b3497f29feb46a35"
+dependencies = [
+ "either",
+ "itertools 0.13.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
+ "uuid",
+]
+
+[[package]]
 name = "rasn-ocsp"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ecc5a6f83a09d3c8f2bd8c200a28986db30b1ad0a33bb828442d2efee5871f1"
 dependencies = [
- "rasn",
- "rasn-pkix",
+ "rasn 0.18.0",
+ "rasn-pkix 0.18.0",
 ]
 
 [[package]]
@@ -3307,7 +3361,16 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3da2b04cf81b8135d5b362cf29143018eb708039670c2680092f1f1b79d501f"
 dependencies = [
- "rasn",
+ "rasn 0.18.0",
+]
+
+[[package]]
+name = "rasn-pkix"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "884db2ae0da3a7239daaec802df74f3431062f85651c511e6c40b35a30282b82"
+dependencies = [
+ "rasn 0.22.0",
 ]
 
 [[package]]
@@ -3930,7 +3993,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4de37ad025c587a29e8f3f5605c00f70b98715ef90b9061a815b9e59e9042d6"
 dependencies = [
  "doc-comment",
- "snafu-derive",
+ "snafu-derive 0.7.5",
+]
+
+[[package]]
+name = "snafu"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "223891c85e2a29c3fe8fb900c1fae5e69c2e42415e3177752e8718475efa5019"
+dependencies = [
+ "snafu-derive 0.8.5",
 ]
 
 [[package]]
@@ -3943,6 +4015,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c3c6b7927ffe7ecaa769ee0e3994da3b8cafc8f444578982c83ecb161af917"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
 ]
 
 [[package]]
