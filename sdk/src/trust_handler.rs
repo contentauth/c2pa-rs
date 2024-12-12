@@ -14,61 +14,18 @@
 use std::{
     collections::HashSet,
     io::{read_to_string, Cursor, Read},
-    panic::{RefUnwindSafe, UnwindSafe},
     str::FromStr,
 };
 
 use asn1_rs::{oid, Oid};
-use c2pa_crypto::{base64, hash::sha256};
-
-use crate::{Error, Result};
+use c2pa_crypto::{base64, hash::sha256, trust_handler::TrustHandlerError};
 
 pub(crate) static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
 pub(crate) static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
 pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9);
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
-// Trait for supply configuration and handling of trust lists and EKU configuration store
-//
-// `RefUnwindSafe` + `UnwindSafe` were added to ensure `Store` is unwind safe and to preserve
-// backwards compatibility.
-pub(crate) trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
-    fn new() -> Self
-    where
-        Self: Sized;
-
-    // add trust anchors
-    fn load_trust_anchors_from_data(&mut self, trust_data: &mut dyn Read) -> Result<()>;
-
-    // add allowed list
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()>;
-
-    // append private trust anchors
-    fn append_private_trust_data(&mut self, private_anchors_data: &mut dyn Read) -> Result<()>;
-
-    // clear all entries in trust handler list
-    fn clear(&mut self);
-
-    // load EKU configuration
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()>;
-
-    // list off auxillary allowed EKU Oid
-    fn get_auxillary_ekus(&self) -> Vec<Oid>;
-
-    // list of all anchors
-    #[allow(dead_code)] // Only used in calls with allow dead_code
-    fn get_anchors(&self) -> Vec<Vec<u8>>;
-
-    // set of allowed cert hashes
-    #[allow(dead_code)] // Only used in calls with allow dead_code
-    fn get_allowed_list(&self) -> &HashSet<String>;
-}
-
-impl std::fmt::Debug for dyn TrustHandlerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TrustHandler Installed")
-    }
-}
+pub(crate) use c2pa_crypto::trust_handler::TrustHandlerConfig;
 
 pub(crate) fn has_allowed_oid<'a>(
     eku: &x509_parser::extensions::ExtendedKeyUsage,
@@ -104,7 +61,7 @@ pub(crate) fn has_allowed_oid<'a>(
 
 // load set of validation EKUs, ignoring unrecognized Oid lines
 #[allow(dead_code)]
-pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> Result<Vec<String>> {
+pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> crate::Result<Vec<String>> {
     let mut oid_vec = Vec::new();
 
     for line in read_to_string(config_data)?.lines() {
@@ -115,11 +72,11 @@ pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> Result<Vec<S
     Ok(oid_vec)
 }
 
-pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
     let mut certs = Vec::new();
 
     for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
-        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+        let pem = pem_result.map_err(|_e| crate::Error::CoseInvalidCert)?;
         certs.push(pem.contents);
     }
     Ok(certs)
@@ -133,31 +90,33 @@ pub(crate) struct TrustPassThrough {
     config_store: Vec<u8>,
 }
 
-impl TrustHandlerConfig for TrustPassThrough {
-    fn new() -> Self
-    where
-        Self: Sized,
-    {
+impl TrustPassThrough {
+    pub(crate) fn new() -> Self {
         TrustPassThrough {
             allowed_cert_set: HashSet::new(),
             config_store: Vec::new(),
         }
     }
+}
 
-    fn load_trust_anchors_from_data(&mut self, _trust_data: &mut dyn std::io::Read) -> Result<()> {
+impl TrustHandlerConfig for TrustPassThrough {
+    fn load_trust_anchors_from_data(
+        &mut self,
+        _trust_data: &mut dyn std::io::Read,
+    ) -> Result<(), TrustHandlerError> {
         Ok(())
     }
 
     fn append_private_trust_data(
         &mut self,
         _private_anchors_data: &mut dyn std::io::Read,
-    ) -> Result<()> {
+    ) -> Result<(), TrustHandlerError> {
         Ok(())
     }
 
     fn clear(&mut self) {}
 
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
+    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
         config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
@@ -189,7 +148,10 @@ impl TrustHandlerConfig for TrustPassThrough {
         Vec::new()
     }
 
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn std::io::prelude::Read) -> Result<()> {
+    fn load_allowed_list(
+        &mut self,
+        allowed_list: &mut dyn std::io::prelude::Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
         allowed_list.read_to_end(&mut buffer)?;
 

@@ -41,6 +41,7 @@ mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
 pub mod time_stamp;
+pub mod trust_handler;
 
 mod validation_info;
 pub use validation_info::ValidationInfo;

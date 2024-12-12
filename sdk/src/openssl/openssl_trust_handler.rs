@@ -18,15 +18,17 @@ use std::{
 };
 
 use asn1_rs::Oid;
-use c2pa_crypto::{base64, hash::sha256, openssl::OpenSslMutex};
+use c2pa_crypto::{
+    base64,
+    hash::sha256,
+    openssl::OpenSslMutex,
+    trust_handler::{TrustHandlerConfig, TrustHandlerError},
+};
 use openssl::x509::verify::X509VerifyFlags;
 
-use crate::{
-    trust_handler::{load_eku_configuration, TrustHandlerConfig},
-    Error, Result,
-};
+use crate::{trust_handler::load_eku_configuration, Error};
 
-fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
+fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>, TrustHandlerError> {
     // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
     // don't make this pub or pub(crate) without finding a way to ensure that
     // precondition.
@@ -34,16 +36,18 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>> {
     let mut certs: Vec<openssl::x509::X509> = Vec::new();
 
     for d in ders {
-        let cert = openssl::x509::X509::from_der(d).map_err(Error::OpenSslError)?;
+        let cert = openssl::x509::X509::from_der(d)?;
         certs.push(cert);
     }
 
     Ok(certs)
 }
 
-fn load_trust_from_pem_data(trust_data: &[u8]) -> Result<Vec<openssl::x509::X509>> {
+fn load_trust_from_pem_data(
+    trust_data: &[u8],
+) -> Result<Vec<openssl::x509::X509>, TrustHandlerError> {
     let _openssl = OpenSslMutex::acquire()?;
-    openssl::x509::X509::stack_from_pem(trust_data).map_err(Error::OpenSslError)
+    Ok(openssl::x509::X509::stack_from_pem(trust_data)?)
 }
 
 // Struct to handle verification of trust chains
@@ -56,7 +60,7 @@ pub(crate) struct OpenSSLTrustHandlerConfig {
 }
 
 impl OpenSSLTrustHandlerConfig {
-    pub fn load_default_trust(&mut self) -> Result<()> {
+    pub fn load_default_trust(&mut self) -> Result<(), TrustHandlerError> {
         // load config store
         let config = include_bytes!("./store.cfg");
         let mut config_reader = Cursor::new(config);
@@ -73,11 +77,10 @@ impl OpenSSLTrustHandlerConfig {
         Ok(())
     }
 
-    fn update_store(&mut self) -> Result<()> {
+    fn update_store(&mut self) -> Result<(), TrustHandlerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
-        let mut builder =
-            openssl::x509::store::X509StoreBuilder::new().map_err(Error::OpenSslError)?;
+        let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
 
         // add trust anchors
         for t in &self.trust_anchors {
@@ -107,8 +110,8 @@ impl std::fmt::Debug for OpenSSLTrustHandlerConfig {
 }
 
 #[allow(dead_code)]
-impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
-    fn new() -> Self {
+impl OpenSSLTrustHandlerConfig {
+    pub(crate) fn new() -> Self {
         let mut th = OpenSSLTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
@@ -122,22 +125,29 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
 
         th
     }
+}
 
+#[allow(dead_code)]
+impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
     // add trust anchors
-    fn load_trust_anchors_from_data(&mut self, trust_data_reader: &mut dyn Read) -> Result<()> {
+    fn load_trust_anchors_from_data(
+        &mut self,
+        trust_data_reader: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut trust_data = Vec::new();
         trust_data_reader.read_to_end(&mut trust_data)?;
 
         self.trust_anchors = load_trust_from_pem_data(&trust_data)?;
         if self.trust_anchors.is_empty() {
-            return Err(Error::NotFound); // catch silent failure
+            return Err(TrustHandlerError::InternalError("no trust anchors found"));
+            // catch silent failure
         }
 
         self.update_store()
     }
 
     // add allowed list entries
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()> {
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
         allowed_list.read_to_end(&mut buffer)?;
 
@@ -145,7 +155,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
             let _openssl = OpenSslMutex::acquire()?;
             if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
                 for cert in &cert_list {
-                    let cert_der = cert.to_der().map_err(Error::OpenSslError)?;
+                    let cert_der = cert.to_der()?;
                     let cert_sha256 = sha256(&cert_der);
                     let cert_hash_base64 = base64::encode(&cert_sha256);
 
@@ -177,7 +187,10 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
     }
 
     // append private trust anchors
-    fn append_private_trust_data(&mut self, private_anchors_reader: &mut dyn Read) -> Result<()> {
+    fn append_private_trust_data(
+        &mut self,
+        private_anchors_reader: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut private_anchors_data = Vec::new();
         private_anchors_reader.read_to_end(&mut private_anchors_data)?;
 
@@ -193,7 +206,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
     }
 
     // load EKU configuration
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
+    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
         config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
@@ -240,7 +253,7 @@ pub(crate) fn verify_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoc: Option<i64>,
-) -> Result<bool> {
+) -> crate::Result<bool> {
     // check the cert against the allowed list first
     let cert_sha256 = sha256(cert_der);
     let cert_hash_base64 = base64::encode(&cert_sha256);
