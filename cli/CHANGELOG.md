@@ -23,11 +23,8 @@ _12 December 2024_
 
 ### Other
 
+* Move c2patool source code into c2pa-rs repo (#723)
 * Move profile settings to workspace Cargo.toml
-* Fix README links
-* Update repository link in cli/Cargo.toml
-* Fix formatting of cli/CHANGELOG.md
-* Merge branch 'c2patool-main' into c2patool-merge
 * Enlarged description of c2pa command-line behavior (contentauth/c2patool[#285](https://github.com/contentauth/c2pa-rs/pull/285))
 
 ## 0.9.12
