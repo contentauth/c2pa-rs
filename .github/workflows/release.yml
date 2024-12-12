@@ -95,7 +95,7 @@ jobs:
 
       - name: Run make release
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: make release
+        run: cd cli && make release
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
@@ -109,14 +109,14 @@ jobs:
 
       - name: Generate SBOM
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: cargo sbom > c2patool.${{ matrix.os }}.sbom.json
+        run: cd cli && cargo sbom > c2patool.${{ matrix.os }}.sbom.json
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: svenstaro/upload-release-action@v1-release
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: c2patool.${{ matrix.os }}.sbom.json
+          file: cli/c2patool.${{ matrix.os }}.sbom.json
           asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-sbom.json
           tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
           overwrite: true
