@@ -91,8 +91,7 @@ impl WebTrustHandlerConfig {
 }
 
 impl TrustHandlerConfig for WebTrustHandlerConfig {
-    // add trust anchors
-    fn load_trust_anchors_from_data(
+    fn set_trust_anchors(
         &mut self,
         trust_data_reader: &mut dyn Read,
     ) -> Result<(), TrustHandlerError> {

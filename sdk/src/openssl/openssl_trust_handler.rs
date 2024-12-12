@@ -129,18 +129,16 @@ impl OpenSSLTrustHandlerConfig {
 
 #[allow(dead_code)]
 impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
-    // add trust anchors
-    fn load_trust_anchors_from_data(
+    fn set_trust_anchors(
         &mut self,
-        trust_data_reader: &mut dyn Read,
+        trust_anchor_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError> {
         let mut trust_data = Vec::new();
-        trust_data_reader.read_to_end(&mut trust_data)?;
+        trust_anchor_pems.read_to_end(&mut trust_data)?;
 
         self.trust_anchors = load_trust_from_pem_data(&trust_data)?;
         if self.trust_anchors.is_empty() {
             return Err(TrustHandlerError::InternalError("no trust anchors found"));
-            // catch silent failure
         }
 
         self.update_store()
@@ -359,7 +357,7 @@ pub mod tests {
 
         // load the trust store
         let mut reader = Cursor::new(ta);
-        th.load_trust_anchors_from_data(&mut reader).unwrap();
+        th.set_trust_anchors(&mut reader).unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);

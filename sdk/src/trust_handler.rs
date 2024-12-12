@@ -100,10 +100,11 @@ impl TrustPassThrough {
 }
 
 impl TrustHandlerConfig for TrustPassThrough {
-    fn load_trust_anchors_from_data(
+    fn set_trust_anchors(
         &mut self,
         _trust_data: &mut dyn std::io::Read,
     ) -> Result<(), TrustHandlerError> {
+        // Ignore all trust anchors.
         Ok(())
     }
 

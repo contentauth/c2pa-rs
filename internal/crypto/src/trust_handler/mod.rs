@@ -29,10 +29,35 @@ use thiserror::Error;
 /// An implementation of `TrustHandlerConfig` retains information about trust
 /// lists and allowed EKUs to be used when verifying signing certificates.
 pub trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
-    // add trust anchors
-    fn load_trust_anchors_from_data(
+    /// Set trust anchors (root X.509 certificates) that shall be accepted when
+    /// verifying COSE signatures.
+    ///
+    /// From [§14.4.1, C2PA Signers] of the C2PA Technical Specification:
+    ///
+    /// > A validator shall maintain the following lists for C2PA signers:
+    /// >
+    /// > * The list of X.509 certificate trust anchors provided by the C2PA
+    /// > (i.e., the C2PA Trust List).
+    /// > * A list of additional X.509 certificate trust anchors.
+    /// > * A list of accepted Extended Key Usage (EKU) values. _(not relevant
+    /// > for this API)_
+    /// >
+    /// > NOTE: Some of these lists can be empty.
+    /// >
+    /// > In addition to the list of trust anchors provided in the C2PA Trust
+    /// > List, a validator should allow a user to configure additional trust
+    /// > anchor stores, and should provide default options or offer lists
+    /// > maintained by external parties that the user may opt into to populate
+    /// > the validator’s trust anchor store for C2PA signers.
+    ///
+    /// This function reads one or more X.509 root certificates in PEM format
+    /// and configures the trust handler to accept certificates that chain up to
+    /// these trust anchors.
+    /// 
+    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    fn set_trust_anchors(
         &mut self,
-        trust_data: &mut dyn Read,
+        trust_anchor_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
     // add allowed list

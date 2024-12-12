@@ -171,10 +171,8 @@ impl Store {
     /// Load set of trust anchors used for certificate validation. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.
     pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        Ok(self
-            .trust_handler
-            .load_trust_anchors_from_data(&mut trust_reader)?)
+        let mut trust_anchors = Cursor::new(trust_vec);
+        Ok(self.trust_handler.set_trust_anchors(&mut trust_anchors)?)
     }
 
     // Load set of private trust anchors used for certificate validation. [u8] to the
