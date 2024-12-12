@@ -50,6 +50,7 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         return Some(validator);
     }
 
+    let _ = alg; // this value will be unused in this case
     None
 }
 
