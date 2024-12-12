@@ -12,6 +12,7 @@
 // each license.
 
 use bcder::Oid;
+use c2pa_status_tracker::ValidationError;
 use thiserror::Error;
 
 use super::oids::*;
@@ -164,4 +165,8 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignatureValidationError {
             }
         }
     }
+}
+
+impl ValidationError for RawSignatureValidationError {
+    // ...
 }
