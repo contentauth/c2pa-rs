@@ -15,7 +15,7 @@ use std::{io::Cursor, path::Path};
 use anyhow::Result;
 use c2pa::{IngredientOptions, Reader};
 
-/// display additional C2PA information about the asset (not json formatted)
+/// Display additional C2PA information about the asset (not JSON formatted).
 pub fn info(path: &Path) -> Result<()> {
     struct Options {}
     impl IngredientOptions for Options {
