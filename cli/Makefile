@@ -31,13 +31,13 @@ fmt:
 
 # Creates a folder wtih c2patool bin, samples and readme
 c2patool-package:
-	rm -rf target/c2patool*
-	mkdir -p target/c2patool
-	mkdir -p target/c2patool/sample
-	cp target/release/c2patool target/c2patool/c2patool
-	cp README.md target/c2patool/README.md
-	cp sample/* target/c2patool/sample
-	cp CHANGELOG.md target/c2patool/CHANGELOG.md
+	rm -rf ../target/c2patool*
+	mkdir -p ../target/c2patool
+	mkdir -p ../target/c2patool/sample
+	cp ../target/release/c2patool ../target/c2patool/c2patool
+	cp README.md ../target/c2patool/README.md
+	cp sample/* ../target/c2patool/sample
+	cp CHANGELOG.md ../target/c2patool/CHANGELOG.md
 
 # These are for building the c2patool release bin on various platforms
 build-release-win:
@@ -52,7 +52,7 @@ build-release-mac-x86:
 	MACOSX_DEPLOYMENT_TARGET=10.15 cargo build --target=x86_64-apple-darwin --release
 
 build-release-mac-universal: build-release-mac-arm build-release-mac-x86
-	lipo -create -output target/release/c2patool target/aarch64-apple-darwin/release/c2patool target/x86_64-apple-darwin/release/c2patool
+	lipo -create -output ../target/release/c2patool ../target/aarch64-apple-darwin/release/c2patool ../target/x86_64-apple-darwin/release/c2patool
 
 build-release-linux:
 	cargo build --release
@@ -60,13 +60,13 @@ build-release-linux:
 # Builds and packages a zip for c2patool for each platform
 ifeq ($(PLATFORM), mac)
 release: build-release-mac-universal c2patool-package
-	cd target && zip -r c2patool_mac_universal.zip c2patool && cd ..
+	cd ../target && zip -r c2patool_mac_universal.zip c2patool && cd ..
 endif
 ifeq ($(PLATFORM), win)
 release: build-release-win c2patool-package
-	cd target && 7z a -r c2patool_win_intel.zip c2patool && cd ..
+	cd ../target && 7z a -r c2patool_win_intel.zip c2patool && cd ..
 endif
 ifeq ($(PLATFORM), linux)
 release: build-release-linux c2patool-package
-	cd target && tar -czvf c2patool_linux_intel.tar.gz c2patool && cd ..
+	cd ../target && tar -czvf c2patool_linux_intel.tar.gz c2patool && cd ..
 endif
