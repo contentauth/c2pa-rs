@@ -175,7 +175,7 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-  tests:
+  cargo-check:
     name: Default features build
     if: |
       github.event_name != 'pull_request' ||
