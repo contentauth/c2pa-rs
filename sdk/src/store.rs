@@ -523,7 +523,8 @@ impl Store {
         } else {
             if signer.direct_cose_handling() {
                 // Let the signer do all the COSE processing and return the structured COSE data.
-                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+                return signer.sign(claim_bytes.clone()).await;
+            // do not verify remote signers (we never did)
             } else {
                 cose_sign_async(signer, &claim_bytes, box_size, claim.version()).await
             }
@@ -3705,9 +3706,10 @@ pub mod tests {
             hash_utils::Hasher,
             patch::patch_file,
             test::{
-                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
+            test_signer::{async_test_signer, test_signer},
         },
     };
 
@@ -3758,7 +3760,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Test generate JUMBF
         // Get labels for label test
@@ -3878,7 +3880,7 @@ pub mod tests {
         claimv2.add_claim_generator_info(cgi);
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Test generate JUMBF
         // Get labels for label test
@@ -3985,7 +3987,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4025,7 +4027,7 @@ pub mod tests {
 
     struct BadSigner {}
 
-    impl crate::Signer for BadSigner {
+    impl Signer for BadSigner {
         fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             Ok(b"not a valid signature".to_vec())
         }
@@ -4070,7 +4072,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+        use c2pa_crypto::SigningAlg;
+
+        use crate::create_signer;
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4084,7 +4088,7 @@ pub mod tests {
         let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
         let pkey_path = fixture_path("rsa-pss256-expired.pem");
         let signer =
-            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
+            create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
 
         store.commit_claim(claim).unwrap();
 
@@ -4125,12 +4129,12 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
+        assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
     }
 
     #[actix::test]
     async fn test_jumbf_generation_async() {
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4255,7 +4259,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4351,7 +4355,7 @@ pub mod tests {
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
 
             // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
             store.commit_claim(claim1).unwrap();
@@ -4424,7 +4428,7 @@ pub mod tests {
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
 
             // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
             store.commit_claim(claim1).unwrap();
@@ -4498,7 +4502,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4572,7 +4576,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4646,7 +4650,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4712,7 +4716,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4756,7 +4760,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4800,7 +4804,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4926,7 +4930,7 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4964,7 +4968,7 @@ pub mod tests {
     fn test_data_box_creation() {
         use crate::utils::test::create_test_store;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5019,7 +5023,7 @@ pub mod tests {
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5194,7 +5198,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
@@ -5224,7 +5228,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let result: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(result);
@@ -5286,7 +5290,7 @@ pub mod tests {
         claim.set_external_manifest();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         store.commit_claim(claim).unwrap();
 
@@ -5323,7 +5327,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5391,7 +5395,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5443,7 +5447,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5499,7 +5503,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         store.commit_claim(claim1).unwrap();
 
@@ -5553,7 +5557,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -5623,7 +5627,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // get the embeddable manifest
         let em = store
@@ -5709,7 +5713,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // get the embeddable manifest
         let em = store
@@ -5772,12 +5776,12 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
-
         use std::io::SeekFrom;
+
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -5846,7 +5850,7 @@ pub mod tests {
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -5917,7 +5921,7 @@ pub mod tests {
         let mut hasher = Hasher::SHA256(Sha256::new());
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -6023,7 +6027,7 @@ pub mod tests {
     fn test_placed_manifest() {
         use crate::jumbf::labels::to_normalized_uri;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("C.jpg");
@@ -6143,7 +6147,7 @@ pub mod tests {
 
         impl DynamicSigner {
             fn new() -> Self {
-                let signer = temp_signer();
+                let signer = test_signer(SigningAlg::Ps256);
                 DynamicSigner {
                     alg: signer.alg(),
                     certs: signer.certs().unwrap_or_default(),
@@ -6157,7 +6161,7 @@ pub mod tests {
         #[async_trait::async_trait]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
-                let signer = temp_signer();
+                let signer = test_signer(SigningAlg::Ps256);
                 signer.sign(&data)
             }
 
@@ -6270,7 +6274,7 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = temp_signer();
+                    let signer = test_signer(SigningAlg::Ps256);
 
                     // add manifest based on
                     let new_output_path = output_path.join(init_dir.file_name().unwrap());

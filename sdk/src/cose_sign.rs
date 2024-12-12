@@ -38,7 +38,6 @@ use crate::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
     trust_handler::TrustHandlerConfig,
-    utils::sig_utils::der_to_p1363,
     AsyncSigner, Error, Result, Signer,
 };
 
@@ -277,6 +276,63 @@ pub(crate) fn cose_sign(
     }
 }
 
+fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
+    // P1363 format: r | s
+
+    let (_, p) = parse_ec_der_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
+
+    let mut r = extfmt::Hexlify(p.r).to_string();
+    let mut s = extfmt::Hexlify(p.s).to_string();
+
+    let sig_len: usize = match alg {
+        SigningAlg::Es256 => 64,
+        SigningAlg::Es384 => 96,
+        SigningAlg::Es512 => 132,
+        _ => return Err(Error::UnsupportedType),
+    };
+
+    // pad or truncate as needed
+    let rp = if r.len() > sig_len {
+        // truncate
+        let offset = r.len() - sig_len;
+        &r[offset..r.len()]
+    } else {
+        // pad
+        while r.len() != sig_len {
+            r.insert(0, '0');
+        }
+        r.as_ref()
+    };
+
+    let sp = if s.len() > sig_len {
+        // truncate
+        let offset = s.len() - sig_len;
+        &s[offset..s.len()]
+    } else {
+        // pad
+        while s.len() != sig_len {
+            s.insert(0, '0');
+        }
+        s.as_ref()
+    };
+
+    if rp.len() != sig_len || rp.len() != sp.len() {
+        return Err(Error::InvalidEcdsaSignature);
+    }
+
+    // merge r and s strings
+    let mut new_sig = rp.to_string();
+    new_sig.push_str(sp);
+
+    // convert back from hex string to byte array
+    (0..new_sig.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
+        })
+        .collect()
+}
+
 #[async_generic(async_signature(signer: &dyn AsyncSigner, alg: SigningAlg))]
 fn build_protected_headers(signer: &dyn Signer, alg: SigningAlg) -> Result<ProtectedHeader> {
     let mut protected_h = match alg {
@@ -448,9 +504,12 @@ fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use c2pa_crypto::SigningAlg;
 
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer};
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
+    use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
     #[test]
     fn test_sign_claim() {
@@ -459,7 +518,7 @@ mod tests {
 
         let claim_bytes = claim.data().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
@@ -471,16 +530,16 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use crate::{
-            cose_sign::sign_claim_async, openssl::AsyncSignerAdapter, AsyncSigner, SigningAlg,
-        };
+        use c2pa_crypto::SigningAlg;
+
+        use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
 
-        let signer = AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
         let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size)
@@ -498,8 +557,8 @@ mod tests {
         }
     }
 
-    impl crate::Signer for BogusSigner {
-        fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
+    impl Signer for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             eprintln!("Canary, canary, please cause this deploy to fail!");
             Ok(b"totally bogus signature".to_vec())
         }
@@ -508,7 +567,7 @@ mod tests {
             c2pa_crypto::SigningAlg::Ps256
         }
 
-        fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
             let cert_vec: Vec<u8> = Vec::new();
             let certs = vec![cert_vec];
             Ok(certs)

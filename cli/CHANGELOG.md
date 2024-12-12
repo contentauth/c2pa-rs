@@ -4,7 +4,43 @@ All changes to this project are documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
-Since version 0.9.13, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.1...c2patool-v0.10.2)
+_12 December 2024_
+
+### Fixed
+
+* No-op change to trigger new c2patool build
+* Update makefile for c2patool's new location in c2pa-rs workspace
+
+## [0.10.1](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.0...c2patool-v0.10.1)
+_12 December 2024_
+
+### Fixed
+
+* No-op change to trigger new c2patool release
+
+## [0.10.0](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.9.12...c2patool-v0.10.0)
+_12 December 2024_
+
+### Added
+
+* Updates c2patool to use only the new Builder/Reader API (contentauth/c2patool#297)
+
+### Documented
+
+* Update Contributing guide, misc minor edits (contentauth/c2patool#296)
+
+### Fixed
+
+* Compile `c2pa-crypto` with `cargo check` (#768)
+
+### Other
+
+* Move c2patool source code into c2pa-rs repo (#723)
+* Move profile settings to workspace Cargo.toml
+* Enlarged description of c2pa command-line behavior (contentauth/c2patool[#285](https://github.com/contentauth/c2pa-rs/pull/285))
 
 ## 0.9.12
 _18 October 2024_

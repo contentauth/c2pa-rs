@@ -293,7 +293,7 @@ pub const GENERAL_ERROR: &str = "general.error";
 /// Returns `false` if the status code is a known C2PA failure status
 /// code or is unknown.
 ///
-/// # Examples
+/// ## Examples
 ///
 /// ```
 /// use c2pa_status_tracker::validation_codes::*;
