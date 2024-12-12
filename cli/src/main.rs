@@ -14,9 +14,10 @@
 
 /// Tool to display and create C2PA manifests
 ///
-/// A file path to an asset must be provided
-/// If only the path is given, this will generate a summary report of any claims in that file
-/// If a manifest definition json file is specified, the claim will be added to any existing claims
+/// A file path to an asset must be provided. If only the path
+/// is given, this will generate a summary report of any claims
+/// in that file. If a manifest definition JSON file is specified,
+/// the claim will be added to any existing claims.
 use std::{
     fs::{create_dir_all, remove_dir_all, File},
     io::Write,
