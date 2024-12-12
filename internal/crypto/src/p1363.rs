@@ -44,10 +44,10 @@ pub struct EcSigComps<'a> {
     pub s: &'a [u8],
 }
 
-#[cfg(not(target_arch = "wasm32"))] // Maye will be used later?
+#[cfg(feature = "openssl")]
 use crate::{raw_signature::RawSignerError, SigningAlg};
 
-#[cfg(not(target_arch = "wasm32"))] // Maye will be used later?
+#[cfg(feature = "openssl")]
 pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawSignerError> {
     // P1363 format: r | s
 
