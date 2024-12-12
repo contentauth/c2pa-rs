@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-status-tracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Status tracking internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
