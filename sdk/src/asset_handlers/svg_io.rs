@@ -975,10 +975,5 @@ pub mod tests {
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
         assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
         println!("{xmp}");
-
-        println!(
-            "/n/n{}",
-            String::from_utf8(output_stream.into_inner()).unwrap()
-        );
     }
 }
