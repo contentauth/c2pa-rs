@@ -18,7 +18,7 @@
 use std::io::Cursor;
 
 use async_generic::async_generic;
-use c2pa_crypto::{p1363::parse_ec_der_sig, SigningAlg};
+use c2pa_crypto::{p1363::parse_ec_der_sig, trust_handler::TrustHandler, SigningAlg};
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -34,7 +34,6 @@ use crate::{
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
-    trust_handler::TrustHandlerConfig,
     AsyncSigner, Error, Result, Signer,
 };
 

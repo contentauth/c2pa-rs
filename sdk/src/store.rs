@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::hash::sha256;
+use c2pa_crypto::{hash::sha256, trust_handler::TrustHandler};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -64,7 +64,6 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    trust_handler::TrustHandlerConfig,
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, RemoteSigner, Signer,
 };
@@ -81,7 +80,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    trust_handler: Box<dyn TrustHandlerConfig>,
+    trust_handler: Box<dyn TrustHandler>,
 }
 
 struct ManifestInfo<'a> {
@@ -200,7 +199,7 @@ impl Store {
         self.trust_handler.clear();
     }
 
-    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
+    fn trust_handler(&self) -> &dyn TrustHandler {
         self.trust_handler.as_ref()
     }
 

@@ -22,7 +22,7 @@ use c2pa_crypto::{
     base64,
     hash::sha256,
     openssl::OpenSslMutex,
-    trust_handler::{TrustHandlerConfig, TrustHandlerError},
+    trust_handler::{TrustHandler, TrustHandlerError},
 };
 use openssl::x509::verify::X509VerifyFlags;
 
@@ -128,7 +128,7 @@ impl OpenSSLTrustHandlerConfig {
 }
 
 #[allow(dead_code)]
-impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
+impl TrustHandler for OpenSSLTrustHandlerConfig {
     fn set_trust_anchors(
         &mut self,
         trust_anchor_pems: &mut dyn Read,
@@ -247,7 +247,7 @@ impl TrustHandlerConfig for OpenSSLTrustHandlerConfig {
 
 // verify certificate and trust chain
 pub(crate) fn verify_trust(
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoc: Option<i64>,

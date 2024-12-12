@@ -22,7 +22,7 @@ use c2pa_crypto::{
     base64,
     hash::sha256,
     raw_signature::RawSignatureValidationError,
-    trust_handler::{TrustHandlerConfig, TrustHandlerError},
+    trust_handler::{TrustHandler, TrustHandlerError},
     webcrypto::async_validator_for_signing_alg,
     SigningAlg,
 };
@@ -90,7 +90,7 @@ impl WebTrustHandlerConfig {
     }
 }
 
-impl TrustHandlerConfig for WebTrustHandlerConfig {
+impl TrustHandler for WebTrustHandlerConfig {
     fn set_trust_anchors(
         &mut self,
         trust_data_reader: &mut dyn Read,
@@ -457,7 +457,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> crate::Result<()> {
 }
 
 async fn on_trust_list(
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     certs: &[Vec<u8>],
     ee_der: &[u8],
 ) -> crate::Result<bool> {
@@ -533,7 +533,7 @@ async fn on_trust_list(
 
 // verify certificate and trust chain
 pub(crate) async fn verify_trust_async(
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     _signing_time_epoc: Option<i64>,

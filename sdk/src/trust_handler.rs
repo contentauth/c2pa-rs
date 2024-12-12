@@ -25,7 +25,7 @@ pub(crate) static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8)
 pub(crate) static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9);
 pub(crate) static DOCUMENT_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .36);
 
-pub(crate) use c2pa_crypto::trust_handler::TrustHandlerConfig;
+use c2pa_crypto::trust_handler::TrustHandler;
 
 pub(crate) fn has_allowed_oid<'a>(
     eku: &x509_parser::extensions::ExtendedKeyUsage,
@@ -99,7 +99,7 @@ impl TrustPassThrough {
     }
 }
 
-impl TrustHandlerConfig for TrustPassThrough {
+impl TrustHandler for TrustPassThrough {
     fn set_trust_anchors(
         &mut self,
         _trust_data: &mut dyn std::io::Read,

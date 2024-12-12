@@ -22,6 +22,7 @@ use c2pa_crypto::{
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     time_stamp::TimeStampError,
+    trust_handler::TrustHandler,
     SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
@@ -39,14 +40,13 @@ use x509_parser::{
 };
 
 #[cfg(feature = "openssl")]
-use crate::openssl::verify_trust; // Eric to investigate
+use crate::openssl::verify_trust;
 #[cfg(target_arch = "wasm32")]
-use crate::wasm::webpki_trust_handler::verify_trust_async; // Eric to investigate
+use crate::wasm::webpki_trust_handler::verify_trust_async;
 use crate::{
-    // c2pa-crypto migration plans (2024-12-05)
-    error::{Error, Result},                               // DON'T MOVE
-    settings::get_settings_value,                         // DON'T MOVE
-    trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
+    error::{Error, Result},
+    settings::get_settings_value,
+    trust_handler::has_allowed_oid,
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -108,7 +108,7 @@ fn get_cose_sign1(
 
 pub(crate) fn check_cert(
     ca_der_bytes: &[u8],
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
 ) -> Result<()> {
@@ -679,7 +679,7 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 pub(crate) fn check_ocsp_status(
     cose_bytes: &[u8],
     data: &[u8],
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -824,10 +824,10 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
-#[async_generic(async_signature( th: &dyn TrustHandlerConfig, chain_der: &[Vec<u8>], cert_der: &[u8], signing_time_epoc: Option<i64>, validation_log: &mut impl StatusTracker))]
+#[async_generic(async_signature( th: &dyn TrustHandler, chain_der: &[Vec<u8>], cert_der: &[u8], signing_time_epoc: Option<i64>, validation_log: &mut impl StatusTracker))]
 #[allow(unused)]
 fn check_trust(
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoc: Option<i64>,
@@ -961,7 +961,7 @@ pub(crate) async fn verify_cose_async(
     data: Vec<u8>,
     additional_data: Vec<u8>,
     cert_check: bool,
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
@@ -1164,7 +1164,7 @@ pub(crate) fn verify_cose(
     data: &[u8],
     additional_data: &[u8],
     cert_check: bool,
-    th: &dyn TrustHandlerConfig,
+    th: &dyn TrustHandler,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;

@@ -26,9 +26,9 @@ use std::{
 use asn1_rs::Oid;
 use thiserror::Error;
 
-/// An implementation of `TrustHandlerConfig` retains information about trust
-/// lists and allowed EKUs to be used when verifying signing certificates.
-pub trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
+/// An implementation of `TrustHandler` retains information about trust anchors
+/// and allowed EKUs to be used when verifying C2PA signing certificates.
+pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
     /// Set trust anchors (root X.509 certificates) that shall be accepted when
     /// verifying COSE signatures.
     ///
@@ -53,7 +53,7 @@ pub trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
     /// This function reads one or more X.509 root certificates in PEM format
     /// and configures the trust handler to accept certificates that chain up to
     /// these trust anchors.
-    /// 
+    ///
     /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
     fn set_trust_anchors(
         &mut self,
@@ -85,14 +85,14 @@ pub trait TrustHandlerConfig: RefUnwindSafe + UnwindSafe + Sync + Send {
     fn get_allowed_list(&self) -> &HashSet<String>;
 }
 
-impl fmt::Debug for dyn TrustHandlerConfig {
+impl fmt::Debug for dyn TrustHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TrustHandler Installed")
     }
 }
 
-/// Describes errors that can be identified when configuring a
-/// `TrustHandlerConfig` implementation.
+/// Describes errors that can be identified when configuring or using a
+/// `TrustHandler` implementation.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TrustHandlerError {

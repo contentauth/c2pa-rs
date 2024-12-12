@@ -16,7 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, ValidationInfo};
+use c2pa_crypto::{base64, trust_handler::TrustHandler, ValidationInfo};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,6 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    trust_handler::TrustHandlerConfig,
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status, ClaimGeneratorInfo,
 };
@@ -1041,7 +1040,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandlerConfig,
+        th: &dyn TrustHandler,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1085,7 +1084,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandlerConfig,
+        th: &dyn TrustHandler,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
