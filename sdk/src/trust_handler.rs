@@ -72,11 +72,11 @@ pub(crate) fn load_eku_configuration(config_data: &mut dyn Read) -> crate::Resul
     Ok(oid_vec)
 }
 
-pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
+pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>, TrustHandlerError> {
     let mut certs = Vec::new();
 
     for pem_result in x509_parser::pem::Pem::iter_from_buffer(trust_data) {
-        let pem = pem_result.map_err(|_e| crate::Error::CoseInvalidCert)?;
+        let pem = pem_result.map_err(|_e| TrustHandlerError::InvalidCertificate)?;
         certs.push(pem.contents);
     }
     Ok(certs)

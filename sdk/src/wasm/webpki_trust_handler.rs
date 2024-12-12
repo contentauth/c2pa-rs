@@ -19,8 +19,12 @@ use std::{
 
 use asn1_rs::{nom::AsBytes, Any, Class, Header, Tag};
 use c2pa_crypto::{
-    base64, hash::sha256, raw_signature::RawSignatureValidationError,
-    webcrypto::async_validator_for_signing_alg, SigningAlg,
+    base64,
+    hash::sha256,
+    raw_signature::RawSignatureValidationError,
+    trust_handler::{TrustHandlerConfig, TrustHandlerError},
+    webcrypto::async_validator_for_signing_alg,
+    SigningAlg,
 };
 use x509_parser::{
     der_parser::der::{parse_der_integer, parse_der_sequence_of},
@@ -29,11 +33,8 @@ use x509_parser::{
 
 use crate::{
     cose_validator::*,
-    error::{Error, Result},
     hash_utils::vec_compare,
-    trust_handler::{
-        has_allowed_oid, load_eku_configuration, load_trust_from_data, TrustHandlerConfig,
-    },
+    trust_handler::{has_allowed_oid, load_eku_configuration, load_trust_from_data},
 };
 
 // Struct to handle verification of trust chains using WebPki
@@ -56,7 +57,22 @@ impl std::fmt::Debug for WebTrustHandlerConfig {
 }
 
 impl WebTrustHandlerConfig {
-    pub fn load_default_trust(&mut self) -> Result<()> {
+    pub(crate) fn new() -> Self {
+        let mut th = WebTrustHandlerConfig {
+            trust_anchors: Vec::new(),
+            private_anchors: Vec::new(),
+            allowed_cert_set: HashSet::new(),
+            config_store: Vec::new(),
+        };
+
+        if th.load_default_trust().is_err() {
+            th.clear(); // just use empty trust handler to fail automatically
+        }
+
+        th
+    }
+
+    pub fn load_default_trust(&mut self) -> Result<(), TrustHandlerError> {
         // load config store
         let config = include_bytes!("./store.cfg");
         let mut config_reader = Cursor::new(config);
@@ -75,23 +91,11 @@ impl WebTrustHandlerConfig {
 }
 
 impl TrustHandlerConfig for WebTrustHandlerConfig {
-    fn new() -> Self {
-        let mut th = WebTrustHandlerConfig {
-            trust_anchors: Vec::new(),
-            private_anchors: Vec::new(),
-            allowed_cert_set: HashSet::new(),
-            config_store: Vec::new(),
-        };
-
-        if th.load_default_trust().is_err() {
-            th.clear(); // just use empty trust handler to fail automatically
-        }
-
-        th
-    }
-
     // add trust anchors
-    fn load_trust_anchors_from_data(&mut self, trust_data_reader: &mut dyn Read) -> Result<()> {
+    fn load_trust_anchors_from_data(
+        &mut self,
+        trust_data_reader: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut trust_data = Vec::new();
         trust_data_reader.read_to_end(&mut trust_data)?;
 
@@ -101,7 +105,10 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
     }
 
     // append private trust anchors
-    fn append_private_trust_data(&mut self, private_anchors_reader: &mut dyn Read) -> Result<()> {
+    fn append_private_trust_data(
+        &mut self,
+        private_anchors_reader: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut private_anchors_data = Vec::new();
         private_anchors_reader.read_to_end(&mut private_anchors_data)?;
 
@@ -117,7 +124,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
     }
 
     // load EKU configuration
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<()> {
+    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
         config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
@@ -145,7 +152,7 @@ impl TrustHandlerConfig for WebTrustHandlerConfig {
     }
 
     // add allowed list entries
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<()> {
+    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
         allowed_list.read_to_end(&mut buffer)?;
 
@@ -299,21 +306,23 @@ async fn verify_data(
     sig_alg: Option<String>,
     sig: Vec<u8>,
     data: Vec<u8>,
-) -> Result<bool> {
+) -> crate::Result<bool> {
     use x509_parser::prelude::*;
 
-    let (_, cert) =
-        X509Certificate::from_der(cert_der.as_bytes()).map_err(|_e| Error::CoseCertUntrusted)?;
+    let (_, cert) = X509Certificate::from_der(cert_der.as_bytes())
+        .map_err(|_e| crate::Error::CoseCertUntrusted)?;
 
     let certificate_public_key = cert.public_key();
 
     let Some(cert_alg_string) = sig_alg else {
-        return Err(Error::BadParam("unknown alg processing cert".to_string()));
+        return Err(crate::Error::BadParam(
+            "unknown alg processing cert".to_string(),
+        ));
     };
 
     let signing_alg: SigningAlg = cert_alg_string
         .parse()
-        .map_err(|_| Error::UnknownAlgorithm)?;
+        .map_err(|_| crate::Error::UnknownAlgorithm)?;
 
     // Not sure this is needed any more. Leaving this for now, but I think this should be handled in c2pa_crypto's raw signature code.
     let adjusted_sig = if cert_alg_string.starts_with("es") {
@@ -326,7 +335,7 @@ async fn verify_data(
     };
 
     let Some(validator) = async_validator_for_signing_alg(signing_alg) else {
-        return Err(Error::UnknownAlgorithm);
+        return Err(crate::Error::UnknownAlgorithm);
     };
 
     let result = validator
@@ -415,7 +424,7 @@ fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Option<Vec<u8>> {
     }
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
+async fn check_chain_order(certs: &[Vec<u8>]) -> crate::Result<()> {
     use x509_parser::prelude::*;
 
     let chain_length = certs.len();
@@ -424,8 +433,8 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
     }
 
     for i in 1..chain_length {
-        let (_, current_cert) =
-            X509Certificate::from_der(&certs[i - 1]).map_err(|_e| Error::CoseCertUntrusted)?;
+        let (_, current_cert) = X509Certificate::from_der(&certs[i - 1])
+            .map_err(|_e| crate::Error::CoseCertUntrusted)?;
 
         let issuer_der = certs[i].to_vec();
         let data = current_cert.tbs_certificate.as_ref();
@@ -439,7 +448,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<()> {
         match result {
             Ok(b) => {
                 if !b {
-                    return Err(Error::OtherError("cert chain order invalid".into()));
+                    return Err(crate::Error::OtherError("cert chain order invalid".into()));
                 }
             }
             Err(e) => return Err(e),
@@ -452,7 +461,7 @@ async fn on_trust_list(
     th: &dyn TrustHandlerConfig,
     certs: &[Vec<u8>],
     ee_der: &[u8],
-) -> Result<bool> {
+) -> crate::Result<bool> {
     use x509_parser::prelude::*;
 
     // check the cert against the allowed list first
@@ -481,7 +490,7 @@ async fn on_trust_list(
     let source_anchors = th.get_anchors();
     for anchor_der in &source_anchors {
         let (_, anchor) =
-            X509Certificate::from_der(anchor_der).map_err(|_e| Error::CoseCertUntrusted)?;
+            X509Certificate::from_der(anchor_der).map_err(|_e| crate::Error::CoseCertUntrusted)?;
         anchors.push(anchor);
     }
 
@@ -492,7 +501,7 @@ async fn on_trust_list(
     // work back from last cert in chain against the trust anchors
     for cert in certs.iter().rev() {
         let (_, chain_cert) =
-            X509Certificate::from_der(cert).map_err(|_e| Error::CoseCertUntrusted)?;
+            X509Certificate::from_der(cert).map_err(|_e| crate::Error::CoseCertUntrusted)?;
 
         for anchor in &source_anchors {
             let data = chain_cert.tbs_certificate.as_ref();
@@ -501,7 +510,7 @@ async fn on_trust_list(
             let sig_alg = cert_signing_alg(&chain_cert);
 
             let (_, anchor_cert) =
-                X509Certificate::from_der(anchor).map_err(|_e| Error::CoseCertUntrusted)?;
+                X509Certificate::from_der(anchor).map_err(|_e| crate::Error::CoseCertUntrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
                 let result =
@@ -529,9 +538,9 @@ pub(crate) async fn verify_trust_async(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     _signing_time_epoc: Option<i64>,
-) -> Result<bool> {
+) -> crate::Result<bool> {
     // check configured EKUs against end-entity cert
-    find_allowed_eku(cert_der, &th.get_auxillary_ekus()).ok_or(Error::CoseCertUntrusted)?;
+    find_allowed_eku(cert_der, &th.get_auxillary_ekus()).ok_or(crate::Error::CoseCertUntrusted)?;
 
     on_trust_list(th, chain_der, cert_der).await
 }

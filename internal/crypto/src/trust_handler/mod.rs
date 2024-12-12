@@ -71,6 +71,10 @@ impl fmt::Debug for dyn TrustHandlerConfig {
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum TrustHandlerError {
+    /// An invalid certificate was detected.
+    #[error("Invalid certificate detected")]
+    InvalidCertificate,
+
     /// An error was reported by the OpenSSL native code.
     ///
     /// NOTE: We do not directly capture the OpenSSL error itself because it
