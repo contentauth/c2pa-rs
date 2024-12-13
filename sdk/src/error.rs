@@ -311,7 +311,7 @@ pub enum Error {
     RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
 
     #[error(transparent)]
-    TrustHandlerError(#[from] c2pa_crypto::trust_handler::TrustHandlerError),
+    InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

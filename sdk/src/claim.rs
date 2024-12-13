@@ -16,7 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, trust_handler::TrustHandler, ValidationInfo};
+use c2pa_crypto::{base64, cose::CertificateAcceptancePolicy, ValidationInfo};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -1040,7 +1040,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandler,
+        cap: &CertificateAcceptancePolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1068,10 +1068,10 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, th, validation_log).await?;
+        check_ocsp_status_async(&sig, &data, cap, validation_log).await?;
 
         let verified =
-            verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
+            verify_cose_async(sig, data, additional_bytes, cert_check, cap, validation_log).await;
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -1084,7 +1084,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandler,
+        cap: &CertificateAcceptancePolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1113,9 +1113,16 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, th, validation_log)?;
+        check_ocsp_status(sig, data, cap, validation_log)?;
 
-        let verified = verify_cose(sig, data, &additional_bytes, cert_check, th, validation_log);
+        let verified = verify_cose(
+            sig,
+            data,
+            &additional_bytes,
+            cert_check,
+            cap,
+            validation_log,
+        );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }

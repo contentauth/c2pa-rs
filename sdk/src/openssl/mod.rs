@@ -16,5 +16,3 @@ mod openssl_trust_handler;
 
 #[cfg(feature = "openssl")]
 pub(crate) use openssl_trust_handler::verify_trust;
-#[cfg(feature = "openssl")]
-pub(crate) use openssl_trust_handler::OpenSSLTrustHandlerConfig;

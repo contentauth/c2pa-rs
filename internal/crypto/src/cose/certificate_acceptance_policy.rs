@@ -18,7 +18,7 @@ use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 /// A `CertificateAcceptancePolicy` retains information about trust anchors and
 /// allowed EKUs to be used when verifying C2PA signing certificates.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CertificateAcceptancePolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
@@ -30,7 +30,44 @@ pub struct CertificateAcceptancePolicy {
     additional_ekus: HashSet<String>,
 }
 
+impl Default for CertificateAcceptancePolicy {
+    fn default() -> Self {
+        let mut this = CertificateAcceptancePolicy {
+            trust_anchor_ders: vec![],
+            end_entity_cert_ders: vec![],
+            additional_ekus: HashSet::default(),
+        };
+
+        // Shouldn't fail, but if it does 🤷🏻‍♂️.
+        let _ = this.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
+
+        // In testing configs, also add debug/trust anchors.
+        #[cfg(test)]
+        {
+            let _ = this.add_trust_anchors(include_bytes!(
+                "../tests/fixtures/raw_signature/test_cert_bundle.pem"
+            ));
+        }
+
+        this
+    }
+}
+
 impl CertificateAcceptancePolicy {
+    /// Create a new certificate acceptance policy with no preconfigured trust
+    /// roots.
+    ///
+    /// Use [`default()`] if you want a typical built-in configuration.
+    ///
+    /// [`default()`]: Self::default()
+    pub fn new() -> Self {
+        CertificateAcceptancePolicy {
+            trust_anchor_ders: vec![],
+            end_entity_cert_ders: vec![],
+            additional_ekus: HashSet::default(),
+        }
+    }
+
     /// Add trust anchors (root X.509 certificates) that shall be accepted when
     /// verifying COSE signatures.
     ///

@@ -11,24 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    collections::HashSet,
-    io::{BufRead, BufReader, Cursor, Read},
-    str::FromStr,
-};
-
-use asn1_rs::Oid;
-use c2pa_crypto::{
-    base64,
-    hash::sha256,
-    openssl::OpenSslMutex,
-    trust_handler::{TrustHandler, TrustHandlerError},
-};
+use c2pa_crypto::{cose::CertificateAcceptancePolicy, openssl::OpenSslMutex};
 use openssl::x509::verify::X509VerifyFlags;
 
-use crate::{trust_handler::load_eku_configuration, Error};
+use crate::Error;
 
-fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>, TrustHandlerError> {
+fn certs_der_to_x509(ders: &[Vec<u8>]) -> crate::Result<Vec<openssl::x509::X509>> {
     // IMPORTANT: ffi_mutex::acquire() should have been called by calling fn. Please
     // don't make this pub or pub(crate) without finding a way to ensure that
     // precondition.
@@ -43,220 +31,16 @@ fn certs_der_to_x509(ders: &[Vec<u8>]) -> Result<Vec<openssl::x509::X509>, Trust
     Ok(certs)
 }
 
-fn load_trust_from_pem_data(
-    trust_data: &[u8],
-) -> Result<Vec<openssl::x509::X509>, TrustHandlerError> {
-    let _openssl = OpenSslMutex::acquire()?;
-    Ok(openssl::x509::X509::stack_from_pem(trust_data)?)
-}
-
-// Struct to handle verification of trust chains
-pub(crate) struct OpenSSLTrustHandlerConfig {
-    trust_anchors: Vec<openssl::x509::X509>,
-    private_anchors: Vec<openssl::x509::X509>,
-    private_certificates: HashSet<String>,
-    trust_store: Option<openssl::x509::store::X509Store>,
-    config_store: Vec<u8>,
-}
-
-impl OpenSSLTrustHandlerConfig {
-    pub fn load_default_trust(&mut self) -> Result<(), TrustHandlerError> {
-        // load config store
-        let config = include_bytes!("./store.cfg");
-        let mut config_reader = Cursor::new(config);
-        self.set_valid_ekus(&mut config_reader)?;
-
-        // load debug/test private trust anchors
-        if cfg!(test) {
-            let pa = include_bytes!("./test_cert_root_bundle.pem");
-            let mut pa_reader = Cursor::new(pa);
-
-            self.add_private_trust_anchors(&mut pa_reader)?;
-        }
-
-        Ok(())
-    }
-
-    fn update_store(&mut self) -> Result<(), TrustHandlerError> {
-        let _openssl = OpenSslMutex::acquire()?;
-
-        let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
-
-        // add trust anchors
-        for t in &self.trust_anchors {
-            builder.add_cert(t.clone())?;
-        }
-
-        // add private anchors
-        for t in &self.private_anchors {
-            builder.add_cert(t.clone())?;
-        }
-
-        self.trust_store = Some(builder.build());
-
-        Ok(())
-    }
-}
-
-impl std::fmt::Debug for OpenSSLTrustHandlerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{} trust anchors, {} private anchors.",
-            self.trust_anchors.len(),
-            self.private_anchors.len()
-        )
-    }
-}
-
-#[allow(dead_code)]
-impl OpenSSLTrustHandlerConfig {
-    pub(crate) fn new() -> Self {
-        let mut th = OpenSSLTrustHandlerConfig {
-            trust_anchors: Vec::new(),
-            private_anchors: Vec::new(),
-            private_certificates: HashSet::new(),
-            trust_store: None,
-            config_store: Vec::new(),
-        };
-        if th.load_default_trust().is_err() {
-            th.clear(); // just use empty trust handler to fail automatically
-        }
-
-        th
-    }
-}
-
-#[allow(dead_code)]
-impl TrustHandler for OpenSSLTrustHandlerConfig {
-    fn set_trust_anchors(
-        &mut self,
-        trust_anchor_pems: &mut dyn Read,
-    ) -> Result<(), TrustHandlerError> {
-        let mut trust_data = Vec::new();
-        trust_anchor_pems.read_to_end(&mut trust_data)?;
-
-        self.trust_anchors = load_trust_from_pem_data(&trust_data)?;
-        if self.trust_anchors.is_empty() {
-            return Err(TrustHandlerError::InternalError("no trust anchors found"));
-        }
-
-        self.update_store()
-    }
-
-    fn set_private_credential_list(
-        &mut self,
-        private_credential_pems: &mut dyn Read,
-    ) -> Result<(), TrustHandlerError> {
-        let mut buffer = Vec::new();
-        private_credential_pems.read_to_end(&mut buffer)?;
-
-        {
-            let _openssl = OpenSslMutex::acquire()?;
-            if let Ok(cert_list) = openssl::x509::X509::stack_from_pem(&buffer) {
-                for cert in &cert_list {
-                    let cert_der = cert.to_der()?;
-                    let cert_sha256 = sha256(&cert_der);
-                    let cert_hash_base64 = base64::encode(&cert_sha256);
-
-                    self.private_certificates.insert(cert_hash_base64);
-                }
-            }
-        }
-
-        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
-        let reader = Cursor::new(buffer);
-        let buf_reader = BufReader::new(reader);
-
-        let mut inside_cert_block = false;
-        for l in buf_reader.lines().map_while(|v| v.ok()) {
-            if l.contains("-----BEGIN") {
-                inside_cert_block = true;
-            }
-            if l.contains("-----END") {
-                inside_cert_block = false;
-            }
-
-            // sanity check that that is is base64 encoded and outside of certificate block
-            if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
-                self.private_certificates.insert(l);
-            }
-        }
-
-        Ok(())
-    }
-
-    // append private trust anchors
-    fn add_private_trust_anchors(
-        &mut self,
-        private_anchors_reader: &mut dyn Read,
-    ) -> Result<(), TrustHandlerError> {
-        let mut private_anchors_data = Vec::new();
-        private_anchors_reader.read_to_end(&mut private_anchors_data)?;
-
-        let mut pa = load_trust_from_pem_data(&private_anchors_data)?;
-        self.private_anchors.append(&mut pa);
-        self.update_store()
-    }
-
-    fn clear(&mut self) {
-        self.trust_anchors = Vec::new();
-        self.private_anchors = Vec::new();
-        self.trust_store = None;
-    }
-
-    fn set_valid_ekus(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
-        config_data.read_to_end(&mut self.config_store)?;
-        Ok(())
-    }
-
-    // list off auxillary allowed EKU Oid
-    fn get_auxillary_ekus(&self) -> Vec<Oid> {
-        let mut oids = Vec::new();
-        if let Ok(oid_strings) = load_eku_configuration(&mut Cursor::new(&self.config_store)) {
-            for oid_str in &oid_strings {
-                if let Ok(oid) = Oid::from_str(oid_str) {
-                    oids.push(oid);
-                }
-            }
-        }
-        oids
-    }
-
-    fn get_anchors(&self) -> Vec<Vec<u8>> {
-        let mut anchors = Vec::new();
-
-        for a in &self.private_anchors {
-            if let Ok(der) = a.to_der() {
-                anchors.push(der)
-            }
-        }
-
-        for a in &self.trust_anchors {
-            if let Ok(der) = a.to_der() {
-                anchors.push(der)
-            }
-        }
-        anchors
-    }
-
-    // set of allowed cert hashes
-    fn get_allowed_list(&self) -> &HashSet<String> {
-        &self.private_certificates
-    }
-}
-
 // verify certificate and trust chain
 pub(crate) fn verify_trust(
-    th: &dyn TrustHandler,
+    cap: &CertificateAcceptancePolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoc: Option<i64>,
 ) -> crate::Result<bool> {
     // check the cert against the allowed list first
-    let cert_sha256 = sha256(cert_der);
-    let cert_hash_base64 = base64::encode(&cert_sha256);
-    if th.get_allowed_list().contains(&cert_hash_base64) {
+    // TO DO: optimize by hashing the cert?
+    if cap.end_entity_cert_ders().any(|der| der == cert_der) {
         return Ok(true);
     }
 
@@ -286,18 +70,20 @@ pub(crate) fn verify_trust(
         .set_param(&verify_param)
         .map_err(Error::OpenSslError)?;
 
-    // todo: figure out the passthrough case
-    if th.get_anchors().is_empty() {
-        return Ok(false);
+    // add trust anchors
+    let mut has_anchors = false;
+    for der in cap.trust_anchor_ders() {
+        let c = openssl::x509::X509::from_der(&der).map_err(Error::OpenSslError)?;
+        builder.add_cert(c)?;
+        has_anchors = true
     }
 
-    // add trust anchors
-    for d in th.get_anchors() {
-        let c = openssl::x509::X509::from_der(&d).map_err(Error::OpenSslError)?;
-        builder.add_cert(c)?;
-    }
     // finalize store
     let store = builder.build();
+
+    if !has_anchors {
+        return Ok(false);
+    }
 
     match store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
         Ok(trust) => Ok(trust),
@@ -318,10 +104,7 @@ pub mod tests {
 
     #[test]
     fn test_trust_store() {
-        let mut th = OpenSSLTrustHandlerConfig::new();
-        th.clear();
-
-        th.load_default_trust().unwrap();
+        let cap = CertificateAcceptancePolicy::default();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
@@ -340,25 +123,18 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
     fn test_broken_trust_chain() {
-        let ta = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        let mut th = OpenSSLTrustHandlerConfig::new();
-        th.clear();
-
-        // load the trust store
-        let mut reader = Cursor::new(ta);
-        th.set_trust_anchors(&mut reader).unwrap();
+        let cap = CertificateAcceptancePolicy::default();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
@@ -377,28 +153,24 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(!verify_trust(&th, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &ps512_certs[2..], &ps512_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &es256_certs[2..], &es256_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &es384_certs[2..], &es384_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &es512_certs[2..], &es512_certs[0], None).unwrap());
-        assert!(!verify_trust(&th, &ed25519_certs[2..], &ed25519_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &ps256_certs[2..], &ps256_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &ps384_certs[2..], &ps384_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &ps512_certs[2..], &ps512_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &es256_certs[2..], &es256_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &es384_certs[2..], &es384_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &es512_certs[2..], &es512_certs[0], None).unwrap());
+        assert!(!verify_trust(&cap, &ed25519_certs[2..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
     fn test_allowed_list() {
-        let mut th = OpenSSLTrustHandlerConfig::new();
-        th.clear();
+        let mut cap = CertificateAcceptancePolicy::default();
 
-        let mut allowed_list_path = crate::utils::test::fixture_path("certs");
-        allowed_list_path = allowed_list_path.join("trust");
-        allowed_list_path = allowed_list_path.join("allowed_list.pem");
-
-        let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
-
-        th.set_private_credential_list(&mut allowed_list).unwrap();
+        cap.add_entity_credentials(include_bytes!(
+            "../../tests/fixtures/certs/trust/allowed_list.pem"
+        ))
+        .unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
@@ -417,27 +189,23 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
     #[test]
     fn test_allowed_list_hashes() {
-        let mut th = OpenSSLTrustHandlerConfig::new();
-        th.clear();
+        let mut cap = CertificateAcceptancePolicy::default();
 
-        let mut allowed_list_path = crate::utils::test::fixture_path("certs");
-        allowed_list_path = allowed_list_path.join("trust");
-        allowed_list_path = allowed_list_path.join("allowed_list.hash");
-
-        let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
-
-        th.set_private_credential_list(&mut allowed_list).unwrap();
+        cap.add_entity_credentials(include_bytes!(
+            "../../tests/fixtures/certs/trust/allowed_list.hash"
+        ))
+        .unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
@@ -456,12 +224,12 @@ pub mod tests {
         let es512_certs = es512.certs().unwrap();
         let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&th, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es256_certs[1..], &es256_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es384_certs[1..], &es384_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &es512_certs[1..], &es512_certs[0], None).unwrap());
-        assert!(verify_trust(&th, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es256_certs[1..], &es256_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es384_certs[1..], &es384_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &es512_certs[1..], &es512_certs[0], None).unwrap());
+        assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 }
