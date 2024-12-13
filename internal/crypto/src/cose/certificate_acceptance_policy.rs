@@ -11,18 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(missing_docs)] // TEMPORARY while refactoring
-
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
 use asn1_rs::{oid, Oid};
-use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-/// A `TrustConfig` retains information about trust anchors and allowed EKUs to
-/// be used when verifying C2PA signing certificates.
+/// A `CertificateAcceptancePolicy` retains information about trust anchors and
+/// allowed EKUs to be used when verifying C2PA signing certificates.
 #[derive(Debug, Default)]
-pub struct TrustConfig {
+pub struct CertificateAcceptancePolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
 
@@ -33,7 +30,7 @@ pub struct TrustConfig {
     additional_ekus: HashSet<String>,
 }
 
-impl TrustConfig {
+impl CertificateAcceptancePolicy {
     /// Add trust anchors (root X.509 certificates) that shall be accepted when
     /// verifying COSE signatures.
     ///
@@ -61,14 +58,17 @@ impl TrustConfig {
     /// these trust anchors.
     ///
     /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
-    pub fn add_trust_anchors(&mut self, trust_anchor_pems: &[u8]) -> Result<(), TrustConfigError> {
+    pub fn add_trust_anchors(
+        &mut self,
+        trust_anchor_pems: &[u8],
+    ) -> Result<(), InvalidCertificateError> {
         for maybe_pem in Pem::iter_from_buffer(trust_anchor_pems) {
             // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {
                 Ok(pem) => self.trust_anchor_ders.push(pem.contents),
-                Err(_) => {
-                    return Err(TrustConfigError::InvalidCertificate);
+                Err(e) => {
+                    return Err(InvalidCertificateError(e.to_string()));
                 }
             }
         }
@@ -101,14 +101,14 @@ impl TrustConfig {
     pub fn add_entity_credentials(
         &mut self,
         end_entity_cert_pems: &[u8],
-    ) -> Result<(), TrustConfigError> {
+    ) -> Result<(), InvalidCertificateError> {
         for maybe_pem in Pem::iter_from_buffer(end_entity_cert_pems) {
             // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {
                 Ok(pem) => self.end_entity_cert_ders.push(pem.contents),
-                Err(_) => {
-                    return Err(TrustConfigError::InvalidCertificate);
+                Err(e) => {
+                    return Err(InvalidCertificateError(e.to_string()));
                 }
             }
         }
@@ -214,64 +214,18 @@ impl TrustConfig {
     // fn get_allowed_list(&self) -> &HashSet<String>;
 }
 
-/// Describes errors that can be identified when configuring or using a
-/// `TrustHandler` implementation.
-#[derive(Debug, Eq, Error, PartialEq)]
-#[non_exhaustive]
-pub enum TrustConfigError {
-    /// An invalid certificate was detected.
-    #[error("Invalid certificate detected")]
-    InvalidCertificate,
+/// This error can occur when adding certificates to a
+/// [`CertificateAcceptancePolicy`].
+#[derive(Debug, Eq, PartialEq)]
+pub struct InvalidCertificateError(String);
 
-    /// An error was reported by the OpenSSL native code.
-    ///
-    /// NOTE: We do not directly capture the OpenSSL error itself because it
-    /// lacks an Eq implementation. Instead we capture the error description.
-    #[cfg(feature = "openssl")]
-    #[error("an error was reported by OpenSSL native code: {0}")]
-    OpenSslError(String),
-
-    /// The OpenSSL native code mutex could not be acquired.
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
-
-    /// An I/O error occurred while reading trust data.
-    #[error("I/O error ({0})")]
-    IoError(String),
-
-    /// An unexpected internal error occured while requesting the time stamp
-    /// response.
-    #[error("internal error ({0})")]
-    InternalError(&'static str),
-}
-
-impl From<std::io::Error> for TrustConfigError {
-    fn from(err: std::io::Error) -> Self {
-        Self::IoError(err.to_string())
+impl fmt::Display for InvalidCertificateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Unable to parse certificate list: {}", self.0)
     }
 }
 
-#[cfg(feature = "openssl")]
-impl From<openssl::error::ErrorStack> for TrustConfigError {
-    fn from(err: openssl::error::ErrorStack) -> Self {
-        Self::OpenSslError(err.to_string())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for TrustConfigError {
-    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
-        match err {
-            crate::webcrypto::WasmCryptoError::UnknownContext => {
-                Self::InternalError("unknown WASM context")
-            }
-            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
-                Self::InternalError("WASM crypto unavailable")
-            }
-        }
-    }
-}
+impl Error for InvalidCertificateError {}
 
 static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
 static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);

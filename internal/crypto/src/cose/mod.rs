@@ -15,6 +15,9 @@
 //!
 //! [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 
+mod certificate_acceptance_policy;
+pub use certificate_acceptance_policy::{CertificateAcceptancePolicy, InvalidCertificateError};
+
 mod error;
 pub use error::CoseError;
 
@@ -22,6 +25,3 @@ mod sigtst;
 pub use sigtst::{
     cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async, TstToken,
 };
-
-mod trust_config;
-pub use trust_config::{TrustConfig, TrustConfigError};
