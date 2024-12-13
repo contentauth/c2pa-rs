@@ -106,7 +106,8 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
         private_credential_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
-    /// Remove all trust anchors, private credentials, and EKUs previously configured.
+    /// Remove all trust anchors, private credentials, and EKUs previously
+    /// configured.
     fn clear(&mut self);
 
     // load EKU configuration
