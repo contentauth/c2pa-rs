@@ -106,7 +106,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // allow user EKUs through this check if configured
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
         let mut reader = Cursor::new(trust_config.as_bytes());
-        passthrough_tb.load_configuration(&mut reader)?;
+        passthrough_tb.set_valid_ekus(&mut reader)?;
     }
 
     check_cert(signing_cert, &passthrough_tb, &mut cose_log, None)

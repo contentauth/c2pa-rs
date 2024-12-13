@@ -106,12 +106,32 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
         private_credential_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
+    /// Set extended key usage (EKU) values that shall be accepted when
+    /// verifying COSE signatures.
+    ///
+    /// From [§14.4.1, C2PA Signers], of the C2PA Technical Specification:
+    ///
+    /// > A validator shall maintain the following lists for C2PA signers:
+    /// >
+    /// > * The list of X.509 certificate trust anchors provided by the C2PA
+    /// > (i.e., the C2PA Trust List). _(not relevant
+    /// > for this API)_
+    /// > * A list of additional X.509 certificate trust anchors. _(not relevant
+    /// > for this API)_
+    /// > * A list of accepted Extended Key Usage (EKU) values.
+    /// >
+    /// > NOTE: Some of these lists can be empty.
+    ///
+    /// This function reads zero or more EKU object identifiers (OIDs) and
+    /// configures the trust handler to accept certificates that are issued with
+    /// one of those EKUs.
+    ///
+    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    fn set_valid_ekus(&mut self, eku_oids: &mut dyn Read) -> Result<(), TrustHandlerError>;
+
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     fn clear(&mut self);
-
-    // load EKU configuration
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError>;
 
     // list off auxillary allowed EKU Oid
     fn get_auxillary_ekus(&self) -> Vec<Oid>;

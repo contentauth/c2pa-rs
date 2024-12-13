@@ -186,7 +186,7 @@ impl Store {
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
         let mut trust_reader = Cursor::new(trust_vec);
-        Ok(self.trust_handler.load_configuration(&mut trust_reader)?)
+        Ok(self.trust_handler.set_valid_ekus(&mut trust_reader)?)
     }
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {

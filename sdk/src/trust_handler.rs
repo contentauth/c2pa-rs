@@ -117,7 +117,8 @@ impl TrustHandler for TrustPassThrough {
 
     fn clear(&mut self) {}
 
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
+    fn set_valid_ekus(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
+        // Merge with the loop in get_auxillary_ekus.
         config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }

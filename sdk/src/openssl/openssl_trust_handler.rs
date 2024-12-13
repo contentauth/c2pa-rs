@@ -64,7 +64,7 @@ impl OpenSSLTrustHandlerConfig {
         // load config store
         let config = include_bytes!("./store.cfg");
         let mut config_reader = Cursor::new(config);
-        self.load_configuration(&mut config_reader)?;
+        self.set_valid_ekus(&mut config_reader)?;
 
         // load debug/test private trust anchors
         if cfg!(test) {
@@ -205,8 +205,7 @@ impl TrustHandler for OpenSSLTrustHandlerConfig {
         self.trust_store = None;
     }
 
-    // load EKU configuration
-    fn load_configuration(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
+    fn set_valid_ekus(&mut self, config_data: &mut dyn Read) -> Result<(), TrustHandlerError> {
         config_data.read_to_end(&mut self.config_store)?;
         Ok(())
     }
