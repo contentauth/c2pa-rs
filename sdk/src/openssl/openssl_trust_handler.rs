@@ -73,7 +73,7 @@ pub(crate) fn verify_trust(
     // add trust anchors
     let mut has_anchors = false;
     for der in cap.trust_anchor_ders() {
-        let c = openssl::x509::X509::from_der(&der).map_err(Error::OpenSslError)?;
+        let c = openssl::x509::X509::from_der(der).map_err(Error::OpenSslError)?;
         builder.add_cert(c)?;
         has_anchors = true
     }

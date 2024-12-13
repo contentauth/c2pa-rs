@@ -103,7 +103,7 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
 
     // allow user EKUs through this check if configured
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
-        passthrough_cap.add_valid_ekus(&trust_config.as_bytes());
+        passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
     check_cert(signing_cert, &passthrough_cap, &mut cose_log, None)
