@@ -13,6 +13,9 @@ For the best experience, read the docs on the [CAI Open Source SDK documentation
 - [Release notes](docs/release-notes.md)
 - [Contributing to the project](docs/project-contributions.md)
 
+C2PA Tool documentation:
+
+
 </div>
 
 ## Key features
