@@ -11,8 +11,8 @@ See also:
 
 * <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-ref" target="_self">Manifest store reference</a>
 * <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-json-schema" target="_self">Manifest store schema</a>
-* <a href="https://github.com/contentauth/c2patool/blob/main/schemas/manifest-definition.json" target="_self">Manifest definition schema</a>
-* <a href="https://github.com/contentauth/c2patool/blob/main/schemas/ingredient.json" target="_self">Ingredient schema</a>
+* <a href="https://github.com/contentauth/c2pa-rs/blob/main/cli/schemas/manifest-definition.json" target="_self">Manifest definition schema</a>
+* <a href="https://github.com/contentauth/c2pa-rs/blob/main/cli/schemas/ingredient.json" target="_self">Ingredient schema</a>
 
 ## Adding a claim generator icon
 
@@ -47,7 +47,7 @@ NOTE: The [Verify](https://contentcredentials.org/verify) tool will not display 
 
 ## Example
 
-The example below is a snippet of a manifest definition that inserts a CreativeWork author assertion. This example uses the default testing certificates in the [sample folder](https://github.com/contentauth/c2patool/tree/main/sample) that are also built into the c2patool binary.   Copy this JSON into a file to use as a test manifest. 
+The example below is a snippet of a manifest definition that inserts a `CreativeWork` author assertion. This example uses the default testing certificates in the [sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample) that are also built into the `c2patool` binary.   Copy this JSON into a file to use as a test manifest. 
 
 **NOTE**:  When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only. For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
 
