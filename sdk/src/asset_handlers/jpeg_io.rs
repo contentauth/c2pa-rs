@@ -321,7 +321,7 @@ impl CAIWriter for JpegIO {
             if seg <= jpeg.segments().len() {
                 jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
             } else {
-                return Err(Error::InvalidAsset("JPEG JUMPF segment error".to_owned()));
+                return Err(Error::InvalidAsset("JPEG JUMBF segment error".to_owned()));
             }
         }
 
