@@ -1,0 +1,278 @@
+// Copyright 2023 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+#![allow(missing_docs)] // TEMPORARY while refactoring
+
+use std::{collections::HashSet, str::FromStr};
+
+use asn1_rs::{oid, Oid};
+use thiserror::Error;
+use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
+
+/// A `TrustConfig` retains information about trust anchors and allowed EKUs to
+/// be used when verifying C2PA signing certificates.
+#[derive(Debug, Default)]
+pub struct TrustConfig {
+    /// Trust anchors (root X.509 certificates) in DER format.
+    trust_anchor_ders: Vec<Vec<u8>>,
+
+    /// End-entity certificaters (root X.509 certificates) in DER format.
+    end_entity_cert_ders: Vec<Vec<u8>>,
+
+    /// Additional extended key usage (EKU) OIDs.
+    additional_ekus: HashSet<String>,
+}
+
+impl TrustConfig {
+    /// Add trust anchors (root X.509 certificates) that shall be accepted when
+    /// verifying COSE signatures.
+    ///
+    /// From [§14.4.1, C2PA Signers], of the C2PA Technical Specification:
+    ///
+    /// > A validator shall maintain the following lists for C2PA signers:
+    /// >
+    /// > * The list of X.509 certificate trust anchors provided by the C2PA
+    /// > (i.e., the C2PA Trust List).
+    /// > * A list of additional X.509 certificate trust anchors.
+    /// > * ~~A list of accepted Extended Key Usage (EKU) values.~~ _(not
+    /// > relevant
+    /// > for this API)_
+    /// >
+    /// > NOTE: Some of these lists can be empty.
+    /// >
+    /// > In addition to the list of trust anchors provided in the C2PA Trust
+    /// > List, a validator should allow a user to configure additional trust
+    /// > anchor stores, and should provide default options or offer lists
+    /// > maintained by external parties that the user may opt into to populate
+    /// > the validator’s trust anchor store for C2PA signers.
+    ///
+    /// This function reads zero or more X.509 root certificates in PEM format
+    /// and configures the trust handler to accept certificates that chain up to
+    /// these trust anchors.
+    ///
+    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    pub fn add_trust_anchors(&mut self, trust_anchor_pems: &[u8]) -> Result<(), TrustConfigError> {
+        for maybe_pem in Pem::iter_from_buffer(trust_anchor_pems) {
+            // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
+            // decoded PEM content, which is expected to be in DER format.
+            match maybe_pem {
+                Ok(pem) => self.trust_anchor_ders.push(pem.contents),
+                Err(_) => {
+                    return Err(TrustConfigError::InvalidCertificate);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add individual end-entity credentials that shall be accepted when
+    /// verifying COSE signatures.
+    ///
+    /// From [§14.4.3, Private Credential Storage], of the C2PA Technical
+    /// Specification:
+    ///
+    /// > A validator may also allow the user to create and maintain a private
+    /// > credential store of signing credentials. This store is intended as an
+    /// > "address book" of credentials they have chosen to trust based on an
+    /// > out-of-band relationship. If present, the private credential store
+    /// > shall only apply to validating signed C2PA manifests, and shall not
+    /// > apply to validating time-stamps. If present, the private credential
+    /// > store shall only allow trust in signer certificates directly; entries
+    /// > in the private credential store cannot issue credentials and shall not
+    /// > be included as trust anchors during validation.
+    ///
+    /// This function reads zero or more X.509 end-entity certificates in PEM
+    /// format and configures the trust handler to accept those specific
+    /// certificates, regardless of how they may or may not chain up to other
+    /// trust anchors.
+    ///
+    /// [§14.4.3, Private Credential Storage]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_private_credential_storage
+    pub fn add_entity_credentials(
+        &mut self,
+        end_entity_cert_pems: &[u8],
+    ) -> Result<(), TrustConfigError> {
+        for maybe_pem in Pem::iter_from_buffer(end_entity_cert_pems) {
+            // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
+            // decoded PEM content, which is expected to be in DER format.
+            match maybe_pem {
+                Ok(pem) => self.end_entity_cert_ders.push(pem.contents),
+                Err(_) => {
+                    return Err(TrustConfigError::InvalidCertificate);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add extended key usage (EKU) values that shall be accepted when
+    /// verifying COSE signatures.
+    ///
+    /// From [§14.4.1, C2PA Signers], of the C2PA Technical Specification:
+    ///
+    /// > A validator shall maintain the following lists for C2PA signers:
+    /// >
+    /// > * ~~The list of X.509 certificate trust anchors provided by the C2PA
+    /// > (i.e., the C2PA Trust List).~~ _(not relevant for this API)_
+    /// > * ~~A list of additional X.509 certificate trust anchors.~~ _(not
+    /// > relevant for this API)_
+    /// > * A list of accepted Extended Key Usage (EKU) values.
+    /// >
+    /// > NOTE: Some of these lists can be empty.
+    ///
+    /// This function reads zero or more EKU object identifiers (OIDs) in
+    /// dotted-decimal notation (one per line) and configures the trust handler
+    /// to accept certificates that are issued with one of those EKUs.
+    ///
+    /// IMPORTANT: The trust configuration will always accept the default set of
+    /// OIDs descfibed in the C2PA Technical Specification.
+    ///
+    /// This function will quietly ignore any invalid input, such as a non-UTF8
+    /// input or lines within the input such as comments or blank lines that can
+    /// not be parsed as OIDs.
+    ///
+    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    pub fn add_valid_ekus(&mut self, eku_oids: &[u8]) {
+        let Ok(eku_oids) = std::str::from_utf8(eku_oids) else {
+            return;
+        };
+
+        for line in eku_oids.lines() {
+            if let Ok(_oid) = Oid::from_str(line) {
+                self.additional_ekus.insert(line.to_string());
+            }
+        }
+    }
+
+    /// Remove all trust anchors, private credentials, and EKUs previously
+    /// configured.
+    pub fn clear(&mut self) {
+        self.trust_anchor_ders.clear();
+        self.end_entity_cert_ders.clear();
+        self.additional_ekus.clear();
+    }
+
+    /// Return an iterator over the trust anchors.
+    ///
+    /// Each anchor will be returned in DER format.
+    pub fn trust_anchor_ders<'a>(&'a self) -> impl Iterator<Item = &'a Vec<u8>> {
+        self.trust_anchor_ders.iter()
+    }
+
+    /// Return an iterator over the allowed end-entity certificates.
+    ///
+    /// Each end-entity certificate will be returned in DER format.
+    pub fn end_entity_cert_ders<'a>(&'a self) -> impl Iterator<Item = &'a Vec<u8>> {
+        self.end_entity_cert_ders.iter()
+    }
+
+    /// Return `true` if the EKU OID is allowed.
+    pub fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
+        if eku.email_protection {
+            return Some(EMAIL_PROTECTION_OID.clone());
+        }
+
+        if eku.time_stamping {
+            return Some(TIMESTAMPING_OID.clone());
+        }
+
+        if eku.ocsp_signing {
+            return Some(OCSP_SIGNING_OID.clone());
+        }
+
+        // TO REVIEW: Earlier implementation used the last match; this one uses the
+        // first. Does that make a difference?
+
+        for extra_oid in eku.other.iter().as_ref() {
+            let extra_oid_str = extra_oid.to_string();
+            if self.additional_ekus.contains(&extra_oid_str) {
+                return Some(extra_oid.clone());
+            }
+        }
+
+        None
+    }
+
+    // // list off auxillary allowed EKU Oid
+    // fn get_auxillary_ekus(&self) -> Vec<Oid>;
+
+    // // list of all anchors
+    // fn get_anchors(&self) -> Vec<Vec<u8>>;
+
+    // // set of allowed cert hashes
+    // fn get_allowed_list(&self) -> &HashSet<String>;
+}
+
+/// Describes errors that can be identified when configuring or using a
+/// `TrustHandler` implementation.
+#[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum TrustConfigError {
+    /// An invalid certificate was detected.
+    #[error("Invalid certificate detected")]
+    InvalidCertificate,
+
+    /// An error was reported by the OpenSSL native code.
+    ///
+    /// NOTE: We do not directly capture the OpenSSL error itself because it
+    /// lacks an Eq implementation. Instead we capture the error description.
+    #[cfg(feature = "openssl")]
+    #[error("an error was reported by OpenSSL native code: {0}")]
+    OpenSslError(String),
+
+    /// The OpenSSL native code mutex could not be acquired.
+    #[cfg(feature = "openssl")]
+    #[error(transparent)]
+    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+
+    /// An I/O error occurred while reading trust data.
+    #[error("I/O error ({0})")]
+    IoError(String),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(&'static str),
+}
+
+impl From<std::io::Error> for TrustConfigError {
+    fn from(err: std::io::Error) -> Self {
+        Self::IoError(err.to_string())
+    }
+}
+
+#[cfg(feature = "openssl")]
+impl From<openssl::error::ErrorStack> for TrustConfigError {
+    fn from(err: openssl::error::ErrorStack) -> Self {
+        Self::OpenSslError(err.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<crate::webcrypto::WasmCryptoError> for TrustConfigError {
+    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+        match err {
+            crate::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::InternalError("unknown WASM context")
+            }
+            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::InternalError("WASM crypto unavailable")
+            }
+        }
+    }
+}
+
+static EMAIL_PROTECTION_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .4);
+static TIMESTAMPING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .8);
+static OCSP_SIGNING_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .3 .9);

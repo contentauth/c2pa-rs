@@ -22,3 +22,6 @@ mod sigtst;
 pub use sigtst::{
     cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async, TstToken,
 };
+
+mod trust_config;
+pub use trust_config::{TrustConfig, TrustConfigError};
