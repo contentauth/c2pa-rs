@@ -75,10 +75,10 @@ impl CertificateAcceptancePolicy {
     /// > A validator shall maintain the following lists for C2PA signers:
     /// >
     /// > * The list of X.509 certificate trust anchors provided by the C2PA
-    /// >   (i.e., the C2PA Trust List).
+    /// > (i.e., the C2PA Trust List).
     /// > * A list of additional X.509 certificate trust anchors.
     /// > * ~~A list of accepted Extended Key Usage (EKU) values.~~ _(not
-    /// >   relevant for this API)_
+    /// > relevant for this API)_
     /// >
     /// > NOTE: Some of these lists can be empty.
     /// >
@@ -159,9 +159,9 @@ impl CertificateAcceptancePolicy {
     /// > A validator shall maintain the following lists for C2PA signers:
     /// >
     /// > * ~~The list of X.509 certificate trust anchors provided by the C2PA
-    /// >   (i.e., the C2PA Trust List).~~ _(not relevant for this API)_
+    /// > (i.e., the C2PA Trust List).~~ _(not relevant for this API)_
     /// > * ~~A list of additional X.509 certificate trust anchors.~~ _(not
-    /// >   relevant for this API)_
+    /// > relevant for this API)_
     /// > * A list of accepted Extended Key Usage (EKU) values.
     /// >
     /// > NOTE: Some of these lists can be empty.
