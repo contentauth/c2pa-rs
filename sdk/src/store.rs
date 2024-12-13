@@ -181,7 +181,7 @@ impl Store {
         let mut trust_reader = Cursor::new(trust_vec);
         Ok(self
             .trust_handler
-            .append_private_trust_data(&mut trust_reader)?)
+            .add_private_trust_anchors(&mut trust_reader)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {

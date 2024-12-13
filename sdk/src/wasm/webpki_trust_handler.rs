@@ -83,7 +83,7 @@ impl WebTrustHandlerConfig {
             let pa = include_bytes!("./test_cert_root_bundle.pem");
             let mut pa_reader = Cursor::new(pa);
 
-            self.append_private_trust_data(&mut pa_reader)?;
+            self.add_private_trust_anchors(&mut pa_reader)?;
         }
 
         Ok(())
@@ -103,8 +103,7 @@ impl TrustHandler for WebTrustHandlerConfig {
         Ok(())
     }
 
-    // append private trust anchors
-    fn append_private_trust_data(
+    fn add_private_trust_anchors(
         &mut self,
         private_anchors_reader: &mut dyn Read,
     ) -> Result<(), TrustHandlerError> {

@@ -108,9 +108,9 @@ impl TrustHandler for TrustPassThrough {
         Ok(())
     }
 
-    fn append_private_trust_data(
+    fn add_private_trust_anchors(
         &mut self,
-        _private_anchors_data: &mut dyn std::io::Read,
+        _private_anchors_data: &mut dyn Read,
     ) -> Result<(), TrustHandlerError> {
         Ok(())
     }

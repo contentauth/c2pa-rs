@@ -32,7 +32,7 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
     /// Set trust anchors (root X.509 certificates) that shall be accepted when
     /// verifying COSE signatures.
     ///
-    /// From [§14.4.1, C2PA Signers] of the C2PA Technical Specification:
+    /// From [§14.4.1, C2PA Signers], of the C2PA Technical Specification:
     ///
     /// > A validator shall maintain the following lists for C2PA signers:
     /// >
@@ -60,9 +60,26 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
         trust_anchor_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
+    /// Add private trust anchors.
+    ///
+    /// Similar to [`set_trust_anchors`], this function takes zero or more
+    /// PEM-encoded X.509 root certificates and configures the trust handler to
+    /// accept certificates that chain up to these trust anchors.
+    ///
+    /// This adds trust anchors to any anchors that were previously specified
+    /// via [`set_trust_anchors`] or previous calls to
+    /// [`add_private_trust_anchors`].
+    ///
+    /// [`add_private_trust_anchors`]: Self::add_private_trust_anchors
+    /// [`set_trust_anchors`]: Self::set_trust_anchors
+    fn add_private_trust_anchors(
+        &mut self,
+        private_trust_anchor_pems: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError>;
+
     /// Set allowed list of private end-entity credentials.
     ///
-    /// From [§14.4.3, Private Credential Storage] of the C2PA Technical
+    /// From [§14.4.3, Private Credential Storage], of the C2PA Technical
     /// Specification:
     ///
     /// > A validator may also allow the user to create and maintain a private
@@ -87,12 +104,6 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
     fn set_private_credential_list(
         &mut self,
         private_credential_pems: &mut dyn Read,
-    ) -> Result<(), TrustHandlerError>;
-
-    // append private trust anchors
-    fn append_private_trust_data(
-        &mut self,
-        private_anchors_data: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
     // clear all entries in trust handler list
