@@ -54,7 +54,7 @@ fn load_trust_from_pem_data(
 pub(crate) struct OpenSSLTrustHandlerConfig {
     trust_anchors: Vec<openssl::x509::X509>,
     private_anchors: Vec<openssl::x509::X509>,
-    allowed_cert_set: HashSet<String>,
+    private_certificates: HashSet<String>,
     trust_store: Option<openssl::x509::store::X509Store>,
     config_store: Vec<u8>,
 }
@@ -115,7 +115,7 @@ impl OpenSSLTrustHandlerConfig {
         let mut th = OpenSSLTrustHandlerConfig {
             trust_anchors: Vec::new(),
             private_anchors: Vec::new(),
-            allowed_cert_set: HashSet::new(),
+            private_certificates: HashSet::new(),
             trust_store: None,
             config_store: Vec::new(),
         };
@@ -144,10 +144,12 @@ impl TrustHandler for OpenSSLTrustHandlerConfig {
         self.update_store()
     }
 
-    // add allowed list entries
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<(), TrustHandlerError> {
+    fn set_private_credential_list(
+        &mut self,
+        private_credential_pems: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
-        allowed_list.read_to_end(&mut buffer)?;
+        private_credential_pems.read_to_end(&mut buffer)?;
 
         {
             let _openssl = OpenSslMutex::acquire()?;
@@ -157,7 +159,7 @@ impl TrustHandler for OpenSSLTrustHandlerConfig {
                     let cert_sha256 = sha256(&cert_der);
                     let cert_hash_base64 = base64::encode(&cert_sha256);
 
-                    self.allowed_cert_set.insert(cert_hash_base64);
+                    self.private_certificates.insert(cert_hash_base64);
                 }
             }
         }
@@ -177,7 +179,7 @@ impl TrustHandler for OpenSSLTrustHandlerConfig {
 
             // sanity check that that is is base64 encoded and outside of certificate block
             if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
-                self.allowed_cert_set.insert(l);
+                self.private_certificates.insert(l);
             }
         }
 
@@ -241,7 +243,7 @@ impl TrustHandler for OpenSSLTrustHandlerConfig {
 
     // set of allowed cert hashes
     fn get_allowed_list(&self) -> &HashSet<String> {
-        &self.allowed_cert_set
+        &self.private_certificates
     }
 }
 
@@ -397,7 +399,7 @@ pub mod tests {
 
         let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
 
-        th.load_allowed_list(&mut allowed_list).unwrap();
+        th.set_private_credential_list(&mut allowed_list).unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
@@ -436,7 +438,7 @@ pub mod tests {
 
         let mut allowed_list = std::fs::File::open(&allowed_list_path).unwrap();
 
-        th.load_allowed_list(&mut allowed_list).unwrap();
+        th.set_private_credential_list(&mut allowed_list).unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);

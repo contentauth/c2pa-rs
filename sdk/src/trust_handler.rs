@@ -86,14 +86,14 @@ pub(crate) fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>, Tr
 // configured to all email protection, timestamping, ocsp signing and document signing
 #[derive(Debug)]
 pub(crate) struct TrustPassThrough {
-    allowed_cert_set: HashSet<String>,
+    private_credential_list: HashSet<String>,
     config_store: Vec<u8>,
 }
 
 impl TrustPassThrough {
     pub(crate) fn new() -> Self {
         TrustPassThrough {
-            allowed_cert_set: HashSet::new(),
+            private_credential_list: HashSet::new(),
             config_store: Vec::new(),
         }
     }
@@ -149,25 +149,25 @@ impl TrustHandler for TrustPassThrough {
         Vec::new()
     }
 
-    fn load_allowed_list(
+    fn set_private_credential_list(
         &mut self,
-        allowed_list: &mut dyn std::io::prelude::Read,
+        private_credential_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
-        allowed_list.read_to_end(&mut buffer)?;
+        private_credential_pems.read_to_end(&mut buffer)?;
 
         if let Ok(cert_list) = load_trust_from_data(&buffer) {
             for cert_der in &cert_list {
                 let cert_sha256 = sha256(cert_der);
                 let cert_hash_base64 = base64::encode(&cert_sha256);
 
-                self.allowed_cert_set.insert(cert_hash_base64);
+                self.private_credential_list.insert(cert_hash_base64);
             }
         }
         Ok(())
     }
 
     fn get_allowed_list(&self) -> &std::collections::HashSet<String> {
-        &self.allowed_cert_set
+        &self.private_credential_list
     }
 }

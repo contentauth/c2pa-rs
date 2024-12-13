@@ -191,7 +191,9 @@ impl Store {
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
         let mut trust_reader = Cursor::new(allowed_vec);
-        Ok(self.trust_handler.load_allowed_list(&mut trust_reader)?)
+        Ok(self
+            .trust_handler
+            .set_private_credential_list(&mut trust_reader)?)
     }
 
     /// Clear all existing trust anchors

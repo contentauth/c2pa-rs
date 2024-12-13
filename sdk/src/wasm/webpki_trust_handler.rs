@@ -150,8 +150,10 @@ impl TrustHandler for WebTrustHandlerConfig {
         anchors
     }
 
-    // add allowed list entries
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<(), TrustHandlerError> {
+    fn set_private_credential_list(
+        &mut self,
+        allowed_list: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError> {
         let mut buffer = Vec::new();
         allowed_list.read_to_end(&mut buffer)?;
 

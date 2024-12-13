@@ -60,8 +60,34 @@ pub trait TrustHandler: RefUnwindSafe + UnwindSafe + Sync + Send {
         trust_anchor_pems: &mut dyn Read,
     ) -> Result<(), TrustHandlerError>;
 
-    // add allowed list
-    fn load_allowed_list(&mut self, allowed_list: &mut dyn Read) -> Result<(), TrustHandlerError>;
+    /// Set allowed list of private end-entity credentials.
+    ///
+    /// From [§14.4.3, Private Credential Storage] of the C2PA Technical
+    /// Specification:
+    ///
+    /// > A validator may also allow the user to create and maintain a private
+    /// > credential store of signing credentials. This store is intended as an
+    /// > "address book" of credentials they have chosen to trust based on an
+    /// > out-of-band relationship. If present, the private credential store
+    /// > shall only apply to validating signed C2PA manifests, and shall not
+    /// > apply to validating time-stamps. If present, the private credential
+    /// > store shall only allow trust in signer certificates directly; entries
+    /// > in the private credential store cannot issue credentials and shall not
+    /// > be included as trust anchors during validation.
+    ///
+    /// This function reads zero or more X.509 end-entity certificates in PEM
+    /// format and configures the trust handler to accept those specific
+    /// certificates, regardless of how they may or may not chain up to other
+    /// trust anchors.
+    ///
+    /// [§14.4.3, Private Credential Storage]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_private_credential_storage
+    ///
+    /// TO DO: Understand alternate format that allows hash of credential public
+    /// key? ???
+    fn set_private_credential_list(
+        &mut self,
+        private_credential_pems: &mut dyn Read,
+    ) -> Result<(), TrustHandlerError>;
 
     // append private trust anchors
     fn append_private_trust_data(
