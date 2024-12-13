@@ -79,8 +79,7 @@ impl CertificateAcceptancePolicy {
     /// > (i.e., the C2PA Trust List).
     /// > * A list of additional X.509 certificate trust anchors.
     /// > * ~~A list of accepted Extended Key Usage (EKU) values.~~ _(not
-    /// > relevant
-    /// > for this API)_
+    /// > relevant for this API)_
     /// >
     /// > NOTE: Some of these lists can be empty.
     /// >
@@ -240,15 +239,6 @@ impl CertificateAcceptancePolicy {
 
         None
     }
-
-    // // list off auxillary allowed EKU Oid
-    // fn get_auxillary_ekus(&self) -> Vec<Oid>;
-
-    // // list of all anchors
-    // fn get_anchors(&self) -> Vec<Vec<u8>>;
-
-    // // set of allowed cert hashes
-    // fn get_allowed_list(&self) -> &HashSet<String>;
 }
 
 /// This error can occur when adding certificates to a

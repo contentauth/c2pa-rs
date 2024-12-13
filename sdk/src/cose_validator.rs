@@ -824,7 +824,13 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     Err(Error::NotFound)
 }
 
-#[async_generic(async_signature(cap: &CertificateAcceptancePolicy, chain_der: &[Vec<u8>], cert_der: &[u8], signing_time_epoc: Option<i64>, validation_log: &mut impl StatusTracker))]
+#[async_generic(async_signature(
+    cap: &CertificateAcceptancePolicy,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    signing_time_epoc: Option<i64>,
+    validation_log: &mut impl StatusTracker
+))]
 #[allow(unused)]
 fn check_trust(
     cap: &CertificateAcceptancePolicy,
