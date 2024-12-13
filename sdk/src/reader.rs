@@ -487,8 +487,8 @@ pub mod tests {
         let manifest = reader.active_manifest().unwrap();
         let ingredient = manifest.ingredients().iter().next().unwrap();
         let uri = ingredient.thumbnail_ref().unwrap().identifier.clone();
-        let mut stream = std::io::Cursor::new(Vec::new());
-        let bytes_written = reader.resource_to_stream(&uri, &mut stream)?;
+        let stream = std::io::Cursor::new(Vec::new());
+        let bytes_written = reader.resource_to_stream(&uri, stream)?;
         assert_eq!(bytes_written, 41810);
         Ok(())
     }
