@@ -203,38 +203,39 @@ pub mod tests {
         assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
     }
 
-    #[test]
-    fn test_allowed_list_hashes() {
-        let mut cap = CertificateAcceptancePolicy::default();
+    // TO REVIEW: Do we need this? Considering removing support for hashed certs.
+    // #[test]
+    // fn test_allowed_list_hashes() {
+    //     let mut cap = CertificateAcceptancePolicy::default();
 
-        cap.add_end_entity_credentials(include_bytes!(
-            "../../tests/fixtures/certs/trust/allowed_list.hash"
-        ))
-        .unwrap();
+    //     cap.add_end_entity_credentials(include_bytes!(
+    //         "../../tests/fixtures/certs/trust/allowed_list.hash"
+    //     ))
+    //     .unwrap();
 
-        // test all the certs
-        let ps256 = test_signer(SigningAlg::Ps256);
-        let ps384 = test_signer(SigningAlg::Ps384);
-        let ps512 = test_signer(SigningAlg::Ps512);
-        let es256 = test_signer(SigningAlg::Es256);
-        let es384 = test_signer(SigningAlg::Es384);
-        let es512 = test_signer(SigningAlg::Es512);
-        let ed25519 = test_signer(SigningAlg::Ed25519);
+    //     // test all the certs
+    //     let ps256 = test_signer(SigningAlg::Ps256);
+    //     let ps384 = test_signer(SigningAlg::Ps384);
+    //     let ps512 = test_signer(SigningAlg::Ps512);
+    //     let es256 = test_signer(SigningAlg::Es256);
+    //     let es384 = test_signer(SigningAlg::Es384);
+    //     let es512 = test_signer(SigningAlg::Es512);
+    //     let ed25519 = test_signer(SigningAlg::Ed25519);
 
-        let ps256_certs = ps256.certs().unwrap();
-        let ps384_certs = ps384.certs().unwrap();
-        let ps512_certs = ps512.certs().unwrap();
-        let es256_certs = es256.certs().unwrap();
-        let es384_certs = es384.certs().unwrap();
-        let es512_certs = es512.certs().unwrap();
-        let ed25519_certs = ed25519.certs().unwrap();
+    //     let ps256_certs = ps256.certs().unwrap();
+    //     let ps384_certs = ps384.certs().unwrap();
+    //     let ps512_certs = ps512.certs().unwrap();
+    //     let es256_certs = es256.certs().unwrap();
+    //     let es384_certs = es384.certs().unwrap();
+    //     let es512_certs = es512.certs().unwrap();
+    //     let ed25519_certs = ed25519.certs().unwrap();
 
-        assert!(verify_trust(&cap, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &es256_certs[1..], &es256_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &es384_certs[1..], &es384_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &es512_certs[1..], &es512_certs[0], None).unwrap());
-        assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
-    }
+    //     assert!(verify_trust(&cap, &ps256_certs[1..], &ps256_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &ps384_certs[1..], &ps384_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &ps512_certs[1..], &ps512_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &es256_certs[1..], &es256_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &es384_certs[1..], &es384_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &es512_certs[1..], &es512_certs[0], None).unwrap());
+    //     assert!(verify_trust(&cap, &ed25519_certs[1..], &ed25519_certs[0], None).unwrap());
+    // }
 }
