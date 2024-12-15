@@ -81,6 +81,13 @@ fn add_trust_anchors_err_bad_pem() {
     assert!(cap.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
 }
 
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn add_end_entity_credentials_err_bad_pem() {
+    let mut cap = CertificateAcceptancePolicy::new();
+    assert!(cap.add_end_entity_credentials(BAD_PEM.as_bytes()).is_err());
+}
+
 fn email_eku() -> ExtendedKeyUsage<'static> {
     ExtendedKeyUsage {
         any: false,
