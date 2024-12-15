@@ -104,7 +104,12 @@ pub mod tests {
 
     #[test]
     fn test_trust_store() {
-        let cap = CertificateAcceptancePolicy::default();
+        let mut cap = CertificateAcceptancePolicy::default();
+
+        cap.add_trust_anchors(include_bytes!(
+            "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+        ))
+        .unwrap();
 
         // test all the certs
         let ps256 = test_signer(SigningAlg::Ps256);
