@@ -11,8 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(clippy::doc_lazy_continuation)]
-// Clippy and rustfmt aren't agreeing at the moment. :-(
+#![allow(clippy::doc_lazy_continuation)] // Clippy and rustfmt aren't agreeing at the moment. :-(
 
 use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
