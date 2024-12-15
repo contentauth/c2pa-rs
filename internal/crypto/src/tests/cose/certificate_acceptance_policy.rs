@@ -76,6 +76,30 @@ fn default() {
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn clear() {
+    let mut cap = CertificateAcceptancePolicy::default();
+    cap.clear();
+
+    assert_eq!(
+        cap.has_allowed_eku(&email_eku()).unwrap(),
+        EMAIL_PROTECTION_OID
+    );
+
+    assert!(cap.has_allowed_eku(&document_signing_eku()).is_none());
+
+    assert_eq!(
+        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        TIME_STAMPING_OID
+    );
+
+    assert_eq!(
+        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        OCSP_SIGNING_OID
+    );
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn add_trust_anchors_err_bad_pem() {
     let mut cap = CertificateAcceptancePolicy::new();
     assert!(cap.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
