@@ -44,7 +44,7 @@ impl Default for CertificateAcceptancePolicy {
         #[cfg(test)]
         {
             let _ = this.add_trust_anchors(include_bytes!(
-                "../tests/fixtures/raw_signature/test_cert_bundle.pem"
+                "../tests/fixtures/raw_signature/test_cert_root_bundle.pem"
             ));
         }
 
