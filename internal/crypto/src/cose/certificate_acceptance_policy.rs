@@ -192,14 +192,6 @@ impl CertificateAcceptancePolicy {
         }
     }
 
-    /// Remove all trust anchors, private credentials, and EKUs previously
-    /// configured.
-    pub fn clear(&mut self) {
-        self.trust_anchor_ders.clear();
-        self.end_entity_cert_ders.clear();
-        self.additional_ekus.clear();
-    }
-
     /// Return an iterator over the trust anchors.
     ///
     /// Each anchor will be returned in DER format.
