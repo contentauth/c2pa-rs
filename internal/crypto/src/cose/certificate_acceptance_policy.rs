@@ -237,7 +237,7 @@ impl CertificateAcceptancePolicy {
 /// This error can occur when adding certificates to a
 /// [`CertificateAcceptancePolicy`].
 #[derive(Debug, Eq, PartialEq)]
-pub struct InvalidCertificateError(String);
+pub struct InvalidCertificateError(pub(crate) String);
 
 impl fmt::Display for InvalidCertificateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

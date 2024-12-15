@@ -16,7 +16,7 @@ use asn1_rs::{oid, Oid};
 use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::prelude::ExtendedKeyUsage;
 
-use crate::cose::CertificateAcceptancePolicy;
+use crate::cose::{CertificateAcceptancePolicy, InvalidCertificateError};
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -86,6 +86,23 @@ fn add_trust_anchors_err_bad_pem() {
 fn add_end_entity_credentials_err_bad_pem() {
     let mut cap = CertificateAcceptancePolicy::new();
     assert!(cap.add_end_entity_credentials(BAD_PEM.as_bytes()).is_err());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn err_to_string() {
+    let ice = InvalidCertificateError("foo".to_string());
+    assert_eq!(ice.to_string(), "Unable to parse certificate list: foo");
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn err_debug() {
+    let ice = InvalidCertificateError("foo".to_string());
+    assert_eq!(
+        format!("{ice:#?}"),
+        "InvalidCertificateError(\n    \"foo\",\n)"
+    );
 }
 
 fn email_eku() -> ExtendedKeyUsage<'static> {
