@@ -172,7 +172,7 @@ pub mod tests {
     fn test_allowed_list() {
         let mut cap = CertificateAcceptancePolicy::default();
 
-        cap.add_entity_credentials(include_bytes!(
+        cap.add_end_entity_credentials(include_bytes!(
             "../../tests/fixtures/certs/trust/allowed_list.pem"
         ))
         .unwrap();
@@ -207,7 +207,7 @@ pub mod tests {
     fn test_allowed_list_hashes() {
         let mut cap = CertificateAcceptancePolicy::default();
 
-        cap.add_entity_credentials(include_bytes!(
+        cap.add_end_entity_credentials(include_bytes!(
             "../../tests/fixtures/certs/trust/allowed_list.hash"
         ))
         .unwrap();

@@ -133,7 +133,7 @@ impl CertificateAcceptancePolicy {
     /// trust anchors.
     ///
     /// [§14.4.3, Private Credential Storage]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_private_credential_storage
-    pub fn add_entity_credentials(
+    pub fn add_end_entity_credentials(
         &mut self,
         end_entity_cert_pems: &[u8],
     ) -> Result<(), InvalidCertificateError> {

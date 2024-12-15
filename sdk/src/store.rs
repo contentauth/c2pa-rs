@@ -181,7 +181,7 @@ impl Store {
     }
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
-        Ok(self.cap.add_entity_credentials(allowed_vec)?)
+        Ok(self.cap.add_end_entity_credentials(allowed_vec)?)
     }
 
     /// Clear all existing trust anchors
