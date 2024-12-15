@@ -39,8 +39,32 @@ fn new() {
         cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
         OCSP_SIGNING_OID
     );
+}
 
-    // assert!(cap.has_allowed_eku(OCSP_SIGNING_OID).is_some());
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn default() {
+    let cap = CertificateAcceptancePolicy::default();
+
+    assert_eq!(
+        cap.has_allowed_eku(&email_eku()).unwrap(),
+        EMAIL_PROTECTION_OID
+    );
+
+    assert_eq!(
+        cap.has_allowed_eku(&document_signing_eku()).unwrap(),
+        DOCUMENT_SIGNING_OID
+    );
+
+    assert_eq!(
+        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        TIME_STAMPING_OID
+    );
+
+    assert_eq!(
+        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        OCSP_SIGNING_OID
+    );
 }
 
 fn email_eku() -> ExtendedKeyUsage<'static> {
