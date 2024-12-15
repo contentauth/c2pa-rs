@@ -20,6 +20,13 @@ use crate::cose::CertificateAcceptancePolicy;
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn impl_debug() {
+    let cap = CertificateAcceptancePolicy::new();
+    let _ = format!("{cap:#?}");
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn new() {
     let cap = CertificateAcceptancePolicy::new();
 
