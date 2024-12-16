@@ -1708,7 +1708,7 @@ impl RemoteRefEmbed for BmffIO {
                 let xmp = match self.get_reader().read_xmp(input_stream) {
                     Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
                     None => {
-                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        let xmp = MIN_XMP.to_string();
                         add_provenance(&xmp, &manifest_uri)?
                     }
                 };
