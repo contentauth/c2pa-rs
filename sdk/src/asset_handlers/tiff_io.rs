@@ -395,26 +395,31 @@ where
             let decoded_offset = decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
             input.seek(SeekFrom::Start(decoded_offset))?;
 
-            let num_longs = usize::value_from(subifd.value_count)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+            let num_longs_x4 = usize::value_from(
+                subifd
+                    .value_count
+                    .checked_mul(4)
+                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
+            )
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
             let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
 
-            if num_longs * 4 <= 4 || ts.big_tiff && num_longs * 4 <= 8 {
+            if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
                 let offset_bytes = subifd.value_offset.to_ne_bytes();
                 let offset_reader = Cursor::new(offset_bytes);
 
                 with_order!(offset_reader, ts.byte_order, |src| {
-                    for item in subfile_offsets.iter_mut().take(num_longs) {
+                    for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
                         let s = src.read_u32()?; // read a long from offset
                         *item = s; // write a long in output endian
                     }
                 });
             } else {
-                let buf = input.read_to_vec(num_longs as u64 * 4)?;
+                let buf = input.read_to_vec(num_longs_x4 as u64)?;
                 let offsets_buf = Cursor::new(buf);
 
                 with_order!(offsets_buf, ts.byte_order, |src| {
-                    for item in subfile_offsets.iter_mut().take(num_longs) {
+                    for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
                         let s = src.read_u32()?; // read a long from offset
                         *item = s; // write a long in output endian
                     }
@@ -1052,17 +1057,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     data
                 }
                 IFDEntryType::Short => {
-                    let num_shorts = usize::value_from(cnt)
+                    let num_shorts_x2 =
+                        usize::value_from(cnt.checked_mul(2).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    let mut data = safe_vec(cnt * 2, Some(0u8))?;
+                    let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
 
-                    if num_shorts * 2 <= 4 || self.big_tiff && num_shorts * 2 <= 8 {
+                    if num_shorts_x2 <= 4 || self.big_tiff && num_shorts_x2 <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
                         let mut offset_reader = Cursor::new(offset_bytes);
 
                         let mut w = Cursor::new(data.as_mut_slice());
-                        for _i in 0..num_shorts {
+                        for _i in 0..num_shorts_x2 / 2 {
                             let s = offset_reader.read_u16::<NativeEndian>()?; // read a short from offset
                             w.write_u16::<NativeEndian>(s)?; // write a short in output endian
                         }
@@ -1079,17 +1087,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     data
                 }
                 IFDEntryType::Long | IFDEntryType::Ifd => {
-                    let num_longs = usize::value_from(cnt)
+                    let num_longs_x4 =
+                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    let mut data = safe_vec(cnt * 4, Some(0u8))?;
+                    let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
 
-                    if num_longs * 4 <= 4 || self.big_tiff && num_longs * 4 <= 8 {
+                    if num_longs_x4 <= 4 || self.big_tiff && num_longs_x4 <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
                         let mut offset_reader = Cursor::new(offset_bytes);
 
                         let mut w = Cursor::new(data.as_mut_slice());
-                        for _i in 0..num_longs {
+                        for _i in 0..num_longs_x4 / 4 {
                             let s = offset_reader.read_u32::<NativeEndian>()?; // read a long from offset
                             w.write_u32::<NativeEndian>(s)?; // write a long in output endian
                         }
@@ -1106,17 +1117,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     data
                 }
                 IFDEntryType::Sshort => {
-                    let num_sshorts = usize::value_from(cnt)
+                    let num_sshorts_x2 =
+                        usize::value_from(cnt.checked_mul(2).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    let mut data = safe_vec(cnt * 2, Some(0u8))?;
+                    let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
 
-                    if num_sshorts * 2 <= 4 || self.big_tiff && num_sshorts * 2 <= 8 {
+                    if num_sshorts_x2 <= 4 || self.big_tiff && num_sshorts_x2 <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
                         let mut offset_reader = Cursor::new(offset_bytes);
 
                         let mut w = Cursor::new(data.as_mut_slice());
-                        for _i in 0..num_sshorts {
+                        for _i in 0..num_sshorts_x2 / 2 {
                             let s = offset_reader.read_i16::<NativeEndian>()?; // read a short from offset
                             w.write_i16::<NativeEndian>(s)?; // write a short in output endian
                         }
@@ -1133,17 +1147,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     data
                 }
                 IFDEntryType::Slong => {
-                    let num_slongs = usize::value_from(cnt)
+                    let num_slongs_x4 =
+                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    let mut data = safe_vec(cnt * 4, Some(0u8))?;
+                    let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
 
-                    if num_slongs * 4 <= 4 || self.big_tiff && num_slongs * 4 <= 8 {
+                    if num_slongs_x4 <= 4 || self.big_tiff && num_slongs_x4 <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
                         let mut offset_reader = Cursor::new(offset_bytes);
 
                         let mut w = Cursor::new(data.as_mut_slice());
-                        for _i in 0..num_slongs {
+                        for _i in 0..num_slongs_x4 / 4 {
                             let s = offset_reader.read_i32::<NativeEndian>()?; // read a slong from offset
                             w.write_i32::<NativeEndian>(s)?; // write a slong in output endian
                         }
@@ -1160,17 +1177,20 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     data
                 }
                 IFDEntryType::Float => {
-                    let num_floats = usize::value_from(cnt)
+                    let num_floats_x4 =
+                        usize::value_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    let mut data = safe_vec(cnt * 4, Some(0u8))?;
+                    let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
 
-                    if num_floats * 4 <= 4 || self.big_tiff && num_floats * 4 <= 8 {
+                    if num_floats_x4 <= 4 || self.big_tiff && num_floats_x4 <= 8 {
                         let offset_bytes = entry.value_offset.to_ne_bytes();
                         let mut offset_reader = Cursor::new(offset_bytes);
 
                         let mut w = Cursor::new(data.as_mut_slice());
-                        for _i in 0..num_floats {
+                        for _i in 0..num_floats_x4 / 4 {
                             let s = offset_reader.read_f32::<NativeEndian>()?; // read a float from offset
                             w.write_f32::<NativeEndian>(s)?; // write a float in output endian
                         }
@@ -1570,7 +1590,7 @@ impl RemoteRefEmbed for TiffIO {
                 let xmp = match self.get_reader().read_xmp(source_stream) {
                     Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
                     None => {
-                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        let xmp = MIN_XMP.to_string();
                         add_provenance(&xmp, &manifest_uri)?
                     }
                 };
@@ -1730,6 +1750,48 @@ pub mod tests {
         }
         assert!(success);
     }
+
+    #[test]
+    fn test_overflow_clone_ifd_entries() {
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x04, 0x00, // entry_type
+            0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // value_count (cnt)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x04, 0x00, // entry_type
+            0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // value_count (cnt)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+
+        let tiff_io = TiffIO {};
+
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
     /*  disable until I find smaller DNG
     #[test]
     fn test_read_write_dng_manifest() {

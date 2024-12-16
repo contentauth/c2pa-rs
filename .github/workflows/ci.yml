@@ -368,7 +368,7 @@ jobs:
       - name: Install nightly Rust toolchain
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
-        # not in stable Rust as of this writing (Rust 1.76).
+        # not in stable Rust as of this writing (Rust 1.81).
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo docs
