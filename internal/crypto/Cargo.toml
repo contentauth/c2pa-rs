@@ -1,6 +1,6 @@
 [package]
 name = "c2pa-crypto"
-version = "0.1.2"
+version = "0.2.0"
 description = "Cryptography internals for c2pa-rs crate"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -35,7 +35,7 @@ async-trait = "0.1.77"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.7.2"
-c2pa-status-tracker = { path = "../status-tracker", version = "0.1.0" }
+c2pa-status-tracker = { path = "../status-tracker", version = "0.2.0" }
 ciborium = "0.2.2"
 const-hex = "1.14"
 coset = "0.3.1"
@@ -50,7 +50,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_bytes = "0.11.5"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
-thiserror = "1.0.61"
+thiserror = "2.0.6"
 x509-certificate = "0.21.0"
 x509-parser = "0.16.0"
 
@@ -63,12 +63,12 @@ url = "2.5.3"
 normal = ["openssl"] # TEMPORARY: Remove after openssl transition complete.
 
 [dependencies.chrono]
-version = "0.4.38"
+version = "0.4.39"
 default-features = false
 features = ["wasmbind"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.chrono]
-version = "0.4.38"
+version = "0.4.39"
 default-features = false
 features = ["now", "wasmbind"]
 
