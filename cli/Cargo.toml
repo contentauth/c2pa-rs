@@ -20,7 +20,7 @@ repository = "https://github.com/contentauth/c2pa-rs/tree/main/cli"
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.2"
-c2pa = { path = "../sdk", version = "0.40.0", features = [
+c2pa = { path = "../sdk", version = "0.41.0", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",

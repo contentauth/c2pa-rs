@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 The format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.2.0...c2pa-crypto-v0.3.0)
+_16 December 2024_
+
+### Added
+
+* Bump MSRV to 1.81.0 (#781)
+
+### Updated dependencies
+
+* Bump thiserror from 1.0.69 to 2.0.6 (#770)
+
 ## [0.2.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-crypto-v0.1.2...c2pa-crypto-v0.2.0)
 _12 December 2024_
 
