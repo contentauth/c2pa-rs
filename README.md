@@ -36,6 +36,10 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. 
 
+### Rust language requirement (MSRV)
+
+The `c2pa` crate requires Rust version 1.81.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+
 ### Contributions and feedback
 
 We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on nightly builds and testing, see [Contributing to the project](docs/project-contributions.md).

@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.76.0]
+        rust_version: [stable, 1.81.0]
 
     steps:
       - name: Checkout repository
@@ -214,7 +214,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.76.0]
+        rust_version: [stable, 1.81.0]
 
     steps:
       - name: Checkout repository
@@ -368,7 +368,7 @@ jobs:
       - name: Install nightly Rust toolchain
         # Nightly is used here because the docs.rs build
         # uses nightly and we use doc_cfg features that are
-        # not in stable Rust as of this writing (Rust 1.76).
+        # not in stable Rust as of this writing (Rust 1.81).
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Run cargo docs
