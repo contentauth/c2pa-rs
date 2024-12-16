@@ -1,6 +1,6 @@
-# c2patool - C2PA command line tool
+# C2PA command line tool
 
-`c2patool` is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_manifests) and media assets (audio, image or video files).
+C2PA Tool, `c2patool`, is a command line tool for working with C2PA [manifests](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_manifests) and media assets (audio, image or video files).
 
 Use the tool on a file in one of the [supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md) to:
 
@@ -34,8 +34,8 @@ There are two ways to install C2PA Tool:
 
 The quickest way to install the tool is to use the binary executable builds.  If you just want to try C2PA Tool quickly:
 
-1. Go to the [c2patool repository releases page](https://github.com/contentauth/c2pa-rs/releases). 
-1. Under the latest release, click **Assets**.
+1. Go to the [Releases page](https://github.com/contentauth/c2pa-rs/releases). 
+1. Under the latest **c2patool** release, click **Assets**.
 1. Download the archive for your operating system (Linux, macOS, or Windows).
 1. Copy the executable file to a location on your `PATH`.
 
@@ -44,7 +44,7 @@ Confirm that you can run the tool by entering a command such as:
 c2patool -h
 ```
 
-NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2patool.git`.
+NOTE: You also may want to get some of the example files provided in the repository `sample` directory.   To do so, clone the repository with `git clone https://github.com/contentauth/c2pa-rs.git`.
 
 ### Using Cargo Binstall
 
@@ -73,6 +73,6 @@ To ensure you have the latest version, enter this command:
 c2patool -V
 ```
 
-The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page](https://github.com/contentauth/c2patool/releases). 
+The tool will display the version installed. Compare the version number displayed with the latest release version shown in the [repository releases page](https://github.com/contentauth/c2pa-rs/releases). 
 
 If you need to upgrade, simply run `cargo binstall c2patool` again, or use [cargo-update](https://github.com/nabijaczleweli/cargo-update).

@@ -1,8 +1,8 @@
-# Release notes
+# C2PA Tool release notes 
 
-This page highlights noteworthy changes in each release.
+This page highlights noteworthy changes in each release of the `c2patool` CLI.
 
-Refer to the [CHANGELOG](https://github.com/contentauth/c2patool/blob/main/CHANGELOG.md) for detailed Git changes.
+Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md) for detailed Git changes.
 
 ## 0.9.x
 
