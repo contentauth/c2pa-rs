@@ -654,7 +654,7 @@ impl RemoteRefEmbed for PngIO {
 
                 let xmp = match self.read_xmp(source_stream) {
                     Some(s) => s,
-                    None => format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP),
+                    None => MIN_XMP.to_string(),
                 };
 
                 // update XMP
