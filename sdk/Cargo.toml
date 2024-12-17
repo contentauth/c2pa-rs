@@ -18,7 +18,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.76.0"
+rust-version = "1.81.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -162,7 +162,7 @@ web-sys = { version = "0.3.58", features = [
 [dev-dependencies]
 anyhow = "1.0.40"
 mockall = "0.13.1"
-c2pa = { path = ".", features = [
+c2pa = { path = ".", default-features = false, features = [
     "unstable_api",
 ] } # allow integration tests to use the new API
 glob = "0.3.1"

@@ -1978,7 +1978,7 @@ impl Claim {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
