@@ -30,6 +30,7 @@ json_schema = ["dep:schemars"]
 openssl = ["dep:openssl"]
 
 [dependencies]
+asn1-rs = "0.6.2"
 async-generic = "1.1"
 async-trait = "0.1.77"
 base64 = "0.22.1"

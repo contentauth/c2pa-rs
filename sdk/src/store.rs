@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::hash::sha256;
+use c2pa_crypto::{cose::CertificateAcceptancePolicy, hash::sha256};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -64,7 +64,6 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    trust_handler::TrustHandlerConfig,
     utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, RemoteSigner, Signer,
 };
@@ -81,7 +80,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    trust_handler: Box<dyn TrustHandlerConfig>,
+    cap: CertificateAcceptancePolicy,
 }
 
 struct ManifestInfo<'a> {
@@ -125,12 +124,7 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            #[cfg(feature = "openssl")]
-            trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
-            #[cfg(target_arch = "wasm32")]
-            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
-            #[cfg(not(any(feature = "openssl", target_arch = "wasm32")))]
-            trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
+            cap: CertificateAcceptancePolicy::default(),
             provenance_path: None,
             //dynamic_assertions: Vec::new(),
         };
@@ -171,37 +165,28 @@ impl Store {
     /// Load set of trust anchors used for certificate validation. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.
     pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler
-            .load_trust_anchors_from_data(&mut trust_reader)
+        Ok(self.cap.add_trust_anchors(trust_vec)?)
     }
 
     // Load set of private trust anchors used for certificate validation. [u8] to the
     /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
     /// if there are additional trust stores.
     pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler
-            .append_private_trust_data(&mut trust_reader)
+        Ok(self.cap.add_trust_anchors(trust_vec)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler.load_configuration(&mut trust_reader)
+        self.cap.add_valid_ekus(trust_vec);
+        Ok(())
     }
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(allowed_vec);
-        self.trust_handler.load_allowed_list(&mut trust_reader)
+        Ok(self.cap.add_end_entity_credentials(allowed_vec)?)
     }
 
     /// Clear all existing trust anchors
     pub fn clear_trust_anchors(&mut self) {
-        self.trust_handler.clear();
-    }
-
-    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
-        self.trust_handler.as_ref()
+        self.cap.clear();
     }
 
     /// Get the provenance if available.
@@ -468,7 +453,7 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
+        if let Ok(info) = check_ocsp_status(sig, &data, &self.cap, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
@@ -526,21 +511,14 @@ impl Store {
                         let mut cose_log = OneShotStatusTracker::default();
 
                         let result = if _sync {
-                            verify_cose(
-                                &sig,
-                                &claim_bytes,
-                                b"",
-                                false,
-                                self.trust_handler(),
-                                &mut cose_log,
-                            )
+                            verify_cose(&sig, &claim_bytes, b"", false, &self.cap, &mut cose_log)
                         } else {
                             verify_cose_async(
                                 sig.clone(),
                                 claim_bytes,
                                 b"".to_vec(),
                                 false,
-                                self.trust_handler(),
+                                &self.cap,
                                 &mut cose_log,
                             )
                             .await
@@ -1298,7 +1276,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        store.trust_handler(),
+                        &store.cap,
                         validation_log,
                     )?;
 
@@ -1402,7 +1380,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        store.trust_handler(),
+                        &store.cap,
                         validation_log,
                     )
                     .await?;
@@ -1450,15 +1428,8 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(
-            claim,
-            asset_data,
-            true,
-            true,
-            store.trust_handler(),
-            validation_log,
-        )
-        .await?;
+        Claim::verify_claim_async(claim, asset_data, true, true, &store.cap, validation_log)
+            .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
@@ -1487,14 +1458,7 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(
-            claim,
-            asset_data,
-            true,
-            true,
-            store.trust_handler(),
-            validation_log,
-        )?;
+        Claim::verify_claim(claim, asset_data, true, true, &store.cap, validation_log)?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 

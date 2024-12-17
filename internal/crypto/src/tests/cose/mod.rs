@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,8 +11,4 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "openssl")]
-mod openssl_trust_handler;
-
-#[cfg(feature = "openssl")]
-pub(crate) use openssl_trust_handler::verify_trust;
+mod certificate_acceptance_policy;

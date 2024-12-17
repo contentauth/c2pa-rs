@@ -747,6 +747,7 @@ name = "c2pa-crypto"
 version = "0.2.0"
 dependencies = [
  "actix",
+ "asn1-rs",
  "async-generic",
  "async-trait",
  "base64 0.22.1",
