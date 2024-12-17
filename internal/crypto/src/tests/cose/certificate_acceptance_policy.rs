@@ -17,7 +17,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::prelude::ExtendedKeyUsage;
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, InvalidCertificateError},
+    cose::{CertificateAcceptancePolicy, CertificateValidationError, InvalidCertificateError},
     raw_signature::signer::test_signer,
     SigningAlg,
 };
@@ -251,27 +251,20 @@ fn test_trust_store() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    assert!(cap
-        .validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es256_certs[1..], &es256_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es384_certs[1..], &es384_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es512_certs[1..], &es512_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
-        .unwrap());
+    cap.validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es256_certs[1..], &es256_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es384_certs[1..], &es384_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es512_certs[1..], &es512_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
+        .unwrap();
 }
 
 #[test]
@@ -295,30 +288,53 @@ fn test_broken_trust_chain() {
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
     // Break the trust chain by skipping the first intermediate CA.
-    assert!(!cap
-        .validate_certificate(&ps256_certs[2..], &ps256_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&ps512_certs[2..], &ps512_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&es256_certs[2..], &es256_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&es384_certs[2..], &es384_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&es512_certs[2..], &es512_certs[0], None)
-        .unwrap());
-    assert!(!cap
-        .validate_certificate(&ed25519_certs[2..], &ed25519_certs[0], None)
-        .unwrap());
+    assert_eq!(
+        cap.validate_certificate(&ps256_certs[2..], &ps256_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&ps512_certs[2..], &ps512_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&es256_certs[2..], &es256_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&es384_certs[2..], &es384_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&es512_certs[2..], &es512_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
+
+    assert_eq!(
+        cap.validate_certificate(&ed25519_certs[2..], &ed25519_certs[0], None)
+            .unwrap_err(),
+        CertificateValidationError::CertificateNotTrusted
+    );
 }
 
 #[test]
@@ -356,25 +372,18 @@ fn test_allowed_list() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    assert!(cap
-        .validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es256_certs[1..], &es256_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es384_certs[1..], &es384_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&es512_certs[1..], &es512_certs[0], None)
-        .unwrap());
-    assert!(cap
-        .validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
-        .unwrap());
+    cap.validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es256_certs[1..], &es256_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es384_certs[1..], &es384_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&es512_certs[1..], &es512_certs[0], None)
+        .unwrap();
+    cap.validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
+        .unwrap();
 }

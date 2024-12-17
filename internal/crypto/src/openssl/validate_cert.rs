@@ -17,8 +17,8 @@ use openssl::{
 };
 
 use crate::{
-    cose::CertificateAcceptancePolicy, openssl::OpenSslMutex,
-    raw_signature::RawSignatureValidationError,
+    cose::{CertificateAcceptancePolicy, CertificateValidationError},
+    openssl::OpenSslMutex,
 };
 
 pub(crate) fn validate_cert(
@@ -26,11 +26,11 @@ pub(crate) fn validate_cert(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<bool, RawSignatureValidationError> {
+) -> Result<(), CertificateValidationError> {
     // First check to see if the certificate appears on the allowed list of
     // end-entity certificates.
     if cap.end_entity_cert_ders().any(|der| der == cert_der) {
-        return Ok(true);
+        return Ok(());
     }
 
     let _openssl = OpenSslMutex::acquire()?;
@@ -65,12 +65,13 @@ pub(crate) fn validate_cert(
     let store = builder.build();
 
     if !has_anchors {
-        return Ok(false);
+        return Err(CertificateValidationError::CertificateNotTrusted);
     }
 
     let mut store_ctx = X509StoreContext::new()?;
-    match store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert()) {
-        Ok(trust) => Ok(trust),
-        Err(_) => Ok(false),
+    if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
+        Ok(())
+    } else {
+        Err(CertificateValidationError::CertificateNotTrusted)
     }
 }

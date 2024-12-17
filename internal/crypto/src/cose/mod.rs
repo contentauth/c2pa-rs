@@ -16,7 +16,9 @@
 //! [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 
 mod certificate_acceptance_policy;
-pub use certificate_acceptance_policy::{CertificateAcceptancePolicy, InvalidCertificateError};
+pub use certificate_acceptance_policy::{
+    CertificateAcceptancePolicy, CertificateValidationError, InvalidCertificateError,
+};
 
 mod error;
 pub use error::CoseError;

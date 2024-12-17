@@ -17,9 +17,8 @@ use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
 use asn1_rs::{oid, Oid};
 use async_generic::async_generic;
+use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
-
-use crate::raw_signature::RawSignatureValidationError;
 
 /// A `CertificateAcceptancePolicy` retains information about trust anchors and
 /// allowed EKUs to be used when verifying C2PA signing certificates.
@@ -74,14 +73,9 @@ impl CertificateAcceptancePolicy {
 
     /// Evaluate a certificate against the policy described by this struct.
     ///
-    /// Returns `Ok(true)` if the certificate appears on the end-entity
+    /// Returns `Ok(())` if the certificate appears on the end-entity
     /// certificate list or has a valid chain to one of the trust anchors that
     /// was provided and that it has a valid extended key usage (EKU).
-    ///
-    /// Returns `Ok(false)` if the certificate was not found in either list or
-    /// the EKUs were not found on the allowed list.
-    ///
-    /// Returns `Err(...)` if a technical fault prevented the above evaluation.
     ///
     /// If `signing_time_epoch` is provided, evaluates the signing time (which
     /// must be in Unix seconds since the epoch) against the certificate's
@@ -93,7 +87,7 @@ impl CertificateAcceptancePolicy {
         chain_der: &[Vec<u8>],
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
-    ) -> Result<bool, RawSignatureValidationError> {
+    ) -> Result<(), CertificateValidationError> {
         if _async {
             #[cfg(target_arch = "wasm32")]
             {}
@@ -109,7 +103,7 @@ impl CertificateAcceptancePolicy {
             );
         }
 
-        Err(RawSignatureValidationError::InternalError(
+        Err(CertificateValidationError::InternalError(
             "no implementation for certificate evaluation available",
         ))
     }
@@ -284,6 +278,67 @@ impl CertificateAcceptancePolicy {
         }
 
         None
+    }
+}
+
+/// Describes errors that can be identified when validating a certificate.
+#[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+#[allow(unused)] // TEMPORARY while building
+pub enum CertificateValidationError {
+    /// The certificate does not appear on any approved trust list.
+    ///
+    /// A certificate can be approved either by adding one or more trust anchors
+    /// via a call to [`CertificateAcceptancePolicy::add_trust_anchors`] or by
+    /// adding one or more end-entity certificates via
+    /// [`CertificateAcceptancePolicy::add_end_entity_credentials`].
+    ///
+    /// If the certificate that was presented doesn't match either of these
+    /// conditions, this error will be returned.
+    #[error("the certificate is not trusted")]
+    CertificateNotTrusted,
+
+    /// The certificate contains an invalid extended key usage (EKU) value.
+    #[error("the certificate contains an invalid extended key usage (EKU) value")]
+    InvalidEku,
+
+    /// An error was reported by the OpenSSL native code.
+    ///
+    /// NOTE: We do not directly capture the OpenSSL error itself because it
+    /// lacks an Eq implementation. Instead we capture the error description.
+    #[cfg(feature = "openssl")]
+    #[error("an error was reported by OpenSSL native code: {0}")]
+    OpenSslError(String),
+
+    /// The OpenSSL native code mutex could not be acquired.
+    #[cfg(feature = "openssl")]
+    #[error(transparent)]
+    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(&'static str),
+}
+
+#[cfg(feature = "openssl")]
+impl From<openssl::error::ErrorStack> for CertificateValidationError {
+    fn from(err: openssl::error::ErrorStack) -> Self {
+        Self::OpenSslError(err.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<crate::webcrypto::WasmCryptoError> for CertificateValidationError {
+    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+        match err {
+            crate::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::InternalError("unknown WASM context")
+            }
+            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::InternalError("WASM crypto unavailable")
+            }
+        }
     }
 }
 
