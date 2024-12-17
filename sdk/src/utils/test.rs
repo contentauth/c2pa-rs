@@ -335,14 +335,17 @@ struct TempRemoteSigner {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
         {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 
@@ -485,7 +488,7 @@ struct TempAsyncRemoteSigner {
 impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
         {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
@@ -499,7 +502,10 @@ impl AsyncSigner for TempAsyncRemoteSigner {
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
         }
 
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 

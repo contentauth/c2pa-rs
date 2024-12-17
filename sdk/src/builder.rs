@@ -1262,6 +1262,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_sign() {
         #[derive(Serialize, Deserialize)]
         struct TestAssertion {
@@ -1422,6 +1423,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_builder_remote_sign() {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
@@ -1459,7 +1461,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl_sign")]
     fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
@@ -1493,6 +1495,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_builder_data_hashed_embeddable() {
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
@@ -1553,6 +1556,10 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(any(
+        target_arch = "wasm32",
+        all(feature = "openssl_sign", feature = "file_io")
+    ))]
     async fn test_builder_box_hashed_embeddable() {
         use crate::asset_io::{CAIWriter, HashBlockObjectType};
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
@@ -1656,7 +1663,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [
