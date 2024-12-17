@@ -1541,13 +1541,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        any(
-            target_arch = "wasm32",
-            not(feature = "openssl")
-        ),
-        ignore
-    )]
+    #[cfg_attr(any(target_arch = "wasm32", not(feature = "openssl")), ignore)]
     // Note this does not work from wasm32, due to validation issues
     fn test_stream_jpg() {
         let image_bytes = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1592,7 +1586,10 @@ mod tests {
 
     #[allow(dead_code)]
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
-    #[cfg_attr(not(all(feature = "openssl", feature = "fetch_remote_manifests")), ignore)]
+    #[cfg_attr(
+        not(all(feature = "openssl", feature = "fetch_remote_manifests")),
+        ignore
+    )]
     async fn test_jpg_cloud_from_memory() {
         let image_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let format = "image/jpeg";

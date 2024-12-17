@@ -580,10 +580,7 @@ impl std::fmt::Display for ManifestStore {
     }
 }
 
-#[cfg(all(
-    test,
-    any(target_arch = "wasm32", feature = "openssl")
-))]
+#[cfg(all(test, any(target_arch = "wasm32", feature = "openssl")))]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]

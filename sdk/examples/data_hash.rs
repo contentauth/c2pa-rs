@@ -22,7 +22,6 @@ use std::{
 
 #[cfg(feature = "openssl_sign")]
 use c2pa::create_signer;
-
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::{
     assertions::{

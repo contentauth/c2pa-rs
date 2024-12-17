@@ -342,7 +342,10 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
         }
-        #[cfg(not(any(target_arch = "wasm32", all(feature = "openssl_sign", feature = "file_io"))))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 
@@ -499,7 +502,10 @@ impl AsyncSigner for TempAsyncRemoteSigner {
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
         }
 
-        #[cfg(not(any(target_arch = "wasm32", all(feature = "openssl_sign", feature = "file_io"))))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 
