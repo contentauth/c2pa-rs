@@ -549,7 +549,7 @@ impl CAIWriter for SvgIO {
         let end = manifest_pos + encoded_manifest_len;
         let length = usize::value_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            - end;
+            .saturating_sub(end);
         positions.push(HashObjectPositions {
             offset: end,
             length,
@@ -1002,5 +1002,14 @@ pub mod tests {
         assert!(xmp.ends_with("<?xpacket end=\"w\"?>"));
         assert_eq!(&extract_provenance(&xmp).unwrap(), test_data);
         println!("{xmp}");
+    }
+
+    #[test]
+    fn test_crash_integer_underflow() {
+        let data = [0x22, 0x3c, 0x73, 0x76, 0x67];
+        let mut stream = Cursor::new(&data);
+        let svg_io = SvgIO::new("svg");
+
+        let _ = svg_io.get_object_locations_from_stream(&mut stream);
     }
 }
