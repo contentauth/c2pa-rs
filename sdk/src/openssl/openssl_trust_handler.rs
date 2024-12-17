@@ -92,6 +92,7 @@ pub(crate) fn verify_trust(
 }
 
 #[cfg(test)]
+#[cfg(feature = "file_io")]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]

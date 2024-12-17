@@ -15,10 +15,10 @@ use anyhow::Result;
 // This example is not designed to work with a wasm build
 // so we provide this shell to avoid testing errors
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 mod client;
 fn main() -> Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "openssl")]
     client::main()?;
     Ok(())
 }

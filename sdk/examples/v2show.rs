@@ -14,12 +14,12 @@
 //! Example App that generates a manifest store listing for a given file
 
 use anyhow::Result;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(not(feature = "openssl"), target_arch = "wasm32"))]
 fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
 fn main() -> Result<()> {
     use std::io::Read;
 
