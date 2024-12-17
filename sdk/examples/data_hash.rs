@@ -169,7 +169,7 @@ fn user_data_hash_with_user_hashing() -> Result<()> {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&dest)?;
+        .open(dest)?;
 
     let mut builder = builder_from_source(&source)?;
     // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)

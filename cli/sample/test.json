@@ -1,0 +1,48 @@
+{
+  "alg": "ps256",
+  "private_key": "ps256.pem",
+  "sign_cert": "ps256.pub",
+  "ta_url": "http://timestamp.digicert.com",
+  "claim_generator": "TestApp",
+  "title": "My Title",
+  "assertions": [
+    {
+      "label": "stds.schema-org.CreativeWork",
+      "data": {
+        "@context": "https://schema.org",
+        "@type": "CreativeWork",
+        "author": [
+          {
+            "@type": "Person",
+            "name": "Joe Bloggs"
+          }
+        ]
+      }
+    },
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.opened"
+          }
+        ],
+        "metadata": {
+          "reviewRatings": [
+            {
+              "code": "c2pa.unknown",
+              "explanation": "Something untracked happened",
+              "value": 4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "my.assertion",
+      "data": {
+        "any_tag": "whatever I want"
+      }
+    }
+  ]
+}

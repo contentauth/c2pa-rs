@@ -15,7 +15,6 @@
 //  Isolate from wasm by wrapping in module.
 #[cfg(not(target_arch = "wasm32"))] // wasm doesn't support ed25519 yet
 mod integration_v2 {
-
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
@@ -170,7 +169,7 @@ mod integration_v2 {
         }
 
         println!("{}", reader.json());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.active_manifest().unwrap().title().unwrap(), title);
 
         Ok(())
@@ -182,13 +181,14 @@ mod integration_v2 {
 
         // Parse the PEM data to get the private key
         let pem = parse(private_key).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+
         // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
         let key_bytes = &pem.contents()[16..];
         let signing_key =
             SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+
         // Sign the data
         let signature: Signature = signing_key.sign(data);
-
         Ok(signature.to_bytes().to_vec())
     }
 }

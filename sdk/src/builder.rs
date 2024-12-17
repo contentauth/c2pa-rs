@@ -24,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::FileOptions, ZipArchive, ZipWriter};
+use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 use crate::{
     assertion::AssertionDecodeError,
@@ -453,7 +453,7 @@ impl Builder {
             {
                 let mut zip = ZipWriter::new(stream);
                 let options =
-                    FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
                 // write a version file
                 zip.start_file("version.txt", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
@@ -1083,6 +1083,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
+    use c2pa_crypto::SigningAlg;
     use serde_json::json;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
@@ -1092,7 +1093,7 @@ mod tests {
         assertions::BoxHash,
         asset_handlers::jpeg_io::JpegIO,
         hash_stream_by_alg,
-        utils::test::{temp_signer, write_jpeg_placeholder_stream},
+        utils::{test::write_jpeg_placeholder_stream, test_signer::test_signer},
         Reader,
     };
 
@@ -1306,7 +1307,7 @@ mod tests {
         let mut _builder = Builder::from_archive(&mut zipped).unwrap();
 
         // sign and write to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         builder
             .sign(signer.as_ref(), format, &mut source, &mut dest)
             .unwrap();
@@ -1316,7 +1317,7 @@ mod tests {
         let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
 
         println!("{}", manifest_store);
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         assert!(manifest_store.active_manifest().is_some());
         let manifest = manifest_store.active_manifest().unwrap();
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
@@ -1338,14 +1339,14 @@ mod tests {
             .unwrap();
 
         // sign and write to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         builder.sign_file(signer.as_ref(), source, &dest).unwrap();
 
         // read and validate the signed manifest store
         let manifest_store = Reader::from_file(&dest).expect("from_bytes");
 
         println!("{}", manifest_store);
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
@@ -1390,7 +1391,7 @@ mod tests {
                 .unwrap();
 
             // sign and write to the output stream
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
             builder
                 .sign(signer.as_ref(), format, &mut source, &mut dest)
                 .unwrap();
@@ -1402,7 +1403,7 @@ mod tests {
             println!("{}", manifest_store);
             if format != "c2pa" {
                 // c2pa files will not validate since they have no associated asset
-                assert!(manifest_store.validation_status().is_none());
+                assert_eq!(manifest_store.validation_status(), None);
             }
             assert_eq!(
                 manifest_store.active_manifest().unwrap().title().unwrap(),
@@ -1474,7 +1475,7 @@ mod tests {
             .unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
@@ -1490,7 +1491,7 @@ mod tests {
                 .expect("from_bytes");
 
         println!("{}", reader.json());
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[test]
@@ -1499,7 +1500,7 @@ mod tests {
         const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
         let mut input_stream = Cursor::new(CLOUD_IMAGE);
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let mut builder = Builder::from_json(&simple_manifest()).unwrap();
 
@@ -1550,7 +1551,7 @@ mod tests {
         let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
         println!("{reader}");
         #[cfg(not(target_arch = "wasm32"))] // skip this until we get wasm async signing working
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1573,7 +1574,7 @@ mod tests {
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
-        let signer = crate::utils::test::temp_async_signer();
+        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")
@@ -1637,7 +1638,7 @@ mod tests {
         let mut builder = Builder::from_archive(&mut zipped).unwrap();
 
         // sign the ManifestStoreBuilder and write it to the output stream
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         let _manifest_data = builder
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
@@ -1647,7 +1648,7 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
 
         //println!("{}", reader);
-        assert!(reader.validation_status().is_none());
+        assert_eq!(reader.validation_status(), None);
         assert_eq!(
             reader
                 .active_manifest()
@@ -1813,7 +1814,7 @@ mod tests {
         // convert buffer to cursor with Read/Write/Seek capability
         let mut input = Cursor::new(image.to_vec());
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
         // Embed a manifest using the signer.
         let mut output = Cursor::new(Vec::new());
         builder

@@ -17,11 +17,14 @@ use asn1_rs::{Any, Class, Header, Tag};
 use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
+    cose::{parse_and_validate_sigtst, parse_and_validate_sigtst_async},
     ocsp::OcspResponse,
+    p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
-    SigningAlg,
+    time_stamp::TimeStampError,
+    SigningAlg, ValidationInfo,
 };
-use c2pa_status_tracker::{log_item, StatusTracker};
+use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
 use conv::*;
 use coset::{
@@ -36,17 +39,14 @@ use x509_parser::{
 };
 
 #[cfg(feature = "openssl")]
-use crate::openssl::verify_trust;
+use crate::openssl::verify_trust; // Eric to investigate
 #[cfg(target_arch = "wasm32")]
-use crate::wasm::webpki_trust_handler::verify_trust_async;
+use crate::wasm::webpki_trust_handler::verify_trust_async; // Eric to investigate
 use crate::{
-    error::{Error, Result},
-    settings::get_settings_value,
-    time_stamp::gt_to_datetime,
-    trust_handler::{has_allowed_oid, TrustHandlerConfig},
-    utils::sig_utils::parse_ec_der_sig,
-    validation_status,
-    validator::ValidationInfo,
+    // c2pa-crypto migration plans (2024-12-05)
+    error::{Error, Result},                               // DON'T MOVE
+    settings::get_settings_value,                         // DON'T MOVE
+    trust_handler::{has_allowed_oid, TrustHandlerConfig}, // Eli to move to c2pa-crypto
 };
 
 pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
@@ -98,7 +98,7 @@ fn get_cose_sign1(
                 "could not deserialize signature",
                 "get_cose_sign1"
             )
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+            .validation_status(CLAIM_SIGNATURE_MISMATCH)
             .failure_no_throw(validation_log, Error::InvalidCoseSignature { coset_error });
 
             Err(Error::CoseSignature)
@@ -119,7 +119,7 @@ pub(crate) fn check_cert(
             "certificate could not be parsed",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         Error::CoseInvalidCert
@@ -132,7 +132,7 @@ pub(crate) fn check_cert(
             "certificate version incorrect",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
@@ -147,7 +147,7 @@ pub(crate) fn check_cert(
                 .map_err(|_| Error::CoseInvalidCert)?,
         ) {
             log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED)
+                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
                 .failure_no_throw(validation_log, Error::CoseCertExpiration);
 
             return Err(Error::CoseCertExpiration);
@@ -164,7 +164,7 @@ pub(crate) fn check_cert(
             x509_parser::time::ASN1Time::from_timestamp(now).map_err(|_| Error::CoseInvalidCert)?,
         ) {
             log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED)
+                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
                 .failure_no_throw(validation_log, Error::CoseCertExpiration);
 
             return Err(Error::CoseCertExpiration);
@@ -190,7 +190,7 @@ pub(crate) fn check_cert(
             "certificate algorithm not supported",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
@@ -247,7 +247,7 @@ pub(crate) fn check_cert(
                     "certificate algorithm error",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -263,7 +263,7 @@ pub(crate) fn check_cert(
                     "certificate hash algorithm not supported",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -274,7 +274,7 @@ pub(crate) fn check_cert(
                 "certificate missing algorithm parameters",
                 "check_cert_alg"
             )
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
             return Err(Error::CoseInvalidCert);
@@ -299,7 +299,7 @@ pub(crate) fn check_cert(
                     "certificate unsupported EC curve",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -329,7 +329,7 @@ pub(crate) fn check_cert(
                 "certificate key length too short",
                 "check_cert_alg"
             )
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
             return Err(Error::CoseInvalidCert);
@@ -348,7 +348,7 @@ pub(crate) fn check_cert(
             "certificate issuer and subject cannot be the same {self-signed disallowed}",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
@@ -361,7 +361,7 @@ pub(crate) fn check_cert(
             "certificate issuer/subject unique ids are not allowed",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         return Err(Error::CoseInvalidCert);
@@ -382,7 +382,7 @@ pub(crate) fn check_cert(
                     "certificate 'any' EKU not allowed",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -394,7 +394,7 @@ pub(crate) fn check_cert(
                     "certificate missing required EKU",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -414,7 +414,7 @@ pub(crate) fn check_cert(
                     "certificate invalid set of EKUs",
                     "check_cert_alg"
                 )
-                .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
                 .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                 return Err(Error::CoseInvalidCert);
@@ -442,7 +442,7 @@ pub(crate) fn check_cert(
                             "certificate missing digitalSignature EKU",
                             "check_cert_alg"
                         )
-                        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+                        .validation_status(SIGNING_CREDENTIAL_INVALID)
                         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
                         return Err(Error::CoseInvalidCert);
@@ -496,7 +496,7 @@ pub(crate) fn check_cert(
             "certificate params incorrect",
             "check_cert_alg"
         )
-        .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
         .failure_no_throw(validation_log, Error::CoseInvalidCert);
 
         Err(Error::CoseInvalidCert)
@@ -811,10 +811,9 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     {
         let time_cbor = serde_cbor::to_vec(t)?;
         let tst_infos = if _sync {
-            crate::time_stamp::cose_sigtst_to_tstinfos(&time_cbor, data, &sign1.protected)?
+            parse_and_validate_sigtst(&time_cbor, data, &sign1.protected)?
         } else {
-            crate::time_stamp::cose_sigtst_to_tstinfos_async(&time_cbor, data, &sign1.protected)
-                .await?
+            parse_and_validate_sigtst_async(&time_cbor, data, &sign1.protected).await?
         };
 
         // there should only be one but consider handling more in the future since it is technically ok
@@ -881,13 +880,13 @@ fn check_trust(
         Ok(trusted) => {
             if trusted {
                 log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+                    .validation_status(SIGNING_CREDENTIAL_TRUSTED)
                     .success(validation_log);
 
                 Ok(())
             } else {
                 log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                    .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
                     .failure_no_throw(validation_log, Error::CoseCertUntrusted);
 
                 Err(Error::CoseCertUntrusted)
@@ -895,7 +894,7 @@ fn check_trust(
         }
         Err(e) => {
             log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
                 .failure_no_throw(validation_log, &e);
 
             // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
@@ -975,7 +974,7 @@ pub(crate) async fn verify_cose_async(
                 "unsupported or missing Cose algorithm",
                 "verify_cose_async"
             )
-            .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+            .validation_status(ALGORITHM_UNSUPPORTED)
             .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
             // one of these must exist
@@ -1003,20 +1002,23 @@ pub(crate) async fn verify_cose_async(
                 // log timestamp errors
                 match e {
                     Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
-                    Error::CoseTimeStampMismatch => {
+
+                    Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
                             "Cose_Sign1",
                             "timestamp message imprint did not match",
                             "verify_cose"
                         )
-                        .validation_status(validation_status::TIMESTAMP_MISMATCH)
+                        .validation_status(TIMESTAMP_MISMATCH)
                         .failure(validation_log, Error::CoseTimeStampMismatch)?;
                     }
+
                     Error::CoseTimeStampValidity => {
                         log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
-                            .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY)
+                            .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
                             .failure(validation_log, Error::CoseTimeStampValidity)?;
                     }
+
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                             .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
@@ -1053,7 +1055,7 @@ pub(crate) async fn verify_cose_async(
     // check signature format
     if let Err(_e) = check_sig(&sign1.signature, alg) {
         log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
         // TO REVIEW: This could return e if OneShotStatusTracker is used. Hmmm.
@@ -1175,7 +1177,7 @@ pub(crate) fn verify_cose(
                 "unsupported or missing Cose algorithm",
                 "verify_cose"
             )
-            .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+            .validation_status(ALGORITHM_UNSUPPORTED)
             .failure_no_throw(validation_log, Error::CoseSignatureAlgorithmNotSupported);
 
             return Err(Error::CoseSignatureAlgorithmNotSupported);
@@ -1205,28 +1207,31 @@ pub(crate) fn verify_cose(
                 // log timestamp errors
                 match e {
                     Error::NotFound => check_cert(der_bytes, th, validation_log, None)?,
-                    Error::CoseTimeStampMismatch => {
+
+                    Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
                             "Cose_Sign1",
                             "timestamp did not match signed data",
                             "verify_cose"
                         )
-                        .validation_status(validation_status::TIMESTAMP_MISMATCH)
+                        .validation_status(TIMESTAMP_MISMATCH)
                         .failure_no_throw(validation_log, Error::CoseTimeStampMismatch);
 
                         return Err(Error::CoseTimeStampMismatch);
                     }
+
                     Error::CoseTimeStampValidity => {
                         log_item!(
                             "Cose_Sign1",
                             "timestamp certificate outside of validity",
                             "verify_cose"
                         )
-                        .validation_status(validation_status::TIMESTAMP_OUTSIDE_VALIDITY)
+                        .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
                         .failure_no_throw(validation_log, Error::CoseTimeStampValidity);
 
                         return Err(Error::CoseTimeStampValidity);
                     }
+
                     _ => {
                         log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
                             .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
@@ -1252,7 +1257,7 @@ pub(crate) fn verify_cose(
     // check signature format
     if let Err(e) = check_sig(&sign1.signature, alg) {
         log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
-            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
             .failure_no_throw(validation_log, e);
 
         return Err(Error::CoseSignatureAlgorithmNotSupported);
@@ -1344,16 +1349,23 @@ async fn validate_with_cert_async(
     validate_with_cert(validator, sig, data, der_bytes)
 }
 
+fn gt_to_datetime(
+    gt: x509_certificate::asn1time::GeneralizedTime,
+) -> chrono::DateTime<chrono::Utc> {
+    gt.into()
+}
+
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
 
     use super::*;
-    use crate::{openssl::temp_signer, signer::ConfigurableSigner, Signer, SigningAlg};
+    use crate::{utils::test_signer::test_signer, Signer};
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -1374,7 +1386,7 @@ pub mod tests {
 
             assert_eq!(
                 validation_log.logged_items()[0].validation_status,
-                Some(validation_status::SIGNING_CREDENTIAL_EXPIRED.into())
+                Some(SIGNING_CREDENTIAL_EXPIRED.into())
             );
         }
     }
@@ -1382,39 +1394,31 @@ pub mod tests {
     #[test]
     #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     fn test_cert_algorithms() {
-        let cert_dir = crate::utils::test::fixture_path("certs");
         let th = crate::openssl::OpenSSLTrustHandlerConfig::new();
 
         let mut validation_log = DetailedStatusTracker::default();
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es256, None);
-        let es256_cert = std::fs::read(cert_path).unwrap();
+        let es256_cert = include_bytes!("../tests/fixtures/certs/es256.pub");
+        let es384_cert = include_bytes!("../tests/fixtures/certs/es384.pub");
+        let es512_cert = include_bytes!("../tests/fixtures/certs/es512.pub");
+        let rsa_pss256_cert = include_bytes!("../tests/fixtures/certs/ps256.pub");
 
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es384, None);
-        let es384_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_ec_signer(&cert_dir, SigningAlg::Es512, None);
-        let es512_cert = std::fs::read(cert_path).unwrap();
-
-        let (_, cert_path) = temp_signer::get_rsa_signer(&cert_dir, SigningAlg::Ps256, None);
-        let rsa_pss256_cert = std::fs::read(cert_path).unwrap();
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es384_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es384_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&es512_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(es512_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&rsa_pss256_cert) {
+        if let Ok(signcert) = openssl::x509::X509::from_pem(rsa_pss256_cert) {
             let der_bytes = signcert.to_der().unwrap();
             assert!(check_cert(&der_bytes, &th, &mut validation_log, None).is_ok());
         }
@@ -1431,7 +1435,7 @@ pub mod tests {
 
         let box_size = 10000;
 
-        let signer = crate::utils::test::temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
@@ -1445,6 +1449,10 @@ pub mod tests {
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
+        use c2pa_crypto::raw_signature::{
+            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError,
+        };
+
         let mut validation_log = DetailedStatusTracker::default();
 
         let mut claim = crate::claim::Claim::new("ocsp_sign_test", Some("contentauth"));
@@ -1456,19 +1464,16 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let signer = crate::openssl::RsaSigner::from_signcert_and_pkey(
-            &sign_cert,
-            &pem_key,
-            SigningAlg::Ps256,
-            None,
-        )
-        .unwrap();
+        let signer =
+            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
             pub signer: Box<dyn crate::Signer>,
             pub ocsp_rsp: Vec<u8>,
         }
+
         impl crate::Signer for OcspSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
                 self.signer.sign(data)
@@ -1492,7 +1497,7 @@ pub mod tests {
         }
 
         let ocsp_signer = OcspSigner {
-            signer: Box::new(signer),
+            signer: Box::new(crate::signer::RawSignerWrapper(signer)),
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 

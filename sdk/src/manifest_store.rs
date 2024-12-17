@@ -631,7 +631,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -653,7 +653,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -671,7 +671,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -694,7 +694,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         println!("{manifest_store}");
     }
 
@@ -713,7 +713,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");
@@ -732,7 +732,7 @@ mod tests {
         assert!(manifest_store.active_label().is_some());
         assert!(manifest_store.get_active().is_some());
         assert!(!manifest_store.manifests().is_empty());
-        assert!(manifest_store.validation_status().is_none());
+        assert_eq!(manifest_store.validation_status(), None);
         let manifest = manifest_store.get_active().unwrap();
         assert!(!manifest.ingredients().is_empty());
         assert_eq!(manifest.issuer().unwrap(), "C2PA Test Signing Cert");

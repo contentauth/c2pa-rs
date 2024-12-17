@@ -1531,13 +1531,13 @@ mod tests {
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.metadata().is_none());
+        assert_eq!(ingredient.metadata(), None);
         #[cfg(target_arch = "wasm32")]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
         );
-        assert_eq!(None, ingredient.validation_status());
+        assert_eq!(ingredient.validation_status(), None);
     }
 
     #[test]
@@ -1560,8 +1560,8 @@ mod tests {
         assert_eq!(&ingredient.title, title);
         assert_eq!(ingredient.format(), format);
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.metadata().is_none());
-        assert_eq!(None, ingredient.validation_status());
+        assert_eq!(ingredient.metadata(), None);
+        assert_eq!(ingredient.validation_status(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1582,7 +1582,7 @@ mod tests {
         #[cfg(feature = "add_thumbnails")]
         assert!(ingredient.thumbnail().is_some());
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.metadata().is_none());
+        assert_eq!(ingredient.metadata(), None);
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -1605,7 +1605,7 @@ mod tests {
         assert!(ingredient.provenance().is_some());
         assert!(ingredient.provenance().unwrap().starts_with("https:"));
         assert!(ingredient.manifest_data().is_some());
-        assert_eq!(None, ingredient.validation_status());
+        assert_eq!(ingredient.validation_status(), None);
     }
 
     #[allow(dead_code)]
@@ -1627,7 +1627,7 @@ mod tests {
             .url()
             .unwrap()
             .starts_with("http"));
-        assert!(ingredient.manifest_data().is_none());
+        assert_eq!(ingredient.manifest_data(), None);
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
@@ -1649,7 +1649,7 @@ mod tests {
             &"ingredient_from_memory_async:".into(),
             &ingredient.to_string().into(),
         );
-        assert_eq!(None, ingredient.validation_status());
+        assert_eq!(ingredient.validation_status(), None);
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.provenance().is_some());
     }
@@ -1694,7 +1694,7 @@ mod tests_file_io {
             assert!(ingredient.thumbnail().is_some());
             assert_eq!(ingredient.thumbnail().unwrap().0, format);
         } else {
-            assert!(ingredient.thumbnail().is_none());
+            assert_eq!(ingredient.thumbnail(), None);
         }
     }
 
@@ -1710,8 +1710,8 @@ mod tests_file_io {
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "Purple Square.psd");
         assert_eq!(ingredient.format(), "image/vnd.adobe.photoshop");
-        assert!(ingredient.thumbnail().is_none()); // should always be none
-        assert!(ingredient.manifest_data().is_none());
+        assert_eq!(ingredient.thumbnail(), None); // should always be none
+        assert_eq!(ingredient.manifest_data(), None);
     }
 
     #[test]
@@ -1731,7 +1731,7 @@ mod tests_file_io {
             .identifier
             .starts_with("self#jumbf="));
         assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.metadata().is_none());
+        assert_eq!(ingredient.metadata(), None);
     }
 
     #[test]
@@ -1745,9 +1745,9 @@ mod tests_file_io {
         assert_eq!(&ingredient.title, NO_MANIFEST_JPEG);
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_none());
-        assert!(ingredient.manifest_data().is_none());
-        assert!(ingredient.metadata().is_none());
+        assert_eq!(ingredient.provenance(), None);
+        assert_eq!(ingredient.manifest_data(), None);
+        assert_eq!(ingredient.metadata(), None);
         assert!(ingredient.instance_id().starts_with("xmp.iid:"));
         #[cfg(feature = "add_thumbnails")]
         assert!(ingredient
@@ -1783,8 +1783,8 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), "image/jpeg");
         assert_eq!(ingredient.hash(), Some("1234568abcdef"));
         assert_eq!(ingredient.thumbnail_ref().unwrap().format, "image/foo"); // always generated
-        assert!(ingredient.manifest_data().is_none());
-        assert!(ingredient.metadata().is_none());
+        assert_eq!(ingredient.manifest_data(), None);
+        assert_eq!(ingredient.metadata(), None);
     }
 
     #[test]
@@ -1797,8 +1797,8 @@ mod tests_file_io {
         println!("ingredient = {ingredient}");
         assert_eq!(ingredient.title(), "libpng-test.png");
         test_thumbnail(&ingredient, "image/png");
-        assert!(ingredient.provenance().is_none());
-        assert!(ingredient.manifest_data.is_none());
+        assert_eq!(ingredient.provenance(), None);
+        assert_eq!(ingredient.manifest_data, None);
     }
 
     #[test]
@@ -1833,7 +1833,7 @@ mod tests_file_io {
         assert_eq!(ingredient.format(), "image/jpeg");
         test_thumbnail(&ingredient, "image/jpeg");
         assert!(ingredient.provenance().is_some());
-        assert!(ingredient.manifest_data().is_none());
+        assert_eq!(ingredient.manifest_data(), None);
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
@@ -1847,7 +1847,7 @@ mod tests_file_io {
         let ap = fixture_path("CIE-sig-CA.jpg");
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         // println!("ingredient = {ingredient}");
-        assert_eq!(None, ingredient.validation_status());
+        assert_eq!(ingredient.validation_status(), None);
         assert!(ingredient.manifest_data().is_some());
     }
 
@@ -1899,11 +1899,11 @@ mod tests_file_io {
         let mut ingredient = Ingredient::new("title", "format", "instance_id");
         ingredient.resources.set_base_path(folder);
 
-        assert!(ingredient.thumbnail_ref().is_none());
+        assert_eq!(ingredient.thumbnail_ref(), None);
         // assert!(ingredient
         //     .set_manifest_data_ref(ResourceRef::new("image/jpg", "foo"))
         //     .is_err());
-        assert!(ingredient.manifest_data_ref().is_none());
+        assert_eq!(ingredient.manifest_data_ref(), None);
         // verify we can set a reference
         assert!(ingredient
             .set_thumbnail_ref(ResourceRef::new("image/jpg", "C.jpg"))

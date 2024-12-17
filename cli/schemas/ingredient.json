@@ -1,0 +1,72 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "http://ns.adobe.com/c2patool/ingredient-definition/v1",
+    "type": "object",
+    "description": "Definition format for an ingredient created with c2patool",
+    "examples": [
+        {
+            "title": "C.jpg",
+            "format": "image/jpeg",
+            "instance_id": "xmp:iid:01712cdc-26b8-4902-ad53-1cdbd5370b1b",
+            "relationship": "componentOf",
+            "thumbnail": {
+                "format": "image/jpeg",
+                "identifier": "thumb.jpg"
+            },
+            "active_manifest": "manifest.c2pa"
+        }
+    ],
+    "required": [
+        "title"
+    ],
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "A human-readable string to be displayed as the title for this Ingredient (generally the file name of the asset)."
+        },
+        "format": {
+            "type": "string",
+            "description": "The MIME content type of the associated ingredient"
+        },
+        "instance_id": {
+            "type": "string",
+            "description": "A unique identifier for the ingredient instance. Often from `xmpMM:InstanceID` in XMP metadata"
+        },
+        "document_id": {
+            "type": "string",
+            "description": "Optionally a copy from `xmpMM:DocumentID` in XMP metadata"
+        },
+        "relationship": {
+            "type": "string",
+            "description": "Either `componentOf`(default) or `parentOf`"
+        },
+        "provenance": {
+            "type": "string",
+            "description": "URI to the associated C2PA manifest. My echo `dcterms:provenance` in XMP metadata."
+        },
+        "hash": {
+            "type": "string",
+            "description": "A hash value of the asset at import, used to deduplicate ingredients"
+        },
+        "thumbnail": {
+            "type": "object",
+            "format": "ResourceReference",
+            "description": "Identifies a thumbnail file with `format` holding MIME type, and `identifier` with a path to the file (relative to Ingredient definition)"
+        },
+        "active_manifest": {
+            "type": "string",
+            "description": "Manifest label of for the most recently added manifest in the manifest store"
+        },
+        "validation_status": {
+            "type": "object",
+            "format": "ValidationStatus",
+            "description": "Validation status record for any issues related to this ingredient or its validation"
+        },
+        "manifest_data": {
+            "type": "object",
+            "format": "ResourceRef",
+            "description": "Identifies a c2pa file the extracted manifest store from an asset with `format` holding MIME type, and `identifier` with a path to the .c2pa file (relative to Ingredient definition)"
+        }
+    },
+    "additionalProperties": false
+}

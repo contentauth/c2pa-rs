@@ -11,9 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_crypto::SigningAlg;
+use async_trait::async_trait;
+use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
 
 use crate::{DynamicAssertion, Result};
+
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -46,7 +48,7 @@ pub trait Signer {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        crate::time_stamp::default_rfc3161_message(message)
+        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -56,20 +58,19 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    #[cfg(feature = "openssl")]
+    #[allow(unused)] // message not used on WASM
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(crate::time_stamp::default_rfc3161_request(
-                    &url, headers, &body, message,
-                ));
+                return Some(
+                    c2pa_crypto::time_stamp::default_rfc3161_request(&url, headers, &body, message)
+                        .map_err(|e| e.into()),
+                );
             }
         }
-        None
-    }
-    #[cfg(not(feature = "openssl"))]
-    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+
         None
     }
 
@@ -106,10 +107,8 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         alg: SigningAlg,
         tsa_url: Option<String>,
     ) -> Result<Self> {
-        use crate::Error;
-
-        let signcert = std::fs::read(signcert_path).map_err(Error::IoError)?;
-        let pkey = std::fs::read(pkey_path).map_err(Error::IoError)?;
+        let signcert = std::fs::read(signcert_path).map_err(crate::Error::IoError)?;
+        let pkey = std::fs::read(pkey_path).map_err(crate::Error::IoError)?;
 
         Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
     }
@@ -122,8 +121,6 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
         tsa_url: Option<String>,
     ) -> Result<Self>;
 }
-
-use async_trait::async_trait;
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
 ///
@@ -161,7 +158,7 @@ pub trait AsyncSigner: Sync {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        crate::time_stamp::default_rfc3161_message(message)
+        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
     /// Request RFC 3161 timestamp to be included in the manifest data
@@ -178,11 +175,15 @@ pub trait AsyncSigner: Sync {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
-                    crate::time_stamp::default_rfc3161_request_async(&url, headers, &body, message)
-                        .await,
+                    c2pa_crypto::time_stamp::default_rfc3161_request_async(
+                        &url, headers, &body, message,
+                    )
+                    .await
+                    .map_err(|e| e.into()),
                 );
             }
         }
+
         None
     }
 
@@ -208,6 +209,11 @@ pub trait AsyncSigner: Sync {
     }
 }
 
+/// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
+///
+/// This trait exists to allow the signature mechanism to be extended.
+///
+/// Use this when the implementation is asynchronous.
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
 pub trait AsyncSigner {
@@ -239,10 +245,19 @@ pub trait AsyncSigner {
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        crate::time_stamp::default_rfc3161_message(message)
+        c2pa_crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
 
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>>;
+    /// Request RFC 3161 timestamp to be included in the manifest data
+    /// structure.
+    ///
+    /// `message` is a preliminary hash of the claim
+    ///
+    /// The default implementation will send the request to the URL
+    /// provided by [`Self::time_authority_url()`], if any.
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        None
+    }
 
     /// OCSP response for the signing cert if available
     /// This is the only C2PA supported cert revocation method.
@@ -283,9 +298,57 @@ pub trait RemoteSigner: Sync {
     fn reserve_size(&self) -> usize;
 }
 
-impl Signer for Box<dyn Signer + Send + Sync> {
+impl Signer for Box<dyn Signer> {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         (**self).sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
     }
 
     fn alg(&self) -> SigningAlg {
@@ -312,12 +375,12 @@ impl Signer for Box<dyn Signer + Send + Sync> {
         (**self).timestamp_request_body(message)
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message)
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
     }
 
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
-        (**self).ocsp_val()
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
     }
 
     fn direct_cose_handling(&self) -> bool {
@@ -326,5 +389,98 @@ impl Signer for Box<dyn Signer + Send + Sync> {
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         (**self).dynamic_assertions()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+impl AsyncSigner for Box<dyn AsyncSigner> {
+    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+        (**self).sign(data).await
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message).await
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val().await
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
+
+impl Signer for RawSignerWrapper {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.0.sign(data).map_err(|e| e.into())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.0.cert_chain().map_err(|e| e.into())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.0
+            .time_stamp_request_body(message)
+            .map_err(|e| e.into())
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.0
+            .send_time_stamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
     }
 }
