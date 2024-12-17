@@ -267,3 +267,39 @@ impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
         self.0.send_time_stamp_request(message)
     }
 }
+
+#[cfg(test)]
+pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn RawSigner> {
+    let (cert_chain, private_key) = match alg {
+        SigningAlg::Ed25519 => (
+            include_bytes!("../tests/fixtures/raw_signature/ed25519.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/ed25519.priv").as_slice(),
+        ),
+        SigningAlg::Es256 => (
+            include_bytes!("../tests/fixtures/raw_signature/es256.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/es256.priv").as_slice(),
+        ),
+        SigningAlg::Es384 => (
+            include_bytes!("../tests/fixtures/raw_signature/es384.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/es384.priv").as_slice(),
+        ),
+        SigningAlg::Es512 => (
+            include_bytes!("../tests/fixtures/raw_signature/es512.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/es512.priv").as_slice(),
+        ),
+        SigningAlg::Ps256 => (
+            include_bytes!("../tests/fixtures/raw_signature/ps256.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/ps256.priv").as_slice(),
+        ),
+        SigningAlg::Ps384 => (
+            include_bytes!("../tests/fixtures/raw_signature/ps384.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/ps384.priv").as_slice(),
+        ),
+        SigningAlg::Ps512 => (
+            include_bytes!("../tests/fixtures/raw_signature/ps512.pub").as_slice(),
+            include_bytes!("../tests/fixtures/raw_signature/ps512.priv").as_slice(),
+        ),
+    };
+
+    signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap()
+}
