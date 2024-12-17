@@ -1,6 +1,6 @@
 # Changelog
 
-All changes to this project are documented in this file.
+All changes to this project are documented in this file.  For a high-level summary of changes, see the [Release Notes](../docs/release-notes.md).
 
 This project adheres to [Semantic Versioning](https://semver.org), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
