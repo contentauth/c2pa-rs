@@ -381,12 +381,7 @@ pub mod tests {
 
     #[wasm_bindgen_test]
     async fn test_trust_store() {
-        let mut cap = CertificateAcceptancePolicy::default();
-
-        cap.add_trust_anchors(include_bytes!(
-            "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-        ))
-        .unwrap();
+        let cap = crate::utils::test::test_certificate_acceptance_policy();
 
         // test all the certs
         let ps256 = include_bytes!("../../tests/fixtures/certs/ps256.pub");
