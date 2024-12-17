@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(dead_code)] // TEMPORARY while refactoring
-
 use openssl::{
     stack::Stack,
     x509::{verify::X509VerifyFlags, X509StoreContext, X509},
@@ -23,7 +21,7 @@ use crate::{
     raw_signature::RawSignatureValidationError,
 };
 
-pub(crate) fn verify_cert_trust(
+pub(crate) fn validate_cert(
     cap: &CertificateAcceptancePolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],

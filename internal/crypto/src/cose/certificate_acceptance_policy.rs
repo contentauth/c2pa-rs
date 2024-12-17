@@ -16,7 +16,10 @@
 use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
 use asn1_rs::{oid, Oid};
+use async_generic::async_generic;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
+
+use crate::raw_signature::RawSignatureValidationError;
 
 /// A `CertificateAcceptancePolicy` retains information about trust anchors and
 /// allowed EKUs to be used when verifying C2PA signing certificates.
@@ -67,6 +70,48 @@ impl CertificateAcceptancePolicy {
             end_entity_cert_ders: vec![],
             additional_ekus: HashSet::default(),
         }
+    }
+
+    /// Evaluate a certificate against the policy described by this struct.
+    ///
+    /// Returns `Ok(true)` if the certificate appears on the end-entity
+    /// certificate list or has a valid chain to one of the trust anchors that
+    /// was provided and that it has a valid extended key usage (EKU).
+    ///
+    /// Returns `Ok(false)` if the certificate was not found in either list or
+    /// the EKUs were not found on the allowed list.
+    ///
+    /// Returns `Err(...)` if a technical fault prevented the above evaluation.
+    ///
+    /// If `signing_time_epoch` is provided, evaluates the signing time (which
+    /// must be in Unix seconds since the epoch) against the certificate's
+    /// period of validity.
+    #[allow(unused)] // parameters may be unused in some cases
+    #[async_generic]
+    pub fn validate_certificate(
+        &self,
+        chain_der: &[Vec<u8>],
+        end_entity_cert_der: &[u8],
+        signing_time_epoch: Option<i64>,
+    ) -> Result<bool, RawSignatureValidationError> {
+        if _async {
+            #[cfg(target_arch = "wasm32")]
+            {}
+        }
+
+        #[cfg(feature = "openssl")]
+        {
+            return crate::openssl::validate_cert::validate_cert(
+                self,
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            );
+        }
+
+        Err(RawSignatureValidationError::InternalError(
+            "no implementation for certificate evaluation available",
+        ))
     }
 
     /// Add trust anchors (root X.509 certificates) that shall be accepted when

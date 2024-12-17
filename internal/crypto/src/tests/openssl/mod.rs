@@ -14,4 +14,3 @@
 mod ffi_mutex;
 mod signers;
 mod validators;
-mod verify_cert_trust;

@@ -24,5 +24,5 @@ mod ffi_mutex;
 pub use ffi_mutex::{OpenSslMutex, OpenSslMutexUnavailable};
 
 pub(crate) mod signers;
+pub(crate) mod validate_cert;
 pub mod validators;
-pub(crate) mod verify_cert_trust;
