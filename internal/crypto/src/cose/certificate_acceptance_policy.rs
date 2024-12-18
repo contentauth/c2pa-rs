@@ -290,12 +290,14 @@ impl CertificateAcceptancePolicy {
     }
 }
 
-/// Describes errors that can be identified when evaluating a certificate's trust.
+/// Describes errors that can be identified when evaluating a certificate's
+/// trust.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 #[allow(unused)] // TEMPORARY while building
 pub enum CertificateTrustError {
-    /// The certificate does not appear on any trust list that has been configured.
+    /// The certificate does not appear on any trust list that has been
+    /// configured.
     ///
     /// A certificate can be approved either by adding one or more trust anchors
     /// via a call to [`CertificateAcceptancePolicy::add_trust_anchors`] or by
