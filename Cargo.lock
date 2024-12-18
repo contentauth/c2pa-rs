@@ -763,6 +763,7 @@ dependencies = [
  "getrandom",
  "hex",
  "js-sys",
+ "nom",
  "openssl",
  "p256",
  "p384",

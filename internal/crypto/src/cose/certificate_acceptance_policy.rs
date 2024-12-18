@@ -90,7 +90,15 @@ impl CertificateAcceptancePolicy {
     ) -> Result<(), CertificateValidationError> {
         if _async {
             #[cfg(target_arch = "wasm32")]
-            {}
+            {
+                return crate::webcrypto::validate_cert::validate_cert(
+                    self,
+                    chain_der,
+                    end_entity_cert_der,
+                    signing_time_epoch,
+                )
+                .await;
+            }
         }
 
         #[cfg(feature = "openssl")]
@@ -314,6 +322,10 @@ pub enum CertificateValidationError {
     #[cfg(feature = "openssl")]
     #[error(transparent)]
     OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+
+    /// The certificate (or certificate chain) that was presented is invalid.
+    #[error("the certificate or certificate chain is invalid")]
+    InvalidCertificate,
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.
