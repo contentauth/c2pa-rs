@@ -847,9 +847,9 @@ fn check_trust(
     }
 
     let verify_result = if _sync {
-        cap.validate_certificate(chain_der, cert_der, signing_time_epoch)
+        cap.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
     } else {
-        cap.validate_certificate_async(chain_der, cert_der, signing_time_epoch)
+        cap.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
             .await
     };
 
