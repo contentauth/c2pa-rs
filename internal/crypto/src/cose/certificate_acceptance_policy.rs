@@ -71,7 +71,8 @@ impl CertificateAcceptancePolicy {
         }
     }
 
-    /// Evaluate a certificate against the policy described by this struct.
+    /// Evaluate a certificate against the trust policy described by this
+    /// struct.
     ///
     /// Returns `Ok(())` if the certificate appears on the end-entity
     /// certificate list or has a valid chain to one of the trust anchors that
@@ -82,7 +83,7 @@ impl CertificateAcceptancePolicy {
     /// period of validity.
     #[allow(unused)] // parameters may be unused in some cases
     #[async_generic]
-    pub fn validate_certificate(
+    pub fn check_certificate_trust(
         &self,
         chain_der: &[Vec<u8>],
         end_entity_cert_der: &[u8],

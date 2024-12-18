@@ -251,19 +251,19 @@ fn test_trust_store() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    cap.validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
+    cap.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
+    cap.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
+    cap.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es256_certs[1..], &es256_certs[0], None)
+    cap.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es384_certs[1..], &es384_certs[0], None)
+    cap.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es512_certs[1..], &es512_certs[0], None)
+    cap.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
+    cap.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
         .unwrap();
 }
 
@@ -280,25 +280,25 @@ async fn test_trust_store_async() {
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
-    cap.validate_certificate_async(&ps256_certs[1..], &ps256_certs[0], None)
+    cap.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ps384_certs[1..], &ps384_certs[0], None)
+    cap.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ps512_certs[1..], &ps512_certs[0], None)
+    cap.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es256_certs[1..], &es256_certs[0], None)
+    cap.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es384_certs[1..], &es384_certs[0], None)
+    cap.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es512_certs[1..], &es512_certs[0], None)
+    cap.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ed25519_certs[1..], &ed25519_certs[0], None)
+    cap.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
         .await
         .unwrap();
 }
@@ -325,49 +325,49 @@ fn test_broken_trust_chain() {
 
     // Break the trust chain by skipping the first intermediate CA.
     assert_eq!(
-        cap.validate_certificate(&ps256_certs[2..], &ps256_certs[0], None)
+        cap.check_certificate_trust(&ps256_certs[2..], &ps256_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
+        cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&ps384_certs[2..], &ps384_certs[0], None)
+        cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&ps512_certs[2..], &ps512_certs[0], None)
+        cap.check_certificate_trust(&ps512_certs[2..], &ps512_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&es256_certs[2..], &es256_certs[0], None)
+        cap.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&es384_certs[2..], &es384_certs[0], None)
+        cap.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&es512_certs[2..], &es512_certs[0], None)
+        cap.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate(&ed25519_certs[2..], &ed25519_certs[0], None)
+        cap.check_certificate_trust(&ed25519_certs[2..], &ed25519_certs[0], None)
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
@@ -388,56 +388,56 @@ async fn test_broken_trust_chain_async() {
 
     // Break the trust chain by skipping the first intermediate CA.
     assert_eq!(
-        cap.validate_certificate_async(&ps256_certs[2..], &ps256_certs[0], None)
+        cap.check_certificate_trust_async(&ps256_certs[2..], &ps256_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&ps384_certs[2..], &ps384_certs[0], None)
+        cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&ps384_certs[2..], &ps384_certs[0], None)
+        cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&ps512_certs[2..], &ps512_certs[0], None)
+        cap.check_certificate_trust_async(&ps512_certs[2..], &ps512_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&es256_certs[2..], &es256_certs[0], None)
+        cap.check_certificate_trust_async(&es256_certs[2..], &es256_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&es384_certs[2..], &es384_certs[0], None)
+        cap.check_certificate_trust_async(&es384_certs[2..], &es384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&es512_certs[2..], &es512_certs[0], None)
+        cap.check_certificate_trust_async(&es512_certs[2..], &es512_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.validate_certificate_async(&ed25519_certs[2..], &ed25519_certs[0], None)
+        cap.check_certificate_trust_async(&ed25519_certs[2..], &ed25519_certs[0], None)
             .await
             .unwrap_err(),
         CertificateValidationError::CertificateNotTrusted
@@ -479,19 +479,19 @@ fn test_allowed_list() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    cap.validate_certificate(&ps256_certs[1..], &ps256_certs[0], None)
+    cap.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ps384_certs[1..], &ps384_certs[0], None)
+    cap.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ps512_certs[1..], &ps512_certs[0], None)
+    cap.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es256_certs[1..], &es256_certs[0], None)
+    cap.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es384_certs[1..], &es384_certs[0], None)
+    cap.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&es512_certs[1..], &es512_certs[0], None)
+    cap.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
-    cap.validate_certificate(&ed25519_certs[1..], &ed25519_certs[0], None)
+    cap.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
         .unwrap();
 }
 
@@ -523,25 +523,25 @@ async fn test_allowed_list_async() {
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
-    cap.validate_certificate_async(&ps256_certs[1..], &ps256_certs[0], None)
+    cap.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ps384_certs[1..], &ps384_certs[0], None)
+    cap.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ps512_certs[1..], &ps512_certs[0], None)
+    cap.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es256_certs[1..], &es256_certs[0], None)
+    cap.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es384_certs[1..], &es384_certs[0], None)
+    cap.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&es512_certs[1..], &es512_certs[0], None)
+    cap.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
         .await
         .unwrap();
-    cap.validate_certificate_async(&ed25519_certs[1..], &ed25519_certs[0], None)
+    cap.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
         .await
         .unwrap();
 }
