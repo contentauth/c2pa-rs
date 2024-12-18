@@ -273,17 +273,11 @@ async fn test_trust_store_async() {
     let cap = CertificateAcceptancePolicy::default();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
-
     let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
-
     let ps512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps512.pub"));
-
     let es256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es256.pub"));
-
     let es384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es384.pub"));
-
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
-
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
     cap.validate_certificate_async(&ps256_certs[1..], &ps256_certs[0], None)
@@ -385,17 +379,11 @@ async fn test_broken_trust_chain_async() {
     let cap = CertificateAcceptancePolicy::default();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
-
     let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
-
     let ps512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps512.pub"));
-
     let es256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es256.pub"));
-
     let es384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es384.pub"));
-
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
-
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
     // Break the trust chain by skipping the first intermediate CA.
@@ -528,17 +516,11 @@ async fn test_allowed_list_async() {
         .unwrap();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
-
     let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
-
     let ps512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps512.pub"));
-
     let es256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es256.pub"));
-
     let es384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es384.pub"));
-
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
-
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
     cap.validate_certificate_async(&ps256_certs[1..], &ps256_certs[0], None)
