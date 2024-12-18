@@ -288,10 +288,6 @@ pub enum Error {
     #[error("could not acquire OpenSSL FFI mutex")]
     OpenSslMutexError,
 
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslError(#[from] openssl::error::ErrorStack),
-
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 

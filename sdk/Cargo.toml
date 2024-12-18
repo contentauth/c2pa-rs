@@ -32,7 +32,7 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["dep:openssl", "c2pa-crypto/openssl"]
+openssl = ["c2pa-crypto/openssl"]
 openssl_sign = ["openssl", "c2pa-crypto/openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
@@ -136,7 +136,6 @@ image = { version = "0.24.7", default-features = false, features = [
     "png",
 ], optional = true }
 instant = "0.1.12"
-openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }

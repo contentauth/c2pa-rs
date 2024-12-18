@@ -1339,6 +1339,7 @@ pub mod tests {
     use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
+    use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{utils::test_signer::test_signer, Signer};
@@ -1349,22 +1350,18 @@ pub mod tests {
         let mut validation_log = DetailedStatusTracker::default();
         let cap = CertificateAcceptancePolicy::default();
 
-        let mut cert_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        cert_path.push("tests/fixtures/rsa-pss256_key-expired.pub");
+        let cert_der = x509_der_from_pem(include_bytes!(
+            "../tests/fixtures/rsa-pss256_key-expired.pub"
+        ));
 
-        let expired_cert = std::fs::read(&cert_path).unwrap();
+        assert!(check_cert(&cert_der, &cap, &mut validation_log, None).is_err());
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_err());
+        assert!(!validation_log.logged_items().is_empty());
 
-            assert!(!validation_log.logged_items().is_empty());
-
-            assert_eq!(
-                validation_log.logged_items()[0].validation_status,
-                Some(SIGNING_CREDENTIAL_EXPIRED.into())
-            );
-        }
+        assert_eq!(
+            validation_log.logged_items()[0].validation_status,
+            Some(SIGNING_CREDENTIAL_EXPIRED.into())
+        );
     }
 
     #[test]
@@ -1374,30 +1371,15 @@ pub mod tests {
 
         let mut validation_log = DetailedStatusTracker::default();
 
-        let es256_cert = include_bytes!("../tests/fixtures/certs/es256.pub");
-        let es384_cert = include_bytes!("../tests/fixtures/certs/es384.pub");
-        let es512_cert = include_bytes!("../tests/fixtures/certs/es512.pub");
-        let rsa_pss256_cert = include_bytes!("../tests/fixtures/certs/ps256.pub");
+        let es256_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/es256.pub"));
+        let es384_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/es384.pub"));
+        let es512_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/es512.pub"));
+        let ps256_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/ps256.pub"));
 
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es384_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es512_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(rsa_pss256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
+        assert!(check_cert(&es256_cert, &cap, &mut validation_log, None).is_ok());
+        assert!(check_cert(&es384_cert, &cap, &mut validation_log, None).is_ok());
+        assert!(check_cert(&es512_cert, &cap, &mut validation_log, None).is_ok());
+        assert!(check_cert(&ps256_cert, &cap, &mut validation_log, None).is_ok());
     }
 
     #[test]
@@ -1486,5 +1468,11 @@ pub mod tests {
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
         assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
+    }
+
+    fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
+        let mut pems = Pem::iter_from_buffer(cert_pem);
+        let pem = pems.next().unwrap().unwrap();
+        pem.contents
     }
 }

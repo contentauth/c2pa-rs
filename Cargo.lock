@@ -702,7 +702,6 @@ dependencies = [
  "memchr",
  "mockall",
  "mp4",
- "openssl",
  "pem 3.0.4",
  "png_pong",
  "rand",
