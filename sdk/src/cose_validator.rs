@@ -19,6 +19,7 @@ use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
         parse_and_validate_sigtst, parse_and_validate_sigtst_async, CertificateAcceptancePolicy,
+        CertificateValidationError,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -40,10 +41,6 @@ use x509_parser::{
     prelude::*,
 };
 
-#[cfg(feature = "openssl")]
-use crate::openssl::verify_trust;
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webpki_trust_handler::verify_trust_async;
 use crate::{
     error::{Error, Result},
     settings::get_settings_value,
@@ -828,7 +825,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
     cap: &CertificateAcceptancePolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    signing_time_epoc: Option<i64>,
+    signing_time_epoch: Option<i64>,
     validation_log: &mut impl StatusTracker
 ))]
 #[allow(unused)]
@@ -836,7 +833,7 @@ fn check_trust(
     cap: &CertificateAcceptancePolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    signing_time_epoc: Option<i64>,
+    signing_time_epoch: Option<i64>,
     validation_log: &mut impl StatusTracker,
 ) -> Result<()> {
     // just return is trust checks are disabled or misconfigured
@@ -849,54 +846,27 @@ fn check_trust(
         Err(e) => return Err(e),
     }
 
-    // is the certificate trusted
-
-    let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl"))]
-        {
-            Err(Error::NotImplemented(
-                "no trust handler for this feature".to_string(),
-            ))
-        }
-
-        #[cfg(feature = "openssl")]
-        {
-            verify_trust(cap, chain_der, cert_der, signing_time_epoc)
-        }
+    let verify_result = if _sync {
+        cap.validate_certificate(chain_der, cert_der, signing_time_epoch)
     } else {
-        #[cfg(target_arch = "wasm32")]
-        {
-            verify_trust_async(cap, chain_der, cert_der, signing_time_epoc).await
-        }
-
-        #[cfg(feature = "openssl")]
-        {
-            verify_trust(cap, chain_der, cert_der, signing_time_epoc)
-        }
-
-        #[cfg(not(any(feature = "openssl", target_arch = "wasm32")))]
-        {
-            Err(Error::NotImplemented(
-                "no trust handler for this feature".to_string(),
-            ))
-        }
+        cap.validate_certificate_async(chain_der, cert_der, signing_time_epoch)
+            .await
     };
 
     match verify_result {
-        Ok(trusted) => {
-            if trusted {
-                log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                    .success(validation_log);
+        Ok(()) => {
+            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(validation_log);
 
-                Ok(())
-            } else {
-                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_no_throw(validation_log, Error::CoseCertUntrusted);
+            Ok(())
+        }
+        Err(CertificateValidationError::CertificateNotTrusted) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
 
-                Err(Error::CoseCertUntrusted)
-            }
+            Err(Error::CoseCertUntrusted)
         }
         Err(e) => {
             log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
@@ -905,7 +875,7 @@ fn check_trust(
 
             // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
             // validation_log.log(log_item, Error::CoseCertUntrusted)?;
-            Err(e)
+            Err(e.into())
         }
     }
 }

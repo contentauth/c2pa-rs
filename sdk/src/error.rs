@@ -314,6 +314,9 @@ pub enum Error {
     RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
 
     #[error(transparent)]
+    CertificateValidationError(#[from] c2pa_crypto::cose::CertificateValidationError),
+
+    #[error(transparent)]
     InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),
 }
 
