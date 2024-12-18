@@ -17,7 +17,7 @@
 
 mod certificate_acceptance_policy;
 pub use certificate_acceptance_policy::{
-    CertificateAcceptancePolicy, CertificateValidationError, InvalidCertificateError,
+    CertificateAcceptancePolicy, CertificateTrustError, InvalidCertificateError,
 };
 
 mod error;

@@ -19,7 +19,7 @@ use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
         parse_and_validate_sigtst, parse_and_validate_sigtst_async, CertificateAcceptancePolicy,
-        CertificateValidationError,
+        CertificateTrustError,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -861,7 +861,7 @@ fn check_trust(
 
             Ok(())
         }
-        Err(CertificateValidationError::CertificateNotTrusted) => {
+        Err(CertificateTrustError::CertificateNotTrusted) => {
             log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
                 .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
                 .failure_no_throw(validation_log, Error::CoseCertUntrusted);

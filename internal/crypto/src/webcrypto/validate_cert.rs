@@ -18,7 +18,7 @@ use x509_parser::{
 };
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, CertificateValidationError},
+    cose::{CertificateAcceptancePolicy, CertificateTrustError},
     p1363::der_to_p1363,
     raw_signature::RawSignatureValidationError,
     webcrypto::async_validator_for_signing_alg,
@@ -30,7 +30,7 @@ pub(crate) async fn validate_cert(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     _signing_time_epoch: Option<i64>,
-) -> Result<(), CertificateValidationError> {
+) -> Result<(), CertificateTrustError> {
     // TO DO: Add verification of signing time.
 
     // First check to see if the certificate appears on the allowed list of
@@ -40,15 +40,15 @@ pub(crate) async fn validate_cert(
     }
 
     let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
-        return Err(CertificateValidationError::InvalidCertificate);
+        return Err(CertificateTrustError::InvalidCertificate);
     };
 
     let Ok(Some(eku)) = cert.extended_key_usage() else {
-        return Err(CertificateValidationError::InvalidEku);
+        return Err(CertificateTrustError::InvalidEku);
     };
 
     let Some(_approved_oid) = cap.has_allowed_eku(&eku.value) else {
-        return Err(CertificateValidationError::InvalidEku);
+        return Err(CertificateTrustError::InvalidEku);
     };
 
     // Add end-entity cert to the chain if not already there.
@@ -70,19 +70,19 @@ pub(crate) async fn validate_cert(
         .trust_anchor_ders()
         .map(|anchor_der| {
             X509Certificate::from_der(anchor_der)
-                .map_err(|_e| CertificateValidationError::CertificateNotTrusted)
+                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
                 .map(|r| r.1)
         })
-        .collect::<Result<Vec<X509Certificate>, CertificateValidationError>>()?;
+        .collect::<Result<Vec<X509Certificate>, CertificateTrustError>>()?;
 
     if anchors.is_empty() {
-        return Err(CertificateValidationError::CertificateNotTrusted);
+        return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
     // Work back from last cert in chain against the trust anchors.
     for cert in chain_der.iter().rev() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
-            .map_err(|_e| CertificateValidationError::CertificateNotTrusted)?;
+            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
         for anchor in cap.trust_anchor_ders() {
             let data = chain_cert.tbs_certificate.as_ref();
@@ -91,7 +91,7 @@ pub(crate) async fn validate_cert(
             let sig_alg = cert_signing_alg(&chain_cert);
 
             let (_, anchor_cert) = X509Certificate::from_der(anchor)
-                .map_err(|_e| CertificateValidationError::CertificateNotTrusted)?;
+                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
             if chain_cert.issuer() == anchor_cert.subject() {
                 let result =
@@ -110,10 +110,10 @@ pub(crate) async fn validate_cert(
     }
 
     // TO DO: Consider path check and names restrictions.
-    return Err(CertificateValidationError::CertificateNotTrusted);
+    return Err(CertificateTrustError::CertificateNotTrusted);
 }
 
-async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateValidationError> {
+async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     let chain_length = certs.len();
     if chain_length < 2 {
         return Ok(());
@@ -121,7 +121,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateValidatio
 
     for i in 1..chain_length {
         let (_, current_cert) = X509Certificate::from_der(&certs[i - 1])
-            .map_err(|_e| CertificateValidationError::CertificateNotTrusted)?;
+            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
         let issuer_der = certs[i].to_vec();
         let data = current_cert.tbs_certificate.as_ref();
@@ -129,7 +129,7 @@ async fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateValidatio
         let sig_alg = cert_signing_alg(&current_cert);
 
         if !verify_data(issuer_der, sig_alg, sig.to_vec(), data.to_vec()).await? {
-            return Err(CertificateValidationError::CertificateNotTrusted);
+            return Err(CertificateTrustError::CertificateNotTrusted);
         }
     }
 
@@ -233,19 +233,19 @@ async fn verify_data(
     sig_alg: Option<String>,
     sig: Vec<u8>,
     data: Vec<u8>,
-) -> Result<bool, CertificateValidationError> {
+) -> Result<bool, CertificateTrustError> {
     let (_, cert) = X509Certificate::from_der(cert_der.as_bytes())
-        .map_err(|_e| CertificateValidationError::InvalidCertificate)?;
+        .map_err(|_e| CertificateTrustError::InvalidCertificate)?;
 
     let certificate_public_key = cert.public_key();
 
     let Some(cert_alg_string) = sig_alg else {
-        return Err(CertificateValidationError::InvalidCertificate);
+        return Err(CertificateTrustError::InvalidCertificate);
     };
 
     let signing_alg: SigningAlg = cert_alg_string
         .parse()
-        .map_err(|_| CertificateValidationError::InvalidCertificate)?;
+        .map_err(|_| CertificateTrustError::InvalidCertificate)?;
 
     // Not sure this is needed any more. Leaving this for now, but I think this
     // should be handled in c2pa_crypto's raw signature code.
@@ -259,7 +259,7 @@ async fn verify_data(
     };
 
     let Some(validator) = async_validator_for_signing_alg(signing_alg) else {
-        return Err(CertificateValidationError::InvalidCertificate);
+        return Err(CertificateTrustError::InvalidCertificate);
     };
 
     let result = validator
@@ -269,7 +269,7 @@ async fn verify_data(
     match result {
         Ok(()) => Ok(true),
         Err(RawSignatureValidationError::SignatureMismatch) => Ok(false),
-        Err(_err) => Err(CertificateValidationError::InvalidCertificate),
+        Err(_err) => Err(CertificateTrustError::InvalidCertificate),
     }
 }
 

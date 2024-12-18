@@ -88,7 +88,7 @@ impl CertificateAcceptancePolicy {
         chain_der: &[Vec<u8>],
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
-    ) -> Result<(), CertificateValidationError> {
+    ) -> Result<(), CertificateTrustError> {
         if _async {
             #[cfg(target_arch = "wasm32")]
             {
@@ -112,7 +112,7 @@ impl CertificateAcceptancePolicy {
             );
         }
 
-        Err(CertificateValidationError::InternalError(
+        Err(CertificateTrustError::InternalError(
             "no implementation for certificate evaluation available",
         ))
     }
@@ -290,12 +290,12 @@ impl CertificateAcceptancePolicy {
     }
 }
 
-/// Describes errors that can be identified when validating a certificate.
+/// Describes errors that can be identified when evaluating a certificate's trust.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 #[allow(unused)] // TEMPORARY while building
-pub enum CertificateValidationError {
-    /// The certificate does not appear on any approved trust list.
+pub enum CertificateTrustError {
+    /// The certificate does not appear on any trust list that has been configured.
     ///
     /// A certificate can be approved either by adding one or more trust anchors
     /// via a call to [`CertificateAcceptancePolicy::add_trust_anchors`] or by
@@ -335,14 +335,14 @@ pub enum CertificateValidationError {
 }
 
 #[cfg(feature = "openssl")]
-impl From<openssl::error::ErrorStack> for CertificateValidationError {
+impl From<openssl::error::ErrorStack> for CertificateTrustError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::OpenSslError(err.to_string())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl From<crate::webcrypto::WasmCryptoError> for CertificateValidationError {
+impl From<crate::webcrypto::WasmCryptoError> for CertificateTrustError {
     fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
         match err {
             crate::webcrypto::WasmCryptoError::UnknownContext => {

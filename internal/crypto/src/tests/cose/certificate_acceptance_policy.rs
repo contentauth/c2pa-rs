@@ -17,7 +17,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, CertificateValidationError, InvalidCertificateError},
+    cose::{CertificateAcceptancePolicy, CertificateTrustError, InvalidCertificateError},
     raw_signature::signer::test_signer,
     SigningAlg,
 };
@@ -327,49 +327,49 @@ fn test_broken_trust_chain() {
     assert_eq!(
         cap.check_certificate_trust(&ps256_certs[2..], &ps256_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&ps512_certs[2..], &ps512_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust(&ed25519_certs[2..], &ed25519_certs[0], None)
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 }
 
@@ -391,56 +391,56 @@ async fn test_broken_trust_chain_async() {
         cap.check_certificate_trust_async(&ps256_certs[2..], &ps256_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&ps512_certs[2..], &ps512_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&es256_certs[2..], &es256_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&es384_certs[2..], &es384_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&es512_certs[2..], &es512_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
         cap.check_certificate_trust_async(&ed25519_certs[2..], &ed25519_certs[0], None)
             .await
             .unwrap_err(),
-        CertificateValidationError::CertificateNotTrusted
+        CertificateTrustError::CertificateNotTrusted
     );
 }
 
