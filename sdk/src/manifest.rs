@@ -1985,6 +1985,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_jpeg_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2025,6 +2026,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_png_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/libpng-test.png");
@@ -2058,6 +2060,7 @@ pub(crate) mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[allow(deprecated)]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     async fn test_embed_webp_stream_wasm() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/mars.webp");
@@ -2089,6 +2092,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_embed_stream() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2125,9 +2129,12 @@ pub(crate) mod tests {
         //println!("{manifest_store}");main
     }
 
-    #[cfg(any(target_arch = "wasm32", feature = "openssl_sign"))]
     #[cfg_attr(feature = "openssl_sign", actix::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(any(
+        target_arch = "wasm32",
+        all(feature = "openssl_sign", feature = "file_io")
+    ))]
     async fn test_embed_from_memory_async() {
         use crate::assertions::User;
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
@@ -2256,7 +2263,7 @@ pub(crate) mod tests {
         assert_eq!(image.into_owned(), thumb_data);
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(feature = "openssl_sign")]
     const MANIFEST_JSON: &str = r#"{
         "claim_generator": "test",
         "claim_generator_info": [

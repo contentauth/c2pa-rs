@@ -15,11 +15,10 @@
 
 #![deny(missing_docs)]
 
-use std::io::Cursor;
-
 use async_generic::async_generic;
 use c2pa_crypto::{
-    p1363::parse_ec_der_sig, time_stamp::ts_token_from_time_stamp_response, SigningAlg,
+    cose::CertificateAcceptancePolicy, p1363::parse_ec_der_sig,
+    time_stamp::ts_token_from_time_stamp_response, SigningAlg,
 };
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
@@ -37,7 +36,6 @@ use crate::{
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
     },
-    trust_handler::TrustHandlerConfig,
     AsyncSigner, Error, Result, Signer,
 };
 
@@ -78,14 +76,14 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
             let mut cose_log = OneShotStatusTracker::default();
-            let passthrough_tb = crate::trust_handler::TrustPassThrough::new();
+            let passthrough_cap = CertificateAcceptancePolicy::default();
 
             match verify_cose(
                 &signed_bytes,
                 claim_bytes,
                 b"",
                 true,
-                &passthrough_tb,
+                &passthrough_cap,
                 &mut cose_log,
             ) {
                 Ok(r) => {
@@ -105,15 +103,14 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = OneShotStatusTracker::default();
-    let mut passthrough_tb = crate::trust_handler::TrustPassThrough::new();
+    let mut passthrough_cap = CertificateAcceptancePolicy::default();
 
     // allow user EKUs through this check if configured
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
-        let mut reader = Cursor::new(trust_config.as_bytes());
-        passthrough_tb.load_configuration(&mut reader)?;
+        passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
-    check_cert(signing_cert, &passthrough_tb, &mut cose_log, None)
+    check_cert(signing_cert, &passthrough_cap, &mut cose_log, None)
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
@@ -512,6 +509,7 @@ mod tests {
     use crate::{claim::Claim, utils::test_signer::test_signer, Result, Signer};
 
     #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "openssl_sign")), ignore)]
     fn test_sign_claim() {
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -526,8 +524,7 @@ mod tests {
         assert_eq!(cose_sign1.len(), box_size);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "openssl")]
+    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     #[actix::test]
     async fn test_sign_claim_async() {
         use c2pa_crypto::SigningAlg;

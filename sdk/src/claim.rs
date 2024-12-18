@@ -16,7 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, ValidationInfo};
+use c2pa_crypto::{base64, cose::CertificateAcceptancePolicy, ValidationInfo};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -54,7 +54,6 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
-    trust_handler::TrustHandlerConfig,
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status, ClaimGeneratorInfo,
 };
@@ -1684,7 +1683,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandlerConfig,
+        cap: &CertificateAcceptancePolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1712,10 +1711,10 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, th, validation_log).await?;
+        check_ocsp_status_async(&sig, &data, cap, validation_log).await?;
 
         let verified =
-            verify_cose_async(sig, data, additional_bytes, cert_check, th, validation_log).await;
+            verify_cose_async(sig, data, additional_bytes, cert_check, cap, validation_log).await;
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -1728,7 +1727,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        th: &dyn TrustHandlerConfig,
+        cap: &CertificateAcceptancePolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1757,9 +1756,16 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, th, validation_log)?;
+        check_ocsp_status(sig, data, cap, validation_log)?;
 
-        let verified = verify_cose(sig, data, &additional_bytes, cert_check, th, validation_log);
+        let verified = verify_cose(
+            sig,
+            data,
+            &additional_bytes,
+            cert_check,
+            cap,
+            validation_log,
+        );
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -2658,7 +2664,7 @@ impl Claim {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "openssl")]
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]

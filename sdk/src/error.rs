@@ -264,6 +264,9 @@ pub enum Error {
     #[error("unknown algorithm")]
     UnknownAlgorithm,
 
+    #[error("invalid signing key")]
+    InvalidSigningKey,
+
     // --- third-party errors ---
     #[error(transparent)]
     Utf8Error(#[from] std::str::Utf8Error),
@@ -315,6 +318,9 @@ pub enum Error {
 
     #[error(transparent)]
     RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
+
+    #[error(transparent)]
+    InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

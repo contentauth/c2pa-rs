@@ -727,7 +727,7 @@ dependencies = [
  "sha2",
  "spki",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.6",
  "tokio",
  "treeline",
  "ureq",
@@ -747,6 +747,7 @@ name = "c2pa-crypto"
 version = "0.2.0"
 dependencies = [
  "actix",
+ "asn1-rs",
  "async-generic",
  "async-trait",
  "base64 0.22.1",
@@ -776,7 +777,7 @@ dependencies = [
  "sha1",
  "sha2",
  "spki",
- "thiserror 1.0.69",
+ "thiserror 2.0.6",
  "ureq",
  "url",
  "wasm-bindgen",

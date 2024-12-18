@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{cose::CertificateAcceptancePolicy, SigningAlg};
 use tempfile::TempDir;
 
 use crate::{
@@ -233,6 +233,18 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
         .expect("get_temp_signer")
 }
 
+/// Create a [`CertificateAcceptancePolicy`] instance that has the test certificate bundles included.
+///
+/// [`CertificateAcceptancePolicy`]: c2pa_crypto::cose::CertificateAcceptancePolicy
+pub fn test_certificate_acceptance_policy() -> CertificateAcceptancePolicy {
+    let mut cap = CertificateAcceptancePolicy::default();
+    cap.add_trust_anchors(include_bytes!(
+        "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+    ))
+    .unwrap();
+    cap
+}
+
 #[cfg(feature = "file_io")]
 pub fn write_jpeg_placeholder_file(
     placeholder: &[u8],
@@ -349,14 +361,17 @@ struct TempRemoteSigner {}
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl crate::signer::RemoteSigner for TempRemoteSigner {
     async fn sign_remote(&self, claim_bytes: &[u8]) -> crate::error::Result<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
         {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
             crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size(), 1).await
         }
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 
@@ -499,7 +514,7 @@ struct TempAsyncRemoteSigner {
 impl AsyncSigner for TempAsyncRemoteSigner {
     // this will not be called but requires an implementation
     async fn sign(&self, claim_bytes: Vec<u8>) -> Result<Vec<u8>> {
-        #[cfg(feature = "openssl_sign")]
+        #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
         {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
@@ -513,7 +528,10 @@ impl AsyncSigner for TempAsyncRemoteSigner {
             crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size(), 1).await
         }
 
-        #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
+        #[cfg(not(any(
+            target_arch = "wasm32",
+            all(feature = "openssl_sign", feature = "file_io")
+        )))]
         {
             use std::io::{Seek, Write};
 

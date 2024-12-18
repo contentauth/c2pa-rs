@@ -174,7 +174,6 @@ pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod store;
 pub(crate) mod time_stamp;
-pub(crate) mod trust_handler;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
