@@ -11,18 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::Cursor;
-
-use fast_xml::{
+use log::error;
+use quick_xml::{
     events::{BytesStart, Event},
+    name::QName,
     Reader, Writer,
 };
-use log::error;
+use std::{io::Cursor, str};
 
-use crate::{
-    asset_io::CAIRead, jumbf_io::get_cailoader_handler, utils::hash_utils::vec_compare, Error,
-    Result,
-};
+use crate::{asset_io::CAIRead, jumbf_io::get_cailoader_handler, Error, Result};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 
@@ -58,17 +55,16 @@ impl XmpInfo {
 /// Extract an a value from XMP using a key
 fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
     let mut reader = Reader::from_str(xmp);
-    reader.trim_text(true);
-    let mut buf = Vec::new();
+    reader.config_mut().trim_text(true);
 
     loop {
-        match reader.read_event(&mut buf) {
+        match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                if e.name() == RDF_DESCRIPTION {
+                if e.name() == QName(RDF_DESCRIPTION) {
                     // attribute case
                     let value = e.attributes().find(|a| {
                         if let Ok(attribute) = a {
-                            vec_compare(attribute.key, key.as_bytes())
+                            attribute.key == QName(key.as_bytes())
                         } else {
                             false
                         }
@@ -78,18 +74,16 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
                             return Some(s);
                         }
                     }
-                } else if e.name() == key.as_bytes() {
+                } else if e.name() == QName(key.as_bytes()) {
                     // tag case
-                    let mut buf: Vec<u8> = Vec::new();
-                    if let Ok(s) = reader.read_text(e.name(), &mut buf) {
-                        return Some(s);
+                    if let Ok(s) = reader.read_text(e.name()) {
+                        return Some(s.to_string());
                     }
                 }
             }
             Ok(Event::Eof) => break,
             _ => {}
         }
-        buf.clear();
     }
     None
 }
@@ -98,24 +92,26 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
 /// Add a value to XMP using a key, replaces the value if the key exists
 fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let mut reader = Reader::from_str(xmp);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
-    let mut buf = Vec::new();
     let mut added = false;
     loop {
         let event = reader
-            .read_event(&mut buf)
+            .read_event()
             .map_err(|e| Error::XmpReadError(e.to_string()))?;
         // println!("{:?}", event);
         match event {
-            Event::Start(ref e) if e.name() == RDF_DESCRIPTION => {
+            Event::Start(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
                 // creates a new element
-                let mut elem = BytesStart::owned(RDF_DESCRIPTION.to_vec(), RDF_DESCRIPTION.len());
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
 
                 for attr in e.attributes() {
                     match attr {
                         Ok(attr) => {
-                            if attr.key == key.as_bytes() {
+                            if attr.key == QName(key.as_bytes()) {
                                 // replace the key/value if it exists
                                 elem.push_attribute((key, value));
                                 added = true;
@@ -139,13 +135,16 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
                     .write_event(Event::Start(elem))
                     .map_err(|e| Error::XmpWriteError(e.to_string()))?;
             }
-            Event::Empty(ref e) if e.name() == RDF_DESCRIPTION => {
+            Event::Empty(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
                 // creates a new element
-                let mut elem = BytesStart::owned(RDF_DESCRIPTION.to_vec(), RDF_DESCRIPTION.len());
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
                 for attr in e.attributes() {
                     match attr {
                         Ok(attr) => {
-                            if attr.key == key.as_bytes() {
+                            if attr.key == QName(key.as_bytes()) {
                                 // replace the key/value if it exists
                                 elem.push_attribute((key, value));
                                 added = true;
@@ -177,7 +176,6 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
             }
         }
     }
-    buf.clear();
     let result = writer.into_inner().into_inner();
     String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
 }

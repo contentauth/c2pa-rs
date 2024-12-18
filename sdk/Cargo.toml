@@ -90,7 +90,7 @@ conv = "0.3.3"
 coset = "0.3.1"
 extfmt = "0.1.1"
 ed25519-dalek = "2.1.1"
-fast-xml = "0.23.1"
+quick-xml = "0.37.1"
 hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"

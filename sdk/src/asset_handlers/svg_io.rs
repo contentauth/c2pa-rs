@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{BufReader, Cursor, Seek, SeekFrom, Write},
     path::Path,
@@ -19,7 +20,7 @@ use std::{
 
 use c2pa_crypto::base64;
 use conv::ValueFrom;
-use fast_xml::{
+use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
 };
@@ -169,8 +170,8 @@ impl AssetIO for SvgIO {
 }
 
 // create manifest entry
-fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
-    let mut output: Vec<u8> = Vec::with_capacity(data.len() + 256);
+fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event> {
+    let output: Vec<u8> = Vec::with_capacity(data.len() + 256);
     let mut writer = Writer::new(Cursor::new(output));
 
     let encoded = base64::encode(data);
@@ -182,7 +183,7 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
                 writer
                     .create_element(MANIFEST)
                     .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
-                    .write_text_content(BytesText::from_plain_str(&encoded))?;
+                    .write_text_content(BytesText::from_escaped(&encoded))?;
                 Ok(())
             })
             .map_err(|_e| Error::XmlWriteError)?;
@@ -190,13 +191,15 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Vec<u8>> {
         writer
             .create_element(MANIFEST)
             .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
-            .write_text_content(BytesText::from_plain_str(&encoded))
+            .write_text_content(BytesText::from_escaped(&encoded))
             .map_err(|_e| Error::XmlWriteError)?;
     }
 
-    output = writer.into_inner().into_inner();
+    let output = writer.into_inner().into_inner();
+    let output_str = String::from_utf8(output).map_err(|_e| Error::XmlWriteError)?;
+    let event = Event::Text(BytesText::from_escaped(Cow::Owned(output_str)));
 
-    Ok(output)
+    Ok(event)
 }
 
 enum DetectedTagsDepth {
@@ -221,9 +224,9 @@ fn detect_manifest_location(
     let mut output: Option<Vec<u8>> = None;
 
     loop {
-        match xml_reader.read_event(&mut buf) {
+        match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name()).into_owned();
+                let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                 xml_path.push(name);
 
                 if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
@@ -238,23 +241,28 @@ fn detect_manifest_location(
                 {
                     detected_level = DetectedTagsDepth::Manifest;
                     insertion_point = xml_reader.buffer_position();
-
-                    let mut temp_buf = Vec::new();
-                    let s = xml_reader
-                        .read_text(e.name(), &mut temp_buf)
-                        .map_err(|_e| {
-                            Error::InvalidAsset("XML manifest tag invalid content".to_string())
-                        })?;
-
-                    output = Some(base64::decode(&s).map_err(|_e| {
-                        dbg!(_e);
-                        Error::InvalidAsset("XML bad base64 encoding".to_string())
-                    })?);
                 }
 
                 if xml_path.len() == 1 && xml_path[0] == SVG {
                     detected_level = DetectedTagsDepth::Empty;
                     insertion_point = xml_reader.buffer_position();
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if xml_path.len() == 3
+                    && xml_path[0] == SVG
+                    && xml_path[1] == METADATA
+                    && xml_path[2] == MANIFEST
+                {
+                    let encoded_content = e
+                        .unescape()
+                        .map_err(|_e| {
+                            Error::InvalidAsset("XML incorrectly escaped character".to_string())
+                        })?
+                        .into_owned();
+                    output = Some(base64::decode(&encoded_content).map_err(|_e| {
+                        Error::InvalidAsset("XML bad base64 encoding".to_string())
+                    })?);
                 }
             }
             Ok(Event::End(_)) => {
@@ -264,7 +272,9 @@ fn detect_manifest_location(
             Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             _ => (),
         }
+        buf.clear();
     }
+    let insertion_point = usize::try_from(insertion_point)?;
 
     Ok((output, detected_level, insertion_point))
 }
@@ -272,7 +282,7 @@ fn detect_manifest_location(
 fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedTagsDepth, usize)> {
     input_stream.rewind()?;
 
-    let mut insertion_point = usize::try_from(stream_len(input_stream)?)?;
+    let mut insertion_point = stream_len(input_stream)?;
     let mut buf = Vec::new();
     let buf_reader = BufReader::new(input_stream);
     let mut xml_reader = Reader::from_reader(buf_reader);
@@ -281,9 +291,9 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
     let mut output = None;
 
     loop {
-        match xml_reader.read_event(&mut buf) {
+        match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name: String = String::from_utf8_lossy(e.name()).into_owned();
+                let name: String = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                 xml_path.push(name);
 
                 if xml_path.len() == 1 && xml_path[0] == SVG {
@@ -298,9 +308,7 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
             }
             Ok(Event::PI(e)) => {
                 let possible_insertion_point = xml_reader.buffer_position();
-                let pi = e.unescape_and_decode(&xml_reader).map_err(|_e| {
-                    Error::InvalidAsset("XML bad processing instructions".to_string())
-                })?;
+                let pi = String::from_utf8_lossy(&e);
 
                 if pi.contains(XPACKET) && pi.contains(XMP_ID) {
                     // reconstruct opening XMP PI tag
@@ -309,7 +317,7 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
                     detected_level = DetectedTagsDepth::Xmp;
                     // adjust to include the opening XMP PI
                     insertion_point = possible_insertion_point
-                        .checked_sub(tag.len())
+                        .checked_sub(tag.len() as u64)
                         .ok_or(Error::BadParam("file read out of range".into()))?;
                 } else if pi.contains(XPACKET) {
                     // this has read to the end of xpacket
@@ -337,7 +345,9 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
             Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             _ => (),
         }
+        buf.clear();
     }
+    let insertion_point = usize::try_from(insertion_point)?;
 
     Ok((output, detected_level, insertion_point))
 }
@@ -397,12 +407,10 @@ impl CAIWriter for SvgIO {
         match detected_tag_location {
             DetectedTagsDepth::Metadata => {
                 // add manifest case
-                let manifest_data = create_manifest_tag(store_bytes, false)?;
-
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -414,7 +422,7 @@ impl CAIWriter for SvgIO {
                             if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA
                             {
                                 writer
-                                    .write(&manifest_data)
+                                    .write_event(create_manifest_tag(store_bytes, false)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
                             }
                         }
@@ -425,7 +433,7 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
@@ -436,9 +444,9 @@ impl CAIWriter for SvgIO {
                 let encoded = base64::encode(store_bytes);
 
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -454,7 +462,7 @@ impl CAIWriter for SvgIO {
                                 && xml_path[2] == MANIFEST
                             {
                                 writer
-                                    .write(encoded.as_bytes())
+                                    .write_event(Event::Text(BytesText::new(&encoded)))
                                     .map_err(|_e| Error::XmlWriteError)?;
                             } else {
                                 writer
@@ -469,7 +477,7 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
@@ -477,12 +485,10 @@ impl CAIWriter for SvgIO {
             }
             _ => {
                 //add metadata & manifest case
-                let manifest_data = create_manifest_tag(store_bytes, true)?;
-
                 loop {
-                    match reader.read_event(&mut buf) {
+                    match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(e)) => {
-                            let name = String::from_utf8_lossy(e.name()).into_owned();
+                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
 
                             // writes the event to the writer
@@ -493,7 +499,7 @@ impl CAIWriter for SvgIO {
                             // add manifest data
                             if xml_path.len() == 1 && xml_path[0] == SVG {
                                 writer
-                                    .write(&manifest_data)
+                                    .write_event(create_manifest_tag(store_bytes, true)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
                             }
                         }
@@ -504,7 +510,7 @@ impl CAIWriter for SvgIO {
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
                         }
-                        Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                        Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                         Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
                     }
                     buf.clear();
@@ -574,9 +580,9 @@ impl CAIWriter for SvgIO {
         let mut xml_path: Vec<String> = Vec::new();
 
         loop {
-            match reader.read_event(&mut buf) {
+            match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) => {
-                    let name = String::from_utf8_lossy(e.name()).into_owned();
+                    let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                     xml_path.push(name);
 
                     if xml_path.len() == 3
@@ -623,7 +629,7 @@ impl CAIWriter for SvgIO {
                             .map_err(|_e| Error::XmlWriteError)?; // pass Event through
                     }
                 }
-                Ok(e) => writer.write_event(&e).map_err(|_e| Error::XmlWriteError)?,
+                Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
                 Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             }
             buf.clear();

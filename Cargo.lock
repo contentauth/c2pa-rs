@@ -685,7 +685,6 @@ dependencies = [
  "coset",
  "ed25519-dalek",
  "extfmt",
- "fast-xml",
  "getrandom",
  "glob",
  "hex",
@@ -705,6 +704,7 @@ dependencies = [
  "openssl",
  "pem 3.0.4",
  "png_pong",
+ "quick-xml",
  "rand",
  "rand_chacha",
  "rand_core 0.9.0-beta.1",
@@ -1490,15 +1490,6 @@ name = "extfmt"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a48fe53466ab1f4ea6303bf9d7a0ca8060778590f09fd6c3304cc817aeb9935d"
-
-[[package]]
-name = "fast-xml"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f7ffc2f9e1373cd82b4d4ce2f84f8162edd48e3932abeb19c06170b66dbbd6c"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "fastrand"
@@ -3178,6 +3169,15 @@ dependencies = [
  "rand_xorshift",
  "regex-syntax",
  "unarray",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.37.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f22f29bdff3987b4d8632ef95fd6424ec7e4e0a57e2f4fc63e489e75357f6a03"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
