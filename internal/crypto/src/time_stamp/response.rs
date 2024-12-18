@@ -12,7 +12,7 @@
 // each license.
 
 use bcder::decode::Constructed;
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::asn1::rfc3161::PkiStatus;
