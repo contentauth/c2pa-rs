@@ -135,14 +135,10 @@ image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
-instant = "0.1.12"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
-# We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
-# to handle certificate timestamp checking correctly.
-instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
 rsa = { version = "0.9.6", features = ["sha2"] }
