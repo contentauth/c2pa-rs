@@ -93,7 +93,7 @@ impl CertificateTrustPolicy {
         if _async {
             #[cfg(target_arch = "wasm32")]
             {
-                return crate::webcrypto::validate_cert::validate_cert(
+                return crate::webcrypto::check_certificate_trust::check_certificate_trust(
                     self,
                     chain_der,
                     end_entity_cert_der,
@@ -105,7 +105,7 @@ impl CertificateTrustPolicy {
 
         #[cfg(feature = "openssl")]
         {
-            return crate::openssl::validate_cert::validate_cert(
+            return crate::openssl::check_certificate_trust::check_certificate_trust(
                 self,
                 chain_der,
                 end_entity_cert_der,

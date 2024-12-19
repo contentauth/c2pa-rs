@@ -23,6 +23,6 @@ mod cert_chain;
 mod ffi_mutex;
 pub use ffi_mutex::{OpenSslMutex, OpenSslMutexUnavailable};
 
+pub(crate) mod check_certificate_trust;
 pub(crate) mod signers;
-pub(crate) mod validate_cert;
 pub mod validators;

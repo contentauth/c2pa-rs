@@ -21,7 +21,7 @@ use crate::{
     openssl::OpenSslMutex,
 };
 
-pub(crate) fn validate_cert(
+pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
