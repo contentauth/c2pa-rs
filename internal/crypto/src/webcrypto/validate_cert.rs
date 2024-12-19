@@ -18,7 +18,7 @@ use x509_parser::{
 };
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, CertificateTrustError},
+    cose::{CertificateTrustError, CertificateTrustPolicy},
     p1363::der_to_p1363,
     raw_signature::RawSignatureValidationError,
     webcrypto::async_validator_for_signing_alg,
@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub(crate) async fn validate_cert(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     _signing_time_epoch: Option<i64>,
@@ -35,7 +35,7 @@ pub(crate) async fn validate_cert(
 
     // First check to see if the certificate appears on the allowed list of
     // end-entity certificates.
-    if cap.end_entity_cert_ders().any(|der| der == cert_der) {
+    if ctp.end_entity_cert_ders().any(|der| der == cert_der) {
         return Ok(());
     }
 
@@ -47,7 +47,7 @@ pub(crate) async fn validate_cert(
         return Err(CertificateTrustError::InvalidEku);
     };
 
-    let Some(_approved_oid) = cap.has_allowed_eku(&eku.value) else {
+    let Some(_approved_oid) = ctp.has_allowed_eku(&eku.value) else {
         return Err(CertificateTrustError::InvalidEku);
     };
 
@@ -66,7 +66,7 @@ pub(crate) async fn validate_cert(
     check_chain_order(&full_chain).await?;
 
     // Build anchors and check against trust anchors.
-    let anchors = cap
+    let anchors = ctp
         .trust_anchor_ders()
         .map(|anchor_der| {
             X509Certificate::from_der(anchor_der)
@@ -84,7 +84,7 @@ pub(crate) async fn validate_cert(
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
-        for anchor in cap.trust_anchor_ders() {
+        for anchor in ctp.trust_anchor_ders() {
             let data = chain_cert.tbs_certificate.as_ref();
             let sig = chain_cert.signature_value.as_ref();
 

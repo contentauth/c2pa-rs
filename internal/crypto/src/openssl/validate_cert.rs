@@ -17,19 +17,19 @@ use openssl::{
 };
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, CertificateTrustError},
+    cose::{CertificateTrustError, CertificateTrustPolicy},
     openssl::OpenSslMutex,
 };
 
 pub(crate) fn validate_cert(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(), CertificateTrustError> {
     // First check to see if the certificate appears on the allowed list of
     // end-entity certificates.
-    if cap.end_entity_cert_ders().any(|der| der == cert_der) {
+    if ctp.end_entity_cert_ders().any(|der| der == cert_der) {
         return Ok(());
     }
 
@@ -56,7 +56,7 @@ pub(crate) fn validate_cert(
 
     // Add trust anchors.
     let mut has_anchors = false;
-    for der in cap.trust_anchor_ders() {
+    for der in ctp.trust_anchor_ders() {
         let root_cert = X509::from_der(der)?;
         builder.add_cert(root_cert)?;
         has_anchors = true;

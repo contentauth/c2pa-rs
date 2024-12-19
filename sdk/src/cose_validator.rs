@@ -18,8 +18,8 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        parse_and_validate_sigtst, parse_and_validate_sigtst_async, CertificateAcceptancePolicy,
-        CertificateTrustError,
+        parse_and_validate_sigtst, parse_and_validate_sigtst_async, CertificateTrustError,
+        CertificateTrustPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -105,7 +105,7 @@ fn get_cose_sign1(
 
 pub(crate) fn check_cert(
     ca_der_bytes: &[u8],
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
     _tst_info_opt: Option<&TstInfo>,
 ) -> Result<()> {
@@ -385,7 +385,7 @@ pub(crate) fn check_cert(
                 return Err(Error::CoseInvalidCert);
             }
 
-            if cap.has_allowed_eku(eku).is_none() {
+            if ctp.has_allowed_eku(eku).is_none() {
                 log_item!(
                     "Cose_Sign1",
                     "certificate missing required EKU",
@@ -676,7 +676,7 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 pub(crate) fn check_ocsp_status(
     cose_bytes: &[u8],
     data: &[u8],
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -703,7 +703,7 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(&ocsp_certs[0], cap, validation_log, Some(tst_info))?;
+                        check_cert(&ocsp_certs[0], ctp, validation_log, Some(tst_info))?;
                     }
                 }
                 result = Ok(ocsp_data);
@@ -741,7 +741,7 @@ pub(crate) fn check_ocsp_status(
                             // if we get a valid response validate the certs
                             if ocsp_data.revoked_at.is_none() {
                                 if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                    check_cert(&ocsp_certs[0], cap, validation_log, None)?;
+                                    check_cert(&ocsp_certs[0], ctp, validation_log, None)?;
                                 }
                             }
                             result = Ok(ocsp_data);
@@ -822,7 +822,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
 }
 
 #[async_generic(async_signature(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
@@ -830,7 +830,7 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
 ))]
 #[allow(unused)]
 fn check_trust(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
@@ -847,9 +847,9 @@ fn check_trust(
     }
 
     let verify_result = if _sync {
-        cap.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
+        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
     } else {
-        cap.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
+        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
             .await
     };
 
@@ -937,7 +937,7 @@ pub(crate) async fn verify_cose_async(
     data: Vec<u8>,
     additional_data: Vec<u8>,
     cert_check: bool,
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
@@ -973,11 +973,11 @@ pub(crate) async fn verify_cose_async(
     if cert_check {
         // verify certs
         match &tst_info_res {
-            Ok(tst_info) => check_cert(der_bytes, cap, validation_log, Some(tst_info))?,
+            Ok(tst_info) => check_cert(der_bytes, ctp, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(der_bytes, cap, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, ctp, validation_log, None)?,
 
                     Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
@@ -1008,7 +1008,7 @@ pub(crate) async fn verify_cose_async(
         // is the certificate trusted
         #[cfg(target_arch = "wasm32")]
         check_trust_async(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1018,7 +1018,7 @@ pub(crate) async fn verify_cose_async(
 
         #[cfg(not(target_arch = "wasm32"))]
         check_trust(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1140,7 +1140,7 @@ pub(crate) fn verify_cose(
     data: &[u8],
     additional_data: &[u8],
     cert_check: bool,
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -1178,11 +1178,11 @@ pub(crate) fn verify_cose(
     if cert_check {
         // verify certs
         match &tst_info_res {
-            Ok(tst_info) => check_cert(der_bytes, cap, validation_log, Some(tst_info))?,
+            Ok(tst_info) => check_cert(der_bytes, ctp, validation_log, Some(tst_info))?,
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(der_bytes, cap, validation_log, None)?,
+                    Error::NotFound => check_cert(der_bytes, ctp, validation_log, None)?,
 
                     Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
@@ -1220,7 +1220,7 @@ pub(crate) fn verify_cose(
 
         // is the certificate trusted
         check_trust(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1348,13 +1348,13 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_expired_cert() {
         let mut validation_log = DetailedStatusTracker::default();
-        let cap = CertificateAcceptancePolicy::default();
+        let ctp = CertificateTrustPolicy::default();
 
         let cert_der = x509_der_from_pem(include_bytes!(
             "../tests/fixtures/rsa-pss256_key-expired.pub"
         ));
 
-        assert!(check_cert(&cert_der, &cap, &mut validation_log, None).is_err());
+        assert!(check_cert(&cert_der, &ctp, &mut validation_log, None).is_err());
 
         assert!(!validation_log.logged_items().is_empty());
 
@@ -1367,7 +1367,7 @@ pub mod tests {
     #[test]
     #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     fn test_cert_algorithms() {
-        let cap = CertificateAcceptancePolicy::default();
+        let ctp = CertificateTrustPolicy::default();
 
         let mut validation_log = DetailedStatusTracker::default();
 
@@ -1376,10 +1376,10 @@ pub mod tests {
         let es512_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/es512.pub"));
         let ps256_cert = x509_der_from_pem(include_bytes!("../tests/fixtures/certs/ps256.pub"));
 
-        assert!(check_cert(&es256_cert, &cap, &mut validation_log, None).is_ok());
-        assert!(check_cert(&es384_cert, &cap, &mut validation_log, None).is_ok());
-        assert!(check_cert(&es512_cert, &cap, &mut validation_log, None).is_ok());
-        assert!(check_cert(&ps256_cert, &cap, &mut validation_log, None).is_ok());
+        assert!(check_cert(&es256_cert, &ctp, &mut validation_log, None).is_ok());
+        assert!(check_cert(&es384_cert, &ctp, &mut validation_log, None).is_ok());
+        assert!(check_cert(&es512_cert, &ctp, &mut validation_log, None).is_ok());
+        assert!(check_cert(&ps256_cert, &ctp, &mut validation_log, None).is_ok());
     }
 
     #[test]

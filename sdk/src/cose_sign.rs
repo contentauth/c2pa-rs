@@ -16,7 +16,7 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
-use c2pa_crypto::{cose::CertificateAcceptancePolicy, p1363::parse_ec_der_sig, SigningAlg};
+use c2pa_crypto::{cose::CertificateTrustPolicy, p1363::parse_ec_der_sig, SigningAlg};
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -72,7 +72,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
             let mut cose_log = OneShotStatusTracker::default();
-            let passthrough_cap = CertificateAcceptancePolicy::default();
+            let passthrough_cap = CertificateTrustPolicy::default();
 
             match verify_cose(
                 &signed_bytes,
@@ -99,7 +99,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = OneShotStatusTracker::default();
-    let mut passthrough_cap = CertificateAcceptancePolicy::default();
+    let mut passthrough_cap = CertificateTrustPolicy::default();
 
     // allow user EKUs through this check if configured
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {

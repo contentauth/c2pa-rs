@@ -1,4 +1,4 @@
-// Copyright 2023 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -20,10 +20,11 @@ use async_generic::async_generic;
 use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-/// A `CertificateAcceptancePolicy` retains information about trust anchors and
-/// allowed EKUs to be used when verifying C2PA signing certificates.
+/// A `CertificateTrustPolicy` is configured with information about trust
+/// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
+/// can be used to evaluate a signing certificate against those policies.
 #[derive(Debug)]
-pub struct CertificateAcceptancePolicy {
+pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
 
@@ -34,9 +35,9 @@ pub struct CertificateAcceptancePolicy {
     additional_ekus: HashSet<String>,
 }
 
-impl Default for CertificateAcceptancePolicy {
+impl Default for CertificateTrustPolicy {
     fn default() -> Self {
-        let mut this = CertificateAcceptancePolicy {
+        let mut this = CertificateTrustPolicy {
             trust_anchor_ders: vec![],
             end_entity_cert_ders: vec![],
             additional_ekus: HashSet::default(),
@@ -56,7 +57,7 @@ impl Default for CertificateAcceptancePolicy {
     }
 }
 
-impl CertificateAcceptancePolicy {
+impl CertificateTrustPolicy {
     /// Create a new certificate acceptance policy with no preconfigured trust
     /// roots.
     ///
@@ -64,7 +65,7 @@ impl CertificateAcceptancePolicy {
     ///
     /// [`default()`]: Self::default()
     pub fn new() -> Self {
-        CertificateAcceptancePolicy {
+        CertificateTrustPolicy {
             trust_anchor_ders: vec![],
             end_entity_cert_ders: vec![],
             additional_ekus: HashSet::default(),
@@ -300,9 +301,9 @@ pub enum CertificateTrustError {
     /// configured.
     ///
     /// A certificate can be approved either by adding one or more trust anchors
-    /// via a call to [`CertificateAcceptancePolicy::add_trust_anchors`] or by
+    /// via a call to [`CertificateTrustPolicy::add_trust_anchors`] or by
     /// adding one or more end-entity certificates via
-    /// [`CertificateAcceptancePolicy::add_end_entity_credentials`].
+    /// [`CertificateTrustPolicy::add_end_entity_credentials`].
     ///
     /// If the certificate that was presented doesn't match either of these
     /// conditions, this error will be returned.
@@ -358,7 +359,7 @@ impl From<crate::webcrypto::WasmCryptoError> for CertificateTrustError {
 }
 
 /// This error can occur when adding certificates to a
-/// [`CertificateAcceptancePolicy`].
+/// [`CertificateTrustPolicy`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct InvalidCertificateError(pub(crate) String);
 

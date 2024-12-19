@@ -17,7 +17,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::{
-    cose::{CertificateAcceptancePolicy, CertificateTrustError, InvalidCertificateError},
+    cose::{CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError},
     raw_signature::signer::test_signer,
     SigningAlg,
 };
@@ -25,29 +25,29 @@ use crate::{
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn impl_debug() {
-    let cap = CertificateAcceptancePolicy::new();
-    let _ = format!("{cap:#?}");
+    let ctp = CertificateTrustPolicy::new();
+    let _ = format!("{ctp:#?}");
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn new() {
-    let cap = CertificateAcceptancePolicy::new();
+    let ctp = CertificateTrustPolicy::new();
 
     assert_eq!(
-        cap.has_allowed_eku(&email_eku()).unwrap(),
+        ctp.has_allowed_eku(&email_eku()).unwrap(),
         EMAIL_PROTECTION_OID
     );
 
-    assert!(cap.has_allowed_eku(&document_signing_eku()).is_none());
+    assert!(ctp.has_allowed_eku(&document_signing_eku()).is_none());
 
     assert_eq!(
-        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        ctp.has_allowed_eku(&time_stamping_eku()).unwrap(),
         TIME_STAMPING_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        ctp.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
         OCSP_SIGNING_OID
     );
 }
@@ -55,25 +55,25 @@ fn new() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn default() {
-    let cap = CertificateAcceptancePolicy::default();
+    let ctp = CertificateTrustPolicy::default();
 
     assert_eq!(
-        cap.has_allowed_eku(&email_eku()).unwrap(),
+        ctp.has_allowed_eku(&email_eku()).unwrap(),
         EMAIL_PROTECTION_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&document_signing_eku()).unwrap(),
+        ctp.has_allowed_eku(&document_signing_eku()).unwrap(),
         DOCUMENT_SIGNING_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        ctp.has_allowed_eku(&time_stamping_eku()).unwrap(),
         TIME_STAMPING_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        ctp.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
         OCSP_SIGNING_OID
     );
 }
@@ -81,23 +81,23 @@ fn default() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn clear() {
-    let mut cap = CertificateAcceptancePolicy::default();
-    cap.clear();
+    let mut ctp = CertificateTrustPolicy::default();
+    ctp.clear();
 
     assert_eq!(
-        cap.has_allowed_eku(&email_eku()).unwrap(),
+        ctp.has_allowed_eku(&email_eku()).unwrap(),
         EMAIL_PROTECTION_OID
     );
 
-    assert!(cap.has_allowed_eku(&document_signing_eku()).is_none());
+    assert!(ctp.has_allowed_eku(&document_signing_eku()).is_none());
 
     assert_eq!(
-        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        ctp.has_allowed_eku(&time_stamping_eku()).unwrap(),
         TIME_STAMPING_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        ctp.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
         OCSP_SIGNING_OID
     );
 }
@@ -105,23 +105,23 @@ fn clear() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn add_valid_ekus_err_bad_utf8() {
-    let mut cap = CertificateAcceptancePolicy::new();
-    cap.add_valid_ekus(&[128, 0]);
+    let mut ctp = CertificateTrustPolicy::new();
+    ctp.add_valid_ekus(&[128, 0]);
 
     assert_eq!(
-        cap.has_allowed_eku(&email_eku()).unwrap(),
+        ctp.has_allowed_eku(&email_eku()).unwrap(),
         EMAIL_PROTECTION_OID
     );
 
-    assert!(cap.has_allowed_eku(&document_signing_eku()).is_none());
+    assert!(ctp.has_allowed_eku(&document_signing_eku()).is_none());
 
     assert_eq!(
-        cap.has_allowed_eku(&time_stamping_eku()).unwrap(),
+        ctp.has_allowed_eku(&time_stamping_eku()).unwrap(),
         TIME_STAMPING_OID
     );
 
     assert_eq!(
-        cap.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
+        ctp.has_allowed_eku(&ocsp_signing_eku()).unwrap(),
         OCSP_SIGNING_OID
     );
 }
@@ -129,15 +129,15 @@ fn add_valid_ekus_err_bad_utf8() {
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn add_trust_anchors_err_bad_pem() {
-    let mut cap = CertificateAcceptancePolicy::new();
-    assert!(cap.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
+    let mut ctp = CertificateTrustPolicy::new();
+    assert!(ctp.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
 }
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn add_end_entity_credentials_err_bad_pem() {
-    let mut cap = CertificateAcceptancePolicy::new();
-    assert!(cap.add_end_entity_credentials(BAD_PEM.as_bytes()).is_err());
+    let mut ctp = CertificateTrustPolicy::new();
+    assert!(ctp.add_end_entity_credentials(BAD_PEM.as_bytes()).is_err());
 }
 
 #[test]
@@ -233,7 +233,7 @@ zGxQnM2hCA==
 
 #[test]
 fn test_trust_store() {
-    let cap = CertificateAcceptancePolicy::default();
+    let ctp = CertificateTrustPolicy::default();
 
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
@@ -251,26 +251,26 @@ fn test_trust_store() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    cap.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+    ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+    ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+    ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+    ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+    ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+    ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+    ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
         .unwrap();
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn test_trust_store_async() {
-    let cap = CertificateAcceptancePolicy::default();
+    let ctp = CertificateTrustPolicy::default();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
     let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
@@ -280,32 +280,32 @@ async fn test_trust_store_async() {
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
-    cap.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
+    ctp.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
+    ctp.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
+    ctp.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
+    ctp.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
+    ctp.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
+    ctp.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
+    ctp.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
         .await
         .unwrap();
 }
 
 #[test]
 fn test_broken_trust_chain() {
-    let cap = CertificateAcceptancePolicy::default();
+    let ctp = CertificateTrustPolicy::default();
 
     let ps256 = test_signer(SigningAlg::Ps256);
     let ps384 = test_signer(SigningAlg::Ps384);
@@ -325,49 +325,49 @@ fn test_broken_trust_chain() {
 
     // Break the trust chain by skipping the first intermediate CA.
     assert_eq!(
-        cap.check_certificate_trust(&ps256_certs[2..], &ps256_certs[0], None)
+        ctp.check_certificate_trust(&ps256_certs[2..], &ps256_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
+        ctp.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
+        ctp.check_certificate_trust(&ps384_certs[2..], &ps384_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&ps512_certs[2..], &ps512_certs[0], None)
+        ctp.check_certificate_trust(&ps512_certs[2..], &ps512_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
+        ctp.check_certificate_trust(&es256_certs[2..], &es256_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
+        ctp.check_certificate_trust(&es384_certs[2..], &es384_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
+        ctp.check_certificate_trust(&es512_certs[2..], &es512_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust(&ed25519_certs[2..], &ed25519_certs[0], None)
+        ctp.check_certificate_trust(&ed25519_certs[2..], &ed25519_certs[0], None)
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
@@ -376,7 +376,7 @@ fn test_broken_trust_chain() {
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn test_broken_trust_chain_async() {
-    let cap = CertificateAcceptancePolicy::default();
+    let ctp = CertificateTrustPolicy::default();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
     let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
@@ -388,56 +388,56 @@ async fn test_broken_trust_chain_async() {
 
     // Break the trust chain by skipping the first intermediate CA.
     assert_eq!(
-        cap.check_certificate_trust_async(&ps256_certs[2..], &ps256_certs[0], None)
+        ctp.check_certificate_trust_async(&ps256_certs[2..], &ps256_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
+        ctp.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
+        ctp.check_certificate_trust_async(&ps384_certs[2..], &ps384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&ps512_certs[2..], &ps512_certs[0], None)
+        ctp.check_certificate_trust_async(&ps512_certs[2..], &ps512_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&es256_certs[2..], &es256_certs[0], None)
+        ctp.check_certificate_trust_async(&es256_certs[2..], &es256_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&es384_certs[2..], &es384_certs[0], None)
+        ctp.check_certificate_trust_async(&es384_certs[2..], &es384_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&es512_certs[2..], &es512_certs[0], None)
+        ctp.check_certificate_trust_async(&es512_certs[2..], &es512_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
     );
 
     assert_eq!(
-        cap.check_certificate_trust_async(&ed25519_certs[2..], &ed25519_certs[0], None)
+        ctp.check_certificate_trust_async(&ed25519_certs[2..], &ed25519_certs[0], None)
             .await
             .unwrap_err(),
         CertificateTrustError::CertificateNotTrusted
@@ -446,21 +446,21 @@ async fn test_broken_trust_chain_async() {
 
 #[test]
 fn test_allowed_list() {
-    let mut cap = CertificateAcceptancePolicy::new();
+    let mut ctp = CertificateTrustPolicy::new();
 
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ed25519.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ed25519.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es256.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es256.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es384.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es384.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es512.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es512.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps256.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps256.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps384.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps384.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps512.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps512.pub"))
         .unwrap();
 
     let ps256 = test_signer(SigningAlg::Ps256);
@@ -479,40 +479,40 @@ fn test_allowed_list() {
     let es512_certs = es512.cert_chain().unwrap();
     let ed25519_certs = ed25519.cert_chain().unwrap();
 
-    cap.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+    ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+    ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+    ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+    ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+    ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+    ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
         .unwrap();
-    cap.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+    ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
         .unwrap();
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), actix::test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 async fn test_allowed_list_async() {
-    let mut cap = CertificateAcceptancePolicy::new();
+    let mut ctp = CertificateTrustPolicy::new();
 
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ed25519.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ed25519.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es256.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es256.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es384.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es384.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es512.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/es512.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps256.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps256.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps384.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps384.pub"))
         .unwrap();
-    cap.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps512.pub"))
+    ctp.add_end_entity_credentials(include_bytes!("../fixtures/raw_signature/ps512.pub"))
         .unwrap();
 
     let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
@@ -523,25 +523,25 @@ async fn test_allowed_list_async() {
     let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
     let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
 
-    cap.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
+    ctp.check_certificate_trust_async(&ps256_certs[1..], &ps256_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
+    ctp.check_certificate_trust_async(&ps384_certs[1..], &ps384_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
+    ctp.check_certificate_trust_async(&ps512_certs[1..], &ps512_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
+    ctp.check_certificate_trust_async(&es256_certs[1..], &es256_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
+    ctp.check_certificate_trust_async(&es384_certs[1..], &es384_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
+    ctp.check_certificate_trust_async(&es512_certs[1..], &es512_certs[0], None)
         .await
         .unwrap();
-    cap.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
+    ctp.check_certificate_trust_async(&ed25519_certs[1..], &ed25519_certs[0], None)
         .await
         .unwrap();
 }
