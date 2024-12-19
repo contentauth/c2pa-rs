@@ -11,4 +11,5 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod certificate_acceptance_policy;
+mod certificate_profile;
+mod certificate_trust_policy;

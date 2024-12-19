@@ -1,4 +1,4 @@
-// Copyright 2023 Adobe. All rights reserved.
+// Copyright 2024 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -16,12 +16,15 @@
 use std::{collections::HashSet, error::Error, fmt, str::FromStr};
 
 use asn1_rs::{oid, Oid};
+use async_generic::async_generic;
+use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-/// A `CertificateAcceptancePolicy` retains information about trust anchors and
-/// allowed EKUs to be used when verifying C2PA signing certificates.
+/// A `CertificateTrustPolicy` is configured with information about trust
+/// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
+/// can be used to evaluate a signing certificate against those policies.
 #[derive(Debug)]
-pub struct CertificateAcceptancePolicy {
+pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
 
@@ -32,9 +35,9 @@ pub struct CertificateAcceptancePolicy {
     additional_ekus: HashSet<String>,
 }
 
-impl Default for CertificateAcceptancePolicy {
+impl Default for CertificateTrustPolicy {
     fn default() -> Self {
-        let mut this = CertificateAcceptancePolicy {
+        let mut this = CertificateTrustPolicy {
             trust_anchor_ders: vec![],
             end_entity_cert_ders: vec![],
             additional_ekus: HashSet::default(),
@@ -54,7 +57,7 @@ impl Default for CertificateAcceptancePolicy {
     }
 }
 
-impl CertificateAcceptancePolicy {
+impl CertificateTrustPolicy {
     /// Create a new certificate acceptance policy with no preconfigured trust
     /// roots.
     ///
@@ -62,11 +65,57 @@ impl CertificateAcceptancePolicy {
     ///
     /// [`default()`]: Self::default()
     pub fn new() -> Self {
-        CertificateAcceptancePolicy {
+        CertificateTrustPolicy {
             trust_anchor_ders: vec![],
             end_entity_cert_ders: vec![],
             additional_ekus: HashSet::default(),
         }
+    }
+
+    /// Evaluate a certificate against the trust policy described by this
+    /// struct.
+    ///
+    /// Returns `Ok(())` if the certificate appears on the end-entity
+    /// certificate list or has a valid chain to one of the trust anchors that
+    /// was provided and that it has a valid extended key usage (EKU).
+    ///
+    /// If `signing_time_epoch` is provided, evaluates the signing time (which
+    /// must be in Unix seconds since the epoch) against the certificate's
+    /// period of validity.
+    #[allow(unused)] // parameters may be unused in some cases
+    #[async_generic]
+    pub fn check_certificate_trust(
+        &self,
+        chain_der: &[Vec<u8>],
+        end_entity_cert_der: &[u8],
+        signing_time_epoch: Option<i64>,
+    ) -> Result<(), CertificateTrustError> {
+        if _async {
+            #[cfg(target_arch = "wasm32")]
+            {
+                return crate::webcrypto::check_certificate_trust::check_certificate_trust(
+                    self,
+                    chain_der,
+                    end_entity_cert_der,
+                    signing_time_epoch,
+                )
+                .await;
+            }
+        }
+
+        #[cfg(feature = "openssl")]
+        {
+            return crate::openssl::check_certificate_trust::check_certificate_trust(
+                self,
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            );
+        }
+
+        Err(CertificateTrustError::InternalError(
+            "no implementation for certificate evaluation available",
+        ))
     }
 
     /// Add trust anchors (root X.509 certificates) that shall be accepted when
@@ -242,8 +291,74 @@ impl CertificateAcceptancePolicy {
     }
 }
 
+/// Describes errors that can be identified when evaluating a certificate's
+/// trust.
+#[derive(Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum CertificateTrustError {
+    /// The certificate does not appear on any trust list that has been
+    /// configured.
+    ///
+    /// A certificate can be approved either by adding one or more trust anchors
+    /// via a call to [`CertificateTrustPolicy::add_trust_anchors`] or by
+    /// adding one or more end-entity certificates via
+    /// [`CertificateTrustPolicy::add_end_entity_credentials`].
+    ///
+    /// If the certificate that was presented doesn't match either of these
+    /// conditions, this error will be returned.
+    #[error("the certificate is not trusted")]
+    CertificateNotTrusted,
+
+    /// The certificate contains an invalid extended key usage (EKU) value.
+    #[error("the certificate contains an invalid extended key usage (EKU) value")]
+    InvalidEku,
+
+    /// An error was reported by the OpenSSL native code.
+    ///
+    /// NOTE: We do not directly capture the OpenSSL error itself because it
+    /// lacks an Eq implementation. Instead we capture the error description.
+    #[cfg(feature = "openssl")]
+    #[error("an error was reported by OpenSSL native code: {0}")]
+    OpenSslError(String),
+
+    /// The OpenSSL native code mutex could not be acquired.
+    #[cfg(feature = "openssl")]
+    #[error(transparent)]
+    OpenSslMutexUnavailable(#[from] crate::openssl::OpenSslMutexUnavailable),
+
+    /// The certificate (or certificate chain) that was presented is invalid.
+    #[error("the certificate or certificate chain is invalid")]
+    InvalidCertificate,
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(&'static str),
+}
+
+#[cfg(feature = "openssl")]
+impl From<openssl::error::ErrorStack> for CertificateTrustError {
+    fn from(err: openssl::error::ErrorStack) -> Self {
+        Self::OpenSslError(err.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<crate::webcrypto::WasmCryptoError> for CertificateTrustError {
+    fn from(err: crate::webcrypto::WasmCryptoError) -> Self {
+        match err {
+            crate::webcrypto::WasmCryptoError::UnknownContext => {
+                Self::InternalError("unknown WASM context")
+            }
+            crate::webcrypto::WasmCryptoError::NoCryptoAvailable => {
+                Self::InternalError("WASM crypto unavailable")
+            }
+        }
+    }
+}
+
 /// This error can occur when adding certificates to a
-/// [`CertificateAcceptancePolicy`].
+/// [`CertificateTrustPolicy`].
 #[derive(Debug, Eq, PartialEq)]
 pub struct InvalidCertificateError(pub(crate) String);
 
