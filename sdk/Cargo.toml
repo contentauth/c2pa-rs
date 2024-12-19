@@ -121,7 +121,7 @@ serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
 tempfile = "3.10.1"
-thiserror = "2.0.6"
+thiserror = "2.0.8"
 treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
