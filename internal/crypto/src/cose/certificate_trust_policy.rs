@@ -13,12 +13,14 @@
 
 #![allow(clippy::doc_lazy_continuation)] // Clippy and rustfmt aren't agreeing at the moment. :-(
 
-use std::{collections::HashSet, error::Error, fmt, str::FromStr};
+use std::{collections::HashSet, error::Error, fmt, io::BufRead, str::FromStr};
 
 use asn1_rs::{oid, Oid};
 use async_generic::async_generic;
 use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
+
+use crate::{base64, hash::sha256};
 
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
@@ -28,8 +30,9 @@ pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
 
-    /// End-entity certificaters (root X.509 certificates) in DER format.
-    end_entity_cert_ders: Vec<Vec<u8>>,
+    /// Base-64 encoded SHA-256 has of end-entity certificaters (root X.509
+    /// certificates) in DER format.
+    end_entity_cert_set: HashSet<String>,
 
     /// Additional extended key usage (EKU) OIDs.
     additional_ekus: HashSet<String>,
@@ -39,7 +42,7 @@ impl Default for CertificateTrustPolicy {
     fn default() -> Self {
         let mut this = CertificateTrustPolicy {
             trust_anchor_ders: vec![],
-            end_entity_cert_ders: vec![],
+            end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
         };
 
@@ -67,7 +70,7 @@ impl CertificateTrustPolicy {
     pub fn new() -> Self {
         CertificateTrustPolicy {
             trust_anchor_ders: vec![],
-            end_entity_cert_ders: vec![],
+            end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
         }
     }
@@ -90,6 +93,13 @@ impl CertificateTrustPolicy {
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
     ) -> Result<(), CertificateTrustError> {
+        // First check to see if the certificate appears in the allowed set of
+        // end-entity certificates.
+        let cert_hash = base64_sha256_cert_der(end_entity_cert_der);
+        if self.end_entity_cert_set.contains(&cert_hash) {
+            return Ok(());
+        }
+
         if _async {
             #[cfg(target_arch = "wasm32")]
             {
@@ -183,16 +193,39 @@ impl CertificateTrustPolicy {
     /// certificates, regardless of how they may or may not chain up to other
     /// trust anchors.
     ///
+    /// As an optimization, this function also accepts standalone lines (outside
+    /// of the X.509 PEM blocks). Each such line must contain a Base-64 encoded
+    /// SHA_256 hash value over the value of a PEM certificate.
+    ///
+    /// Lines that match neither format (PEM or hash) are ignored.
+    ///
     /// [§14.4.3, Private Credential Storage]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_private_credential_storage
     pub fn add_end_entity_credentials(
         &mut self,
         end_entity_cert_pems: &[u8],
     ) -> Result<(), InvalidCertificateError> {
+        let mut inside_pem_block = false;
+
+        for line in end_entity_cert_pems.lines().filter_map(|l| l.ok()) {
+            if line.contains("-----BEGIN") {
+                inside_pem_block = true;
+            }
+            if line.contains("-----END") {
+                inside_pem_block = false;
+            }
+            if !inside_pem_block && line.len() == 44 && base64::decode(&line).is_ok() {
+                self.end_entity_cert_set.insert(line);
+            }
+        }
+
         for maybe_pem in Pem::iter_from_buffer(end_entity_cert_pems) {
             // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {
-                Ok(pem) => self.end_entity_cert_ders.push(pem.contents),
+                Ok(pem) => {
+                    self.end_entity_cert_set
+                        .insert(base64_sha256_cert_der(&pem.contents));
+                }
                 Err(e) => {
                     return Err(InvalidCertificateError(e.to_string()));
                 }
@@ -245,26 +278,19 @@ impl CertificateTrustPolicy {
     /// configured.
     pub fn clear(&mut self) {
         self.trust_anchor_ders.clear();
-        self.end_entity_cert_ders.clear();
+        self.end_entity_cert_set.clear();
         self.additional_ekus.clear();
     }
 
     /// Return an iterator over the trust anchors.
     ///
     /// Each anchor will be returned in DER format.
-    pub fn trust_anchor_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
+    pub(crate) fn trust_anchor_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
         self.trust_anchor_ders.iter()
     }
 
-    /// Return an iterator over the allowed end-entity certificates.
-    ///
-    /// Each end-entity certificate will be returned in DER format.
-    pub fn end_entity_cert_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
-        self.end_entity_cert_ders.iter()
-    }
-
     /// Return `true` if the EKU OID is allowed.
-    pub fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
+    pub(crate) fn has_allowed_eku<'a>(&self, eku: &'a ExtendedKeyUsage) -> Option<Oid<'a>> {
         if eku.email_protection {
             return Some(EMAIL_PROTECTION_OID.clone());
         }
@@ -289,6 +315,11 @@ impl CertificateTrustPolicy {
 
         None
     }
+}
+
+fn base64_sha256_cert_der(cert_der: &[u8]) -> String {
+    let cert_sha256 = sha256(&cert_der);
+    base64::encode(&cert_sha256)
 }
 
 /// Describes errors that can be identified when evaluating a certificate's

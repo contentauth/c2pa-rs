@@ -27,12 +27,6 @@ pub(crate) fn check_certificate_trust(
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(), CertificateTrustError> {
-    // First check to see if the certificate appears on the allowed list of
-    // end-entity certificates.
-    if ctp.end_entity_cert_ders().any(|der| der == cert_der) {
-        return Ok(());
-    }
-
     let _openssl = OpenSslMutex::acquire()?;
 
     let mut cert_chain = Stack::new()?;
