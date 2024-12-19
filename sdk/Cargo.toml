@@ -95,7 +95,7 @@ hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"
 img-parts = "0.3.0"
-jfifdump = "0.5.1"
+jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
