@@ -6,6 +6,17 @@ This project adheres to [Semantic Versioning](https://semver.org), except that â
 
 Since version 0.10.0, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.2...c2patool-v0.10.3)
+_19 December 2024_
+
+### Documented
+
+* Post move cleanup (#778)
+
+### Fixed
+
+* Fix: Obscure glob error message for missing files
+
 ## [0.10.2](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.10.1...c2patool-v0.10.2)
 _12 December 2024_
 
