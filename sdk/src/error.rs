@@ -310,6 +310,9 @@ pub enum Error {
     RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
 
     #[error(transparent)]
+    CertificateProfileError(#[from] c2pa_crypto::cose::CertificateProfileError),
+
+    #[error(transparent)]
     CertificateTrustError(#[from] c2pa_crypto::cose::CertificateTrustError),
 
     #[error(transparent)]

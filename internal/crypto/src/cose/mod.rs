@@ -21,7 +21,7 @@ pub use certificate_trust_policy::{
 };
 
 mod certificate_profile;
-pub use certificate_profile::check_certificate_profile;
+pub use certificate_profile::{check_certificate_profile, CertificateProfileError};
 
 mod error;
 pub use error::CoseError;

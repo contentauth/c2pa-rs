@@ -3883,7 +3883,10 @@ pub mod tests {
 
         let r = store.save_to_asset(&ap, &signer, &op);
         assert!(r.is_err());
-        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+        assert_eq!(
+            r.err().unwrap().to_string(),
+            "the certificate was not valid at time of signing"
+        );
     }
 
     #[test]

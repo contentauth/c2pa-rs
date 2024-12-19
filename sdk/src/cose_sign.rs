@@ -16,7 +16,11 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
-use c2pa_crypto::{cose::CertificateTrustPolicy, p1363::parse_ec_der_sig, SigningAlg};
+use c2pa_crypto::{
+    cose::{check_certificate_profile, CertificateTrustPolicy},
+    p1363::parse_ec_der_sig,
+    SigningAlg,
+};
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
 use coset::{
@@ -27,7 +31,7 @@ use coset::{
 
 use crate::{
     claim::Claim,
-    cose_validator::{check_cert, verify_cose},
+    cose_validator::verify_cose,
     settings::get_settings_value,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
@@ -106,7 +110,12 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
-    check_cert(signing_cert, &passthrough_cap, &mut cose_log, None)
+    Ok(check_certificate_profile(
+        signing_cert,
+        &passthrough_cap,
+        &mut cose_log,
+        None,
+    )?)
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
