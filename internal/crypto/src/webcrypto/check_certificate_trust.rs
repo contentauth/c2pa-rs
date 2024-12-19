@@ -31,8 +31,6 @@ pub(crate) async fn check_certificate_trust(
     cert_der: &[u8],
     _signing_time_epoch: Option<i64>,
 ) -> Result<(), CertificateTrustError> {
-    // TO DO: Add verification of signing time.
-
     let Ok((_rem, cert)) = X509Certificate::from_der(cert_der) else {
         return Err(CertificateTrustError::InvalidCertificate);
     };
