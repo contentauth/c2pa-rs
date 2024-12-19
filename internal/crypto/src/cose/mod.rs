@@ -20,6 +20,9 @@ pub use certificate_trust_policy::{
     CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
 };
 
+mod certificate_profile;
+pub use certificate_profile::check_certificate_profile;
+
 mod error;
 pub use error::CoseError;
 
