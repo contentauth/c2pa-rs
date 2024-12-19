@@ -461,11 +461,6 @@ fn main() -> Result<()> {
         Some(Commands::Fragment { fragments_glob: _ })
     );
 
-    // make sure path is not a glob when not fragmented
-    if !args.path.is_file() && !is_fragment {
-        bail!("glob patterns only allowed when using \"fragment\" command")
-    }
-
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
