@@ -546,6 +546,73 @@ async fn test_allowed_list_async() {
         .unwrap();
 }
 
+#[test]
+fn test_allowed_list_hashes() {
+    let mut ctp = CertificateTrustPolicy::new();
+
+    ctp.add_end_entity_credentials(include_bytes!(
+        "../fixtures/raw_signature/allowed_list.hash"
+    ))
+    .unwrap();
+
+    let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
+    let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
+    let ps512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps512.pub"));
+    let es256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es256.pub"));
+    let es384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es384.pub"));
+    let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
+    let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
+
+    ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+        .unwrap();
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), actix::test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+async fn test_allowed_list_hashes_async() {
+    let mut ctp = CertificateTrustPolicy::new();
+
+    ctp.add_end_entity_credentials(include_bytes!(
+        "../fixtures/raw_signature/allowed_list.hash"
+    ))
+    .unwrap();
+
+    let ps256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps256.pub"));
+    let ps384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps384.pub"));
+    let ps512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ps512.pub"));
+    let es256_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es256.pub"));
+    let es384_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es384.pub"));
+    let es512_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/es512.pub"));
+    let ed25519_certs = cert_ders_from_pem(include_bytes!("../fixtures/raw_signature/ed25519.pub"));
+
+    ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
+        .unwrap();
+    ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
+        .unwrap();
+}
+
 fn cert_ders_from_pem(cert_chain: &[u8]) -> Vec<Vec<u8>> {
     Pem::iter_from_buffer(cert_chain)
         .map(|r| r.unwrap().contents)
