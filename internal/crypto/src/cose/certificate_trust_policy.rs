@@ -295,7 +295,6 @@ impl CertificateTrustPolicy {
 /// trust.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
-#[allow(unused)] // TEMPORARY while building
 pub enum CertificateTrustError {
     /// The certificate does not appear on any trust list that has been
     /// configured.
