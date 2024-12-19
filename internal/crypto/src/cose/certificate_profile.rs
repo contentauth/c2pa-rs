@@ -65,7 +65,7 @@ pub fn check_certificate_profile(
         return Err(CertificateProfileError::InvalidCertificateVersion);
     }
 
-    // check for cert expiration
+    // Was the certificate valid at time of signing?
     if let Some(tst_info) = _tst_info_opt {
         // A valid time stamp was associated with this signature: Ensure that the
         // timestamp was valid at that time.
@@ -457,7 +457,6 @@ pub fn check_certificate_profile(
 /// profile.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
-#[allow(unused)] // TEMPORARY while building
 pub enum CertificateProfileError {
     /// The certificate (or certificate chain) that was presented is invalid.
     ///
