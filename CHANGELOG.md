@@ -6,6 +6,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Since version 0.36.2, the format of this changelog is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.41.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.40.0...c2pa-v0.41.0)
+_19 December 2024_
+
+### Added
+
+* Introduce `c2pa_crypto::CertificateAcceptancePolicy` (#779)
+* Bump MSRV to 1.81.0 (#781)
+
+### Fixed
+
+* Improve usage of `#[cfg]` directives (#783)
+* OOB read attempt in jpeg_io asset handler in get_cai_segments function (#719)
+* Prevent negative length value for SVG object locations (#766)
+* JPEG `write_cai` OOB insertion (#762)
+* Add support XMP in SVG (#771)
+* Possible overflow for TIFF (#760)
+* Resolve new Clippy issues (#776)
+
+### Updated dependencies
+
+* Bump thiserror from 2.0.6 to 2.0.8 (#787)
+* Bump rasn from 0.18.0 to 0.22.0 (#727)
+* Bump thiserror from 1.0.69 to 2.0.6 (#770)
+
 ## [0.40.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.39.0...c2pa-v0.40.0)
 _12 December 2024_
 
