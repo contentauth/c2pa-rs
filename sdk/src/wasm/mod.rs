@@ -18,5 +18,3 @@ pub(crate) mod rsa_wasm_signer;
 pub(crate) use rsa_wasm_signer::RsaWasmSignerAsync;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod util;
-#[cfg(target_arch = "wasm32")]
-pub(crate) mod webpki_trust_handler;

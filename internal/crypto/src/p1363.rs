@@ -44,10 +44,8 @@ pub struct EcSigComps<'a> {
     pub s: &'a [u8],
 }
 
-#[cfg(feature = "openssl")]
 use crate::{raw_signature::RawSignerError, SigningAlg};
 
-#[cfg(feature = "openssl")]
 pub(crate) fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>, RawSignerError> {
     // P1363 format: r | s
 
