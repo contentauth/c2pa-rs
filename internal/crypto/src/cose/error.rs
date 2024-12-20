@@ -32,4 +32,9 @@ pub enum CoseError {
     /// An error occurred while parsing a time stamp.
     #[error(transparent)]
     TimeStampError(#[from] TimeStampError),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(String),
 }
