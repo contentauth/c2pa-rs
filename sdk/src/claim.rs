@@ -35,8 +35,8 @@ use crate::{
     },
     asset_io::CAIRead,
     cose_validator::{
-        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
-        verify_cose, verify_cose_async,
+        check_ocsp_status, check_ocsp_status_async, get_cose_sign1, get_signing_info,
+        get_signing_info_async, verify_cose, verify_cose_async,
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -1068,7 +1068,8 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, ctp, validation_log).await?;
+        let sign1 = get_cose_sign1(&sig, &data, validation_log)?;
+        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
 
         let verified =
             verify_cose_async(sig, data, additional_bytes, cert_check, ctp, validation_log).await;
@@ -1113,7 +1114,8 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, ctp, validation_log)?;
+        let sign1 = get_cose_sign1(sig, data, validation_log)?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
             sig,
