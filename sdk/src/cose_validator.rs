@@ -469,7 +469,7 @@ pub(crate) async fn verify_cose_async(
             ctp,
             &certs[1..],
             der_bytes,
-            tst_info_result_to_timestamp(&tst_info_res),
+            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
             validation_log,
         )
         .await?;
