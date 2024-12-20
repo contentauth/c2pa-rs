@@ -55,7 +55,8 @@ pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
     ED25519 Edwards Curve 25519
 **********************************************************************************/
 
-fn get_cose_sign1(
+// TEMPORARY pub(crate)
+pub(crate) fn get_cose_sign1(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut impl StatusTracker,
@@ -253,13 +254,11 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
-    cose_bytes: &[u8],
+    sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
-
     let mut result = Ok(OcspResponse::default());
 
     if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {

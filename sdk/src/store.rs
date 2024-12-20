@@ -46,7 +46,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
+    cose_validator::{check_ocsp_status, get_cose_sign1, verify_cose, verify_cose_async},
     dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
@@ -453,7 +453,8 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, &self.ctp, &mut validation_log) {
+        let sign1 = get_cose_sign1(&sig, &data, &mut validation_log).ok()?;
+        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
