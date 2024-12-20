@@ -16,7 +16,7 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, cose::CertificateAcceptancePolicy, ValidationInfo};
+use c2pa_crypto::{base64, cose::CertificateTrustPolicy, ValidationInfo};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -1683,7 +1683,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        cap: &CertificateAcceptancePolicy,
+        ctp: &CertificateTrustPolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1711,10 +1711,10 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, cap, validation_log).await?;
+        check_ocsp_status_async(&sig, &data, ctp, validation_log).await?;
 
         let verified =
-            verify_cose_async(sig, data, additional_bytes, cert_check, cap, validation_log).await;
+            verify_cose_async(sig, data, additional_bytes, cert_check, ctp, validation_log).await;
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -1727,7 +1727,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         is_provenance: bool,
         cert_check: bool,
-        cap: &CertificateAcceptancePolicy,
+        ctp: &CertificateTrustPolicy,
         validation_log: &mut impl StatusTracker,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
@@ -1756,14 +1756,14 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, cap, validation_log)?;
+        check_ocsp_status(sig, data, ctp, validation_log)?;
 
         let verified = verify_cose(
             sig,
             data,
             &additional_bytes,
             cert_check,
-            cap,
+            ctp,
             validation_log,
         );
 

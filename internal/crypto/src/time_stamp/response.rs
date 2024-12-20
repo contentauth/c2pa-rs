@@ -12,7 +12,7 @@
 // each license.
 
 use bcder::decode::Constructed;
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use x509_parser::nom::AsBytes;
 
 #[cfg(not(target_arch = "wasm32"))]

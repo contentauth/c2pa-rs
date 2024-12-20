@@ -291,10 +291,6 @@ pub enum Error {
     #[error("could not acquire OpenSSL FFI mutex")]
     OpenSslMutexError,
 
-    #[cfg(feature = "openssl")]
-    #[error(transparent)]
-    OpenSslError(#[from] openssl::error::ErrorStack),
-
     #[error(transparent)]
     OtherError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
@@ -318,6 +314,12 @@ pub enum Error {
 
     #[error(transparent)]
     RawSignerError(#[from] c2pa_crypto::raw_signature::RawSignerError),
+
+    #[error(transparent)]
+    CertificateProfileError(#[from] c2pa_crypto::cose::CertificateProfileError),
+
+    #[error(transparent)]
+    CertificateTrustError(#[from] c2pa_crypto::cose::CertificateTrustError),
 
     #[error(transparent)]
     InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),

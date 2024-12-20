@@ -13,12 +13,13 @@
 
 use std::io::Cursor;
 
-use asn1_rs::{Any, Class, Header, Tag};
+use asn1_rs::oid;
 use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        parse_and_validate_sigtst, parse_and_validate_sigtst_async, CertificateAcceptancePolicy,
+        check_certificate_profile, parse_and_validate_sigtst, parse_and_validate_sigtst_async,
+        CertificateTrustError, CertificateTrustPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -28,47 +29,20 @@ use c2pa_crypto::{
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
-use conv::*;
 use coset::{
     iana::{self, EnumI64},
     sig_structure_data, Label, TaggedCborSerializable,
 };
 use serde_bytes::ByteBuf;
-use x509_parser::{
-    der_parser::{ber::parse_ber_sequence, oid},
-    num_bigint::BigUint,
-    oid_registry::Oid,
-    prelude::*,
-};
+use x509_parser::{num_bigint::BigUint, oid_registry::Oid, prelude::*};
 
-#[cfg(feature = "openssl")]
-use crate::openssl::verify_trust;
-#[cfg(target_arch = "wasm32")]
-use crate::wasm::webpki_trust_handler::verify_trust_async;
 use crate::{
     error::{Error, Result},
     settings::get_settings_value,
 };
 
-pub(crate) const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
-pub(crate) const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
-pub(crate) const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
-
-pub(crate) const ECDSA_WITH_SHA256_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .2);
-pub(crate) const ECDSA_WITH_SHA384_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .3);
-pub(crate) const ECDSA_WITH_SHA512_OID: Oid<'static> = oid!(1.2.840 .10045 .4 .3 .4);
-pub(crate) const SHA256_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .11);
-pub(crate) const SHA384_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .12);
-pub(crate) const SHA512_WITH_RSAENCRYPTION_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .13);
-pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
 #[allow(dead_code)] // used only in WASM build
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
-pub(crate) const SHA256_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .1);
-pub(crate) const SHA384_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .2);
-pub(crate) const SHA512_OID: Oid<'static> = oid!(2.16.840 .1 .101 .3 .4 .2 .3);
-pub(crate) const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
-pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
-pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 /********************** Supported Validators ***************************************
     RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
@@ -104,403 +78,6 @@ fn get_cose_sign1(
 
             Err(Error::CoseSignature)
         }
-    }
-}
-
-pub(crate) fn check_cert(
-    ca_der_bytes: &[u8],
-    cap: &CertificateAcceptancePolicy,
-    validation_log: &mut impl StatusTracker,
-    _tst_info_opt: Option<&TstInfo>,
-) -> Result<()> {
-    // get the cert in der format
-    let (_rem, signcert) = X509Certificate::from_der(ca_der_bytes).map_err(|_err| {
-        log_item!(
-            "Cose_Sign1",
-            "certificate could not be parsed",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        Error::CoseInvalidCert
-    })?;
-
-    // cert version must be 3
-    if signcert.version() != X509Version::V3 {
-        log_item!(
-            "Cose_Sign1",
-            "certificate version incorrect",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        return Err(Error::CoseInvalidCert);
-    }
-
-    // check for cert expiration
-    if let Some(tst_info) = _tst_info_opt {
-        // was there a time stamp association with this signature, is verify against that time
-        let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-        if !signcert.validity().is_valid_at(
-            x509_parser::time::ASN1Time::from_timestamp(signing_time.timestamp())
-                .map_err(|_| Error::CoseInvalidCert)?,
-        ) {
-            log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-                .failure_no_throw(validation_log, Error::CoseCertExpiration);
-
-            return Err(Error::CoseCertExpiration);
-        }
-    } else {
-        // no timestamp so check against current time
-        // use instant to avoid wasm issues
-        let now_f64 = instant::now() / 1000.0;
-        let now: i64 = now_f64
-            .approx_as::<i64>()
-            .map_err(|_e| Error::BadParam("system time invalid".to_string()))?;
-
-        if !signcert.validity().is_valid_at(
-            x509_parser::time::ASN1Time::from_timestamp(now).map_err(|_| Error::CoseInvalidCert)?,
-        ) {
-            log_item!("Cose_Sign1", "certificate expired", "check_cert_alg")
-                .validation_status(SIGNING_CREDENTIAL_EXPIRED)
-                .failure_no_throw(validation_log, Error::CoseCertExpiration);
-
-            return Err(Error::CoseCertExpiration);
-        }
-    }
-
-    let cert_alg = signcert.signature_algorithm.algorithm.clone();
-
-    // check algorithm needed from cert
-
-    // cert must be signed with one the following algorithm
-    if !(cert_alg == SHA256_WITH_RSAENCRYPTION_OID
-        || cert_alg == SHA384_WITH_RSAENCRYPTION_OID
-        || cert_alg == SHA512_WITH_RSAENCRYPTION_OID
-        || cert_alg == ECDSA_WITH_SHA256_OID
-        || cert_alg == ECDSA_WITH_SHA384_OID
-        || cert_alg == ECDSA_WITH_SHA512_OID
-        || cert_alg == RSASSA_PSS_OID
-        || cert_alg == ED25519_OID)
-    {
-        log_item!(
-            "Cose_Sign1",
-            "certificate algorithm not supported",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        return Err(Error::CoseInvalidCert);
-    }
-
-    // verify rsassa_pss parameters
-    if cert_alg == RSASSA_PSS_OID {
-        if let Some(parameters) = &signcert.signature_algorithm.parameters {
-            let seq = parameters
-                .as_sequence()
-                .map_err(|_err| Error::CoseInvalidCert)?;
-
-            let (_i, (ha_alg, mgf_ai)) = seq
-                .parse(|i| {
-                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-                    if h.class() != Class::ContextSpecific || h.tag() != Tag(0) {
-                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-                    }
-
-                    let (i, ha_alg) = AlgorithmIdentifier::from_der(i)
-                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-                    let (i, h) = <Header as asn1_rs::FromDer>::from_der(i)?;
-                    if h.class() != Class::ContextSpecific || h.tag() != Tag(1) {
-                        return Err(nom::Err::Error(asn1_rs::Error::BerValueError));
-                    }
-
-                    let (i, mgf_ai) = AlgorithmIdentifier::from_der(i)
-                        .map_err(|_| nom::Err::Error(asn1_rs::Error::BerValueError))?;
-
-                    // Ignore anything that follows these two parameters.
-
-                    Ok((i, (ha_alg, mgf_ai)))
-                })
-                .map_err(|_| Error::CoseInvalidCert)?;
-
-            let mgf_ai_parameters = mgf_ai.parameters.ok_or(Error::CoseInvalidCert)?;
-            let mgf_ai_parameters = mgf_ai_parameters
-                .as_sequence()
-                .map_err(|_| Error::CoseInvalidCert)?;
-
-            let (_i, mgf_ai_params_algorithm) =
-                <Any as asn1_rs::FromDer>::from_der(&mgf_ai_parameters.content)
-                    .map_err(|_| Error::CoseInvalidCert)?;
-
-            let mgf_ai_params_algorithm = mgf_ai_params_algorithm
-                .as_oid()
-                .map_err(|_| Error::CoseInvalidCert)?;
-
-            // must be the same
-            if ha_alg.algorithm.to_id_string() != mgf_ai_params_algorithm.to_id_string() {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate algorithm error",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-
-            // check for one of the mandatory types
-            if !(ha_alg.algorithm == SHA256_OID
-                || ha_alg.algorithm == SHA384_OID
-                || ha_alg.algorithm == SHA512_OID)
-            {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate hash algorithm not supported",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-        } else {
-            log_item!(
-                "Cose_Sign1",
-                "certificate missing algorithm parameters",
-                "check_cert_alg"
-            )
-            .validation_status(SIGNING_CREDENTIAL_INVALID)
-            .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-            return Err(Error::CoseInvalidCert);
-        }
-    }
-
-    // check curves for SPKI EC algorithms
-    let pk = signcert.public_key();
-    let skpi_alg = &pk.algorithm;
-
-    if skpi_alg.algorithm == EC_PUBLICKEY_OID {
-        if let Some(parameters) = &skpi_alg.parameters {
-            let named_curve_oid = parameters.as_oid().map_err(|_err| Error::CoseInvalidCert)?;
-
-            // must be one of these named curves
-            if !(named_curve_oid == PRIME256V1_OID
-                || named_curve_oid == SECP384R1_OID
-                || named_curve_oid == SECP521R1_OID)
-            {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate unsupported EC curve",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-        } else {
-            return Err(Error::CoseInvalidCert);
-        }
-    }
-
-    // check modulus minimum length (for RSA & PSS algorithms)
-    if skpi_alg.algorithm == RSA_OID || skpi_alg.algorithm == RSASSA_PSS_OID {
-        let (_, skpi_ber) = parse_ber_sequence(&pk.subject_public_key.data)
-            .map_err(|_err| Error::CoseInvalidCert)?;
-
-        let seq = skpi_ber
-            .as_sequence()
-            .map_err(|_err| Error::CoseInvalidCert)?;
-        if seq.len() < 2 {
-            return Err(Error::CoseInvalidCert);
-        }
-
-        let modulus = seq[0].as_bigint().map_err(|_| Error::CoseInvalidCert)?;
-
-        if modulus.bits() < 2048 {
-            log_item!(
-                "Cose_Sign1",
-                "certificate key length too short",
-                "check_cert_alg"
-            )
-            .validation_status(SIGNING_CREDENTIAL_INVALID)
-            .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-            return Err(Error::CoseInvalidCert);
-        }
-    }
-
-    // check cert values
-    let tbscert = &signcert.tbs_certificate;
-
-    let is_self_signed = tbscert.is_ca() && tbscert.issuer() == tbscert.subject();
-
-    // self signed certs are disallowed
-    if is_self_signed {
-        log_item!(
-            "Cose_Sign1",
-            "certificate issuer and subject cannot be the same {self-signed disallowed}",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        return Err(Error::CoseInvalidCert);
-    }
-
-    // unique ids are not allowed
-    if signcert.issuer_uid.is_some() || signcert.subject_uid.is_some() {
-        log_item!(
-            "Cose_Sign1",
-            "certificate issuer/subject unique ids are not allowed",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        return Err(Error::CoseInvalidCert);
-    }
-
-    let mut aki_good = false;
-    let mut ski_good = false;
-    let mut key_usage_good = false;
-    let mut handled_all_critical = true;
-    let extended_key_usage_good = match tbscert
-        .extended_key_usage()
-        .map_err(|_| Error::CoseInvalidCert)?
-    {
-        Some(BasicExtension { value: eku, .. }) => {
-            if eku.any {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate 'any' EKU not allowed",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-
-            if cap.has_allowed_eku(eku).is_none() {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate missing required EKU",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-
-            // one or the other || either of these two, and no others field
-            if (eku.ocsp_signing && eku.time_stamping)
-                || ((eku.ocsp_signing ^ eku.time_stamping)
-                    && (eku.client_auth
-                        | eku.code_signing
-                        | eku.email_protection
-                        | eku.server_auth
-                        | !eku.other.is_empty()))
-            {
-                log_item!(
-                    "Cose_Sign1",
-                    "certificate invalid set of EKUs",
-                    "check_cert_alg"
-                )
-                .validation_status(SIGNING_CREDENTIAL_INVALID)
-                .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                return Err(Error::CoseInvalidCert);
-            }
-
-            true
-        }
-        None => tbscert.is_ca(), // if is not ca it must be present
-    };
-
-    // populate needed extension info
-    for e in signcert.extensions() {
-        match e.parsed_extension() {
-            ParsedExtension::AuthorityKeyIdentifier(_aki) => {
-                aki_good = true;
-            }
-            ParsedExtension::SubjectKeyIdentifier(_spki) => {
-                ski_good = true;
-            }
-            ParsedExtension::KeyUsage(ku) => {
-                if ku.digital_signature() {
-                    if ku.key_cert_sign() && !tbscert.is_ca() {
-                        log_item!(
-                            "Cose_Sign1",
-                            "certificate missing digitalSignature EKU",
-                            "check_cert_alg"
-                        )
-                        .validation_status(SIGNING_CREDENTIAL_INVALID)
-                        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-                        return Err(Error::CoseInvalidCert);
-                    }
-                    key_usage_good = true;
-                }
-                if ku.key_cert_sign() || ku.non_repudiation() {
-                    key_usage_good = true;
-                }
-                // todo: warn if not marked critical
-                // if !e.critical { // warn here somehow}
-            }
-            ParsedExtension::CertificatePolicies(_) => (),
-            ParsedExtension::PolicyMappings(_) => (),
-            ParsedExtension::SubjectAlternativeName(_) => (),
-            ParsedExtension::BasicConstraints(_) => (),
-            ParsedExtension::NameConstraints(_) => (),
-            ParsedExtension::PolicyConstraints(_) => (),
-            ParsedExtension::ExtendedKeyUsage(_) => (),
-            ParsedExtension::CRLDistributionPoints(_) => (),
-            ParsedExtension::InhibitAnyPolicy(_) => (),
-            ParsedExtension::AuthorityInfoAccess(_) => (),
-            ParsedExtension::NSCertType(_) => (),
-            ParsedExtension::CRLNumber(_) => (),
-            ParsedExtension::ReasonCode(_) => (),
-            ParsedExtension::InvalidityDate(_) => (),
-            ParsedExtension::Unparsed => {
-                if e.critical {
-                    // unhandled critical extension
-                    handled_all_critical = false;
-                }
-            }
-            _ => {
-                if e.critical {
-                    // unhandled critical extension
-                    handled_all_critical = false;
-                }
-            }
-        }
-    }
-
-    // if cert is a CA must have valid SubjectKeyIdentifier
-    ski_good = if tbscert.is_ca() { ski_good } else { true };
-
-    // check all flags
-    if aki_good && ski_good && key_usage_good && extended_key_usage_good && handled_all_critical {
-        Ok(())
-    } else {
-        log_item!(
-            "Cose_Sign1",
-            "certificate params incorrect",
-            "check_cert_alg"
-        )
-        .validation_status(SIGNING_CREDENTIAL_INVALID)
-        .failure_no_throw(validation_log, Error::CoseInvalidCert);
-
-        Err(Error::CoseInvalidCert)
     }
 }
 
@@ -680,7 +257,7 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 pub(crate) fn check_ocsp_status(
     cose_bytes: &[u8],
     data: &[u8],
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -707,7 +284,12 @@ pub(crate) fn check_ocsp_status(
                 // if we get a valid response validate the certs
                 if ocsp_data.revoked_at.is_none() {
                     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_cert(&ocsp_certs[0], cap, validation_log, Some(tst_info))?;
+                        check_certificate_profile(
+                            &ocsp_certs[0],
+                            ctp,
+                            validation_log,
+                            Some(tst_info),
+                        )?;
                     }
                 }
                 result = Ok(ocsp_data);
@@ -745,7 +327,12 @@ pub(crate) fn check_ocsp_status(
                             // if we get a valid response validate the certs
                             if ocsp_data.revoked_at.is_none() {
                                 if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                    check_cert(&ocsp_certs[0], cap, validation_log, None)?;
+                                    check_certificate_profile(
+                                        &ocsp_certs[0],
+                                        ctp,
+                                        validation_log,
+                                        None,
+                                    )?;
                                 }
                             }
                             result = Ok(ocsp_data);
@@ -837,18 +424,18 @@ fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> 
 }
 
 #[async_generic(async_signature(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    signing_time_epoc: Option<i64>,
+    signing_time_epoch: Option<i64>,
     validation_log: &mut impl StatusTracker
 ))]
 #[allow(unused)]
 fn check_trust(
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
-    signing_time_epoc: Option<i64>,
+    signing_time_epoch: Option<i64>,
     validation_log: &mut impl StatusTracker,
 ) -> Result<()> {
     // just return is trust checks are disabled or misconfigured
@@ -861,54 +448,27 @@ fn check_trust(
         Err(e) => return Err(e),
     }
 
-    // is the certificate trusted
-
-    let verify_result: Result<bool> = if _sync {
-        #[cfg(not(feature = "openssl"))]
-        {
-            Err(Error::NotImplemented(
-                "no trust handler for this feature".to_string(),
-            ))
-        }
-
-        #[cfg(feature = "openssl")]
-        {
-            verify_trust(cap, chain_der, cert_der, signing_time_epoc)
-        }
+    let verify_result = if _sync {
+        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
     } else {
-        #[cfg(target_arch = "wasm32")]
-        {
-            verify_trust_async(cap, chain_der, cert_der, signing_time_epoc).await
-        }
-
-        #[cfg(feature = "openssl")]
-        {
-            verify_trust(cap, chain_der, cert_der, signing_time_epoc)
-        }
-
-        #[cfg(not(any(feature = "openssl", target_arch = "wasm32")))]
-        {
-            Err(Error::NotImplemented(
-                "no trust handler for this feature".to_string(),
-            ))
-        }
+        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
+            .await
     };
 
     match verify_result {
-        Ok(trusted) => {
-            if trusted {
-                log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                    .success(validation_log);
+        Ok(()) => {
+            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(validation_log);
 
-                Ok(())
-            } else {
-                log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_no_throw(validation_log, Error::CoseCertUntrusted);
+            Ok(())
+        }
+        Err(CertificateTrustError::CertificateNotTrusted) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
 
-                Err(Error::CoseCertUntrusted)
-            }
+            Err(Error::CoseCertUntrusted)
         }
         Err(e) => {
             log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
@@ -917,7 +477,7 @@ fn check_trust(
 
             // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
             // validation_log.log(log_item, Error::CoseCertUntrusted)?;
-            Err(e)
+            Err(e.into())
         }
     }
 }
@@ -979,7 +539,7 @@ pub(crate) async fn verify_cose_async(
     data: Vec<u8>,
     additional_data: Vec<u8>,
     cert_check: bool,
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
@@ -1015,11 +575,15 @@ pub(crate) async fn verify_cose_async(
     if cert_check {
         // verify certs
         match &tst_info_res {
-            Ok(tst_info) => check_cert(der_bytes, cap, validation_log, Some(tst_info))?,
+            Ok(tst_info) => {
+                check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
+            }
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(der_bytes, cap, validation_log, None)?,
+                    Error::NotFound => {
+                        check_certificate_profile(der_bytes, ctp, validation_log, None)?
+                    }
 
                     Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
@@ -1050,7 +614,7 @@ pub(crate) async fn verify_cose_async(
         // is the certificate trusted
         #[cfg(target_arch = "wasm32")]
         check_trust_async(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1060,7 +624,7 @@ pub(crate) async fn verify_cose_async(
 
         #[cfg(not(target_arch = "wasm32"))]
         check_trust(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1182,7 +746,7 @@ pub(crate) fn verify_cose(
     data: &[u8],
     additional_data: &[u8],
     cert_check: bool,
-    cap: &CertificateAcceptancePolicy,
+    ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
     let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
@@ -1232,11 +796,15 @@ pub(crate) fn verify_cose(
     if cert_check {
         // verify certs
         match &tst_info_res {
-            Ok(tst_info) => check_cert(der_bytes, cap, validation_log, Some(tst_info))?,
+            Ok(tst_info) => {
+                check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
+            }
             Err(e) => {
                 // log timestamp errors
                 match e {
-                    Error::NotFound => check_cert(der_bytes, cap, validation_log, None)?,
+                    Error::NotFound => {
+                        check_certificate_profile(der_bytes, ctp, validation_log, None)?
+                    }
 
                     Error::TimeStampError(TimeStampError::InvalidData) => {
                         log_item!(
@@ -1274,7 +842,7 @@ pub(crate) fn verify_cose(
 
         // is the certificate trusted
         check_trust(
-            cap,
+            ctp,
             &certs[1..],
             der_bytes,
             tst_info_result_to_timestamp(&tst_info_res),
@@ -1393,66 +961,10 @@ pub mod tests {
     use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use sha2::digest::generic_array::sequence::Shorten;
+    use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{utils::test_signer::test_signer, Signer};
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_expired_cert() {
-        let mut validation_log = DetailedStatusTracker::default();
-        let cap = CertificateAcceptancePolicy::default();
-
-        let mut cert_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        cert_path.push("tests/fixtures/rsa-pss256_key-expired.pub");
-
-        let expired_cert = std::fs::read(&cert_path).unwrap();
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(&expired_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_err());
-
-            assert!(!validation_log.logged_items().is_empty());
-
-            assert_eq!(
-                validation_log.logged_items()[0].validation_status,
-                Some(SIGNING_CREDENTIAL_EXPIRED.into())
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
-    fn test_cert_algorithms() {
-        let cap = CertificateAcceptancePolicy::default();
-
-        let mut validation_log = DetailedStatusTracker::default();
-
-        let es256_cert = include_bytes!("../tests/fixtures/certs/es256.pub");
-        let es384_cert = include_bytes!("../tests/fixtures/certs/es384.pub");
-        let es512_cert = include_bytes!("../tests/fixtures/certs/es512.pub");
-        let rsa_pss256_cert = include_bytes!("../tests/fixtures/certs/ps256.pub");
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es384_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(es512_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-
-        if let Ok(signcert) = openssl::x509::X509::from_pem(rsa_pss256_cert) {
-            let der_bytes = signcert.to_der().unwrap();
-            assert!(check_cert(&der_bytes, &cap, &mut validation_log, None).is_ok());
-        }
-    }
 
     #[test]
     fn test_no_timestamp() {

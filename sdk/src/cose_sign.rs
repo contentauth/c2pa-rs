@@ -17,8 +17,10 @@
 
 use async_generic::async_generic;
 use c2pa_crypto::{
-    cose::CertificateAcceptancePolicy, p1363::parse_ec_der_sig,
-    time_stamp::ts_token_from_time_stamp_response, SigningAlg,
+    cose::{check_certificate_profile, CertificateTrustPolicy},
+    p1363::parse_ec_der_sig,
+    time_stamp::ts_token_from_time_stamp_response,
+    SigningAlg,
 };
 use c2pa_status_tracker::OneShotStatusTracker;
 use ciborium::value::Value;
@@ -31,7 +33,7 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     claim::Claim,
-    cose_validator::{check_cert, verify_cose},
+    cose_validator::verify_cose,
     settings::get_settings_value,
     time_stamp::{
         cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
@@ -76,7 +78,7 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
         Ok(signed_bytes) => {
             // Sanity check: Ensure that this signature is valid.
             let mut cose_log = OneShotStatusTracker::default();
-            let passthrough_cap = CertificateAcceptancePolicy::default();
+            let passthrough_cap = CertificateTrustPolicy::default();
 
             match verify_cose(
                 &signed_bytes,
@@ -103,14 +105,19 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = OneShotStatusTracker::default();
-    let mut passthrough_cap = CertificateAcceptancePolicy::default();
+    let mut passthrough_cap = CertificateTrustPolicy::default();
 
     // allow user EKUs through this check if configured
     if let Ok(Some(trust_config)) = get_settings_value::<Option<String>>("trust.trust_config") {
         passthrough_cap.add_valid_ekus(trust_config.as_bytes());
     }
 
-    check_cert(signing_cert, &passthrough_cap, &mut cose_log, None)
+    Ok(check_certificate_profile(
+        signing_cert,
+        &passthrough_cap,
+        &mut cose_log,
+        None,
+    )?)
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.

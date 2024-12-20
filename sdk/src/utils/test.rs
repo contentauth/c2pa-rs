@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa_crypto::{cose::CertificateAcceptancePolicy, SigningAlg};
+use c2pa_crypto::{cose::CertificateTrustPolicy, SigningAlg};
 use tempfile::TempDir;
 
 use crate::{
@@ -233,16 +233,16 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
         .expect("get_temp_signer")
 }
 
-/// Create a [`CertificateAcceptancePolicy`] instance that has the test certificate bundles included.
+/// Create a [`CertificateTrustPolicy`] instance that has the test certificate bundles included.
 ///
-/// [`CertificateAcceptancePolicy`]: c2pa_crypto::cose::CertificateAcceptancePolicy
-pub fn test_certificate_acceptance_policy() -> CertificateAcceptancePolicy {
-    let mut cap = CertificateAcceptancePolicy::default();
-    cap.add_trust_anchors(include_bytes!(
+/// [`CertificateTrustPolicy`]: c2pa_crypto::cose::CertificateTrustPolicy
+pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
+    let mut ctp = CertificateTrustPolicy::default();
+    ctp.add_trust_anchors(include_bytes!(
         "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
     ))
     .unwrap();
-    cap
+    ctp
 }
 
 #[cfg(feature = "file_io")]
