@@ -25,6 +25,7 @@ pub use async_validators::{
     AsyncRawSignatureValidator,
 };
 
+pub(crate) mod check_certificate_trust;
 pub(crate) mod signers;
 pub mod validators;
 

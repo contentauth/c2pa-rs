@@ -163,8 +163,6 @@ pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store;
 pub(crate) mod manifest_store_report;
-#[cfg(feature = "openssl")]
-pub(crate) mod openssl;
 #[allow(dead_code)]
 // TODO: Remove this when the feature is released (used in tests only for some builds now)
 pub(crate) mod reader;
