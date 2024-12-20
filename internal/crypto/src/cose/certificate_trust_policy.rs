@@ -30,7 +30,7 @@ pub struct CertificateTrustPolicy {
     /// Trust anchors (root X.509 certificates) in DER format.
     trust_anchor_ders: Vec<Vec<u8>>,
 
-    /// Base-64 encoded SHA-256 has of end-entity certificaters (root X.509
+    /// Base-64 encoded SHA-256 hash of end-entity certificates (root X.509
     /// certificates) in DER format.
     end_entity_cert_set: HashSet<String>,
 
