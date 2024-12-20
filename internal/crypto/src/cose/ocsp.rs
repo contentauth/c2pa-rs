@@ -40,91 +40,29 @@ pub fn check_ocsp_status(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
-    let mut result = Ok(OcspResponse::default());
-
-    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
-        let time_stamp_info = if _sync {
-            validate_cose_tst_info(&sign1, data)
-        } else {
-            validate_cose_tst_info_async(&sign1, data).await
-        };
-
-        // check stapled OCSP response, must have timestamp
-        if let Ok(tst_info) = &time_stamp_info {
-            let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-
-            // Check the OCSP response, only use if not malformed.  Revocation errors are
-            // reported in the validation log
-            if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                &ocsp_response_der,
-                Some(signing_time),
-                validation_log,
-            ) {
-                // if we get a valid response validate the certs
-                if ocsp_data.revoked_at.is_none() {
-                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_certificate_profile(
-                            &ocsp_certs[0],
-                            ctp,
-                            validation_log,
-                            Some(tst_info),
-                        )?;
-                    }
-                }
-                result = Ok(ocsp_data);
+    match get_ocsp_der(sign1) {
+        Some(ocsp_response_der) => {
+            if _sync {
+                check_stapled_ocsp_response(sign1, &ocsp_response_der, data, ctp, validation_log)
+            } else {
+                check_stapled_ocsp_response_async(
+                    sign1,
+                    &ocsp_response_der,
+                    data,
+                    ctp,
+                    validation_log,
+                )
+                .await
             }
         }
-    } else {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            match fetch_policy {
-                OcspFetchPolicy::FetchAllowed => {
-                    // get the cert chain
-                    let certs = get_sign_certs(&sign1)?;
 
-                    if let Some(ocsp_der) = fetch_ocsp_response(&certs) {
-                        // fetch_ocsp_response(&certs) {
-                        let ocsp_response_der = ocsp_der;
-
-                        let time_stamp_info = validate_cose_tst_info(&sign1, data);
-
-                        let signing_time = match &time_stamp_info {
-                            Ok(tst_info) => {
-                                let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
-                                Some(signing_time)
-                            }
-                            Err(_) => None,
-                        };
-
-                        // Check the OCSP response, only use if not malformed.  Revocation errors
-                        // are reported in the validation log
-                        if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                            &ocsp_response_der,
-                            signing_time,
-                            validation_log,
-                        ) {
-                            // if we get a valid response validate the certs
-                            if ocsp_data.revoked_at.is_none() {
-                                if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                    check_certificate_profile(
-                                        &ocsp_certs[0],
-                                        ctp,
-                                        validation_log,
-                                        None,
-                                    )?;
-                                }
-                            }
-                            result = Ok(ocsp_data);
-                        }
-                    }
-                }
-
-                OcspFetchPolicy::DoNotFetch => (),
+        None => match fetch_policy {
+            OcspFetchPolicy::FetchAllowed => {
+                fetch_and_check_ocsp_response(sign1, data, ctp, validation_log)
             }
-        }
+            OcspFetchPolicy::DoNotFetch => Ok(OcspResponse::default()),
+        },
     }
-
-    result
 }
 
 /// Policy for fetching OCSP responses.
@@ -137,9 +75,89 @@ pub enum OcspFetchPolicy {
     DoNotFetch,
 }
 
-// get OCSP der
+#[async_generic]
+fn check_stapled_ocsp_response(
+    sign1: &CoseSign1,
+    ocsp_response_der: &[u8],
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspResponse, CoseError> {
+    let time_stamp_info = if _sync {
+        validate_cose_tst_info(&sign1, data)
+    } else {
+        validate_cose_tst_info_async(&sign1, data).await
+    };
+
+    // If the stapled OCSP response has a time stamp, we can validate it.
+    let Ok(tst_info) = &time_stamp_info else {
+        return Ok(OcspResponse::default());
+    };
+
+    let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
+
+    let Ok(ocsp_data) =
+        OcspResponse::from_der_checked(&ocsp_response_der, Some(signing_time), validation_log)
+    else {
+        return Ok(OcspResponse::default());
+    };
+
+    // If we get a valid response, validate the certs.
+    if ocsp_data.revoked_at.is_none() {
+        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+            check_certificate_profile(&ocsp_certs[0], ctp, validation_log, Some(tst_info))?;
+        }
+    }
+
+    Ok(ocsp_data)
+}
+
+// TO DO: Add async version of this?
+fn fetch_and_check_ocsp_response(
+    sign1: &CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspResponse, CoseError> {
+    if cfg!(target_arch = "wasm32") {
+        let _ = (sign1, data, ctp, validation_log);
+        return Ok(OcspResponse::default());
+    } else {
+        let certs = get_cert_chain(&sign1)?;
+
+        let Some(ocsp_der) = fetch_ocsp_response(&certs) else {
+            return Ok(OcspResponse::default());
+        };
+
+        let ocsp_response_der = ocsp_der;
+
+        let signing_time: Option<DateTime<Utc>> = validate_cose_tst_info(sign1, data)
+            .ok()
+            .map(|tst_info| tst_info.gen_time.clone().into());
+
+        // Check the OCSP response, but only if it is well-formed.
+        // Revocation errors are reported in the validation log.
+        let Ok(ocsp_data) =
+            OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
+        else {
+            // TO REVIEW: This is how the old code worked, but is it correct to ignore a
+            // malformed OCSP response?
+            return Ok(OcspResponse::default());
+        };
+
+        // If we get a valid response validate the certs.
+        if ocsp_data.revoked_at.is_none() {
+            if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+                check_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
+            }
+        }
+
+        Ok(ocsp_data)
+    }
+}
+
 fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
-    if let Some(der) = sign1
+    let Some(der) = sign1
         .unprotected
         .rest
         .iter()
@@ -150,31 +168,30 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
                 None
             }
         })
-    {
-        match der {
-            Value::Map(rvals_map) => {
-                // find OCSP value if available
-                rvals_map.iter().find_map(|x: &(Value, Value)| {
-                    if x.0 == Value::Text("ocspVals".to_string()) {
-                        x.1.as_array()
-                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
-                            .and_then(Value::as_bytes)
-                            .cloned()
-                    } else {
-                        None
-                    }
-                })
-            }
-            _ => None,
+    else {
+        return None;
+    };
+
+    let Value::Map(rvals_map) = der else {
+        return None;
+    };
+
+    // Find OCSP value if available.
+    rvals_map.iter().find_map(|x: &(Value, Value)| {
+        if x.0 == Value::Text("ocspVals".to_string()) {
+            x.1.as_array()
+                .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                .and_then(Value::as_bytes)
+                .cloned()
+        } else {
+            None
         }
-    } else {
-        None
-    }
+    })
 }
 
 // TO DO: See if this gets more widely used in crate.
-// get the public key der
-fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
+// get the public cert chain der
+fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     // check for protected header int, then protected header x5chain,
     // then the legacy unprotected x5chain to get the public key der
 
