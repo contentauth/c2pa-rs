@@ -206,7 +206,7 @@ impl CertificateTrustPolicy {
     ) -> Result<(), InvalidCertificateError> {
         let mut inside_pem_block = false;
 
-        for line in end_entity_cert_pems.lines().filter_map(|l| l.ok()) {
+        for line in end_entity_cert_pems.lines().map_while(Result::ok) {
             if line.contains("-----BEGIN") {
                 inside_pem_block = true;
             }
@@ -318,7 +318,7 @@ impl CertificateTrustPolicy {
 }
 
 fn base64_sha256_cert_der(cert_der: &[u8]) -> String {
-    let cert_sha256 = sha256(&cert_der);
+    let cert_sha256 = sha256(cert_der);
     base64::encode(&cert_sha256)
 }
 
