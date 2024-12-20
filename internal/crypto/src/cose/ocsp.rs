@@ -192,8 +192,8 @@ fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     // check for protected header int, then protected header x5chain,
     // then the legacy unprotected x5chain to get the public key der
 
-    // check the protected header
-    if let Some(der) = sign1
+    // Check the protected header first.
+    let Some(value) = sign1
         .protected
         .header
         .rest
@@ -207,45 +207,22 @@ fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
                 None
             }
         })
-    {
-        // make sure there are no certs in the legacy unprotected header, certs
-        // are only allowing in protect OR unprotected header
-        if get_unprotected_header_certs(sign1).is_ok() {
-            return Err(CoseError::MultipleSigningCertificateChains);
-        }
+    else {
+        // Not there: Also try unprotected header. (This was permitted in older versions
+        // of C2PA.)
+        return get_unprotected_header_certs(sign1);
+    };
 
-        let mut certs: Vec<Vec<u8>> = Vec::new();
-
-        match der {
-            Value::Array(cert_chain) => {
-                // handle array of certs
-                for c in cert_chain {
-                    if let Value::Bytes(der_bytes) = c {
-                        certs.push(der_bytes.clone());
-                    }
-                }
-
-                if certs.is_empty() {
-                    return Err(CoseError::MissingSigningCertificateChain);
-                } else {
-                    return Ok(certs);
-                }
-            }
-            Value::Bytes(ref der_bytes) => {
-                // handle single cert case
-                certs.push(der_bytes.clone());
-                return Ok(certs);
-            }
-            _ => return Err(CoseError::MissingSigningCertificateChain),
-        }
+    // Certs may be in protected or unprotected header, but not both.
+    if get_unprotected_header_certs(sign1).is_ok() {
+        return Err(CoseError::MultipleSigningCertificateChains);
     }
 
-    // check the unprotected header if necessary
-    get_unprotected_header_certs(sign1)
+    cert_chain_from_cbor_value(value)
 }
 
 fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    if let Some(der) = sign1
+    let Some(value) = sign1
         .unprotected
         .rest
         .iter()
@@ -256,32 +233,36 @@ fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>
                 None
             }
         })
-    {
-        let mut certs: Vec<Vec<u8>> = Vec::new();
+    else {
+        return Err(CoseError::MissingSigningCertificateChain);
+    };
 
-        match der {
-            Value::Array(cert_chain) => {
-                // handle array of certs
-                for c in cert_chain {
+    cert_chain_from_cbor_value(value)
+}
+
+fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
+    match value {
+        Value::Array(cert_chain) => {
+            let certs: Vec<Vec<u8>> = cert_chain
+                .iter()
+                .filter_map(|c| {
                     if let Value::Bytes(der_bytes) = c {
-                        certs.push(der_bytes.clone());
+                        Some(der_bytes.clone())
+                    } else {
+                        None
                     }
-                }
+                })
+                .collect();
 
-                if certs.is_empty() {
-                    Err(CoseError::MissingSigningCertificateChain)
-                } else {
-                    Ok(certs)
-                }
-            }
-            Value::Bytes(ref der_bytes) => {
-                // handle single cert case
-                certs.push(der_bytes.clone());
+            if certs.is_empty() {
+                Err(CoseError::MissingSigningCertificateChain)
+            } else {
                 Ok(certs)
             }
-            _ => Err(CoseError::MissingSigningCertificateChain),
         }
-    } else {
-        Err(CoseError::MissingSigningCertificateChain)
+
+        Value::Bytes(ref der_bytes) => Ok(vec![der_bytes.clone()]),
+
+        _ => Err(CoseError::MissingSigningCertificateChain),
     }
 }
