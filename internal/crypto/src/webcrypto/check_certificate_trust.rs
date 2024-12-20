@@ -241,6 +241,10 @@ async fn verify_data(
 
     // Not sure this is needed any more. Leaving this for now, but I think this
     // should be handled in c2pa_crypto's raw signature code.
+
+    // TO REVIEW: For now, this is needed because this function could validate C2PA
+    // signatures (P1363) or those from certificates which are ASN.1 DER. I don't
+    // know if the new code is only used for DER now.
     let adjusted_sig = if cert_alg_string.starts_with("es") {
         match der_to_p1363(&sig, signing_alg) {
             Ok(p1363) => p1363,
