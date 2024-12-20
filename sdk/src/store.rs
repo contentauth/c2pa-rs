@@ -23,7 +23,7 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::{cose::CertificateAcceptancePolicy, hash::sha256};
+use c2pa_crypto::{cose::CertificateTrustPolicy, hash::sha256};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -80,7 +80,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    cap: CertificateAcceptancePolicy,
+    ctp: CertificateTrustPolicy,
 }
 
 struct ManifestInfo<'a> {
@@ -124,7 +124,7 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            cap: CertificateAcceptancePolicy::default(),
+            ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
             //dynamic_assertions: Vec::new(),
         };
@@ -165,28 +165,28 @@ impl Store {
     /// Load set of trust anchors used for certificate validation. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.
     pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.cap.add_trust_anchors(trust_vec)?)
+        Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
     // Load set of private trust anchors used for certificate validation. [u8] to the
     /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
     /// if there are additional trust stores.
     pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.cap.add_trust_anchors(trust_vec)?)
+        Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
-        self.cap.add_valid_ekus(trust_vec);
+        self.ctp.add_valid_ekus(trust_vec);
         Ok(())
     }
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
-        Ok(self.cap.add_end_entity_credentials(allowed_vec)?)
+        Ok(self.ctp.add_end_entity_credentials(allowed_vec)?)
     }
 
     /// Clear all existing trust anchors
     pub fn clear_trust_anchors(&mut self) {
-        self.cap.clear();
+        self.ctp.clear();
     }
 
     /// Get the provenance if available.
@@ -453,7 +453,7 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, &self.cap, &mut validation_log) {
+        if let Ok(info) = check_ocsp_status(sig, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
@@ -511,14 +511,14 @@ impl Store {
                         let mut cose_log = OneShotStatusTracker::default();
 
                         let result = if _sync {
-                            verify_cose(&sig, &claim_bytes, b"", false, &self.cap, &mut cose_log)
+                            verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
                         } else {
                             verify_cose_async(
                                 sig.clone(),
                                 claim_bytes,
                                 b"".to_vec(),
                                 false,
-                                &self.cap,
+                                &self.ctp,
                                 &mut cose_log,
                             )
                             .await
@@ -1276,7 +1276,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        &store.cap,
+                        &store.ctp,
                         validation_log,
                     )?;
 
@@ -1380,7 +1380,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        &store.cap,
+                        &store.ctp,
                         validation_log,
                     )
                     .await?;
@@ -1428,7 +1428,7 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(claim, asset_data, true, true, &store.cap, validation_log)
+        Claim::verify_claim_async(claim, asset_data, true, true, &store.ctp, validation_log)
             .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
@@ -1458,7 +1458,7 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(claim, asset_data, true, true, &store.cap, validation_log)?;
+        Claim::verify_claim(claim, asset_data, true, true, &store.ctp, validation_log)?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 
@@ -3887,7 +3887,10 @@ pub mod tests {
 
         let r = store.save_to_asset(&ap, &signer, &op);
         assert!(r.is_err());
-        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+        assert_eq!(
+            r.err().unwrap().to_string(),
+            "the certificate was not valid at time of signing"
+        );
     }
 
     #[test]
