@@ -16,7 +16,11 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, cose::CertificateTrustPolicy, ValidationInfo};
+use c2pa_crypto::{
+    base64,
+    cose::{parse_cose_sign1, CertificateTrustPolicy},
+    ValidationInfo,
+};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -1711,7 +1715,8 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, ctp, validation_log).await?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
 
         let verified =
             verify_cose_async(sig, data, additional_bytes, cert_check, ctp, validation_log).await;
@@ -1756,7 +1761,8 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, ctp, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
             sig,

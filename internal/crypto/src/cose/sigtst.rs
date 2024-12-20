@@ -12,7 +12,8 @@
 // each license.
 
 use async_generic::async_generic;
-use coset::{sig_structure_data, ProtectedHeader, SignatureContext};
+use ciborium::value::Value;
+use coset::{sig_structure_data, Label, ProtectedHeader, SignatureContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -20,6 +21,46 @@ use crate::{
     cose::CoseError,
     time_stamp::{verify_time_stamp, verify_time_stamp_async},
 };
+
+/// Given a COSE signature, retrieve the `sigTst` header from it and validate
+/// the information within it.
+///
+/// Return a [`TstInfo`] struct if available and valid.
+#[async_generic]
+pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
+    let Some(sigtst) = &sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("sigTst".to_string()) {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    else {
+        return Err(CoseError::NoTimeStampToken);
+    };
+
+    let mut time_cbor: Vec<u8> = vec![];
+    ciborium::into_writer(sigtst, &mut time_cbor)
+        .map_err(|e| CoseError::InternalError(e.to_string()))?;
+
+    let tst_infos = if _sync {
+        parse_and_validate_sigtst(&time_cbor, data, &sign1.protected)?
+    } else {
+        parse_and_validate_sigtst_async(&time_cbor, data, &sign1.protected).await?
+    };
+
+    // For now, we only pay attention to the first time stamp header.
+    // Technically, more are permitted, but we ignore them for now.
+    let Some(tst_info) = tst_infos.into_iter().next() else {
+        return Err(CoseError::NoTimeStampToken);
+    };
+
+    Ok(tst_info)
+}
 
 /// Parse the `sigTst` header from a COSE signature, which should contain one or
 /// more `TstInfo` structures ([RFC 3161] time stamps).
