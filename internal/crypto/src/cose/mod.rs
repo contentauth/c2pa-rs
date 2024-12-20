@@ -26,6 +26,9 @@ pub use certificate_profile::{check_certificate_profile, CertificateProfileError
 mod error;
 pub use error::CoseError;
 
+mod ocsp;
+pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+
 mod sigtst;
 pub use sigtst::{
     cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async,

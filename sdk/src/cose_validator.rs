@@ -18,7 +18,7 @@ use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
         check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-        CertificateTrustError, CertificateTrustPolicy, CoseError,
+        CertificateTrustError, CertificateTrustPolicy, CoseError, OcspFetchPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -216,41 +216,6 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
-// get OCSP der
-fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
-    if let Some(der) = sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("rVals".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        match der {
-            Value::Map(rvals_map) => {
-                // find OCSP value if available
-                rvals_map.iter().find_map(|x: &(Value, Value)| {
-                    if x.0 == Value::Text("ocspVals".to_string()) {
-                        x.1.as_array()
-                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
-                            .and_then(Value::as_bytes)
-                            .cloned()
-                    } else {
-                        None
-                    }
-                })
-            }
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
@@ -259,88 +224,29 @@ pub(crate) fn check_ocsp_status(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
-    let mut result = Ok(OcspResponse::default());
+    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
+        Ok(true) => OcspFetchPolicy::FetchAllowed,
+        _ => OcspFetchPolicy::DoNotFetch,
+    };
 
-    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
-        let time_stamp_info = if _sync {
-            validate_cose_tst_info(&sign1, data)
-        } else {
-            validate_cose_tst_info_async(&sign1, data).await
-        };
-
-        // check stapled OCSP response, must have timestamp
-        if let Ok(tst_info) = &time_stamp_info {
-            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-
-            // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-            if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                &ocsp_response_der,
-                Some(signing_time),
-                validation_log,
-            ) {
-                // if we get a valid response validate the certs
-                if ocsp_data.revoked_at.is_none() {
-                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_certificate_profile(
-                            &ocsp_certs[0],
-                            ctp,
-                            validation_log,
-                            Some(tst_info),
-                        )?;
-                    }
-                }
-                result = Ok(ocsp_data);
-            }
-        }
+    if _sync {
+        Ok(c2pa_crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )?)
     } else {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // only support fetching with the enabled
-            if let Ok(ocsp_fetch) = get_settings_value::<bool>("verify.ocsp_fetch") {
-                if ocsp_fetch {
-                    // get the cert chain
-                    let certs = get_sign_certs(&sign1)?;
-
-                    if let Some(ocsp_der) = c2pa_crypto::ocsp::fetch_ocsp_response(&certs) {
-                        // fetch_ocsp_response(&certs) {
-                        let ocsp_response_der = ocsp_der;
-
-                        let time_stamp_info = validate_cose_tst_info(&sign1, data);
-
-                        let signing_time = match &time_stamp_info {
-                            Ok(tst_info) => {
-                                let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-                                Some(signing_time)
-                            }
-                            Err(_) => None,
-                        };
-
-                        // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-                        if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                            &ocsp_response_der,
-                            signing_time,
-                            validation_log,
-                        ) {
-                            // if we get a valid response validate the certs
-                            if ocsp_data.revoked_at.is_none() {
-                                if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                    check_certificate_profile(
-                                        &ocsp_certs[0],
-                                        ctp,
-                                        validation_log,
-                                        None,
-                                    )?;
-                                }
-                            }
-                            result = Ok(ocsp_data);
-                        }
-                    }
-                }
-            }
-        }
+        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )
+        .await?)
     }
-
-    result
 }
 
 // internal util function to dump the cert chain in PEM format
@@ -982,5 +888,40 @@ pub mod tests {
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
         assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
+    }
+
+    // get OCSP der
+    fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+        if let Some(der) = sign1
+            .unprotected
+            .rest
+            .iter()
+            .find_map(|x: &(Label, Value)| {
+                if x.0 == Label::Text("rVals".to_string()) {
+                    Some(x.1.clone())
+                } else {
+                    None
+                }
+            })
+        {
+            match der {
+                Value::Map(rvals_map) => {
+                    // find OCSP value if available
+                    rvals_map.iter().find_map(|x: &(Value, Value)| {
+                        if x.0 == Value::Text("ocspVals".to_string()) {
+                            x.1.as_array()
+                                .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                                .and_then(Value::as_bytes)
+                                .cloned()
+                        } else {
+                            None
+                        }
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
     }
 }

@@ -348,9 +348,12 @@ impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
 impl From<CoseError> for Error {
     fn from(err: CoseError) -> Self {
         match err {
+            CoseError::MissingSigningCertificateChain => Self::CoseX5ChainMissing,
+            CoseError::MultipleSigningCertificateChains => Self::CoseVerifier,
             CoseError::NoTimeStampToken => Self::NotFound,
             CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
             CoseError::TimeStampError(e) => e.into(),
+            CoseError::CertificateProfileError(e) => e.into(),
             CoseError::InternalError(e) => Self::InternalError(e),
         }
     }
