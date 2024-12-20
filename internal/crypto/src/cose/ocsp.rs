@@ -84,9 +84,9 @@ fn check_stapled_ocsp_response(
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
     let time_stamp_info = if _sync {
-        validate_cose_tst_info(&sign1, data)
+        validate_cose_tst_info(sign1, data)
     } else {
-        validate_cose_tst_info_async(&sign1, data).await
+        validate_cose_tst_info_async(sign1, data).await
     };
 
     // If the stapled OCSP response has a time stamp, we can validate it.
@@ -97,7 +97,7 @@ fn check_stapled_ocsp_response(
     let signing_time: DateTime<Utc> = tst_info.gen_time.clone().into();
 
     let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(&ocsp_response_der, Some(signing_time), validation_log)
+        OcspResponse::from_der_checked(ocsp_response_der, Some(signing_time), validation_log)
     else {
         return Ok(OcspResponse::default());
     };
@@ -121,9 +121,9 @@ fn fetch_and_check_ocsp_response(
 ) -> Result<OcspResponse, CoseError> {
     if cfg!(target_arch = "wasm32") {
         let _ = (sign1, data, ctp, validation_log);
-        return Ok(OcspResponse::default());
+        Ok(OcspResponse::default())
     } else {
-        let certs = get_cert_chain(&sign1)?;
+        let certs = get_cert_chain(sign1)?;
 
         let Some(ocsp_der) = fetch_ocsp_response(&certs) else {
             return Ok(OcspResponse::default());
@@ -157,7 +157,7 @@ fn fetch_and_check_ocsp_response(
 }
 
 fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
-    let Some(der) = sign1
+    let der = sign1
         .unprotected
         .rest
         .iter()
@@ -167,10 +167,7 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
             } else {
                 None
             }
-        })
-    else {
-        return None;
-    };
+        })?;
 
     let Value::Map(rvals_map) = der else {
         return None;

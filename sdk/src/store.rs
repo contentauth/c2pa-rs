@@ -453,7 +453,7 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        let sign1 = get_cose_sign1(&sig, &data, &mut validation_log).ok()?;
+        let sign1 = get_cose_sign1(sig, &data, &mut validation_log).ok()?;
         if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(

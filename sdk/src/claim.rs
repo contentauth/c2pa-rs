@@ -1114,7 +1114,7 @@ impl Claim {
         };
 
         // check certificate revocation
-        let sign1 = get_cose_sign1(&sig, &data, validation_log)?;
+        let sign1 = get_cose_sign1(sig, data, validation_log)?;
         check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
