@@ -15,17 +15,14 @@ use async_generic::async_generic;
 use c2pa_status_tracker::StatusTracker;
 use chrono::{DateTime, Utc};
 use ciborium::value::Value;
-use coset::{
-    iana::{self, EnumI64},
-    CoseSign1, Label,
-};
+use coset::{CoseSign1, Label};
 
 use crate::{
     cose::{
         check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
         CertificateTrustPolicy, CoseError,
     },
-    ocsp::{fetch_ocsp_response, OcspResponse},
+    ocsp::OcspResponse,
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
@@ -119,13 +116,17 @@ fn fetch_and_check_ocsp_response(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse, CoseError> {
-    if cfg!(target_arch = "wasm32") {
+    #[cfg(target_arch = "wasm32")]
+    {
         let _ = (sign1, data, ctp, validation_log);
         Ok(OcspResponse::default())
-    } else {
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
         let certs = get_cert_chain(sign1)?;
 
-        let Some(ocsp_der) = fetch_ocsp_response(&certs) else {
+        let Some(ocsp_der) = crate::ocsp::fetch_ocsp_response(&certs) else {
             return Ok(OcspResponse::default());
         };
 
@@ -187,10 +188,9 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
 }
 
 // TO DO: See if this gets more widely used in crate.
-// get the public cert chain der
+#[cfg(not(target_arch = "wasm32"))]
 fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    // check for protected header int, then protected header x5chain,
-    // then the legacy unprotected x5chain to get the public key der
+    use coset::iana::{self, EnumI64};
 
     // Check the protected header first.
     let Some(value) = sign1
@@ -221,6 +221,7 @@ fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     cert_chain_from_cbor_value(value)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     let Some(value) = sign1
         .unprotected
@@ -240,6 +241,7 @@ fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>
     cert_chain_from_cbor_value(value)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
     match value {
         Value::Array(cert_chain) => {
