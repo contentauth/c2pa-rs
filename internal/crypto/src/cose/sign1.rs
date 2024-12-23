@@ -12,9 +12,9 @@
 // each license.
 
 use c2pa_status_tracker::{log_item, validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker};
-use coset::{CoseSign1, TaggedCborSerializable};
+use coset::{iana::Algorithm, CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
-use crate::cose::CoseError;
+use crate::{cose::CoseError, SigningAlg};
 
 /// Parse a byte slice as a COSE Sign1 data structure.
 ///
@@ -44,4 +44,37 @@ pub fn parse_cose_sign1(
     sign1.payload = Some(data.to_vec());
 
     Ok(sign1)
+}
+
+/// TEMPORARILY PUBLIC while refactoring.
+pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, CoseError> {
+    let Some(ref alg) = sign1.protected.header.alg else {
+        return Err(CoseError::UnsupportedSigningAlgorithm);
+    };
+
+    match alg {
+        RegisteredLabelWithPrivate::PrivateUse(a) => match a {
+            -39 => Ok(SigningAlg::Ps512),
+            -38 => Ok(SigningAlg::Ps384),
+            -37 => Ok(SigningAlg::Ps256),
+            -36 => Ok(SigningAlg::Es512),
+            -35 => Ok(SigningAlg::Es384),
+            -7 => Ok(SigningAlg::Es256),
+            -8 => Ok(SigningAlg::Ed25519),
+            _ => Err(CoseError::UnsupportedSigningAlgorithm),
+        },
+
+        RegisteredLabelWithPrivate::Assigned(a) => match a {
+            Algorithm::PS512 => Ok(SigningAlg::Ps512),
+            Algorithm::PS384 => Ok(SigningAlg::Ps384),
+            Algorithm::PS256 => Ok(SigningAlg::Ps256),
+            Algorithm::ES512 => Ok(SigningAlg::Es512),
+            Algorithm::ES384 => Ok(SigningAlg::Es384),
+            Algorithm::ES256 => Ok(SigningAlg::Es256),
+            Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
+            _ => Err(CoseError::UnsupportedSigningAlgorithm),
+        },
+
+        _ => Err(CoseError::UnsupportedSigningAlgorithm),
+    }
 }

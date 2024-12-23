@@ -33,6 +33,10 @@ pub enum CoseError {
     #[error("no time stamp token found in sigTst or sigTst2 header")]
     NoTimeStampToken,
 
+    /// Unsupported signing algorithm found.
+    #[error("the certificate was signed using an unsupported signature algorithm")]
+    UnsupportedSigningAlgorithm,
+
     /// An error occurred while parsing CBOR.
     #[error("error while parsing CBOR ({0})")]
     CborParsingError(String),
