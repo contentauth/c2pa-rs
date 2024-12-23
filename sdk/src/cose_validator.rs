@@ -17,8 +17,8 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        check_certificate_profile, parse_and_validate_sigtst, parse_and_validate_sigtst_async,
-        CertificateTrustError, CertificateTrustPolicy,
+        check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
+        CertificateTrustError, CertificateTrustPolicy, CoseError, OcspFetchPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -55,7 +55,8 @@ pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
     ED25519 Edwards Curve 25519
 **********************************************************************************/
 
-fn get_cose_sign1(
+// TEMPORARY pub(crate)
+pub(crate) fn get_cose_sign1(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut impl StatusTracker,
@@ -215,133 +216,37 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
-// get OCSP der
-fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
-    if let Some(der) = sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("rVals".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        match der {
-            Value::Map(rvals_map) => {
-                // find OCSP value if available
-                rvals_map.iter().find_map(|x: &(Value, Value)| {
-                    if x.0 == Value::Text("ocspVals".to_string()) {
-                        x.1.as_array()
-                            .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
-                            .and_then(Value::as_bytes)
-                            .cloned()
-                    } else {
-                        None
-                    }
-                })
-            }
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
 #[allow(dead_code)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
-    cose_bytes: &[u8],
+    sign1: &coset::CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<OcspResponse> {
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
+        Ok(true) => OcspFetchPolicy::FetchAllowed,
+        _ => OcspFetchPolicy::DoNotFetch,
+    };
 
-    let mut result = Ok(OcspResponse::default());
-
-    if let Some(ocsp_response_der) = get_ocsp_der(&sign1) {
-        let time_stamp_info = if _sync {
-            get_timestamp_info(&sign1, data)
-        } else {
-            get_timestamp_info_async(&sign1, data).await
-        };
-
-        // check stapled OCSP response, must have timestamp
-        if let Ok(tst_info) = &time_stamp_info {
-            let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-
-            // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-            if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                &ocsp_response_der,
-                Some(signing_time),
-                validation_log,
-            ) {
-                // if we get a valid response validate the certs
-                if ocsp_data.revoked_at.is_none() {
-                    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                        check_certificate_profile(
-                            &ocsp_certs[0],
-                            ctp,
-                            validation_log,
-                            Some(tst_info),
-                        )?;
-                    }
-                }
-                result = Ok(ocsp_data);
-            }
-        }
+    if _sync {
+        Ok(c2pa_crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )?)
     } else {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // only support fetching with the enabled
-            if let Ok(ocsp_fetch) = get_settings_value::<bool>("verify.ocsp_fetch") {
-                if ocsp_fetch {
-                    // get the cert chain
-                    let certs = get_sign_certs(&sign1)?;
-
-                    if let Some(ocsp_der) = c2pa_crypto::ocsp::fetch_ocsp_response(&certs) {
-                        // fetch_ocsp_response(&certs) {
-                        let ocsp_response_der = ocsp_der;
-
-                        let time_stamp_info = get_timestamp_info(&sign1, data);
-
-                        let signing_time = match &time_stamp_info {
-                            Ok(tst_info) => {
-                                let signing_time = gt_to_datetime(tst_info.gen_time.clone());
-                                Some(signing_time)
-                            }
-                            Err(_) => None,
-                        };
-
-                        // Check the OCSP response, only use if not malformed.  Revocation errors are reported in the validation log
-                        if let Ok(ocsp_data) = OcspResponse::from_der_checked(
-                            &ocsp_response_der,
-                            signing_time,
-                            validation_log,
-                        ) {
-                            // if we get a valid response validate the certs
-                            if ocsp_data.revoked_at.is_none() {
-                                if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                                    check_certificate_profile(
-                                        &ocsp_certs[0],
-                                        ctp,
-                                        validation_log,
-                                        None,
-                                    )?;
-                                }
-                            }
-                            result = Ok(ocsp_data);
-                        }
-                    }
-                }
-            }
-        }
+        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )
+        .await?)
     }
-
-    result
 }
 
 // internal util function to dump the cert chain in PEM format
@@ -367,9 +272,9 @@ fn get_signing_time(
     // get timestamp info if available
 
     let time_stamp_info = if _sync {
-        get_timestamp_info(sign1, data)
+        validate_cose_tst_info(sign1, data)
     } else {
-        get_timestamp_info_async(sign1, data).await
+        validate_cose_tst_info_async(sign1, data).await
     };
 
     if let Ok(tst_info) = time_stamp_info {
@@ -377,37 +282,6 @@ fn get_signing_time(
     } else {
         None
     }
-}
-
-// return appropriate TstInfo if available
-#[async_generic]
-fn get_timestamp_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo> {
-    // parse the temp timestamp
-    if let Some(t) = &sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("sigTst".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        let time_cbor = serde_cbor::to_vec(t)?;
-        let tst_infos = if _sync {
-            parse_and_validate_sigtst(&time_cbor, data, &sign1.protected)?
-        } else {
-            parse_and_validate_sigtst_async(&time_cbor, data, &sign1.protected).await?
-        };
-
-        // there should only be one but consider handling more in the future since it is technically ok
-        if !tst_infos.is_empty() {
-            return Ok(tst_infos[0].clone());
-        }
-    }
-    Err(Error::NotFound)
 }
 
 #[async_generic(async_signature(
@@ -506,14 +380,9 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
 }
 
-fn tst_info_result_to_timestamp(tst_info_res: &Result<TstInfo>) -> Option<i64> {
-    match &tst_info_res {
-        Ok(tst_info) => {
-            let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
-            Some(dt.timestamp())
-        }
-        Err(_) => None,
-    }
+fn tst_info_to_timestamp(tst_info: &TstInfo) -> i64 {
+    let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
+    dt.timestamp()
 }
 
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
@@ -556,7 +425,7 @@ pub(crate) async fn verify_cose_async(
     // get the public key der
     let der_bytes = &certs[0];
 
-    let tst_info_res = get_timestamp_info_async(&sign1, &data).await;
+    let tst_info_res = validate_cose_tst_info_async(&sign1, &data).await;
 
     // verify cert matches requested algorithm
     if cert_check {
@@ -565,36 +434,32 @@ pub(crate) async fn verify_cose_async(
             Ok(tst_info) => {
                 check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
             }
-            Err(e) => {
-                // log timestamp errors
-                match e {
-                    Error::NotFound => {
-                        check_certificate_profile(der_bytes, ctp, validation_log, None)?
-                    }
 
-                    Error::TimeStampError(TimeStampError::InvalidData) => {
-                        log_item!(
-                            "Cose_Sign1",
-                            "timestamp message imprint did not match",
-                            "verify_cose"
-                        )
-                        .validation_status(TIMESTAMP_MISMATCH)
-                        .failure(validation_log, Error::CoseTimeStampMismatch)?;
-                    }
+            Err(CoseError::NoTimeStampToken) => {
+                check_certificate_profile(der_bytes, ctp, validation_log, None)?
+            }
 
-                    Error::CoseTimeStampValidity => {
-                        log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
-                            .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                            .failure(validation_log, Error::CoseTimeStampValidity)?;
-                    }
+            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
+                log_item!(
+                    "Cose_Sign1",
+                    "timestamp message imprint did not match",
+                    "verify_cose"
+                )
+                .validation_status(TIMESTAMP_MISMATCH)
+                .failure(validation_log, Error::CoseTimeStampMismatch)?;
+            }
 
-                    _ => {
-                        log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                            .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
+            Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
+                log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
+                    .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
+                    .failure(validation_log, Error::CoseTimeStampValidity)?;
+            }
 
-                        return Err(Error::CoseInvalidTimeStamp);
-                    }
-                }
+            _ => {
+                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
+                    .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
+
+                return Err(Error::CoseInvalidTimeStamp);
             }
         }
 
@@ -604,7 +469,7 @@ pub(crate) async fn verify_cose_async(
             ctp,
             &certs[1..],
             der_bytes,
-            tst_info_result_to_timestamp(&tst_info_res),
+            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
             validation_log,
         )
         .await?;
@@ -614,7 +479,7 @@ pub(crate) async fn verify_cose_async(
             ctp,
             &certs[1..],
             der_bytes,
-            tst_info_result_to_timestamp(&tst_info_res),
+            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
             validation_log,
         )?;
 
@@ -657,7 +522,7 @@ pub(crate) async fn verify_cose_async(
         result.validated = true;
         result.alg = Some(alg);
 
-        result.date = tst_info_res.map(|t| gt_to_datetime(t.gen_time)).ok();
+        result.date = tst_info_res.ok().map(|t| gt_to_datetime(t.gen_time));
 
         // return cert chain
         result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
@@ -766,7 +631,7 @@ pub(crate) fn verify_cose(
     // get the public key der
     let der_bytes = &certs[0];
 
-    let tst_info_res = get_timestamp_info(&sign1, data);
+    let tst_info_res = validate_cose_tst_info(&sign1, data);
 
     if cert_check {
         // verify certs
@@ -774,44 +639,40 @@ pub(crate) fn verify_cose(
             Ok(tst_info) => {
                 check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
             }
-            Err(e) => {
-                // log timestamp errors
-                match e {
-                    Error::NotFound => {
-                        check_certificate_profile(der_bytes, ctp, validation_log, None)?
-                    }
 
-                    Error::TimeStampError(TimeStampError::InvalidData) => {
-                        log_item!(
-                            "Cose_Sign1",
-                            "timestamp did not match signed data",
-                            "verify_cose"
-                        )
-                        .validation_status(TIMESTAMP_MISMATCH)
-                        .failure_no_throw(validation_log, Error::CoseTimeStampMismatch);
+            Err(CoseError::NoTimeStampToken) => {
+                check_certificate_profile(der_bytes, ctp, validation_log, None)?
+            }
 
-                        return Err(Error::CoseTimeStampMismatch);
-                    }
+            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
+                log_item!(
+                    "Cose_Sign1",
+                    "timestamp did not match signed data",
+                    "verify_cose"
+                )
+                .validation_status(TIMESTAMP_MISMATCH)
+                .failure_no_throw(validation_log, Error::CoseTimeStampMismatch);
 
-                    Error::CoseTimeStampValidity => {
-                        log_item!(
-                            "Cose_Sign1",
-                            "timestamp certificate outside of validity",
-                            "verify_cose"
-                        )
-                        .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                        .failure_no_throw(validation_log, Error::CoseTimeStampValidity);
+                return Err(Error::CoseTimeStampMismatch);
+            }
 
-                        return Err(Error::CoseTimeStampValidity);
-                    }
+            Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
+                log_item!(
+                    "Cose_Sign1",
+                    "timestamp certificate outside of validity",
+                    "verify_cose"
+                )
+                .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
+                .failure_no_throw(validation_log, Error::CoseTimeStampValidity);
 
-                    _ => {
-                        log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                            .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
+                return Err(Error::CoseTimeStampValidity);
+            }
 
-                        return Err(Error::CoseInvalidTimeStamp);
-                    }
-                }
+            _ => {
+                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
+                    .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
+
+                return Err(Error::CoseInvalidTimeStamp);
             }
         }
 
@@ -820,7 +681,7 @@ pub(crate) fn verify_cose(
             ctp,
             &certs[1..],
             der_bytes,
-            tst_info_result_to_timestamp(&tst_info_res),
+            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
             validation_log,
         )?;
 
@@ -1027,5 +888,40 @@ pub mod tests {
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
         assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());
+    }
+
+    // get OCSP der
+    fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+        if let Some(der) = sign1
+            .unprotected
+            .rest
+            .iter()
+            .find_map(|x: &(Label, Value)| {
+                if x.0 == Label::Text("rVals".to_string()) {
+                    Some(x.1.clone())
+                } else {
+                    None
+                }
+            })
+        {
+            match der {
+                Value::Map(rvals_map) => {
+                    // find OCSP value if available
+                    rvals_map.iter().find_map(|x: &(Value, Value)| {
+                        if x.0 == Value::Text("ocspVals".to_string()) {
+                            x.1.as_array()
+                                .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
+                                .and_then(Value::as_bytes)
+                                .cloned()
+                        } else {
+                            None
+                        }
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
     }
 }

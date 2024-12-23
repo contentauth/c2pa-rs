@@ -13,7 +13,7 @@
 
 use thiserror::Error;
 
-use crate::time_stamp::TimeStampError;
+use crate::{cose::CertificateProfileError, time_stamp::TimeStampError};
 
 /// Describes errors that can occur when processing or generating [COSE]
 /// signatures.
@@ -21,6 +21,14 @@ use crate::time_stamp::TimeStampError;
 /// [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 #[derive(Debug, Error)]
 pub enum CoseError {
+    /// No signing certificate chain was found.
+    #[error("missing signing certificate chain")]
+    MissingSigningCertificateChain,
+
+    /// Signing certificates appeared in both protected and unprotected headers.
+    #[error("multiple signing certificate chains detected")]
+    MultipleSigningCertificateChains,
+
     /// No time stamp token found.
     #[error("no time stamp token found in sigTst or sigTst2 header")]
     NoTimeStampToken,
@@ -32,4 +40,14 @@ pub enum CoseError {
     /// An error occurred while parsing a time stamp.
     #[error(transparent)]
     TimeStampError(#[from] TimeStampError),
+
+    /// The signing certificate(s) did not match the required certificate
+    /// profile.
+    #[error(transparent)]
+    CertificateProfileError(#[from] CertificateProfileError),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(String),
 }
