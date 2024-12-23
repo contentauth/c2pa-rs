@@ -351,6 +351,7 @@ impl From<CoseError> for Error {
             CoseError::MissingSigningCertificateChain => Self::CoseX5ChainMissing,
             CoseError::MultipleSigningCertificateChains => Self::CoseVerifier,
             CoseError::NoTimeStampToken => Self::NotFound,
+            CoseError::UnsupportedSigningAlgorithm => Self::CoseSignatureAlgorithmNotSupported,
             CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
             CoseError::TimeStampError(e) => e.into(),
             CoseError::CertificateProfileError(e) => e.into(),
