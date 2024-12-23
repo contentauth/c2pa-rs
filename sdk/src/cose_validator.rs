@@ -17,14 +17,13 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
-        validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
-        CertificateTrustPolicy, CoseError, OcspFetchPolicy,
+        cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, validate_cose_tst_info,
+        validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy,
+        OcspFetchPolicy, Verifier,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
-    time_stamp::TimeStampError,
     SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
@@ -255,42 +254,21 @@ pub(crate) async fn verify_cose_async(
 
     let tst_info_res = validate_cose_tst_info_async(&sign1, &data).await;
 
+    let verifier = if cert_check {
+        match get_settings_value::<bool>("verify.verify_trust") {
+            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
+            _ => Verifier::VerifyCertificateProfileOnly(ctp),
+        }
+    } else {
+        Verifier::IgnoreProfileAndTrustPolicy
+    };
+
+    verifier
+        .verify_profile_async(&sign1, &tst_info_res, validation_log)
+        .await?;
+
     // verify cert matches requested algorithm
     if cert_check {
-        // verify certs
-        match &tst_info_res {
-            Ok(tst_info) => {
-                check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
-            }
-
-            Err(CoseError::NoTimeStampToken) => {
-                check_certificate_profile(der_bytes, ctp, validation_log, None)?
-            }
-
-            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
-                log_item!(
-                    "Cose_Sign1",
-                    "timestamp message imprint did not match",
-                    "verify_cose"
-                )
-                .validation_status(TIMESTAMP_MISMATCH)
-                .failure(validation_log, Error::CoseTimeStampMismatch)?;
-            }
-
-            Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
-                log_item!("Cose_Sign1", "timestamp outside of validity", "verify_cose")
-                    .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                    .failure(validation_log, Error::CoseTimeStampValidity)?;
-            }
-
-            _ => {
-                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                    .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
-
-                return Err(Error::CoseInvalidTimeStamp);
-            }
-        }
-
         // is the certificate trusted
         #[cfg(target_arch = "wasm32")]
         check_trust_async(
@@ -461,49 +439,18 @@ pub(crate) fn verify_cose(
 
     let tst_info_res = validate_cose_tst_info(&sign1, data);
 
-    if cert_check {
-        // verify certs
-        match &tst_info_res {
-            Ok(tst_info) => {
-                check_certificate_profile(der_bytes, ctp, validation_log, Some(tst_info))?
-            }
-
-            Err(CoseError::NoTimeStampToken) => {
-                check_certificate_profile(der_bytes, ctp, validation_log, None)?
-            }
-
-            Err(CoseError::TimeStampError(TimeStampError::InvalidData)) => {
-                log_item!(
-                    "Cose_Sign1",
-                    "timestamp did not match signed data",
-                    "verify_cose"
-                )
-                .validation_status(TIMESTAMP_MISMATCH)
-                .failure_no_throw(validation_log, Error::CoseTimeStampMismatch);
-
-                return Err(Error::CoseTimeStampMismatch);
-            }
-
-            Err(CoseError::TimeStampError(TimeStampError::ExpiredCertificate)) => {
-                log_item!(
-                    "Cose_Sign1",
-                    "timestamp certificate outside of validity",
-                    "verify_cose"
-                )
-                .validation_status(TIMESTAMP_OUTSIDE_VALIDITY)
-                .failure_no_throw(validation_log, Error::CoseTimeStampValidity);
-
-                return Err(Error::CoseTimeStampValidity);
-            }
-
-            _ => {
-                log_item!("Cose_Sign1", "error parsing timestamp", "verify_cose")
-                    .failure_no_throw(validation_log, Error::CoseInvalidTimeStamp);
-
-                return Err(Error::CoseInvalidTimeStamp);
-            }
+    let verifier = if cert_check {
+        match get_settings_value::<bool>("verify.verify_trust") {
+            Ok(true) => Verifier::VerifyTrustPolicy(ctp),
+            _ => Verifier::VerifyCertificateProfileOnly(ctp),
         }
+    } else {
+        Verifier::IgnoreProfileAndTrustPolicy
+    };
 
+    verifier.verify_profile(&sign1, &tst_info_res, validation_log)?;
+
+    if cert_check {
         // is the certificate trusted
         check_trust(
             ctp,
