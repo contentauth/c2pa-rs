@@ -17,8 +17,9 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-        CertificateTrustError, CertificateTrustPolicy, CoseError, OcspFetchPolicy,
+        check_certificate_profile, parse_cose_sign1, validate_cose_tst_info,
+        validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
+        OcspFetchPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -30,7 +31,7 @@ use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
-    sig_structure_data, Label, TaggedCborSerializable,
+    sig_structure_data, Label,
 };
 use x509_parser::{der_parser::oid, num_bigint::BigUint, oid_registry::Oid, prelude::*};
 
@@ -148,31 +149,6 @@ pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
     ES512	ECDSA using P-521 and SHA-512
     ED25519 Edwards Curve 25519
 **********************************************************************************/
-
-// TEMPORARY pub(crate)
-pub(crate) fn get_cose_sign1(
-    cose_bytes: &[u8],
-    data: &[u8],
-    validation_log: &mut impl StatusTracker,
-) -> Result<coset::CoseSign1> {
-    match <coset::CoseSign1 as TaggedCborSerializable>::from_tagged_slice(cose_bytes) {
-        Ok(mut sign1) => {
-            sign1.payload = Some(data.to_vec()); // restore payload for verification check
-            Ok(sign1)
-        }
-        Err(coset_error) => {
-            log_item!(
-                "Cose_Sign1",
-                "could not deserialize signature",
-                "get_cose_sign1"
-            )
-            .validation_status(CLAIM_SIGNATURE_MISMATCH)
-            .failure_no_throw(validation_log, Error::InvalidCoseSignature { coset_error });
-
-            Err(Error::CoseSignature)
-        }
-    }
-}
 
 pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
@@ -310,7 +286,6 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
-
 // internal util function to dump the cert chain in PEM format
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     let mut out_buf: Vec<u8> = Vec::new();
@@ -345,7 +320,6 @@ fn get_signing_time(
         None
     }
 }
-
 
 // test for unrecognized signatures
 fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
@@ -402,7 +376,7 @@ pub(crate) async fn verify_cose_async(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
+    let mut sign1 = parse_cose_sign1(&cose_bytes, &data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
         Ok(a) => a,
@@ -547,7 +521,7 @@ pub(crate) fn get_signing_info(
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
-    let sign1 = match get_cose_sign1(cose_bytes, data, validation_log) {
+    let sign1 = match parse_cose_sign1(cose_bytes, data, validation_log) {
         Ok(sign1) => {
             // get the public key der
             match get_sign_cert(&sign1) {
@@ -570,7 +544,7 @@ pub(crate) fn get_signing_info(
                 Err(e) => Err(e),
             }
         }
-        Err(e) => Err(e),
+        Err(e) => Err(e.into()),
     };
 
     let certs = match sign1 {
@@ -605,7 +579,7 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+    let sign1 = parse_cose_sign1(cose_bytes, data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
         Ok(a) => a,
@@ -822,7 +796,7 @@ pub mod tests {
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
-        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
         let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
 
@@ -888,7 +862,7 @@ pub mod tests {
             crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
                 .unwrap();
 
-        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
         assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());

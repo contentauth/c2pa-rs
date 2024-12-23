@@ -16,7 +16,11 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, cose::CertificateTrustPolicy, ValidationInfo};
+use c2pa_crypto::{
+    base64,
+    cose::{parse_cose_sign1, CertificateTrustPolicy},
+    ValidationInfo,
+};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -35,8 +39,8 @@ use crate::{
     },
     asset_io::CAIRead,
     cose_validator::{
-        check_ocsp_status, check_ocsp_status_async, get_cose_sign1, get_signing_info,
-        get_signing_info_async, verify_cose, verify_cose_async,
+        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
+        verify_cose, verify_cose_async,
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -1068,7 +1072,7 @@ impl Claim {
         }
 
         // check certificate revocation
-        let sign1 = get_cose_sign1(&sig, &data, validation_log)?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
         check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
 
         let verified =
@@ -1114,7 +1118,7 @@ impl Claim {
         };
 
         // check certificate revocation
-        let sign1 = get_cose_sign1(sig, data, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
         check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
