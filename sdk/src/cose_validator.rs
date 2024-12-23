@@ -17,8 +17,9 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
-        CertificateTrustError, CertificateTrustPolicy, CoseError, OcspFetchPolicy,
+        check_certificate_profile, parse_cose_sign1, validate_cose_tst_info,
+        validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
+        OcspFetchPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -30,7 +31,7 @@ use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
 use ciborium::value::Value;
 use coset::{
     iana::{self, EnumI64},
-    sig_structure_data, Label, TaggedCborSerializable,
+    sig_structure_data, Label,
 };
 use x509_parser::{der_parser::oid, num_bigint::BigUint, oid_registry::Oid, prelude::*};
 
@@ -38,6 +39,100 @@ use crate::{
     error::{Error, Result},
     settings::get_settings_value,
 };
+
+#[allow(dead_code)]
+#[async_generic]
+pub(crate) fn check_ocsp_status(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspResponse> {
+    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
+        Ok(true) => OcspFetchPolicy::FetchAllowed,
+        _ => OcspFetchPolicy::DoNotFetch,
+    };
+
+    if _sync {
+        Ok(c2pa_crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )?)
+    } else {
+        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )
+        .await?)
+    }
+}
+
+#[async_generic(async_signature(
+    ctp: &CertificateTrustPolicy,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    signing_time_epoch: Option<i64>,
+    validation_log: &mut impl StatusTracker
+))]
+#[allow(unused)]
+fn check_trust(
+    ctp: &CertificateTrustPolicy,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    signing_time_epoch: Option<i64>,
+    validation_log: &mut impl StatusTracker,
+) -> Result<()> {
+    // just return is trust checks are disabled or misconfigured
+    match get_settings_value::<bool>("verify.verify_trust") {
+        Ok(verify_trust) => {
+            if !verify_trust {
+                return Ok(());
+            }
+        }
+        Err(e) => return Err(e),
+    }
+
+    let verify_result = if _sync {
+        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
+    } else {
+        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
+            .await
+    };
+
+    match verify_result {
+        Ok(()) => {
+            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(validation_log);
+
+            Ok(())
+        }
+        Err(CertificateTrustError::CertificateNotTrusted) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
+
+            Err(Error::CoseCertUntrusted)
+        }
+        Err(e) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, &e);
+
+            // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
+            // validation_log.log(log_item, Error::CoseCertUntrusted)?;
+            Err(e.into())
+        }
+    }
+}
+
+// ---- TEMPORARY MARKER: Above this line will not move to c2pa-crypto
 
 #[allow(dead_code)] // used only in WASM build
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
@@ -54,31 +149,6 @@ pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
     ES512	ECDSA using P-521 and SHA-512
     ED25519 Edwards Curve 25519
 **********************************************************************************/
-
-// TEMPORARY pub(crate)
-pub(crate) fn get_cose_sign1(
-    cose_bytes: &[u8],
-    data: &[u8],
-    validation_log: &mut impl StatusTracker,
-) -> Result<coset::CoseSign1> {
-    match <coset::CoseSign1 as TaggedCborSerializable>::from_tagged_slice(cose_bytes) {
-        Ok(mut sign1) => {
-            sign1.payload = Some(data.to_vec()); // restore payload for verification check
-            Ok(sign1)
-        }
-        Err(coset_error) => {
-            log_item!(
-                "Cose_Sign1",
-                "could not deserialize signature",
-                "get_cose_sign1"
-            )
-            .validation_status(CLAIM_SIGNATURE_MISMATCH)
-            .failure_no_throw(validation_log, Error::InvalidCoseSignature { coset_error });
-
-            Err(Error::CoseSignature)
-        }
-    }
-}
 
 pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
     // find the supported handler for the algorithm
@@ -216,39 +286,6 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
-#[allow(dead_code)]
-#[async_generic]
-pub(crate) fn check_ocsp_status(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
-) -> Result<OcspResponse> {
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
-    };
-
-    if _sync {
-        Ok(c2pa_crypto::cose::check_ocsp_status(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )?)
-    } else {
-        Ok(c2pa_crypto::cose::check_ocsp_status_async(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )
-        .await?)
-    }
-}
-
 // internal util function to dump the cert chain in PEM format
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     let mut out_buf: Vec<u8> = Vec::new();
@@ -281,65 +318,6 @@ fn get_signing_time(
         Some(gt_to_datetime(tst_info.gen_time))
     } else {
         None
-    }
-}
-
-#[async_generic(async_signature(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker
-))]
-#[allow(unused)]
-fn check_trust(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker,
-) -> Result<()> {
-    // just return is trust checks are disabled or misconfigured
-    match get_settings_value::<bool>("verify.verify_trust") {
-        Ok(verify_trust) => {
-            if !verify_trust {
-                return Ok(());
-            }
-        }
-        Err(e) => return Err(e),
-    }
-
-    let verify_result = if _sync {
-        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
-    } else {
-        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
-            .await
-    };
-
-    match verify_result {
-        Ok(()) => {
-            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                .success(validation_log);
-
-            Ok(())
-        }
-        Err(CertificateTrustError::CertificateNotTrusted) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
-
-            Err(Error::CoseCertUntrusted)
-        }
-        Err(e) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, &e);
-
-            // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
-            // validation_log.log(log_item, Error::CoseCertUntrusted)?;
-            Err(e.into())
-        }
     }
 }
 
@@ -398,7 +376,7 @@ pub(crate) async fn verify_cose_async(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let mut sign1 = get_cose_sign1(&cose_bytes, &data, validation_log)?;
+    let mut sign1 = parse_cose_sign1(&cose_bytes, &data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
         Ok(a) => a,
@@ -543,7 +521,7 @@ pub(crate) fn get_signing_info(
     let mut alg: Option<SigningAlg> = None;
     let mut cert_serial_number = None;
 
-    let sign1 = match get_cose_sign1(cose_bytes, data, validation_log) {
+    let sign1 = match parse_cose_sign1(cose_bytes, data, validation_log) {
         Ok(sign1) => {
             // get the public key der
             match get_sign_cert(&sign1) {
@@ -566,7 +544,7 @@ pub(crate) fn get_signing_info(
                 Err(e) => Err(e),
             }
         }
-        Err(e) => Err(e),
+        Err(e) => Err(e.into()),
     };
 
     let certs = match sign1 {
@@ -601,7 +579,7 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     validation_log: &mut impl StatusTracker,
 ) -> Result<ValidationInfo> {
-    let sign1 = get_cose_sign1(cose_bytes, data, validation_log)?;
+    let sign1 = parse_cose_sign1(cose_bytes, data, validation_log)?;
 
     let alg = match get_signing_alg(&sign1) {
         Ok(a) => a,
@@ -818,7 +796,7 @@ pub mod tests {
         let cose_bytes =
             crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
-        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
         let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
 
@@ -884,7 +862,7 @@ pub mod tests {
             crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
                 .unwrap();
 
-        let cose_sign1 = get_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
+        let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();
 
         assert_eq!(ocsp_rsp_data, ocsp_stapled.as_slice());

@@ -23,7 +23,10 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
-use c2pa_crypto::{cose::CertificateTrustPolicy, hash::sha256};
+use c2pa_crypto::{
+    cose::{parse_cose_sign1, CertificateTrustPolicy},
+    hash::sha256,
+};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -46,7 +49,7 @@ use crate::{
     },
     claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::{check_ocsp_status, get_cose_sign1, verify_cose, verify_cose_async},
+    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
     dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
@@ -453,7 +456,7 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        let sign1 = get_cose_sign1(sig, &data, &mut validation_log).ok()?;
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
         if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(

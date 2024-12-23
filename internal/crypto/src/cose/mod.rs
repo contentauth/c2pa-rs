@@ -29,6 +29,9 @@ pub use error::CoseError;
 mod ocsp;
 pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
 
+mod sign1;
+pub use sign1::parse_cose_sign1;
+
 mod sigtst;
 pub use sigtst::{
     cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async,
