@@ -17,9 +17,9 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        check_certificate_profile, parse_cose_sign1, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
-        OcspFetchPolicy,
+        check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
+        validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
+        CertificateTrustPolicy, CoseError, OcspFetchPolicy,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -33,7 +33,7 @@ use coset::{
     iana::{self, EnumI64},
     sig_structure_data, Label,
 };
-use x509_parser::{der_parser::oid, num_bigint::BigUint, oid_registry::Oid, prelude::*};
+use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
     error::{Error, Result},
@@ -133,54 +133,6 @@ fn check_trust(
 }
 
 // ---- TEMPORARY MARKER: Above this line will not move to c2pa-crypto
-
-#[allow(dead_code)] // used only in WASM build
-pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
-
-/********************** Supported Validators ***************************************
-    RS256	RSASSA-PKCS1-v1_5 using SHA-256 - not recommended
-    RS384	RSASSA-PKCS1-v1_5 using SHA-384 - not recommended
-    RS512	RSASSA-PKCS1-v1_5 using SHA-512 - not recommended
-    PS256	RSASSA-PSS using SHA-256 and MGF1 with SHA-256
-    PS384	RSASSA-PSS using SHA-384 and MGF1 with SHA-384
-    PS512	RSASSA-PSS using SHA-512 and MGF1 with SHA-512
-    ES256	ECDSA using P-256 and SHA-256
-    ES384	ECDSA using P-384 and SHA-384
-    ES512	ECDSA using P-521 and SHA-512
-    ED25519 Edwards Curve 25519
-**********************************************************************************/
-
-pub(crate) fn get_signing_alg(cs1: &coset::CoseSign1) -> Result<SigningAlg> {
-    // find the supported handler for the algorithm
-    match cs1.protected.header.alg {
-        Some(ref alg) => match alg {
-            coset::RegisteredLabelWithPrivate::PrivateUse(a) => match a {
-                -39 => Ok(SigningAlg::Ps512),
-                -38 => Ok(SigningAlg::Ps384),
-                -37 => Ok(SigningAlg::Ps256),
-                -36 => Ok(SigningAlg::Es512),
-                -35 => Ok(SigningAlg::Es384),
-                -7 => Ok(SigningAlg::Es256),
-                -8 => Ok(SigningAlg::Ed25519),
-                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-            },
-            coset::RegisteredLabelWithPrivate::Assigned(a) => match a {
-                coset::iana::Algorithm::PS512 => Ok(SigningAlg::Ps512),
-                coset::iana::Algorithm::PS384 => Ok(SigningAlg::Ps384),
-                coset::iana::Algorithm::PS256 => Ok(SigningAlg::Ps256),
-                coset::iana::Algorithm::ES512 => Ok(SigningAlg::Es512),
-                coset::iana::Algorithm::ES384 => Ok(SigningAlg::Es384),
-                coset::iana::Algorithm::ES256 => Ok(SigningAlg::Es256),
-                coset::iana::Algorithm::EdDSA => Ok(SigningAlg::Ed25519),
-                _ => Err(Error::CoseSignatureAlgorithmNotSupported),
-            },
-            coset::RegisteredLabelWithPrivate::Text(a) => a
-                .parse()
-                .map_err(|_| Error::CoseSignatureAlgorithmNotSupported),
-        },
-        None => Err(Error::CoseSignatureAlgorithmNotSupported),
-    }
-}
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     // element 0 is the signing cert
@@ -378,7 +330,7 @@ pub(crate) async fn verify_cose_async(
 ) -> Result<ValidationInfo> {
     let mut sign1 = parse_cose_sign1(&cose_bytes, &data, validation_log)?;
 
-    let alg = match get_signing_alg(&sign1) {
+    let alg = match signing_alg_from_sign1(&sign1) {
         Ok(a) => a,
         Err(_) => {
             log_item!(
@@ -534,7 +486,7 @@ pub(crate) fn get_signing_info(
                         };
                         issuer_org = extract_subject_from_cert(&signcert).ok();
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
-                        if let Ok(a) = get_signing_alg(&sign1) {
+                        if let Ok(a) = signing_alg_from_sign1(&sign1) {
                             alg = Some(a);
                         }
                     };
@@ -581,7 +533,7 @@ pub(crate) fn verify_cose(
 ) -> Result<ValidationInfo> {
     let sign1 = parse_cose_sign1(cose_bytes, data, validation_log)?;
 
-    let alg = match get_signing_alg(&sign1) {
+    let alg = match signing_alg_from_sign1(&sign1) {
         Ok(a) => a,
         Err(_) => {
             log_item!(
