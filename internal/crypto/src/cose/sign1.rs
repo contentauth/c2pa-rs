@@ -12,7 +12,11 @@
 // each license.
 
 use c2pa_status_tracker::{log_item, validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker};
-use coset::{iana::Algorithm, CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
+use ciborium::value::Value;
+use coset::{
+    iana::{self, Algorithm, EnumI64},
+    CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
+};
 
 use crate::{cose::CoseError, SigningAlg};
 
@@ -76,5 +80,82 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
         },
 
         _ => Err(CoseError::UnsupportedSigningAlgorithm),
+    }
+}
+
+/// TEMPORARILY PUBLIC while refactoring.
+pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
+    // Check the protected header first.
+    let Some(value) = sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("x5chain".to_string())
+                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
+            {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    else {
+        // Not there: Also try unprotected header. (This was permitted in older versions
+        // of C2PA.)
+        return get_unprotected_header_certs(sign1);
+    };
+
+    // Certs may be in protected or unprotected header, but not both.
+    if get_unprotected_header_certs(sign1).is_ok() {
+        return Err(CoseError::MultipleSigningCertificateChains);
+    }
+
+    cert_chain_from_cbor_value(value)
+}
+
+fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
+    let Some(value) = sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("x5chain".to_string()) {
+                Some(x.1.clone())
+            } else {
+                None
+            }
+        })
+    else {
+        return Err(CoseError::MissingSigningCertificateChain);
+    };
+
+    cert_chain_from_cbor_value(value)
+}
+
+fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
+    match value {
+        Value::Array(cert_chain) => {
+            let certs: Vec<Vec<u8>> = cert_chain
+                .iter()
+                .filter_map(|c| {
+                    if let Value::Bytes(der_bytes) = c {
+                        Some(der_bytes.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if certs.is_empty() {
+                Err(CoseError::MissingSigningCertificateChain)
+            } else {
+                Ok(certs)
+            }
+        }
+
+        Value::Bytes(ref der_bytes) => Ok(vec![der_bytes.clone()]),
+
+        _ => Err(CoseError::MissingSigningCertificateChain),
     }
 }

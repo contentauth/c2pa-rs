@@ -17,7 +17,7 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     asn1::rfc3161::TstInfo,
     cose::{
-        check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
+        cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
         validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
         CertificateTrustPolicy, CoseError, OcspFetchPolicy,
     },
@@ -28,11 +28,7 @@ use c2pa_crypto::{
     SigningAlg, ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, validation_codes::*, StatusTracker};
-use ciborium::value::Value;
-use coset::{
-    iana::{self, EnumI64},
-    sig_structure_data, Label,
-};
+use coset::sig_structure_data;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
 use crate::{
@@ -136,106 +132,8 @@ fn check_trust(
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     // element 0 is the signing cert
-    let certs = get_sign_certs(sign1)?;
+    let certs = cert_chain_from_sign1(sign1)?;
     Ok(certs[0].clone())
-}
-
-fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
-    if let Some(der) = sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        let mut certs: Vec<Vec<u8>> = Vec::new();
-
-        match der {
-            Value::Array(cert_chain) => {
-                // handle array of certs
-                for c in cert_chain {
-                    if let Value::Bytes(der_bytes) = c {
-                        certs.push(der_bytes.clone());
-                    }
-                }
-
-                if certs.is_empty() {
-                    Err(Error::CoseMissingKey)
-                } else {
-                    Ok(certs)
-                }
-            }
-            Value::Bytes(ref der_bytes) => {
-                // handle single cert case
-                certs.push(der_bytes.clone());
-                Ok(certs)
-            }
-            _ => Err(Error::CoseX5ChainMissing),
-        }
-    } else {
-        Err(Error::CoseX5ChainMissing)
-    }
-}
-// get the public key der
-fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
-    // check for protected header int, then protected header x5chain,
-    // then the legacy unprotected x5chain to get the public key der
-
-    // check the protected header
-    if let Some(der) = sign1
-        .protected
-        .header
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string())
-                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
-            {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    {
-        // make sure there are no certs in the legacy unprotected header, certs
-        // are only allowing in protect OR unprotected header
-        if get_unprotected_header_certs(sign1).is_ok() {
-            return Err(Error::CoseVerifier);
-        }
-
-        let mut certs: Vec<Vec<u8>> = Vec::new();
-
-        match der {
-            Value::Array(cert_chain) => {
-                // handle array of certs
-                for c in cert_chain {
-                    if let Value::Bytes(der_bytes) = c {
-                        certs.push(der_bytes.clone());
-                    }
-                }
-
-                if certs.is_empty() {
-                    return Err(Error::CoseX5ChainMissing);
-                } else {
-                    return Ok(certs);
-                }
-            }
-            Value::Bytes(ref der_bytes) => {
-                // handle single cert case
-                certs.push(der_bytes.clone());
-                return Ok(certs);
-            }
-            _ => return Err(Error::CoseX5ChainMissing),
-        }
-    }
-
-    // check the unprotected header if necessary
-    get_unprotected_header_certs(sign1)
 }
 
 // internal util function to dump the cert chain in PEM format
@@ -350,7 +248,7 @@ pub(crate) async fn verify_cose_async(
     let mut result = ValidationInfo::default();
 
     // get the cert chain
-    let certs = get_sign_certs(&sign1)?;
+    let certs = cert_chain_from_sign1(&sign1)?;
 
     // get the public key der
     let der_bytes = &certs[0];
@@ -455,7 +353,7 @@ pub(crate) async fn verify_cose_async(
         result.date = tst_info_res.ok().map(|t| gt_to_datetime(t.gen_time));
 
         // return cert chain
-        result.cert_chain = dump_cert_chain(&get_sign_certs(&sign1)?)?;
+        result.cert_chain = dump_cert_chain(&cert_chain_from_sign1(&sign1)?)?;
     }
 
     Ok(result)
@@ -500,7 +398,7 @@ pub(crate) fn get_signing_info(
     };
 
     let certs = match sign1 {
-        Ok(s) => match get_sign_certs(&s) {
+        Ok(s) => match cert_chain_from_sign1(&s) {
             Ok(c) => dump_cert_chain(&c).unwrap_or_default(),
             Err(_) => Vec::new(),
         },
@@ -556,7 +454,7 @@ pub(crate) fn verify_cose(
     let mut result = ValidationInfo::default();
 
     // get the cert chain
-    let certs = get_sign_certs(&sign1)?;
+    let certs = cert_chain_from_sign1(&sign1)?;
 
     // get the public key der
     let der_bytes = &certs[0];
@@ -726,6 +624,8 @@ fn gt_to_datetime(
 pub mod tests {
     use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
+    use ciborium::Value;
+    use coset::Label;
     use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
