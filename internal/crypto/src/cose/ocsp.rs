@@ -124,7 +124,9 @@ fn fetch_and_check_ocsp_response(
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let certs = get_cert_chain(sign1)?;
+        use crate::cose::cert_chain_from_sign1;
+
+        let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::ocsp::fetch_ocsp_response(&certs) else {
             return Ok(OcspResponse::default());
@@ -185,86 +187,4 @@ fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
             None
         }
     })
-}
-
-// TO DO: See if this gets more widely used in crate.
-#[cfg(not(target_arch = "wasm32"))]
-fn get_cert_chain(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    use coset::iana::{self, EnumI64};
-
-    // Check the protected header first.
-    let Some(value) = sign1
-        .protected
-        .header
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string())
-                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
-            {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    else {
-        // Not there: Also try unprotected header. (This was permitted in older versions
-        // of C2PA.)
-        return get_unprotected_header_certs(sign1);
-    };
-
-    // Certs may be in protected or unprotected header, but not both.
-    if get_unprotected_header_certs(sign1).is_ok() {
-        return Err(CoseError::MultipleSigningCertificateChains);
-    }
-
-    cert_chain_from_cbor_value(value)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
-    let Some(value) = sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
-    else {
-        return Err(CoseError::MissingSigningCertificateChain);
-    };
-
-    cert_chain_from_cbor_value(value)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
-    match value {
-        Value::Array(cert_chain) => {
-            let certs: Vec<Vec<u8>> = cert_chain
-                .iter()
-                .filter_map(|c| {
-                    if let Value::Bytes(der_bytes) = c {
-                        Some(der_bytes.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if certs.is_empty() {
-                Err(CoseError::MissingSigningCertificateChain)
-            } else {
-                Ok(certs)
-            }
-        }
-
-        Value::Bytes(ref der_bytes) => Ok(vec![der_bytes.clone()]),
-
-        _ => Err(CoseError::MissingSigningCertificateChain),
-    }
 }
