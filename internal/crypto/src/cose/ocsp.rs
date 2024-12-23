@@ -19,8 +19,8 @@ use coset::{CoseSign1, Label};
 
 use crate::{
     cose::{
-        cert_chain_from_sign1, check_certificate_profile, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+        check_certificate_profile, validate_cose_tst_info, validate_cose_tst_info_async,
+        CertificateTrustPolicy, CoseError,
     },
     ocsp::OcspResponse,
 };
@@ -124,6 +124,8 @@ fn fetch_and_check_ocsp_response(
 
     #[cfg(not(target_arch = "wasm32"))]
     {
+        use crate::cose::cert_chain_from_sign1;
+
         let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::ocsp::fetch_ocsp_response(&certs) else {
