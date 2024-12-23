@@ -148,7 +148,7 @@ impl Verifier<'_> {
             }
         };
 
-        let certs = cert_chain_from_sign1(&sign1)?;
+        let certs = cert_chain_from_sign1(sign1)?;
         let end_entity_cert_der = &certs[0];
         let chain_der = &certs[1..];
 
