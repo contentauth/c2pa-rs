@@ -39,6 +39,100 @@ use crate::{
     settings::get_settings_value,
 };
 
+#[allow(dead_code)]
+#[async_generic]
+pub(crate) fn check_ocsp_status(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspResponse> {
+    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
+        Ok(true) => OcspFetchPolicy::FetchAllowed,
+        _ => OcspFetchPolicy::DoNotFetch,
+    };
+
+    if _sync {
+        Ok(c2pa_crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )?)
+    } else {
+        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )
+        .await?)
+    }
+}
+
+#[async_generic(async_signature(
+    ctp: &CertificateTrustPolicy,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    signing_time_epoch: Option<i64>,
+    validation_log: &mut impl StatusTracker
+))]
+#[allow(unused)]
+fn check_trust(
+    ctp: &CertificateTrustPolicy,
+    chain_der: &[Vec<u8>],
+    cert_der: &[u8],
+    signing_time_epoch: Option<i64>,
+    validation_log: &mut impl StatusTracker,
+) -> Result<()> {
+    // just return is trust checks are disabled or misconfigured
+    match get_settings_value::<bool>("verify.verify_trust") {
+        Ok(verify_trust) => {
+            if !verify_trust {
+                return Ok(());
+            }
+        }
+        Err(e) => return Err(e),
+    }
+
+    let verify_result = if _sync {
+        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
+    } else {
+        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
+            .await
+    };
+
+    match verify_result {
+        Ok(()) => {
+            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .success(validation_log);
+
+            Ok(())
+        }
+        Err(CertificateTrustError::CertificateNotTrusted) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
+
+            Err(Error::CoseCertUntrusted)
+        }
+        Err(e) => {
+            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, &e);
+
+            // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
+            // validation_log.log(log_item, Error::CoseCertUntrusted)?;
+            Err(e.into())
+        }
+    }
+}
+
+// ---- TEMPORARY MARKER: Above this line will not move to c2pa-crypto
+
 #[allow(dead_code)] // used only in WASM build
 pub(crate) const SHA1_OID: Oid<'static> = oid!(1.3.14 .3 .2 .26);
 
@@ -216,38 +310,6 @@ fn get_sign_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>> {
     get_unprotected_header_certs(sign1)
 }
 
-#[allow(dead_code)]
-#[async_generic]
-pub(crate) fn check_ocsp_status(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
-) -> Result<OcspResponse> {
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
-    };
-
-    if _sync {
-        Ok(c2pa_crypto::cose::check_ocsp_status(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )?)
-    } else {
-        Ok(c2pa_crypto::cose::check_ocsp_status_async(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )
-        .await?)
-    }
-}
 
 // internal util function to dump the cert chain in PEM format
 fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
@@ -284,64 +346,6 @@ fn get_signing_time(
     }
 }
 
-#[async_generic(async_signature(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker
-))]
-#[allow(unused)]
-fn check_trust(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker,
-) -> Result<()> {
-    // just return is trust checks are disabled or misconfigured
-    match get_settings_value::<bool>("verify.verify_trust") {
-        Ok(verify_trust) => {
-            if !verify_trust {
-                return Ok(());
-            }
-        }
-        Err(e) => return Err(e),
-    }
-
-    let verify_result = if _sync {
-        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
-    } else {
-        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
-            .await
-    };
-
-    match verify_result {
-        Ok(()) => {
-            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                .success(validation_log);
-
-            Ok(())
-        }
-        Err(CertificateTrustError::CertificateNotTrusted) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
-
-            Err(Error::CoseCertUntrusted)
-        }
-        Err(e) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, &e);
-
-            // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
-            // validation_log.log(log_item, Error::CoseCertUntrusted)?;
-            Err(e.into())
-        }
-    }
-}
 
 // test for unrecognized signatures
 fn check_sig(sig: &[u8], alg: SigningAlg) -> Result<()> {
