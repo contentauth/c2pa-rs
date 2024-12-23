@@ -15,11 +15,9 @@ use std::io::Cursor;
 
 use async_generic::async_generic;
 use c2pa_crypto::{
-    asn1::rfc3161::TstInfo,
     cose::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy,
-        OcspFetchPolicy, Verifier,
+        validate_cose_tst_info_async, CertificateTrustPolicy, OcspFetchPolicy, Verifier,
     },
     ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
@@ -65,65 +63,6 @@ pub(crate) fn check_ocsp_status(
             validation_log,
         )
         .await?)
-    }
-}
-
-#[async_generic(async_signature(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker
-))]
-#[allow(unused)]
-fn check_trust(
-    ctp: &CertificateTrustPolicy,
-    chain_der: &[Vec<u8>],
-    cert_der: &[u8],
-    signing_time_epoch: Option<i64>,
-    validation_log: &mut impl StatusTracker,
-) -> Result<()> {
-    // just return is trust checks are disabled or misconfigured
-    match get_settings_value::<bool>("verify.verify_trust") {
-        Ok(verify_trust) => {
-            if !verify_trust {
-                return Ok(());
-            }
-        }
-        Err(e) => return Err(e),
-    }
-
-    let verify_result = if _sync {
-        ctp.check_certificate_trust(chain_der, cert_der, signing_time_epoch)
-    } else {
-        ctp.check_certificate_trust_async(chain_der, cert_der, signing_time_epoch)
-            .await
-    };
-
-    match verify_result {
-        Ok(()) => {
-            log_item!("Cose_Sign1", "signing certificate trusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
-                .success(validation_log);
-
-            Ok(())
-        }
-        Err(CertificateTrustError::CertificateNotTrusted) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, Error::CoseCertUntrusted);
-
-            Err(Error::CoseCertUntrusted)
-        }
-        Err(e) => {
-            log_item!("Cose_Sign1", "signing certificate untrusted", "verify_cose")
-                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                .failure_no_throw(validation_log, &e);
-
-            // TO REVIEW: Mixed message: Are we using CoseCertUntrusted in log or &e from above?
-            // validation_log.log(log_item, Error::CoseCertUntrusted)?;
-            Err(e.into())
-        }
     }
 }
 
@@ -207,11 +146,6 @@ fn extract_serial_from_cert(cert: &X509Certificate) -> BigUint {
     cert.serial.clone()
 }
 
-fn tst_info_to_timestamp(tst_info: &TstInfo) -> i64 {
-    let dt: chrono::DateTime<chrono::Utc> = tst_info.gen_time.clone().into();
-    dt.timestamp()
-}
-
 /// Asynchronously validate a COSE_SIGN1 byte vector and verify against expected data
 /// cose_bytes - byte array containing the raw COSE_SIGN1 data
 /// data:  data that was used to create the cose_bytes, these must match
@@ -267,30 +201,10 @@ pub(crate) async fn verify_cose_async(
         .verify_profile_async(&sign1, &tst_info_res, validation_log)
         .await?;
 
-    // verify cert matches requested algorithm
-    if cert_check {
-        // is the certificate trusted
-        #[cfg(target_arch = "wasm32")]
-        check_trust_async(
-            ctp,
-            &certs[1..],
-            der_bytes,
-            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
-            validation_log,
-        )
+    // TO REVIEW: Do we need the async case on non-WASM platforms?
+    verifier
+        .verify_trust_async(&sign1, &tst_info_res, validation_log)
         .await?;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        check_trust(
-            ctp,
-            &certs[1..],
-            der_bytes,
-            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
-            validation_log,
-        )?;
-
-        // todo: check TSA certs against trust list
-    }
 
     // check signature format
     if let Err(_e) = check_sig(&sign1.signature, alg) {
@@ -449,19 +363,7 @@ pub(crate) fn verify_cose(
     };
 
     verifier.verify_profile(&sign1, &tst_info_res, validation_log)?;
-
-    if cert_check {
-        // is the certificate trusted
-        check_trust(
-            ctp,
-            &certs[1..],
-            der_bytes,
-            tst_info_res.as_ref().ok().map(tst_info_to_timestamp),
-            validation_log,
-        )?;
-
-        // todo: check TSA certs against trust list
-    }
+    verifier.verify_trust(&sign1, &tst_info_res, validation_log)?;
 
     // check signature format
     if let Err(e) = check_sig(&sign1.signature, alg) {
