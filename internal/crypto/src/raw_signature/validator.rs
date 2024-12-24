@@ -93,11 +93,9 @@ pub fn async_validator_for_signing_alg(
         return Some(validator);
     }
 
-    let Some(validator) = validator_for_signing_alg(alg) else {
-        return None;
-    };
-
-    Some(Box::new(AsyncValidatorAdapter(validator)))
+    Some(Box::new(AsyncValidatorAdapter(validator_for_signing_alg(
+        alg,
+    )?)))
 }
 
 /// Return a built-in signature validator for the requested signature
