@@ -33,8 +33,8 @@ use crate::{
         validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
         CertificateTrustPolicy, CoseError,
     },
-    openssl::validators::validator_for_signing_alg,
     p1363::parse_ec_der_sig,
+    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg},
     time_stamp::TimeStampError,
     SigningAlg, ValidationInfo,
 };
@@ -95,8 +95,6 @@ impl Verifier<'_> {
         } else {
             self.verify_profile_async(&sign1, &tst_info_res, validation_log)
                 .await?;
-
-            // TO REVIEW: Do we need the async case on non-WASM platforms?
             self.verify_trust_async(&sign1, &tst_info_res, validation_log)
                 .await?;
         }
@@ -135,19 +133,13 @@ impl Verifier<'_> {
 
             validator.validate(&sign1.signature, &tbs, pk_der)?;
         } else {
-            if true {
-                unimplemented!(
-                    "Need to make async_validator_for_signing_alg available outside of WASM"
-                );
-            }
+            let Some(validator) = async_validator_for_signing_alg(alg) else {
+                return Err(CoseError::UnsupportedSigningAlgorithm);
+            };
 
-            let _ = pk_der;
-            let _ = tbs;
-            // let Some(validator) = async_validator_for_signing_alg(alg) else {
-            //     return Err(CoseError::UnsupportedSigningAlgorithm);
-            // };
-
-            // validator.validate(&sign1.signature, data, pk_der).await?;
+            validator
+                .validate_async(&sign1.signature, &tbs, pk_der)
+                .await?;
         }
 
         let subject = sign_cert

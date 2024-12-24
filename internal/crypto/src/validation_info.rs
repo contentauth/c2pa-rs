@@ -38,7 +38,7 @@ pub struct ValidationInfo {
 
     /// Certificate chain used to validate the signature
     pub cert_chain: Vec<u8>,
-    
+
     /// Signature revocation status
     pub revocation_status: Option<bool>,
 }
