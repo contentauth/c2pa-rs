@@ -18,8 +18,8 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::CryptoKey;
 
 use crate::{
-    raw_signature::RawSignatureValidationError,
-    webcrypto::{AsyncRawSignatureValidator, WindowOrWorker},
+    raw_signature::{AsyncRawSignatureValidator, RawSignatureValidationError},
+    webcrypto::WindowOrWorker,
 };
 
 /// An `EcdsaValidator` can validate raw signatures with one of the ECDSA
