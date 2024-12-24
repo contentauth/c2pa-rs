@@ -47,9 +47,9 @@ use crate::{
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
+    claim::{check_ocsp_status, Claim, ClaimAssertion, ClaimAssetData, RemoteManifest},
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
+    cose_validator::{verify_cose, verify_cose_async},
     dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
