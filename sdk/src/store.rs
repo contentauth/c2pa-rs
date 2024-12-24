@@ -518,9 +518,9 @@ impl Store {
                             verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
                         } else {
                             verify_cose_async(
-                                sig.clone(),
-                                claim_bytes,
-                                b"".to_vec(),
+                                &sig,
+                                &claim_bytes,
+                                b"",
                                 false,
                                 &self.ctp,
                                 &mut cose_log,
