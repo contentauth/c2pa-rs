@@ -11,24 +11,32 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Cursor;
+
+use asn1_rs::FromDer;
 use async_generic::async_generic;
 use c2pa_status_tracker::{
     log_item,
     validation_codes::{
-        SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MISMATCH,
-        TIMESTAMP_OUTSIDE_VALIDITY,
+        ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+        SIGNING_CREDENTIAL_UNTRUSTED, TIMESTAMP_MISMATCH, TIMESTAMP_OUTSIDE_VALIDITY,
     },
     StatusTracker,
 };
 use coset::CoseSign1;
+use x509_parser::prelude::X509Certificate;
 
 use crate::{
     asn1::rfc3161::TstInfo,
     cose::{
-        cert_chain_from_sign1, check_certificate_profile, CertificateTrustError,
+        cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
+        validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
         CertificateTrustPolicy, CoseError,
     },
+    openssl::validators::validator_for_signing_alg,
+    p1363::parse_ec_der_sig,
     time_stamp::TimeStampError,
+    SigningAlg, ValidationInfo,
 };
 
 /// A `Verifier` reads a COSE signature and reports on its validity.
@@ -52,6 +60,116 @@ pub enum Verifier<'a> {
 }
 
 impl Verifier<'_> {
+    /// Verify a COSE signature according to the configured policies.
+    #[async_generic]
+    pub fn verify_signature(
+        &self,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        validation_log: &mut impl StatusTracker,
+    ) -> Result<ValidationInfo, CoseError> {
+        let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
+
+        let Ok(alg) = signing_alg_from_sign1(&sign1) else {
+            log_item!(
+                "Cose_Sign1",
+                "unsupported or missing Cose algorithm",
+                "verify_cose"
+            )
+            .validation_status(ALGORITHM_UNSUPPORTED)
+            .failure_no_throw(validation_log, CoseError::UnsupportedSigningAlgorithm);
+
+            return Err(CoseError::UnsupportedSigningAlgorithm);
+        };
+
+        let tst_info_res = if _sync {
+            validate_cose_tst_info(&sign1, data)
+        } else {
+            validate_cose_tst_info_async(&sign1, &data).await
+        };
+
+        if _sync {
+            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
+            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
+        } else {
+            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
+                .await?;
+
+            // TO REVIEW: Do we need the async case on non-WASM platforms?
+            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
+                .await?;
+        }
+
+        match alg {
+            SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+                if parse_ec_der_sig(&sign1.signature).is_err() {
+                    log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
+                        .validation_status(SIGNING_CREDENTIAL_INVALID)
+                        .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
+
+                    // validation_log.log(log_item, CoseError::InvalidEcdsaSignature)?;
+                    return Err(CoseError::InvalidEcdsaSignature);
+                }
+            }
+            _ => (),
+        }
+
+        // Reconstruct payload and additional data as it should have been at time of
+        // signing.
+        sign1.payload = Some(data.to_vec());
+        let tbs = sign1.tbs_data(additional_data);
+
+        let certs = cert_chain_from_sign1(&sign1)?;
+        let end_entity_cert_der = &certs[0];
+
+        let (_rem, sign_cert) = X509Certificate::from_der(end_entity_cert_der)
+            .map_err(|_| CoseError::CborParsingError("invalid X509 certificate".to_string()))?;
+        let pk = sign_cert.public_key();
+        let pk_der = pk.raw;
+
+        if _sync {
+            let Some(validator) = validator_for_signing_alg(alg) else {
+                return Err(CoseError::UnsupportedSigningAlgorithm);
+            };
+
+            validator.validate(&sign1.signature, &tbs, pk_der)?;
+        } else {
+            if true {
+                unimplemented!(
+                    "Need to make async_validator_for_signing_alg available outside of WASM"
+                );
+            }
+
+            let _ = pk_der;
+            let _ = tbs;
+            // let Some(validator) = async_validator_for_signing_alg(alg) else {
+            //     return Err(CoseError::UnsupportedSigningAlgorithm);
+            // };
+
+            // validator.validate(&sign1.signature, data, pk_der).await?;
+        }
+
+        let subject = sign_cert
+            .subject()
+            .iter_organization()
+            .map(|attr| attr.as_str())
+            .last()
+            .ok_or(CoseError::MissingSigningCertificateChain)?
+            .map(|attr| attr.to_string())
+            .map_err(|_| CoseError::MissingSigningCertificateChain)?;
+
+        Ok(ValidationInfo {
+            alg: Some(alg),
+            date: tst_info_res.map(|t| t.gen_time.into()).ok(),
+            cert_serial_number: Some(sign_cert.serial.clone()),
+            issuer_org: Some(subject),
+            validated: true,
+            cert_chain: dump_cert_chain(&certs)?,
+            revocation_status: Some(true),
+        })
+    }
+
     /// Verify certificate profile if so configured.
     ///
     /// TO DO: This might not need to be public after refactoring.
@@ -193,4 +311,21 @@ impl Verifier<'_> {
             }
         }
     }
+}
+
+fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
+    let mut out_buf: Vec<u8> = Vec::new();
+    let mut writer = Cursor::new(out_buf);
+
+    for der_bytes in certs {
+        let c = x509_certificate::X509Certificate::from_der(der_bytes)
+            .map_err(|_e| CoseError::CborParsingError("invalid X509 certificate".to_string()))?;
+
+        c.write_pem(&mut writer).map_err(|_| {
+            CoseError::InternalError("I/O error constructing cert_chain dump".to_string())
+        })?;
+    }
+
+    out_buf = writer.into_inner();
+    Ok(out_buf)
 }
