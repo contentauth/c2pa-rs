@@ -355,6 +355,7 @@ impl From<CoseError> for Error {
             CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
             CoseError::TimeStampError(e) => e.into(),
             CoseError::CertificateProfileError(e) => e.into(),
+            CoseError::CertificateTrustError(e) => e.into(),
             CoseError::InternalError(e) => Self::InternalError(e),
         }
     }
