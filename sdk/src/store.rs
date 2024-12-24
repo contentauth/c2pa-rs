@@ -47,9 +47,12 @@ use crate::{
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssertionType, ClaimAssetData, RemoteManifest},
+    claim::{
+        check_ocsp_status, Claim, ClaimAssertion, ClaimAssertionType, ClaimAssetData,
+        RemoteManifest,
+    },
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
+    cose_validator::{verify_cose, verify_cose_async},
     dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
@@ -5070,7 +5073,9 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(Error::CoseTimeStampMismatch));
+        assert!(report.has_error(Error::TimeStampError(
+            c2pa_crypto::time_stamp::TimeStampError::InvalidData
+        )));
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 

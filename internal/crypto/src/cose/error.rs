@@ -13,7 +13,10 @@
 
 use thiserror::Error;
 
-use crate::{cose::CertificateProfileError, time_stamp::TimeStampError};
+use crate::{
+    cose::{CertificateProfileError, CertificateTrustError},
+    time_stamp::TimeStampError,
+};
 
 /// Describes errors that can occur when processing or generating [COSE]
 /// signatures.
@@ -49,6 +52,10 @@ pub enum CoseError {
     /// profile.
     #[error(transparent)]
     CertificateProfileError(#[from] CertificateProfileError),
+
+    /// The signing certificate(s) did not match the required trust policy.
+    #[error(transparent)]
+    CertificateTrustError(#[from] CertificateTrustError),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.

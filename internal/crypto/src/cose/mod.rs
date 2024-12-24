@@ -37,3 +37,6 @@ pub use sigtst::{
     cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async,
     validate_cose_tst_info, validate_cose_tst_info_async, TstToken,
 };
+
+mod verifier;
+pub use verifier::Verifier;
