@@ -3595,7 +3595,7 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::{time_stamp::TimeStampError, SigningAlg};
+    use c2pa_crypto::SigningAlg;
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -4895,7 +4895,9 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(TimeStampError::InvalidData));
+        assert!(report.has_error(Error::TimeStampError(
+            c2pa_crypto::time_stamp::TimeStampError::InvalidData
+        )));
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 

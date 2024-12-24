@@ -38,5 +38,5 @@ pub use sigtst::{
     validate_cose_tst_info, validate_cose_tst_info_async, TstToken,
 };
 
-mod verify;
-pub use verify::Verifier;
+mod verifier;
+pub use verifier::Verifier;
