@@ -17,9 +17,8 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustPolicy, OcspFetchPolicy, Verifier,
+        validate_cose_tst_info_async, CertificateTrustPolicy, Verifier,
     },
-    ocsp::OcspResponse,
     p1363::parse_ec_der_sig,
     raw_signature::{validator_for_signing_alg, RawSignatureValidator},
     SigningAlg, ValidationInfo,
@@ -32,41 +31,6 @@ use crate::{
     error::{Error, Result},
     settings::get_settings_value,
 };
-
-#[allow(dead_code)]
-#[async_generic]
-pub(crate) fn check_ocsp_status(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    validation_log: &mut impl StatusTracker,
-) -> Result<OcspResponse> {
-    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
-        Ok(true) => OcspFetchPolicy::FetchAllowed,
-        _ => OcspFetchPolicy::DoNotFetch,
-    };
-
-    if _sync {
-        Ok(c2pa_crypto::cose::check_ocsp_status(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )?)
-    } else {
-        Ok(c2pa_crypto::cose::check_ocsp_status_async(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            validation_log,
-        )
-        .await?)
-    }
-}
-
-// ---- TEMPORARY MARKER: Above this line will not move to c2pa-crypto
 
 fn get_sign_cert(sign1: &coset::CoseSign1) -> Result<Vec<u8>> {
     // element 0 is the signing cert
