@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::{
     cose::{CertificateProfileError, CertificateTrustError},
+    raw_signature::RawSignatureValidationError,
     time_stamp::TimeStampError,
 };
 
@@ -40,6 +41,10 @@ pub enum CoseError {
     #[error("the certificate was signed using an unsupported signature algorithm")]
     UnsupportedSigningAlgorithm,
 
+    /// Could not parse ECDSA signature.
+    #[error("could not parse ECDSA signature")]
+    InvalidEcdsaSignature,
+
     /// An error occurred while parsing CBOR.
     #[error("error while parsing CBOR ({0})")]
     CborParsingError(String),
@@ -56,6 +61,10 @@ pub enum CoseError {
     /// The signing certificate(s) did not match the required trust policy.
     #[error(transparent)]
     CertificateTrustError(#[from] CertificateTrustError),
+
+    /// An error was occurred when interpreting the underlying raw signature.
+    #[error(transparent)]
+    RawSignatureValidationError(#[from] RawSignatureValidationError),
 
     /// An unexpected internal error occured while requesting the time stamp
     /// response.

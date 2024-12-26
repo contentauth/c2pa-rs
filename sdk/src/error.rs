@@ -352,10 +352,12 @@ impl From<CoseError> for Error {
             CoseError::MultipleSigningCertificateChains => Self::CoseVerifier,
             CoseError::NoTimeStampToken => Self::NotFound,
             CoseError::UnsupportedSigningAlgorithm => Self::CoseSignatureAlgorithmNotSupported,
+            CoseError::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
             CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
             CoseError::TimeStampError(e) => e.into(),
             CoseError::CertificateProfileError(e) => e.into(),
             CoseError::CertificateTrustError(e) => e.into(),
+            CoseError::RawSignatureValidationError(e) => e.into(),
             CoseError::InternalError(e) => Self::InternalError(e),
         }
     }
