@@ -86,7 +86,7 @@ impl Verifier<'_> {
         let tst_info_res = if _sync {
             validate_cose_tst_info(&sign1, data)
         } else {
-            validate_cose_tst_info_async(&sign1, &data).await
+            validate_cose_tst_info_async(&sign1, data).await
         };
 
         if _sync {
