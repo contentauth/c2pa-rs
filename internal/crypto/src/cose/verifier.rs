@@ -101,7 +101,8 @@ impl Verifier<'_> {
 
         match alg {
             SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-                if parse_ec_der_sig(&sign1.signature).is_err() {
+                if parse_ec_der_sig(&sign1.signature).is_ok() {
+                    // Should have been in P1363 format, not DER.
                     log_item!("Cose_Sign1", "unsupported signature format", "verify_cose")
                         .validation_status(SIGNING_CREDENTIAL_INVALID)
                         .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
