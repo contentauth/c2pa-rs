@@ -1074,8 +1074,15 @@ impl Claim {
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
         check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
 
-        let verified =
-            verify_cose_async(sig, data, additional_bytes, cert_check, ctp, validation_log).await;
+        let verified = verify_cose_async(
+            &sig,
+            &data,
+            &additional_bytes,
+            cert_check,
+            ctp,
+            validation_log,
+        )
+        .await;
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
