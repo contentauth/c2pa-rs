@@ -89,6 +89,16 @@ pub const PNG_CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim.png";
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail>.
 pub const PNG_INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient.png";
 
+/// Label prefix for a SVG claim thumbnail assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail>.
+pub const SVG_CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim.svg";
+
+/// Label prefix for a SVG ingredient thumbnail assertion.
+///
+/// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail>.
+pub const SVG_INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient.svg";
+
 /// Label prefix for an actions assertion.
 ///
 /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_actions>.
@@ -194,6 +204,7 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
     match format {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
+        "image/svg+xml" | "svg" => format!("{label}.svg"),
         _ => {
             let p: Vec<&str> = format.split('/').collect();
             if p.len() == 2 && p[0] == "image" {
