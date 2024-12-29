@@ -49,6 +49,10 @@ pub enum CoseError {
     #[error("error while parsing CBOR ({0})")]
     CborParsingError(String),
 
+    /// An error occurred while generating CBOR.
+    #[error("error while generating CBOR ({0})")]
+    CborGenerationError(String),
+
     /// An error occurred while parsing a time stamp.
     #[error(transparent)]
     TimeStampError(#[from] TimeStampError),

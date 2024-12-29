@@ -13,13 +13,15 @@
 
 use async_generic::async_generic;
 use ciborium::value::Value;
-use coset::{sig_structure_data, Label, ProtectedHeader, SignatureContext};
+use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     asn1::rfc3161::TstInfo,
     cose::CoseError,
-    time_stamp::{verify_time_stamp, verify_time_stamp_async},
+    time_stamp::{
+        verify_time_stamp, verify_time_stamp_async, AsyncTimeStampProvider, TimeStampProvider,
+    },
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -121,8 +123,69 @@ pub struct TstToken {
     pub val: Vec<u8>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 struct TstContainer {
     #[serde(rename = "tstTokens")]
     tst_tokens: Vec<TstToken>,
+}
+
+impl TstContainer {
+    pub fn add_token(&mut self, token: TstToken) {
+        self.tst_tokens.push(token);
+    }
+}
+
+/// TO DO: Determine if this needs to be public after refactoring.
+///
+/// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
+/// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
+/// timestamp for that block of data.
+#[async_generic(
+    async_signature(
+        ts_provider: &dyn AsyncTimeStampProvider,
+        data: &[u8],
+        p_header: &ProtectedHeader,
+        mut header_builder: HeaderBuilder,
+    ))]
+pub fn add_sigtst_header(
+    ts_provider: &dyn TimeStampProvider,
+    data: &[u8],
+    p_header: &ProtectedHeader,
+    mut header_builder: HeaderBuilder,
+) -> Result<HeaderBuilder, CoseError> {
+    let sd = cose_countersign_data(data, p_header);
+
+    let maybe_cts = if _sync {
+        ts_provider.send_time_stamp_request(&sd)
+    } else {
+        ts_provider.send_time_stamp_request(&sd).await
+    };
+
+    if let Some(cts) = maybe_cts {
+        let cts = cts?;
+        let cts = make_cose_timestamp(&cts);
+
+        let mut sigtst_vec: Vec<u8> = vec![];
+        ciborium::into_writer(&cts, &mut sigtst_vec)
+            .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+        let sigtst_cbor: Value = ciborium::from_reader(sigtst_vec.as_slice())
+            .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+        header_builder = header_builder.text_value("sigTst".to_string(), sigtst_cbor);
+    }
+
+    Ok(header_builder)
+}
+
+// Wrap RFC 3161 TimeStampRsp in COSE sigTst object.
+fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
+    let token = TstToken {
+        val: ts_data.to_vec(),
+    };
+
+    let mut container = TstContainer::default();
+    container.add_token(token);
+
+    container
 }

@@ -354,6 +354,7 @@ impl From<CoseError> for Error {
             CoseError::UnsupportedSigningAlgorithm => Self::CoseSignatureAlgorithmNotSupported,
             CoseError::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
             CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
+            CoseError::CborGenerationError(_) => Self::CoseTimeStampGeneration,
             CoseError::TimeStampError(e) => e.into(),
             CoseError::CertificateProfileError(e) => e.into(),
             CoseError::CertificateTrustError(e) => e.into(),
