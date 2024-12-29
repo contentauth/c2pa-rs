@@ -138,8 +138,8 @@ impl TstContainer {
 /// TO DO: Determine if this needs to be public after refactoring.
 ///
 /// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
-/// provided [`RawSigner`] or [`AsyncRawSigner`] to request a timestamp for that
-/// block of data.
+/// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
+/// timestamp for that block of data.
 #[async_generic(
     async_signature(
         ts_provider: &dyn AsyncTimeStampProvider,
