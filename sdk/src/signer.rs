@@ -102,7 +102,7 @@ pub trait Signer {
     /// If this struct also implements [`TimeStampProvider`], return a reference to that struct.
     ///
     /// [`TimeStampProvider`]: c2pa_crypto::time_stamp::TimeStampProvider
-    fn time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn TimeStampProvider>> {
+    fn time_stamp_provider(&self) -> Option<Box<&dyn TimeStampProvider>> {
         None
     }
 }
@@ -222,7 +222,7 @@ pub trait AsyncSigner: Sync {
     /// If this struct also implements [`AsyncTimeStampProvider`], return a reference to that struct.
     ///
     /// [`AsyncTimeStampProvider`]: c2pa_crypto::time_stamp::AsyncTimeStampProvider
-    fn async_time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn AsyncTimeStampProvider>> {
+    fn async_time_stamp_provider(&self) -> Option<Box<&dyn AsyncTimeStampProvider>> {
         None
     }
 }
@@ -368,7 +368,7 @@ impl Signer for Box<dyn Signer> {
         (**self).send_timestamp_request(message)
     }
 
-    fn time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn TimeStampProvider>> {
+    fn time_stamp_provider(&self) -> Option<Box<&dyn TimeStampProvider>> {
         (**self).time_stamp_provider()
     }
 }
