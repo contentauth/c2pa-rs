@@ -12,7 +12,11 @@
 // each license.
 
 use async_trait::async_trait;
-use c2pa_crypto::{raw_signature::RawSigner, SigningAlg};
+use c2pa_crypto::{
+    raw_signature::RawSigner,
+    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
+    SigningAlg,
+};
 
 use crate::{DynamicAssertion, Result};
 
@@ -93,6 +97,13 @@ pub trait Signer {
     /// Returns a list of dynamic assertions that should be included in the manifest.
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         Vec::new()
+    }
+
+    /// If this struct also implements [`TimeStampProvider`], return a reference to that struct.
+    ///
+    /// [`TimeStampProvider`]: c2pa_crypto::time_stamp::TimeStampProvider
+    fn time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn TimeStampProvider>> {
+        None
     }
 }
 
@@ -207,6 +218,13 @@ pub trait AsyncSigner: Sync {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         Vec::new()
     }
+
+    /// If this struct also implements [`AsyncTimeStampProvider`], return a reference to that struct.
+    ///
+    /// [`AsyncTimeStampProvider`]: c2pa_crypto::time_stamp::AsyncTimeStampProvider
+    fn async_time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn AsyncTimeStampProvider>> {
+        None
+    }
 }
 
 /// The `AsyncSigner` trait generates a cryptographic signature over a byte array.
@@ -279,6 +297,13 @@ pub trait AsyncSigner {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         Vec::new()
     }
+
+    /// If this struct also implements [`AsyncTimeStampProvider`], return a reference to that struct.
+    ///
+    /// [`AsyncTimeStampProvider`]: c2pa_crypto::time_stamp::AsyncTimeStampProvider
+    fn async_time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn AsyncTimeStampProvider>> {
+        None
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -341,6 +366,10 @@ impl Signer for Box<dyn Signer> {
 
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         (**self).send_timestamp_request(message)
+    }
+
+    fn time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn TimeStampProvider>> {
+        (**self).time_stamp_provider()
     }
 }
 

@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     asn1::rfc3161::TstInfo,
     cose::CoseError,
-    time_stamp::{verify_time_stamp, verify_time_stamp_async},
+    time_stamp::{
+        verify_time_stamp, verify_time_stamp_async, AsyncTimeStampProvider, TimeStampError,
+        TimeStampProvider,
+    },
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -125,4 +128,29 @@ pub struct TstToken {
 struct TstContainer {
     #[serde(rename = "tstTokens")]
     tst_tokens: Vec<TstToken>,
+}
+
+/// TO DO: Determine if this needs to be public after refactoring.
+///
+/// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
+/// provided [`RawSigner`] or [`AsyncRawSigner`] to request a timestamp for that
+/// block of data.
+#[async_generic(
+    async_signature(
+        ts_provider: &dyn AsyncTimeStampProvider,
+        data: &[u8],
+        p_header: &ProtectedHeader,
+    ))]
+pub fn timestamp_countersignature(
+    ts_provider: &dyn TimeStampProvider,
+    data: &[u8],
+    p_header: &ProtectedHeader,
+) -> Option<Result<Vec<u8>, TimeStampError>> {
+    let sd = cose_countersign_data(data, p_header);
+
+    if _sync {
+        ts_provider.send_time_stamp_request(&sd)
+    } else {
+        ts_provider.send_time_stamp_request(&sd).await
+    }
 }

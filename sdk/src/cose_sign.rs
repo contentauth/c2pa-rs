@@ -17,7 +17,10 @@
 
 use async_generic::async_generic;
 use c2pa_crypto::{
-    cose::{check_certificate_profile, CertificateTrustPolicy},
+    cose::{
+        check_certificate_profile, timestamp_countersignature, timestamp_countersignature_async,
+        CertificateTrustPolicy,
+    },
     p1363::parse_ec_der_sig,
     SigningAlg,
 };
@@ -30,13 +33,8 @@ use coset::{
 };
 
 use crate::{
-    claim::Claim,
-    cose_validator::verify_cose,
-    settings::get_settings_value,
-    time_stamp::{
-        cose_timestamp_countersign, cose_timestamp_countersign_async, make_cose_timestamp,
-    },
-    AsyncSigner, Error, Result, Signer,
+    claim::Claim, cose_validator::verify_cose, settings::get_settings_value,
+    time_stamp::make_cose_timestamp, AsyncSigner, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -311,9 +309,15 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
     };
 
     let maybe_cts = if _sync {
-        cose_timestamp_countersign(signer, data, &ph2)
+        signer
+            .time_stamp_provider()
+            .and_then(|tsp| timestamp_countersignature(*tsp, data, &ph2))
     } else {
-        cose_timestamp_countersign_async(signer, data, &ph2).await
+        if let Some(tsp) = signer.async_time_stamp_provider() {
+            timestamp_countersignature_async(*tsp, data, &ph2).await
+        } else {
+            None
+        }
     };
 
     let mut unprotected_h = if let Some(cts) = maybe_cts {
