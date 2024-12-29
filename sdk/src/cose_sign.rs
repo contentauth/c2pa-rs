@@ -18,7 +18,7 @@
 use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
-        check_certificate_profile, timestamp_countersignature, timestamp_countersignature_async,
+        add_sigtst_header, add_sigtst_header_async, check_certificate_profile,
         CertificateTrustPolicy,
     },
     p1363::parse_ec_der_sig,
@@ -33,8 +33,8 @@ use coset::{
 };
 
 use crate::{
-    claim::Claim, cose_validator::verify_cose, settings::get_settings_value,
-    time_stamp::make_cose_timestamp, AsyncSigner, Error, Result, Signer,
+    claim::Claim, cose_validator::verify_cose, settings::get_settings_value, AsyncSigner, Error,
+    Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -308,26 +308,20 @@ fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(H
         header: protected_header.clone(),
     };
 
-    let maybe_cts = if _sync {
-        signer
-            .time_stamp_provider()
-            .and_then(|tsp| timestamp_countersignature(*tsp, data, &ph2))
+    let unprotected_h = HeaderBuilder::new();
+
+    let mut unprotected_h = if _sync {
+        if let Some(tsp) = signer.time_stamp_provider() {
+            add_sigtst_header(*tsp, data, &ph2, unprotected_h)?
+        } else {
+            unprotected_h
+        }
     } else {
         if let Some(tsp) = signer.async_time_stamp_provider() {
-            timestamp_countersignature_async(*tsp, data, &ph2).await
+            add_sigtst_header_async(*tsp, data, &ph2, unprotected_h).await?
         } else {
-            None
+            unprotected_h
         }
-    };
-
-    let mut unprotected_h = if let Some(cts) = maybe_cts {
-        let cts = cts?;
-        let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
-        let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
-
-        HeaderBuilder::new().text_value("sigTst".to_string(), sigtst_cbor)
-    } else {
-        HeaderBuilder::new()
     };
 
     // set the ocsp responder response if available
