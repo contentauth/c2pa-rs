@@ -1,0 +1,31 @@
+thread 'main' panicked at src/tools/rustfmt/src/comment.rs:503:29:
+byte index 4 is out of bounds of `> >`
+stack backtrace:
+   0:        0x10f0680f0 - std::backtrace::Backtrace::create::ha751bce222e5ae16
+   1:        0x10d2f6acc - std[17a8e917c6ec07a8]::panicking::update_hook::<alloc[48cb1b81ffafecc]::boxed::Box<rustc_driver_impl[ad5d86c5e6d345f]::install_ice_hook::{closure#1}>>::{closure#0}
+   2:        0x10f082eb0 - std::panicking::rust_panic_with_hook::he198aa85ff28153f
+   3:        0x10f082a1c - std::panicking::begin_panic_handler::{{closure}}::h4073917fa0e6d1d3
+   4:        0x10f080610 - std::sys::backtrace::__rust_end_short_backtrace::h09e7e14c9bd67923
+   5:        0x10f0826e0 - _rust_begin_unwind
+   6:        0x1117506cc - core::panicking::panic_fmt::h3c70e330423a8a1d
+   7:        0x10c8a4430 - core::str::slice_error_fail_rt::h14d858b97a4525ec
+   8:        0x111750bd0 - core::str::slice_error_fail::h51812382ee2b7c98
+   9:        0x102f2f09c - rustfmt_nightly[4afb4d3298affb73]::comment::rewrite_comment_inner
+  10:        0x102f2abe0 - rustfmt_nightly[4afb4d3298affb73]::comment::identify_comment
+  11:        0x102f20dc4 - <[rustc_ast[9e0ec498d228abde]::ast::Attribute] as rustfmt_nightly[4afb4d3298affb73]::rewrite::Rewrite>::rewrite_result
+  12:        0x102fb04f0 - <rustfmt_nightly[4afb4d3298affb73]::visitor::FmtVisitor>::visit_attrs
+  13:        0x102fa5990 - <rustfmt_nightly[4afb4d3298affb73]::visitor::FmtVisitor>::visit_item
+  14:        0x102f8d6ac - <rustfmt_nightly[4afb4d3298affb73]::visitor::FmtVisitor>::visit_items_with_reordering
+  15:        0x102fb1520 - <rustfmt_nightly[4afb4d3298affb73]::visitor::FmtVisitor>::format_separate_mod
+  16:        0x102e5b84c - <scoped_tls[96d12b8eb3754116]::ScopedKey<rustc_span[35582937fc5d27f5]::SessionGlobals>>::with::<<rustfmt_nightly[4afb4d3298affb73]::Session<std[17a8e917c6ec07a8]::io::stdio::Stdout>>::format_input_inner::{closure#0}, core[4f329069540e35fb]::result::Result<rustfmt_nightly[4afb4d3298affb73]::FormatReport, rustfmt_nightly[4afb4d3298affb73]::ErrorKind>>
+  17:        0x102e72298 - rustfmt[8cd2b3af7b1ec055]::format_and_emit_report::<std[17a8e917c6ec07a8]::io::stdio::Stdout>
+  18:        0x102e701ec - rustfmt[8cd2b3af7b1ec055]::execute
+  19:        0x102e6d0c8 - rustfmt[8cd2b3af7b1ec055]::main
+  20:        0x102e63970 - std[17a8e917c6ec07a8]::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  21:        0x102e63d48 - std[17a8e917c6ec07a8]::rt::lang_start::<()>::{closure#0}
+  22:        0x10f065ac4 - std::rt::lang_start_internal::h2bf1499861d71f0a
+  23:        0x102e73230 - _main
+
+
+rustc version: 1.85.0-nightly (14ee63a3c 2024-12-29)
+platform: aarch64-apple-darwin
