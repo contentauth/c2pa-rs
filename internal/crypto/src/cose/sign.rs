@@ -36,35 +36,40 @@ use crate::{
 /// > X.509 Certificates are stored as defined by [RFC 9360] (CBOR Object
 /// > Signing and Encryption (COSE): Header Parameters for Carrying and
 /// > Referencing X.509 Certificates). For convenience, the definition of
-/// > x5chain is copied below.
+/// > `x5chain` is copied below.
 /// >
 /// > ...
 /// >
-/// >> `x5chain`: This header parameter contains an ordered array of X.509
-/// certificates. The certificates are to be ordered starting with the
-/// certificate containing the end-entity key followed by the certificate that
-/// signed it, and so on. There is no requirement for the entire chain to be
-/// present in the element if there is reason to believe that the relying party
-/// already has, or can locate, the missing certificates. This means that the
-/// relying party is still required to do path building but that a candidate
-/// path is proposed in this header parameter. >>
-/// >> The trust mechanism MUST process any certificates in this parameter as
-/// untrusted input. The presence of a self-signed certificate in the parameter
-/// MUST NOT cause the update of the set of trust anchors without some
-/// out-of-band confirmation. As the contents of this header parameter are
-/// untrusted input, the header parameter can be in either the protected or
-/// unprotected header bucket. Sending the header parameter in the unprotected
-/// header bucket allows an intermediary to remove or add certificates. >>
-/// >> The end-entity certificate MUST be integrity protected by COSE. This can,
-/// for example, be done by sending the header parameter in the protected
-/// header, sending an `x5chain` in the unprotected header combined with an
-/// `x5t` in the protected header, or including the end-entity certificate in
-/// the `external_aad`. >>
-/// >> This header parameter allows for a single X.509 certificate or a chain of
-/// X.509 certificates to be carried in the message. >>
-/// >> * If a single certificate is conveyed, it is placed in a CBOR byte
-/// string. >> * If multiple certificates are conveyed, a CBOR array of byte
-/// strings is used, with each certificate being in its own byte string.
+/// > `x5chain`: This header parameter contains an ordered array of X.509
+/// > certificates. The certificates are to be ordered starting with the
+/// > certificate containing the end-entity key followed by the certificate that
+/// > signed it, and so on. There is no requirement for the entire chain to be
+/// > present in the element if there is reason to believe that the relying
+/// > party already has, or can locate, the missing certificates. This means
+/// > that the relying party is still required to do path building but that a
+/// > candidate path is proposed in this header parameter.
+/// >
+/// > The trust mechanism MUST process any certificates in this parameter as
+/// > untrusted input. The presence of a self-signed certificate in the
+/// > parameter MUST NOT cause the update of the set of trust anchors without
+/// > some out-of-band confirmation. As the contents of this header parameter
+/// > are untrusted input, the header parameter can be in either the protected
+/// > or unprotected header bucket. Sending the header parameter in the
+/// > unprotected header bucket allows an intermediary to remove or add
+/// > certificates.
+/// >
+/// > The end-entity certificate MUST be integrity protected by COSE. This can,
+/// > for example, be done by sending the header parameter in the protected
+/// > header, sending an `x5chain` in the unprotected header combined with an
+/// > `x5t` in the protected header, or including the end-entity certificate in
+/// > the `external_aad`.
+/// >
+/// > This header parameter allows for a single X.509 certificate or a chain of
+/// > X.509 certificates to be carried in the message.
+/// >
+/// > * If a single certificate is conveyed, it is placed in a CBOR byte string.
+/// > * If multiple certificates are conveyed, a CBOR array of byte strings is
+/// > used, with each certificate being in its own byte string.
 ///
 /// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
