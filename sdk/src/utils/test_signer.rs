@@ -143,4 +143,8 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .await
             .map(|r| r.map_err(|e| e.into()))
     }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        Some(Box::new(&*self.0))
+    }
 }

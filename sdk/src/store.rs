@@ -5897,6 +5897,7 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
+        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -5935,61 +5936,47 @@ pub mod tests {
 
         /// This is an async signer wrapped around a local temp signer,
         /// that implements the dynamic assertion trait.
-        struct DynamicSigner {
-            alg: SigningAlg,
-            certs: Vec<Vec<u8>>,
-            reserve_size: usize,
-            tsa_url: Option<String>,
-            ocsp_val: Option<Vec<u8>>,
-        }
+        struct DynamicSigner(Box<dyn AsyncSigner>);
 
         impl DynamicSigner {
             fn new() -> Self {
-                let signer = test_signer(SigningAlg::Ps256);
-                DynamicSigner {
-                    alg: signer.alg(),
-                    certs: signer.certs().unwrap_or_default(),
-                    reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_authority_url(),
-                    ocsp_val: signer.ocsp_val(),
-                }
+                Self(async_test_signer(SigningAlg::Ps256))
             }
         }
 
         #[async_trait::async_trait]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
-                let signer = test_signer(SigningAlg::Ps256);
-                signer.sign(&data)
+                self.0.sign(data).await
             }
 
             fn alg(&self) -> SigningAlg {
-                self.alg
+                self.0.alg()
             }
 
             fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
-                let mut output: Vec<Vec<u8>> = Vec::new();
-                for v in &self.certs {
-                    output.push(v.clone());
-                }
-                Ok(output)
+                self.0.certs()
             }
 
             fn reserve_size(&self) -> usize {
-                self.reserve_size
+                self.0.reserve_size()
             }
 
             fn time_authority_url(&self) -> Option<String> {
-                self.tsa_url.clone()
+                self.0.time_authority_url()
             }
 
             async fn ocsp_val(&self) -> Option<Vec<u8>> {
-                self.ocsp_val.clone()
+                self.0.ocsp_val().await
             }
 
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
+            }
+
+            fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+                self.0.async_raw_signer()
             }
         }
 

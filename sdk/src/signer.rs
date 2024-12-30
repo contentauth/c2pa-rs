@@ -13,8 +13,8 @@
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    raw_signature::RawSigner,
-    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    time_stamp::{TimeStampError, TimeStampProvider},
     SigningAlg,
 };
 
@@ -99,10 +99,10 @@ pub trait Signer {
         Vec::new()
     }
 
-    /// If this struct also implements [`TimeStampProvider`], return a reference to that struct.
+    /// If this struct also implements [`RawSigner`] (which it should), return a reference to that struct.
     ///
-    /// [`TimeStampProvider`]: c2pa_crypto::time_stamp::TimeStampProvider
-    fn time_stamp_provider(&self) -> Option<Box<&dyn TimeStampProvider>> {
+    /// [`RawSigner`]: c2pa_crypto::time_stamp::RawSigner
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
         None
     }
 }
@@ -219,10 +219,10 @@ pub trait AsyncSigner: Sync {
         Vec::new()
     }
 
-    /// If this struct also implements [`AsyncTimeStampProvider`], return a reference to that struct.
+    /// If this struct also implements [`AsyncRawSigner`] (which it should), return a reference to that struct.
     ///
-    /// [`AsyncTimeStampProvider`]: c2pa_crypto::time_stamp::AsyncTimeStampProvider
-    fn async_time_stamp_provider(&self) -> Option<Box<&dyn AsyncTimeStampProvider>> {
+    /// [`AsyncRawSigner`]: c2pa_crypto::time_stamp::AsyncRawSigner
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         None
     }
 }
@@ -298,10 +298,10 @@ pub trait AsyncSigner {
         Vec::new()
     }
 
-    /// If this struct also implements [`AsyncTimeStampProvider`], return a reference to that struct.
+    /// If this struct also implements [`AsyncRawSigner`] (which it should), return a reference to that struct.
     ///
-    /// [`AsyncTimeStampProvider`]: c2pa_crypto::time_stamp::AsyncTimeStampProvider
-    fn async_time_stamp_provider<'a>(&'a self) -> Option<Box<&'a dyn AsyncTimeStampProvider>> {
+    /// [`AsyncRawSigner`]: c2pa_crypto::time_stamp::AsyncRawSigner
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         None
     }
 }
@@ -368,8 +368,57 @@ impl Signer for Box<dyn Signer> {
         (**self).send_timestamp_request(message)
     }
 
-    fn time_stamp_provider(&self) -> Option<Box<&dyn TimeStampProvider>> {
-        (**self).time_stamp_provider()
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        (**self).raw_signer()
+    }
+}
+
+impl RawSigner for Box<dyn Signer> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.as_ref().sign(data)?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.as_ref().alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.as_ref().certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.as_ref().reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        eprintln!("HUH, A DIFFERENT I WANTED @ 397");
+        self.as_ref().ocsp_val()
+    }
+}
+
+impl TimeStampProvider for Box<dyn Signer> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.as_ref().time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.as_ref().timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.as_ref().sign(message)?)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.as_ref()
+            .send_timestamp_request(message)
+            .map(|r| Ok(r?))
     }
 }
 
@@ -419,6 +468,10 @@ impl AsyncSigner for Box<dyn AsyncSigner + Send + Sync> {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         (**self).dynamic_assertions()
     }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        (**self).async_raw_signer()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -467,6 +520,10 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         (**self).dynamic_assertions()
     }
+
+    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+        (**self).async_raw_signer()
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -511,5 +568,9 @@ impl Signer for RawSignerWrapper {
         self.0
             .send_time_stamp_request(message)
             .map(|r| r.map_err(|e| e.into()))
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        Some(Box::new(&*self.0))
     }
 }

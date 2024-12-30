@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     cose::{CertificateProfileError, CertificateTrustError},
-    raw_signature::RawSignatureValidationError,
+    raw_signature::{RawSignatureValidationError, RawSignerError},
     time_stamp::TimeStampError,
 };
 
@@ -66,7 +66,15 @@ pub enum CoseError {
     #[error(transparent)]
     CertificateTrustError(#[from] CertificateTrustError),
 
-    /// An error was occurred when interpreting the underlying raw signature.
+    /// The box size provided for the signature is too small.
+    #[error("the signature box is too small")]
+    BoxSizeTooSmall,
+
+    /// An error occurred when generating the underlying raw signature.
+    #[error(transparent)]
+    RawSignerError(#[from] RawSignerError),
+
+    /// An error occurred when interpreting the underlying raw signature.
     #[error(transparent)]
     RawSignatureValidationError(#[from] RawSignatureValidationError),
 
