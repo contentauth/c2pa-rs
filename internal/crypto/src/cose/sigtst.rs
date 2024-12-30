@@ -139,6 +139,9 @@ impl TstContainer {
 /// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
 /// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
 /// timestamp for that block of data.
+///
+/// [`TimeStampProvider`]: crate::time_stamp::TimeStampProvider
+/// [`AsyncTimeStampProvider`]: crate::time_stamp::AsyncTimeStampProvider
 #[async_generic(
     async_signature(
         ts_provider: &dyn AsyncRawSigner,
