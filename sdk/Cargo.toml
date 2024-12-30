@@ -32,7 +32,7 @@ file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["dep:openssl", "c2pa-crypto/openssl"]
+openssl = ["c2pa-crypto/openssl"]
 openssl_sign = ["openssl", "c2pa-crypto/openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
@@ -95,7 +95,7 @@ hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"
 img-parts = "0.3.0"
-jfifdump = "0.5.1"
+jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
@@ -106,9 +106,9 @@ png_pong = "0.9.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
-rasn-ocsp = "0.18.0"
-rasn-pkix = "0.18.0"
-rasn = "0.18.0"
+rasn-ocsp = "0.22.0"
+rasn-pkix = "0.22.0"
+rasn = "0.22.0"
 riff = "2.0.0"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
@@ -121,7 +121,7 @@ serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
 tempfile = "3.10.1"
-thiserror = "2.0.6"
+thiserror = "2.0.8"
 treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
@@ -135,19 +135,14 @@ image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
-instant = "0.1.12"
-openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
-# We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
-# to handle certificate timestamp checking correctly.
-instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
 rsa = { version = "0.9.6", features = ["sha2"] }
-serde-wasm-bindgen = "0.5.0"
+serde-wasm-bindgen = "0.6.5"
 spki = "0.7.3"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"

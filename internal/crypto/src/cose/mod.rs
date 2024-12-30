@@ -15,13 +15,29 @@
 //!
 //! [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 
-mod certificate_acceptance_policy;
-pub use certificate_acceptance_policy::{CertificateAcceptancePolicy, InvalidCertificateError};
+mod certificate_trust_policy;
+pub use certificate_trust_policy::{
+    CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError,
+};
+
+mod certificate_profile;
+pub use certificate_profile::{check_certificate_profile, CertificateProfileError};
 
 mod error;
 pub use error::CoseError;
 
+mod ocsp;
+pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+
+mod sign1;
+pub use sign1::{cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1};
+
 mod sigtst;
 pub use sigtst::{
-    cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async, TstToken,
+    add_sigtst_header, add_sigtst_header_async, cose_countersign_data, parse_and_validate_sigtst,
+    parse_and_validate_sigtst_async, validate_cose_tst_info, validate_cose_tst_info_async,
+    TstToken,
 };
+
+mod verifier;
+pub use verifier::Verifier;

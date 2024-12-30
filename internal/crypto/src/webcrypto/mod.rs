@@ -22,9 +22,9 @@
 pub(crate) mod async_validators;
 pub use async_validators::{
     async_validator_for_sig_and_hash_algs, async_validator_for_signing_alg,
-    AsyncRawSignatureValidator,
 };
 
+pub(crate) mod check_certificate_trust;
 pub(crate) mod signers;
 pub mod validators;
 

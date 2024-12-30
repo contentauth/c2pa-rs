@@ -13,7 +13,11 @@
 
 use thiserror::Error;
 
-use crate::time_stamp::TimeStampError;
+use crate::{
+    cose::{CertificateProfileError, CertificateTrustError},
+    raw_signature::RawSignatureValidationError,
+    time_stamp::TimeStampError,
+};
 
 /// Describes errors that can occur when processing or generating [COSE]
 /// signatures.
@@ -21,15 +25,53 @@ use crate::time_stamp::TimeStampError;
 /// [COSE]: https://datatracker.ietf.org/doc/rfc9052/
 #[derive(Debug, Error)]
 pub enum CoseError {
+    /// No signing certificate chain was found.
+    #[error("missing signing certificate chain")]
+    MissingSigningCertificateChain,
+
+    /// Signing certificates appeared in both protected and unprotected headers.
+    #[error("multiple signing certificate chains detected")]
+    MultipleSigningCertificateChains,
+
     /// No time stamp token found.
     #[error("no time stamp token found in sigTst or sigTst2 header")]
     NoTimeStampToken,
+
+    /// Unsupported signing algorithm found.
+    #[error("the certificate was signed using an unsupported signature algorithm")]
+    UnsupportedSigningAlgorithm,
+
+    /// Could not parse ECDSA signature.
+    #[error("could not parse ECDSA signature")]
+    InvalidEcdsaSignature,
 
     /// An error occurred while parsing CBOR.
     #[error("error while parsing CBOR ({0})")]
     CborParsingError(String),
 
+    /// An error occurred while generating CBOR.
+    #[error("error while generating CBOR ({0})")]
+    CborGenerationError(String),
+
     /// An error occurred while parsing a time stamp.
     #[error(transparent)]
     TimeStampError(#[from] TimeStampError),
+
+    /// The signing certificate(s) did not match the required certificate
+    /// profile.
+    #[error(transparent)]
+    CertificateProfileError(#[from] CertificateProfileError),
+
+    /// The signing certificate(s) did not match the required trust policy.
+    #[error(transparent)]
+    CertificateTrustError(#[from] CertificateTrustError),
+
+    /// An error was occurred when interpreting the underlying raw signature.
+    #[error(transparent)]
+    RawSignatureValidationError(#[from] RawSignatureValidationError),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(String),
 }
