@@ -19,9 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     asn1::rfc3161::TstInfo,
     cose::CoseError,
-    time_stamp::{
-        verify_time_stamp, verify_time_stamp_async, AsyncTimeStampProvider, TimeStampProvider,
-    },
+    raw_signature::{AsyncRawSigner, RawSigner},
+    time_stamp::{verify_time_stamp, verify_time_stamp_async},
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -140,15 +139,18 @@ impl TstContainer {
 /// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
 /// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
 /// timestamp for that block of data.
+///
+/// [`TimeStampProvider`]: crate::time_stamp::TimeStampProvider
+/// [`AsyncTimeStampProvider`]: crate::time_stamp::AsyncTimeStampProvider
 #[async_generic(
     async_signature(
-        ts_provider: &dyn AsyncTimeStampProvider,
+        ts_provider: &dyn AsyncRawSigner,
         data: &[u8],
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
     ))]
 pub fn add_sigtst_header(
-    ts_provider: &dyn TimeStampProvider,
+    ts_provider: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
