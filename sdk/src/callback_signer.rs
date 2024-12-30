@@ -18,8 +18,8 @@
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    raw_signature::{RawSigner, RawSignerError},
-    time_stamp::TimeStampProvider,
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
     SigningAlg,
 };
 
@@ -164,8 +164,8 @@ impl Signer for CallbackSigner {
         self.tsa_url.clone()
     }
 
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        Some(Box::new(self))
+    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+        Box::new(self)
     }
 }
 
@@ -224,5 +224,38 @@ impl AsyncSigner for CallbackSigner {
     #[cfg(target_arch = "wasm32")]
     async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
+    }
+
+    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+        Box::new(self)
+    }
+}
+
+#[async_trait]
+impl AsyncRawSigner for CallbackSigner {
+    // TO DISCUSS WITH GAVIN: Perhaps we could make CallbackSigner's API return c2pa_crypto::Result<..., RawSignerError> instead?
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        (self.callback)(self.context, &data)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        let pems = pem::parse_many(&self.certs)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        Ok(pems.into_iter().map(|p| p.into_contents()).collect())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.reserve_size
+    }
+}
+
+impl AsyncTimeStampProvider for CallbackSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }

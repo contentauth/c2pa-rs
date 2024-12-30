@@ -261,9 +261,8 @@ pub mod tests {
                 Some(self.ocsp_rsp.clone())
             }
 
-            fn raw_signer(&self) -> Option<Box<&dyn c2pa_crypto::raw_signature::RawSigner>> {
-                eprintln!("RS AS SELF:265");
-                Some(Box::new(self))
+            fn raw_signer(&self) -> Box<&dyn RawSigner> {
+                Box::new(self)
             }
         }
 

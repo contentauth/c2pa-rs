@@ -101,22 +101,16 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
         return Err(Error::CoseNoCerts);
     }
 
-    let signer = if _sync {
+    let raw_signer = if _sync {
         signer.raw_signer()
     } else {
         signer.async_raw_signer()
     };
 
-    let Some(signer) = signer else {
-        return Err(Error::InternalError(
-            "Signer does not implement RawSigner".to_string(),
-        ));
-    };
-
     if _sync {
-        Ok(sign(*signer, data, box_size)?)
+        Ok(sign(*raw_signer, data, box_size)?)
     } else {
-        Ok(sign_async(*signer, data, box_size).await?)
+        Ok(sign_async(*raw_signer, data, box_size).await?)
     }
 }
 
@@ -141,7 +135,11 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError},
+        time_stamp::{TimeStampError, TimeStampProvider},
+        SigningAlg,
+    };
 
     use super::sign_claim;
     #[cfg(not(target_arch = "wasm32"))]
@@ -157,7 +155,7 @@ mod tests {
         let claim_bytes = claim.data().unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
-        let box_size = signer.reserve_size();
+        let box_size = Signer::reserve_size(signer.as_ref());
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
@@ -215,6 +213,40 @@ mod tests {
         }
 
         fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
+        }
+
+        fn raw_signer(&self) -> Box<&dyn c2pa_crypto::raw_signature::RawSigner> {
+            Box::new(self)
+        }
+    }
+
+    impl RawSigner for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+            eprintln!("Canary, canary, please cause this deploy to fail!");
+            Ok(b"totally bogus signature".to_vec())
+        }
+
+        fn alg(&self) -> c2pa_crypto::SigningAlg {
+            c2pa_crypto::SigningAlg::Ps256
+        }
+
+        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            let cert_vec: Vec<u8> = Vec::new();
+            let certs = vec![cert_vec];
+            Ok(certs)
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+    }
+
+    impl TimeStampProvider for BogusSigner {
+        fn send_time_stamp_request(
+            &self,
+            _message: &[u8],
+        ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
             Some(Ok(Vec::new()))
         }
     }

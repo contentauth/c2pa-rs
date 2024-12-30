@@ -3595,7 +3595,11 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError},
+        time_stamp::TimeStampProvider,
+        SigningAlg,
+    };
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3836,7 +3840,31 @@ pub mod tests {
         fn reserve_size(&self) -> usize {
             42
         }
+
+        fn raw_signer(&self) -> Box<&dyn RawSigner> {
+            Box::new(self)
+        }
     }
+
+    impl RawSigner for BadSigner {
+        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+            Ok(b"not a valid signature".to_vec())
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
+        }
+
+        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            Ok(Vec::new())
+        }
+
+        fn reserve_size(&self) -> usize {
+            42
+        }
+    }
+
+    impl TimeStampProvider for BadSigner {}
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -5660,7 +5688,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -5731,7 +5759,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -5849,7 +5877,7 @@ pub mod tests {
         // get the embeddable manifest
         let mut input_stream = std::fs::File::open(ap).unwrap();
         let placed_manifest = store
-            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
+            .get_placed_manifest(Signer::reserve_size(&signer), "jpg", &mut input_stream)
             .unwrap();
 
         // insert manifest into output asset
@@ -5975,7 +6003,7 @@ pub mod tests {
                 vec![Box::new(TestDynamicAssertion {})]
             }
 
-            fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+            fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
                 self.0.async_raw_signer()
             }
         }
