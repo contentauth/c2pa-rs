@@ -231,7 +231,8 @@ impl AsyncSigner for CallbackSigner {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncRawSigner for CallbackSigner {
     // TO DISCUSS WITH GAVIN: Perhaps we could make CallbackSigner's API return c2pa_crypto::Result<..., RawSignerError> instead?
     async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {

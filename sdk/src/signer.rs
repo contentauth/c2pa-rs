@@ -530,7 +530,7 @@ impl AsyncSigner for Box<dyn AsyncSigner> {
         (**self).dynamic_assertions()
     }
 
-    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
+    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
         (**self).async_raw_signer()
     }
 }

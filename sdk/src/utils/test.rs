@@ -497,7 +497,7 @@ impl WebCryptoSigner {
 
 #[cfg(target_arch = "wasm32")]
 #[async_trait::async_trait(?Send)]
-impl crate::signer::AsyncSigner for WebCryptoSigner {
+impl AsyncSigner for WebCryptoSigner {
     fn alg(&self) -> SigningAlg {
         self.signing_alg
     }
@@ -551,6 +551,10 @@ impl crate::signer::AsyncSigner for WebCryptoSigner {
     async fn send_timestamp_request(&self, _: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
+
+    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+        unreachable!();
+    }
 }
 
 /// Create a [`RemoteSigner`] instance that can be used for testing purposes.
@@ -588,7 +592,12 @@ impl AsyncSigner for TempAsyncRemoteSigner {
         #[cfg(target_arch = "wasm32")]
         {
             let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
-            crate::cose_sign::cose_sign_async(&signer, &claim_bytes, self.reserve_size()).await
+            crate::cose_sign::cose_sign_async(
+                &signer,
+                &claim_bytes,
+                AsyncRawSigner::reserve_size(self),
+            )
+            .await
         }
 
         #[cfg(not(any(
@@ -637,7 +646,8 @@ impl AsyncSigner for TempAsyncRemoteSigner {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncRawSigner for TempAsyncRemoteSigner {
     async fn sign(&self, _claim_bytes: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
         unreachable!("Should not be called");
@@ -656,7 +666,8 @@ impl AsyncRawSigner for TempAsyncRemoteSigner {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncTimeStampProvider for TempAsyncRemoteSigner {
     async fn send_time_stamp_request(
         &self,
