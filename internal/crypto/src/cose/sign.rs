@@ -127,7 +127,7 @@ pub fn sign(signer: &dyn RawSigner, data: &[u8], box_size: usize) -> Result<Vec<
     // The payload is provided elsewhere, so we don't need to repeat it in the
     // `Cose_Sign1` structure.
     sign1.payload = None;
-    Ok(pad_cose_sig(&mut sign1, box_size)?)
+    pad_cose_sig(&mut sign1, box_size)
 }
 
 #[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], alg: SigningAlg))]
@@ -158,7 +158,7 @@ fn build_headers(
 
     let sc_der_array_or_bytes = match certs.len() {
         1 => Value::Bytes(certs[0].clone()),
-        _ => Value::Array(certs.into_iter().map(|cert| Value::Bytes(cert)).collect()),
+        _ => Value::Array(certs.into_iter().map(Value::Bytes).collect()),
     };
 
     // Add certs to protected header.

@@ -242,7 +242,7 @@ pub mod tests {
 
         impl crate::Signer for OcspSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-                Ok(self.raw_signer.sign(&data)?)
+                Ok(self.raw_signer.sign(data)?)
             }
 
             fn alg(&self) -> SigningAlg {
