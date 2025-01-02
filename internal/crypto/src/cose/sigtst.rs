@@ -16,6 +16,7 @@ use bcder::{decode::Constructed, encode::Values};
 use ciborium::value::Value;
 use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext};
 use serde::{Deserialize, Serialize};
+use serde_bytes::ByteBuf;
 
 use crate::{
     asn1::{
@@ -33,13 +34,15 @@ use crate::{
 /// Return a [`TstInfo`] struct if available and valid.
 #[async_generic]
 pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
-    let Some(sigtst) = &sign1
+    let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
         .iter()
         .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("sigTst".to_string()) {
-                Some(x.1.clone())
+            if x.0 == Label::Text("sigTst2".to_string()) {
+                Some((x.1.clone(), TimeStampStorage::V2_sigTst2_CTT))
+            } else if x.0 == Label::Text("sigTst".to_string()) {
+                Some((x.1.clone(), TimeStampStorage::V1_sigTst))
             } else {
                 None
             }
@@ -48,14 +51,27 @@ pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<T
         return Err(CoseError::NoTimeStampToken);
     };
 
+    // `maybe_sig_data` has to be declared outside the match block below so that the
+    // slice we return can live long enough.
+    let mut maybe_sig_data: Vec<u8> = vec![];
+    let tbs = match tss {
+        TimeStampStorage::V1_sigTst => data,
+        TimeStampStorage::V2_sigTst2_CTT => {
+            let sig_data = ByteBuf::from(sign1.signature.clone());
+            ciborium::into_writer(&sig_data, &mut maybe_sig_data)
+                .map_err(|e| CoseError::CborParsingError(e.to_string()))?;
+            maybe_sig_data.as_slice()
+        }
+    };
+
     let mut time_cbor: Vec<u8> = vec![];
     ciborium::into_writer(sigtst, &mut time_cbor)
         .map_err(|e| CoseError::InternalError(e.to_string()))?;
 
     let tst_infos = if _sync {
-        parse_and_validate_sigtst(&time_cbor, data, &sign1.protected)?
+        parse_and_validate_sigtst(&time_cbor, tbs, &sign1.protected)?
     } else {
-        parse_and_validate_sigtst_async(&time_cbor, data, &sign1.protected).await?
+        parse_and_validate_sigtst_async(&time_cbor, tbs, &sign1.protected).await?
     };
 
     // For now, we only pay attention to the first time stamp header.
