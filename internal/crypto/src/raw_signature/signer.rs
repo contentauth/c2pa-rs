@@ -155,10 +155,11 @@ impl From<crate::webcrypto::WasmCryptoError> for RawSignerError {
 /// certificate and private key.
 ///
 /// Which signers are available may vary depending on the platform and which
-/// crate features were enabled.
+/// crate features were enabled. If the desired signing algorithm is
+/// unavailable, will respond with `Err(RawSignerError::InternalError)`.
 ///
-/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
-/// response if the certificate chain or private key are invalid.
+/// May return an `Err` response if the certificate chain or private key are
+/// invalid.
 #[allow(unused)] // arguments may or may not be used depending on crate features
 pub fn signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],
@@ -195,10 +196,11 @@ pub fn signer_from_cert_chain_and_private_key(
 /// certificate and private key.
 ///
 /// Which signers are available may vary depending on the platform and which
-/// crate features were enabled.
+/// crate features were enabled. If the desired signing algorithm is
+/// unavailable, will respond with `Err(RawSignerError::InternalError)`.
 ///
-/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
-/// response if the certificate chain or private key are invalid.
+/// May return an `Err` response if the certificate chain or private key are
+/// invalid.
 #[allow(unused)] // arguments may or may not be used depending on crate features
 pub fn async_signer_from_cert_chain_and_private_key(
     cert_chain: &[u8],

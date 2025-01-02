@@ -25,8 +25,8 @@ use crate::SigningAlg;
 /// another signature mechanism. In the C2PA ecosystem, this wrapper is
 /// typically COSE, but `RawSignatureValidator` does not implement COSE.
 pub trait RawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
     fn validate(
         &self,
         sig: &[u8],
@@ -44,14 +44,14 @@ pub trait RawSignatureValidator {
 ///
 /// The WASM implementation of `c2pa-crypto` also implements
 /// [`RawSignatureValidator`] (the synchronous version), but some encryption
-/// algorithms are not fully supported. When possible, it's preferable to use
-/// this implementation.
+/// algorithms are not supported. For that reason, it's preferable to use this
+/// implementation on WASM.
 ///
 /// [`RawSignatureValidator`]: crate::raw_signature::RawSignatureValidator
 #[async_trait(?Send)]
 pub trait AsyncRawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
     async fn validate_async(
         &self,
         sig: &[u8],
