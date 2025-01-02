@@ -39,11 +39,10 @@ pub use sign1::{
 };
 
 mod sigtst;
-pub use sigtst::{
-    add_sigtst_header, add_sigtst_header_async, cose_countersign_data, parse_and_validate_sigtst,
-    parse_and_validate_sigtst_async, TstToken,
+pub(crate) use sigtst::{
+    add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,
+    validate_cose_tst_info_async,
 };
-pub(crate) use sigtst::{validate_cose_tst_info, validate_cose_tst_info_async};
 
 mod time_stamp_storage;
 pub use time_stamp_storage::TimeStampStorage;
