@@ -452,7 +452,14 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
         {
             let signer = crate::wasm::RsaWasmSignerAsync::new();
 
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            // TEMPORARY: Assume V1 until we plumb more through.
+            crate::cose_sign::cose_sign_async(
+                &signer,
+                claim_bytes,
+                self.reserve_size(),
+                TimeStampStorage::V1_sigTst,
+            )
+            .await
         }
     }
 
