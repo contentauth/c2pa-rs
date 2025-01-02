@@ -34,9 +34,8 @@ use crate::{
         CertificateTrustPolicy, CoseError, ValidationInfo,
     },
     p1363::parse_ec_der_sig,
-    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg},
+    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg, SigningAlg},
     time_stamp::TimeStampError,
-    SigningAlg,
 };
 
 /// A `Verifier` reads a COSE signature and reports on its validity.

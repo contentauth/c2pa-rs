@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
+    raw_signature::SigningAlg,
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-    SigningAlg,
 };
 
 /// Implementations of the `RawSigner` trait generate a cryptographic signature

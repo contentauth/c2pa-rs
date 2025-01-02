@@ -21,7 +21,7 @@ use coset::{
 
 use crate::{
     cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
-    SigningAlg,
+    raw_signature::SigningAlg,
 };
 
 /// Parse a byte slice as a COSE Sign1 data structure.

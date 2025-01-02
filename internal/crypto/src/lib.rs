@@ -36,9 +36,6 @@ pub(crate) mod p1363;
 
 pub mod raw_signature;
 
-mod signing_alg;
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-
 pub mod time_stamp;
 
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

@@ -16,10 +16,7 @@
 
 use bcder::Oid;
 
-use crate::{
-    raw_signature::{oids::*, RawSignatureValidator},
-    SigningAlg,
-};
+use crate::raw_signature::{oids::*, RawSignatureValidator, SigningAlg};
 
 mod ecdsa_validator;
 pub use ecdsa_validator::EcdsaValidator;

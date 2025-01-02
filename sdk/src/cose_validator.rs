@@ -19,7 +19,7 @@ use c2pa_crypto::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
         signing_time_from_sign1_async, CertificateTrustPolicy, ValidationInfo, Verifier,
     },
-    SigningAlg,
+    raw_signature::SigningAlg,
 };
 use c2pa_status_tracker::StatusTracker;
 use x509_parser::{num_bigint::BigUint, prelude::*};
@@ -152,7 +152,7 @@ pub(crate) fn get_signing_info(
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use ciborium::Value;
     use coset::Label;

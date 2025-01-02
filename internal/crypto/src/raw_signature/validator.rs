@@ -15,8 +15,7 @@ use async_trait::async_trait;
 use bcder::Oid;
 use thiserror::Error;
 
-use super::oids::*;
-use crate::SigningAlg;
+use crate::raw_signature::{oids::*, SigningAlg};
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.
