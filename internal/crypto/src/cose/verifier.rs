@@ -31,12 +31,12 @@ use crate::{
     cose::{
         cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
         validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
-        CertificateTrustPolicy, CoseError,
+        CertificateTrustPolicy, CoseError, ValidationInfo,
     },
     p1363::parse_ec_der_sig,
     raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg},
     time_stamp::TimeStampError,
-    SigningAlg, ValidationInfo,
+    SigningAlg,
 };
 
 /// A `Verifier` reads a COSE signature and reports on its validity.

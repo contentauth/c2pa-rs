@@ -47,5 +47,8 @@ pub(crate) use sigtst::{
 mod time_stamp_storage;
 pub use time_stamp_storage::TimeStampStorage;
 
+mod validation_info;
+pub use validation_info::ValidationInfo;
+
 mod verifier;
 pub use verifier::Verifier;

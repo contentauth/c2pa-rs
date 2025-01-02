@@ -34,7 +34,7 @@ pub struct ValidationInfo {
     pub issuer_org: Option<String>,
 
     /// Signature validity
-    /// 
+    ///
     /// TO REVIEW: What does this `bool` mean?
     pub validated: bool,
 
@@ -42,7 +42,7 @@ pub struct ValidationInfo {
     pub cert_chain: Vec<u8>,
 
     /// Signature revocation status
-    /// 
+    ///
     /// TO REVIEW: What does this `bool` mean?
     pub revocation_status: Option<bool>,
 }

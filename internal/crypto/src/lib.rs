@@ -41,9 +41,6 @@ pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
 
 pub mod time_stamp;
 
-mod validation_info;
-pub use validation_info::ValidationInfo;
-
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub mod webcrypto;
 

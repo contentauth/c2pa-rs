@@ -17,9 +17,9 @@ use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
         cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
-        signing_time_from_sign1_async, CertificateTrustPolicy, Verifier,
+        signing_time_from_sign1_async, CertificateTrustPolicy, ValidationInfo, Verifier,
     },
-    SigningAlg, ValidationInfo,
+    SigningAlg,
 };
 use c2pa_status_tracker::StatusTracker;
 use x509_parser::{num_bigint::BigUint, prelude::*};
