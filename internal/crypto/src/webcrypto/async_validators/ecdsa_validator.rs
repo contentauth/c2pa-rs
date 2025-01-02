@@ -71,9 +71,7 @@ impl AsyncRawSignatureValidator for EcdsaValidator {
 
         let crypto_key: CryptoKey = JsFuture::from(promise)
             .await
-            .map_err(|_err| {
-                RawSignatureValidationError::InternalError("invalid ECDSA key")
-            })?
+            .map_err(|_err| RawSignatureValidationError::InternalError("invalid ECDSA key"))?
             .into();
 
         let algorithm = EcdsaParams(hash).as_js_object().map_err(|_err| {
