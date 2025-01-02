@@ -38,7 +38,10 @@ pub(crate) fn check_certificate_trust(
     let cert = X509::from_der(cert_der)?;
 
     let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
+    builder.set_flags(X509VerifyFlags::X509_STRICT)?;
+
     let mut verify_param = openssl::x509::verify::X509VerifyParam::new()?;
+    verify_param.set_flags(X509VerifyFlags::X509_STRICT)?;
 
     if let Some(st) = signing_time_epoch {
         verify_param.set_time(st);
