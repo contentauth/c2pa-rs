@@ -89,11 +89,11 @@ impl TimeStampResponse {
 }
 
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct ContentInfo {
-    content_type: rasn::types::ObjectIdentifier,
+pub(crate) struct ContentInfo {
+    pub(crate) content_type: rasn::types::ObjectIdentifier,
 
     #[rasn(tag(explicit(0)))]
-    content: rasn::types::Any,
+    pub(crate) content: rasn::types::Any,
 }
 
 /// TO REVIEW: Does this need to be public after refactoring?

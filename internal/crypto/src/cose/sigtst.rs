@@ -11,21 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::nom::AsBytes;
 use async_generic::async_generic;
-use bcder::{decode::Constructed, encode::Values};
+use bcder::decode::Constructed;
 use ciborium::value::Value;
 use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    asn1::{
-        rfc3161::{TimeStampResp, TstInfo},
-        rfc5652::ContentInfo,
-    },
+    asn1::rfc3161::{TimeStampResp, TstInfo},
     cose::{CoseError, TimeStampStorage},
     raw_signature::{AsyncRawSigner, RawSigner},
-    time_stamp::{verify_time_stamp, verify_time_stamp_async, TimeStampResponse},
+    time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -240,22 +238,20 @@ fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
     );
 
     let tst = ts_resp.0.time_stamp_token?;
-    let mut tst_der = Vec::new();
-    tst.write_encoded(bcder::Mode::Der, &mut tst_der).ok()?;
 
-    if let Ok(ts) = Constructed::decode(tst_der.as_ref(), bcder::Mode::Der, |cons| {
-        cons.take_sequence(|cons| {
-            let content_type = crate::asn1::rfc5652::ContentType::take_from(cons)?;
-            let content = cons.take_constructed_if(bcder::Tag::CTX_0, |cons| cons.capture_all())?;
-
-            Ok(ContentInfo {
-                content_type,
-                content,
-            })
+    let a: Result<Vec<u32>, CoseError> = tst
+        .content_type
+        .iter()
+        .map(|v| {
+            v.to_u32()
+                .ok_or(CoseError::InternalError("invalid component".to_string()))
         })
-    }) {
-        println!("{:?}", ts);
-    }
+        .collect();
 
-    Some(tst_der)
+    let ci = ContentInfo {
+        content_type: rasn::types::ObjectIdentifier::new(a.ok()?)?,
+        content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
+    };
+
+    rasn::der::encode(&ci).ok()
 }
