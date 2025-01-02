@@ -14,7 +14,7 @@
 //! Hash convenience functions.
 
 /// Given a byte slice, return the SHA-1 hash of that content.
-pub fn sha1(data: &[u8]) -> Vec<u8> {
+pub(crate) fn sha1(data: &[u8]) -> Vec<u8> {
     use sha1::{Digest, Sha1};
 
     let mut hasher = Sha1::default();
