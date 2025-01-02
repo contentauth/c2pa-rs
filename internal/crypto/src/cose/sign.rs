@@ -20,7 +20,7 @@ use coset::{
 };
 
 use crate::{
-    cose::{add_sigtst_header, add_sigtst_header_async, CoseError},
+    cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
     p1363::{der_to_p1363, parse_ec_der_sig},
     raw_signature::{AsyncRawSigner, RawSigner},
     SigningAlg,
@@ -76,9 +76,15 @@ use crate::{
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
-    box_size: usize
+    box_size: usize,
+    _time_stamp_storage: TimeStampStorage
 ))]
-pub fn sign(signer: &dyn RawSigner, data: &[u8], box_size: usize) -> Result<Vec<u8>, CoseError> {
+pub fn sign(
+    signer: &dyn RawSigner,
+    data: &[u8],
+    box_size: usize,
+    _time_stamp_storage: TimeStampStorage,
+) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
     let (protected_header, unprotected_header) = if _sync {

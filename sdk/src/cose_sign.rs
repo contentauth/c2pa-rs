@@ -16,7 +16,9 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
-use c2pa_crypto::cose::{check_certificate_profile, sign, sign_async, CertificateTrustPolicy};
+use c2pa_crypto::cose::{
+    check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage,
+};
 use c2pa_status_tracker::OneShotStatusTracker;
 
 use crate::{
@@ -51,10 +53,11 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
+    // TEMPORARY: assume time stamp V1 until we plumb this through further
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size)
+        cose_sign(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size).await
+        cose_sign_async(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
     };
 
     match signed_bytes {
@@ -90,9 +93,15 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
 #[async_generic(async_signature(
     signer: &dyn AsyncSigner,
     data: &[u8],
-    box_size: usize
+    box_size: usize,
+    time_stamp_storage: TimeStampStorage,
 ))]
-pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
+pub(crate) fn cose_sign(
+    signer: &dyn Signer,
+    data: &[u8],
+    box_size: usize,
+    time_stamp_storage: TimeStampStorage,
+) -> Result<Vec<u8>> {
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
     if let Some(signing_cert) = certs.first() {
@@ -108,9 +117,9 @@ pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Re
     };
 
     if _sync {
-        Ok(sign(*raw_signer, data, box_size)?)
+        Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?)
     } else {
-        Ok(sign_async(*raw_signer, data, box_size).await?)
+        Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
     }
 }
 

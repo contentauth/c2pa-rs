@@ -24,7 +24,7 @@ use std::{
 use async_generic::async_generic;
 use async_recursion::async_recursion;
 use c2pa_crypto::{
-    cose::{parse_cose_sign1, CertificateTrustPolicy},
+    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
 };
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
@@ -494,7 +494,8 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size)
+                // TEMPORARY: Assume V1 until we plumb things through further.
+                cose_sign(signer, &claim_bytes, box_size, TimeStampStorage::V1_sigTst)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -502,7 +503,8 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size).await
+                // TEMPORARY: Assume V1 until we plumb things through further.
+                cose_sign_async(signer, &claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
             }
         };
         match result {
