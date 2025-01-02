@@ -29,6 +29,7 @@ pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampPro
 mod response;
 pub use response::ts_token_from_time_stamp_response;
 // ^^ TO REVIEW: Does this need to be public after refactoring?
+pub(crate) use response::{ContentInfo, TimeStampResponse};
 
 mod verify;
 /// TEMPORARILY PUBLIC while refactoring

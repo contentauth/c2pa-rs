@@ -800,6 +800,7 @@ dependencies = [
  "assert_cmd",
  "atree",
  "c2pa",
+ "c2pa-crypto",
  "clap",
  "env_logger",
  "glob",

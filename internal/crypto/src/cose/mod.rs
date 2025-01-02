@@ -29,14 +29,21 @@ pub use error::CoseError;
 mod ocsp;
 pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
 
+mod sign;
+pub use sign::{sign, sign_async};
+
 mod sign1;
 pub use sign1::{cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1};
 
 mod sigtst;
 pub use sigtst::{
-    cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async,
-    validate_cose_tst_info, validate_cose_tst_info_async, TstToken,
+    add_sigtst_header, add_sigtst_header_async, cose_countersign_data, parse_and_validate_sigtst,
+    parse_and_validate_sigtst_async, validate_cose_tst_info, validate_cose_tst_info_async,
+    TstToken,
 };
+
+mod time_stamp_storage;
+pub use time_stamp_storage::TimeStampStorage;
 
 mod verifier;
 pub use verifier::Verifier;
