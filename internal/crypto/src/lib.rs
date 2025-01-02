@@ -32,8 +32,7 @@ compile_error!("OpenSSL feature is not compatible with WASM platform");
 #[cfg(feature = "openssl")]
 pub mod openssl;
 
-pub mod p1363;
-// ^^ TO REVIEW: Can this be made pub(crate) once refactoring is done?
+pub(crate) mod p1363;
 
 pub mod raw_signature;
 
