@@ -22,7 +22,7 @@ use std::{
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    cose::CertificateTrustPolicy,
+    cose::{CertificateTrustPolicy, TimeStampStorage},
     raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     SigningAlg,
@@ -424,7 +424,14 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            // TEMPORARY: Assume v1 until we plumb things through further.
+            crate::cose_sign::cose_sign_async(
+                &signer,
+                claim_bytes,
+                self.reserve_size(),
+                TimeStampStorage::V1_sigTst,
+            )
+            .await
         }
         #[cfg(not(any(
             target_arch = "wasm32",
@@ -445,7 +452,14 @@ impl crate::signer::RemoteSigner for TempRemoteSigner {
         {
             let signer = crate::wasm::RsaWasmSignerAsync::new();
 
-            crate::cose_sign::cose_sign_async(&signer, claim_bytes, self.reserve_size()).await
+            // TEMPORARY: Assume V1 until we plumb more through.
+            crate::cose_sign::cose_sign_async(
+                &signer,
+                claim_bytes,
+                self.reserve_size(),
+                TimeStampStorage::V1_sigTst,
+            )
+            .await
         }
     }
 
@@ -581,10 +595,12 @@ impl AsyncSigner for TempAsyncRemoteSigner {
             let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ps256);
 
             // this would happen on some remote server
+            // TEMPORARY: Assume V1 until we plumb through further.
             crate::cose_sign::cose_sign_async(
                 &signer,
                 &claim_bytes,
                 AsyncSigner::reserve_size(self),
+                TimeStampStorage::V1_sigTst,
             )
             .await
         }
@@ -592,10 +608,12 @@ impl AsyncSigner for TempAsyncRemoteSigner {
         #[cfg(target_arch = "wasm32")]
         {
             let signer = crate::wasm::rsa_wasm_signer::RsaWasmSignerAsync::new();
+            // TEMPORARY: Assume V1 until we plumb through further.
             crate::cose_sign::cose_sign_async(
                 &signer,
                 &claim_bytes,
                 AsyncRawSigner::reserve_size(self),
+                TimeStampStorage::V1_sigTst,
             )
             .await
         }
