@@ -44,6 +44,7 @@ use crate::{
 /// It can provide different levels of verification depending on the enum value
 /// chosen.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Verifier<'a> {
     /// Use a [`CertificateTrustPolicy`] to validate the signing certificate's
     /// profile against C2PA requirements _and_ validate the certificate's
@@ -164,10 +165,8 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate profile if so configured.
-    ///
-    /// TO DO: This might not need to be public after refactoring.
     #[async_generic]
-    pub fn verify_profile(
+    pub(crate) fn verify_profile(
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
@@ -236,10 +235,8 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate profile if so configured.
-    ///
-    /// TO DO: This might not need to be public after refactoring.
     #[async_generic]
-    pub fn verify_trust(
+    pub(crate) fn verify_trust(
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
