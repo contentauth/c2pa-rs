@@ -88,17 +88,7 @@ impl Verifier<'_> {
         } else {
             validate_cose_tst_info_async(&sign1, data).await
         };
-
-        if _sync {
-            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
-            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
-        } else {
-            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
-                .await?;
-            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
-                .await?;
-        }
-
+        
         match alg {
             SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
                 if parse_ec_der_sig(&sign1.signature).is_ok() {
@@ -113,6 +103,16 @@ impl Verifier<'_> {
             }
             _ => (),
         }
+
+        if _sync {
+            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
+            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
+        } else {
+            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
+                .await?;
+            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
+                .await?;
+        }    
 
         // Reconstruct payload and additional data as it should have been at time of
         // signing.
