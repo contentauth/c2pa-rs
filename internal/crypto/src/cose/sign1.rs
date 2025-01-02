@@ -50,7 +50,7 @@ pub fn parse_cose_sign1(
     Ok(sign1)
 }
 
-/// TEMPORARILY PUBLIC while refactoring.
+/// TO DO: Documentation for this function.
 pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, CoseError> {
     let Some(ref alg) = sign1.protected.header.alg else {
         return Err(CoseError::UnsupportedSigningAlgorithm);
@@ -83,7 +83,7 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
     }
 }
 
-/// TEMPORARILY PUBLIC while refactoring.
+/// TO DO: Documentation for this function.
 pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     // Check the protected header first.
     let Some(value) = sign1

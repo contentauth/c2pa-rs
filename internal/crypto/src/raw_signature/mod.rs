@@ -22,7 +22,8 @@ pub use signer::{
 pub(crate) mod oids;
 
 mod validator;
+pub(crate) use validator::validator_for_sig_and_hash_algs;
 pub use validator::{
-    async_validator_for_signing_alg, validator_for_sig_and_hash_algs, validator_for_signing_alg,
-    AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
+    async_validator_for_signing_alg, validator_for_signing_alg, AsyncRawSignatureValidator,
+    RawSignatureValidationError, RawSignatureValidator,
 };

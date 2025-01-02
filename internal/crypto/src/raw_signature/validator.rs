@@ -103,10 +103,7 @@ pub fn async_validator_for_signing_alg(
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
-///
-/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
-/// into c2pa-crypto
-pub fn validator_for_sig_and_hash_algs(
+pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {
