@@ -34,11 +34,15 @@ pub struct ValidationInfo {
     pub issuer_org: Option<String>,
 
     /// Signature validity
+    /// 
+    /// TO REVIEW: What does this `bool` mean?
     pub validated: bool,
 
     /// Certificate chain used to validate the signature
     pub cert_chain: Vec<u8>,
 
     /// Signature revocation status
+    /// 
+    /// TO REVIEW: What does this `bool` mean?
     pub revocation_status: Option<bool>,
 }
