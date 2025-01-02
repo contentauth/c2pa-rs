@@ -24,11 +24,6 @@ use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 /// 1.2.840.113549.1.9.16.1.4
 pub const OID_CONTENT_TYPE_TST_INFO: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 1, 4]);
 
-/// id-aa-timeStampToken
-///
-/// 1.2.840.113549.1.9.16.2.14
-pub const OID_TIME_STAMP_TOKEN: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 2, 14]);
-
 /// A time-stamp request.
 ///
 /// ```ASN.1
@@ -149,17 +144,6 @@ impl TimeStampResp {
             })
         })
     }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::sequence((
-            self.status.encode_ref(),
-            if let Some(time_stamp_token) = &self.time_stamp_token {
-                Some(time_stamp_token)
-            } else {
-                None
-            },
-        ))
-    }
 }
 
 /// PKI status info
@@ -190,16 +174,6 @@ impl PkiStatusInfo {
                 fail_info,
             })
         })
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::sequence((
-            self.status.encode(),
-            self.status_string
-                .as_ref()
-                .map(|status_string| status_string.encode_ref()),
-            self.fail_info.as_ref().map(|fail_info| fail_info.encode()),
-        ))
     }
 }
 
