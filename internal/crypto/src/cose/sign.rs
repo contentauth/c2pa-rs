@@ -18,6 +18,7 @@ use coset::{
     CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
     TaggedCborSerializable,
 };
+use serde_bytes::ByteBuf;
 
 use crate::{
     cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
@@ -77,27 +78,59 @@ use crate::{
     signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: usize,
-    _time_stamp_storage: TimeStampStorage
+    tss: TimeStampStorage
 ))]
 pub fn sign(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: usize,
-    _time_stamp_storage: TimeStampStorage,
+    tss: TimeStampStorage,
+) -> Result<Vec<u8>, CoseError> {
+    if _sync {
+        match tss {
+            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss),
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss),
+        }
+    } else {
+        match tss {
+            TimeStampStorage::V1_sigTst => sign_v1_async(signer, data, box_size, tss).await,
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2_async(signer, data, box_size, tss).await,
+        }
+    }
+}
+
+#[async_generic(async_signature(
+    signer: &dyn AsyncRawSigner,
+    data: &[u8],
+    box_size: usize,
+    tss: TimeStampStorage
+))]
+pub fn sign_v1(
+    signer: &dyn RawSigner,
+    data: &[u8],
+    box_size: usize,
+    tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
-    let (protected_header, unprotected_header) = if _sync {
-        build_headers(signer, data, alg)?
+    let protected_header = if _sync {
+        build_protected_header(signer, alg)?
     } else {
-        build_headers_async(signer, data, alg).await?
+        build_protected_header_async(signer, alg).await?
     };
 
     // We don't use the additional data header.
     let aad: &[u8; 0] = b"";
 
+    // V1: Generate time stamp then sign.
+    let unprotected_header = if _sync {
+        build_unprotected_header(signer, data, &protected_header, tss)?
+    } else {
+        build_unprotected_header_async(signer, data, &protected_header, tss).await?
+    };
+
     let sign1_builder = CoseSign1Builder::new()
-        .protected(protected_header)
+        .protected(protected_header.header.clone())
         .unprotected(unprotected_header)
         .payload(data.to_vec());
 
@@ -136,12 +169,89 @@ pub fn sign(
     pad_cose_sig(&mut sign1, box_size)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], alg: SigningAlg))]
-fn build_headers(
+#[async_generic(async_signature(
+    signer: &dyn AsyncRawSigner,
+    data: &[u8],
+    box_size: usize,
+    tss: TimeStampStorage
+))]
+pub fn sign_v2(
     signer: &dyn RawSigner,
     data: &[u8],
+    box_size: usize,
+    tss: TimeStampStorage,
+) -> Result<Vec<u8>, CoseError> {
+    let alg = signer.alg();
+
+    let protected_header = if _sync {
+        build_protected_header(signer, alg)?
+    } else {
+        build_protected_header_async(signer, alg).await?
+    };
+
+    // We don't use the additional data header.
+    let aad: &[u8; 0] = b"";
+
+    // V2: Sign then generate time stamp.
+    let sign1_builder = CoseSign1Builder::new()
+        .protected(protected_header.header.clone())
+        .payload(data.to_vec());
+
+    let mut sign1 = sign1_builder.build();
+
+    let tbs = coset::sig_structure_data(
+        coset::SignatureContext::CoseSign1,
+        sign1.protected.clone(),
+        None,
+        aad,
+        sign1.payload.as_ref().unwrap_or(&vec![]),
+    );
+
+    let signature = if _sync {
+        signer.sign(&tbs)?
+    } else {
+        signer.sign(tbs).await?
+    };
+
+    // Fix up signatures that may be in the wrong format.
+    sign1.signature = match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            if parse_ec_der_sig(&signature).is_ok() {
+                // Fix up DER signature to be in P1363 format.
+                der_to_p1363(&signature, alg)?
+            } else {
+                signature
+            }
+        }
+        _ => signature,
+    };
+
+    // The payload is provided elsewhere, so we don't need to repeat it in the
+    // `Cose_Sign1` structure.
+    sign1.payload = None;
+
+    let sig_data = ByteBuf::from(sign1.signature.clone());
+    let mut sig_data_cbor: Vec<u8> = vec![];
+    ciborium::into_writer(&sig_data, &mut sig_data_cbor)
+        .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+    // Fill in the unprotected header with time stamp data.
+    let unprotected_header = if _sync {
+        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss)?
+    } else {
+        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss).await?
+    };
+
+    sign1.unprotected = unprotected_header;
+
+    pad_cose_sig(&mut sign1, box_size)
+}
+
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg))]
+fn build_protected_header(
+    signer: &dyn RawSigner,
     alg: SigningAlg,
-) -> Result<(Header, Header), CoseError> {
+) -> Result<ProtectedHeader, CoseError> {
     let mut protected_h = match alg {
         SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
         SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
@@ -151,14 +261,6 @@ fn build_headers(
         SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
         SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
     };
-
-    let ocsp_val = if _sync {
-        signer.ocsp_response()
-    } else {
-        signer.ocsp_response().await
-    };
-
-    dbg!(&ocsp_val);
 
     let certs = signer.cert_chain()?;
 
@@ -179,15 +281,35 @@ fn build_headers(
         header: protected_header.clone(),
     };
 
+    Ok(ph2)
+}
+
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader,     tss: TimeStampStorage,))]
+fn build_unprotected_header(
+    signer: &dyn RawSigner,
+    data: &[u8],
+    p_header: &ProtectedHeader,
+    tss: TimeStampStorage,
+) -> Result<Header, CoseError> {
+    // signed_data_from_time_stamp_response
+
+    // TO DO: Continue with diff here ... (let maybe_cts etc)
+
     let unprotected_h = HeaderBuilder::new();
 
     let mut unprotected_h = if _sync {
-        add_sigtst_header(signer, data, &ph2, unprotected_h)?
+        add_sigtst_header(signer, data, p_header, unprotected_h, tss)?
     } else {
-        add_sigtst_header_async(signer, data, &ph2, unprotected_h).await?
+        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss).await?
     };
 
     // Set the OCSP responder response if available.
+    let ocsp_val = if _sync {
+        signer.ocsp_response()
+    } else {
+        signer.ocsp_response().await
+    };
+
     if let Some(ocsp) = ocsp_val {
         let mut ocsp_vec: Vec<Value> = Vec::new();
         let mut r_vals: Vec<(Value, Value)> = vec![];
@@ -198,8 +320,8 @@ fn build_headers(
         unprotected_h = unprotected_h.text_value("rVals".to_string(), Value::Map(r_vals));
     }
 
-    // Build complete header
-    Ok((protected_header, unprotected_h.build()))
+    // Build complete header.
+    Ok(unprotected_h.build())
 }
 
 const PAD: &str = "pad";

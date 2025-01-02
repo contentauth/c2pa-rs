@@ -12,15 +12,19 @@
 // each license.
 
 use async_generic::async_generic;
+use bcder::{decode::Constructed, encode::Values};
 use ciborium::value::Value;
 use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    asn1::rfc3161::TstInfo,
-    cose::CoseError,
+    asn1::{
+        rfc3161::{TimeStampResp, TstInfo},
+        rfc5652::ContentInfo,
+    },
+    cose::{CoseError, TimeStampStorage},
     raw_signature::{AsyncRawSigner, RawSigner},
-    time_stamp::{verify_time_stamp, verify_time_stamp_async},
+    time_stamp::{verify_time_stamp, verify_time_stamp_async, TimeStampResponse},
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -148,12 +152,14 @@ impl TstContainer {
         data: &[u8],
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
+        tss: TimeStampStorage,
     ))]
 pub fn add_sigtst_header(
     ts_provider: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
+    tss: TimeStampStorage,
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 
@@ -164,7 +170,16 @@ pub fn add_sigtst_header(
     };
 
     if let Some(cts) = maybe_cts {
-        let cts = cts?;
+        let mut cts = cts?;
+
+        if tss == TimeStampStorage::V2_sigTst2_CTT {
+            // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
+            // sigTst2
+            cts = timestamptoken_from_timestamprsp(&cts).ok_or(CoseError::CborGenerationError(
+                "unable to generate time stamp token".to_string(),
+            ))?;
+        }
+
         let cts = make_cose_timestamp(&cts);
 
         let mut sigtst_vec: Vec<u8> = vec![];
@@ -174,7 +189,14 @@ pub fn add_sigtst_header(
         let sigtst_cbor: Value = ciborium::from_reader(sigtst_vec.as_slice())
             .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
-        header_builder = header_builder.text_value("sigTst".to_string(), sigtst_cbor);
+        match tss {
+            TimeStampStorage::V1_sigTst => {
+                header_builder = header_builder.text_value("sigTst".to_string(), sigtst_cbor);
+            }
+            TimeStampStorage::V2_sigTst2_CTT => {
+                header_builder = header_builder.text_value("sigTst2".to_string(), sigtst_cbor);
+            }
+        }
     }
 
     Ok(header_builder)
@@ -190,4 +212,34 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
     container.add_token(token);
 
     container
+}
+
+// Return timeStampToken used by sigTst2.
+fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
+    let ts_resp = TimeStampResponse(
+        Constructed::decode(ts.as_ref(), bcder::Mode::Der, |cons| {
+            TimeStampResp::take_from(cons)
+        })
+        .ok()?,
+    );
+
+    let tst = ts_resp.0.time_stamp_token?;
+    let mut tst_der = Vec::new();
+    tst.write_encoded(bcder::Mode::Der, &mut tst_der).ok()?;
+
+    if let Ok(ts) = Constructed::decode(tst_der.as_ref(), bcder::Mode::Der, |cons| {
+        cons.take_sequence(|cons| {
+            let content_type = crate::asn1::rfc5652::ContentType::take_from(cons)?;
+            let content = cons.take_constructed_if(bcder::Tag::CTX_0, |cons| cons.capture_all())?;
+
+            Ok(ContentInfo {
+                content_type,
+                content,
+            })
+        })
+    }) {
+        println!("{:?}", ts);
+    }
+
+    Some(tst_der)
 }

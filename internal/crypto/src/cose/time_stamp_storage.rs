@@ -19,6 +19,7 @@
 ///
 /// [§10.3.2.5.4, Storing the time-stamp]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_storing_the_time_stamp
 #[allow(non_camel_case_types)] // We choose to match the exact header names as used in the C2PA specification.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TimeStampStorage {
     /// v1 time-stamps _(deprecated)_ are stored in a COSE unprotected header
     /// whose label is the string `sigTst`. If present, the value of this header
