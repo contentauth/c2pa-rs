@@ -231,7 +231,7 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
 // Return timeStampToken used by sigTst2.
 fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
     let ts_resp = TimeStampResponse(
-        Constructed::decode(ts.as_ref(), bcder::Mode::Der, |cons| {
+        Constructed::decode(ts, bcder::Mode::Der, |cons| {
             TimeStampResp::take_from(cons)
         })
         .ok()?,
