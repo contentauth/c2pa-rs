@@ -16,8 +16,8 @@ use std::io::Cursor;
 use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
-        cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustPolicy, Verifier,
+        cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
+        signing_time_from_sign1_async, CertificateTrustPolicy, Verifier,
     },
     SigningAlg, ValidationInfo,
 };
@@ -75,27 +75,6 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     Ok(out_buf)
 }
 
-// Note: this function is only used to get the display string and not for cert validation.
-#[async_generic]
-fn get_signing_time(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    // get timestamp info if available
-
-    let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
-    } else {
-        validate_cose_tst_info_async(sign1, data).await
-    };
-
-    if let Ok(tst_info) = time_stamp_info {
-        Some(gt_to_datetime(tst_info.gen_time))
-    } else {
-        None
-    }
-}
-
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
     cert.subject()
         .iter_organization()
@@ -130,9 +109,9 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            get_signing_time(&sign1, data)
+                            signing_time_from_sign1(&sign1, data)
                         } else {
-                            get_signing_time_async(&sign1, data).await
+                            signing_time_from_sign1_async(&sign1, data).await
                         };
                         issuer_org = extract_subject_from_cert(&signcert).ok();
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -168,12 +147,6 @@ pub(crate) fn get_signing_info(
     }
 }
 
-fn gt_to_datetime(
-    gt: x509_certificate::asn1time::GeneralizedTime,
-) -> chrono::DateTime<chrono::Utc> {
-    gt.into()
-}
-
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
@@ -207,7 +180,7 @@ pub mod tests {
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
+        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes);
 
         assert_eq!(signing_time, None);
     }
