@@ -18,6 +18,10 @@ use std::{
 
 use anyhow::{bail, Context};
 use c2pa::{Error, Signer, SigningAlg};
+use c2pa_crypto::{
+    raw_signature::{RawSigner, RawSignerError},
+    time_stamp::TimeStampProvider,
+};
 
 use crate::signer::SignConfig;
 
@@ -183,6 +187,53 @@ impl Signer for CallbackSigner<'_> {
     fn time_authority_url(&self) -> Option<String> {
         self.config.tsa_url.clone()
     }
+
+    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+        Box::new(self)
+    }
+}
+
+impl RawSigner for CallbackSigner<'_> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+        self.callback.sign(data).map_err(|e| {
+            eprintln!("Unable to embed signature into asset. {}", e);
+            RawSignerError::InternalError(e.to_string())
+        })
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.config.alg
+    }
+
+    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+        let cert_contents = std::fs::read(&self.config.sign_cert_path)?;
+
+        let mut pems = pem::parse_many(cert_contents).map_err(|_| Error::CoseInvalidCert)?;
+        // [pem::parse_many] returns an empty vector if you supply invalid contents, like json, for example.
+        // Check here if the pems vector is empty.
+        if pems.is_empty() {
+            return Err(RawSignerError::InvalidSigningCredentials(
+                "no certificates provided".to_string(),
+            ));
+        }
+
+        let sign_cert = pems
+            .drain(..)
+            .map(|p| p.into_contents())
+            .collect::<Vec<Vec<u8>>>();
+
+        Ok(sign_cert)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.config.reserve_size
+    }
+}
+
+impl TimeStampProvider for CallbackSigner<'_> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.config.tsa_url.clone()
+    }
 }
 
 #[cfg(test)]
@@ -214,7 +265,7 @@ mod test {
         let callback = Box::new(mock_callback_signer);
         let signer = CallbackSigner::new(callback, config);
 
-        assert_eq!(signer.sign(&[]).unwrap(), expected);
+        assert_eq!(Signer::sign(&signer, &[]).unwrap(), expected);
     }
 
     #[test]
@@ -237,7 +288,10 @@ mod test {
         let callback = Box::new(mock_callback_signer);
         let signer = CallbackSigner::new(callback, config);
 
-        assert!(matches!(signer.sign(&[]), Err(Error::EmbeddingError)));
+        assert!(matches!(
+            Signer::sign(&signer, &[]),
+            Err(Error::EmbeddingError)
+        ));
     }
 
     #[test]
@@ -291,8 +345,8 @@ mod test {
         let callback = Box::<MockSignCallback>::default();
         let signer = CallbackSigner::new(callback, esc);
 
-        assert_eq!(signer.alg(), expected_alg);
-        assert_eq!(signer.reserve_size(), expected_reserve_size);
+        assert_eq!(Signer::alg(&signer), expected_alg);
+        assert_eq!(Signer::reserve_size(&signer), expected_reserve_size);
     }
 
     #[test]

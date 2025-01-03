@@ -16,10 +16,10 @@ use std::io::Cursor;
 use async_generic::async_generic;
 use c2pa_crypto::{
     cose::{
-        cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, validate_cose_tst_info,
-        validate_cose_tst_info_async, CertificateTrustPolicy, Verifier,
+        cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
+        signing_time_from_sign1_async, CertificateTrustPolicy, ValidationInfo, Verifier,
     },
-    SigningAlg, ValidationInfo,
+    raw_signature::SigningAlg,
 };
 use c2pa_status_tracker::StatusTracker;
 use x509_parser::{num_bigint::BigUint, prelude::*};
@@ -75,27 +75,6 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>> {
     Ok(out_buf)
 }
 
-// Note: this function is only used to get the display string and not for cert validation.
-#[async_generic]
-fn get_signing_time(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    // get timestamp info if available
-
-    let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data)
-    } else {
-        validate_cose_tst_info_async(sign1, data).await
-    };
-
-    if let Ok(tst_info) = time_stamp_info {
-        Some(gt_to_datetime(tst_info.gen_time))
-    } else {
-        None
-    }
-}
-
 fn extract_subject_from_cert(cert: &X509Certificate) -> Result<String> {
     cert.subject()
         .iter_organization()
@@ -130,9 +109,9 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            get_signing_time(&sign1, data)
+                            signing_time_from_sign1(&sign1, data)
                         } else {
-                            get_signing_time_async(&sign1, data).await
+                            signing_time_from_sign1_async(&sign1, data).await
                         };
                         issuer_org = extract_subject_from_cert(&signcert).ok();
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -168,18 +147,12 @@ pub(crate) fn get_signing_info(
     }
 }
 
-fn gt_to_datetime(
-    gt: x509_certificate::asn1time::GeneralizedTime,
-) -> chrono::DateTime<chrono::Utc> {
-    gt.into()
-}
-
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
 #[cfg(feature = "openssl_sign")]
 #[cfg(test)]
 pub mod tests {
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::DetailedStatusTracker;
     use ciborium::Value;
     use coset::Label;
@@ -207,15 +180,16 @@ pub mod tests {
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = get_signing_time(&cose_sign1, &claim_bytes);
+        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes);
 
         assert_eq!(signing_time, None);
     }
     #[test]
     #[cfg(feature = "openssl_sign")]
     fn test_stapled_ocsp() {
-        use c2pa_crypto::raw_signature::{
-            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError,
+        use c2pa_crypto::{
+            raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},
+            time_stamp::{TimeStampError, TimeStampProvider},
         };
 
         let mut validation_log = DetailedStatusTracker::default();
@@ -229,19 +203,19 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let signer =
+        let raw_signer =
             signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
                 .unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
-            pub signer: Box<dyn crate::Signer>,
+            pub raw_signer: Box<dyn RawSigner>,
             pub ocsp_rsp: Vec<u8>,
         }
 
         impl crate::Signer for OcspSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-                self.signer.sign(data)
+                Ok(self.raw_signer.sign(data)?)
             }
 
             fn alg(&self) -> SigningAlg {
@@ -249,27 +223,81 @@ pub mod tests {
             }
 
             fn certs(&self) -> Result<Vec<Vec<u8>>> {
-                self.signer.certs()
+                Ok(self.raw_signer.cert_chain()?)
             }
 
             fn reserve_size(&self) -> usize {
-                self.signer.reserve_size()
+                self.raw_signer.reserve_size()
             }
 
             fn ocsp_val(&self) -> Option<Vec<u8>> {
                 Some(self.ocsp_rsp.clone())
             }
+
+            fn raw_signer(&self) -> Box<&dyn RawSigner> {
+                Box::new(self)
+            }
+        }
+
+        impl RawSigner for OcspSigner {
+            fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+                self.raw_signer.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.raw_signer.alg()
+            }
+
+            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+                self.raw_signer.cert_chain()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.raw_signer.reserve_size()
+            }
+
+            fn ocsp_response(&self) -> Option<Vec<u8>> {
+                eprintln!("THE ONE I WANTED @ 287");
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        impl TimeStampProvider for OcspSigner {
+            fn time_stamp_service_url(&self) -> Option<String> {
+                self.raw_signer.time_stamp_service_url()
+            }
+
+            fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+                self.raw_signer.time_stamp_request_headers()
+            }
+
+            fn time_stamp_request_body(
+                &self,
+                message: &[u8],
+            ) -> std::result::Result<Vec<u8>, TimeStampError> {
+                self.raw_signer.time_stamp_request_body(message)
+            }
+
+            fn send_time_stamp_request(
+                &self,
+                message: &[u8],
+            ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+                self.raw_signer.send_time_stamp_request(message)
+            }
         }
 
         let ocsp_signer = OcspSigner {
-            signer: Box::new(crate::signer::RawSignerWrapper(signer)),
+            raw_signer,
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 
         // sign and staple
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &ocsp_signer, ocsp_signer.reserve_size())
-                .unwrap();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &ocsp_signer,
+            RawSigner::reserve_size(&ocsp_signer),
+        )
+        .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
         let ocsp_stapled = get_ocsp_der(&cose_sign1).unwrap();

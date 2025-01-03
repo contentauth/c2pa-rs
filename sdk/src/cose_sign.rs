@@ -16,21 +16,10 @@
 #![deny(missing_docs)]
 
 use async_generic::async_generic;
-use c2pa_crypto::{
-    cose::{
-        add_sigtst_header, add_sigtst_header_async, check_certificate_profile,
-        CertificateTrustPolicy,
-    },
-    p1363::parse_ec_der_sig,
-    SigningAlg,
+use c2pa_crypto::cose::{
+    check_certificate_profile, sign, sign_async, CertificateTrustPolicy, TimeStampStorage,
 };
 use c2pa_status_tracker::OneShotStatusTracker;
-use ciborium::value::Value;
-use coset::{
-    iana::{self, EnumI64},
-    CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
-    TaggedCborSerializable,
-};
 
 use crate::{
     claim::Claim, cose_validator::verify_cose, settings::get_settings_value, AsyncSigner, Error,
@@ -64,10 +53,11 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
     let label = "dummy_label";
     let _claim = Claim::from_data(label, claim_bytes)?;
 
+    // TEMPORARY: assume time stamp V1 until we plumb this through further
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size)
+        cose_sign(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size).await
+        cose_sign_async(signer, claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
     };
 
     match signed_bytes {
@@ -98,6 +88,41 @@ pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> R
     }
 }
 
+/// Returns signed Cose_Sign1 bytes for `data`.
+/// The Cose_Sign1 will be signed with the algorithm from [`Signer`].
+#[async_generic(async_signature(
+    signer: &dyn AsyncSigner,
+    data: &[u8],
+    box_size: usize,
+    time_stamp_storage: TimeStampStorage,
+))]
+pub(crate) fn cose_sign(
+    signer: &dyn Signer,
+    data: &[u8],
+    box_size: usize,
+    time_stamp_storage: TimeStampStorage,
+) -> Result<Vec<u8>> {
+    // Make sure the signing cert is valid.
+    let certs = signer.certs()?;
+    if let Some(signing_cert) = certs.first() {
+        signing_cert_valid(signing_cert)?;
+    } else {
+        return Err(Error::CoseNoCerts);
+    }
+
+    let raw_signer = if _sync {
+        signer.raw_signer()
+    } else {
+        signer.async_raw_signer()
+    };
+
+    if _sync {
+        Ok(sign(*raw_signer, data, box_size, time_stamp_storage)?)
+    } else {
+        Ok(sign_async(*raw_signer, data, box_size, time_stamp_storage).await?)
+    }
+}
+
 fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     // make sure signer certs are valid
     let mut cose_log = OneShotStatusTracker::default();
@@ -116,307 +141,13 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
     )?)
 }
 
-/// Returns signed Cose_Sign1 bytes for `data`.
-/// The Cose_Sign1 will be signed with the algorithm from [`Signer`].
-#[async_generic(async_signature(
-    signer: &dyn AsyncSigner,
-    data: &[u8],
-    box_size: usize
-))]
-pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
-    // 13.2.1. X.509 Certificates
-    //
-    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
-    // The value is a CBOR array of byte strings, each of which contains the certificate
-    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
-    // least one element. The first element of the array must be the certificate of
-    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
-    // public key used to validate the signature. The Validity member of the TBSCertificate
-    // sequence provides the time validity period of the certificate.
-
-    /*
-       This header parameter allows for a single X.509 certificate or a
-       chain of X.509 certificates to be carried in the message.
-
-       *  If a single certificate is conveyed, it is placed in a CBOR
-           byte string.
-
-       *  If multiple certificates are conveyed, a CBOR array of byte
-           strings is used, with each certificate being in its own byte
-           string.
-    */
-
-    // make sure the signing cert is valid
-    let certs = signer.certs()?;
-    if let Some(signing_cert) = certs.first() {
-        signing_cert_valid(signing_cert)?;
-    } else {
-        return Err(Error::CoseNoCerts);
-    }
-
-    let alg = signer.alg();
-
-    // build complete header
-    let (protected_header, unprotected_header) = if _sync {
-        build_headers(signer, data, alg)?
-    } else {
-        build_headers_async(signer, data, alg).await?
-    };
-
-    let aad: &[u8; 0] = b""; // no additional data required here
-
-    let sign1_builder = CoseSign1Builder::new()
-        .protected(protected_header)
-        .unprotected(unprotected_header)
-        .payload(data.to_vec());
-
-    let mut sign1 = sign1_builder.build();
-
-    let tbs = coset::sig_structure_data(
-        coset::SignatureContext::CoseSign1,
-        sign1.protected.clone(),
-        None,
-        aad,
-        sign1.payload.as_ref().unwrap_or(&vec![]),
-    );
-
-    let signature = if _sync {
-        signer.sign(&tbs)?
-    } else {
-        signer.sign(tbs).await?
-    };
-
-    // fix up signatures that may be in the wrong format
-    sign1.signature = match alg {
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-            if parse_ec_der_sig(&signature).is_ok() {
-                // fix up DER signature to be in P1363 format
-                der_to_p1363(&signature, alg)?
-            } else {
-                signature
-            }
-        }
-        _ => signature,
-    };
-
-    sign1.payload = None; // clear the payload since it is known
-
-    let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
-
-    // println!("sig: {}", Hexlify(&c2pa_sig_data));
-
-    Ok(c2pa_sig_data)
-}
-
-fn der_to_p1363(data: &[u8], alg: SigningAlg) -> Result<Vec<u8>> {
-    // P1363 format: r | s
-
-    let (_, p) = parse_ec_der_sig(data).map_err(|_err| Error::InvalidEcdsaSignature)?;
-
-    let mut r = extfmt::Hexlify(p.r).to_string();
-    let mut s = extfmt::Hexlify(p.s).to_string();
-
-    let sig_len: usize = match alg {
-        SigningAlg::Es256 => 64,
-        SigningAlg::Es384 => 96,
-        SigningAlg::Es512 => 132,
-        _ => return Err(Error::UnsupportedType),
-    };
-
-    // pad or truncate as needed
-    let rp = if r.len() > sig_len {
-        // truncate
-        let offset = r.len() - sig_len;
-        &r[offset..r.len()]
-    } else {
-        // pad
-        while r.len() != sig_len {
-            r.insert(0, '0');
-        }
-        r.as_ref()
-    };
-
-    let sp = if s.len() > sig_len {
-        // truncate
-        let offset = s.len() - sig_len;
-        &s[offset..s.len()]
-    } else {
-        // pad
-        while s.len() != sig_len {
-            s.insert(0, '0');
-        }
-        s.as_ref()
-    };
-
-    if rp.len() != sig_len || rp.len() != sp.len() {
-        return Err(Error::InvalidEcdsaSignature);
-    }
-
-    // merge r and s strings
-    let mut new_sig = rp.to_string();
-    new_sig.push_str(sp);
-
-    // convert back from hex string to byte array
-    (0..new_sig.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&new_sig[i..i + 2], 16).map_err(|_err| Error::InvalidEcdsaSignature)
-        })
-        .collect()
-}
-
-#[async_generic(async_signature(signer: &dyn AsyncSigner, data: &[u8], alg: SigningAlg))]
-fn build_headers(signer: &dyn Signer, data: &[u8], alg: SigningAlg) -> Result<(Header, Header)> {
-    let mut protected_h = match alg {
-        SigningAlg::Ps256 => HeaderBuilder::new().algorithm(iana::Algorithm::PS256),
-        SigningAlg::Ps384 => HeaderBuilder::new().algorithm(iana::Algorithm::PS384),
-        SigningAlg::Ps512 => HeaderBuilder::new().algorithm(iana::Algorithm::PS512),
-        SigningAlg::Es256 => HeaderBuilder::new().algorithm(iana::Algorithm::ES256),
-        SigningAlg::Es384 => HeaderBuilder::new().algorithm(iana::Algorithm::ES384),
-        SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
-        SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
-    };
-
-    let certs = signer.certs()?;
-
-    let ocsp_val = if _sync {
-        signer.ocsp_val()
-    } else {
-        signer.ocsp_val().await
-    };
-
-    let sc_der_array_or_bytes = match certs.len() {
-        1 => Value::Bytes(certs[0].clone()), // single cert
-        _ => {
-            let mut sc_der_array: Vec<Value> = Vec::new();
-            for cert in certs {
-                sc_der_array.push(Value::Bytes(cert));
-            }
-            Value::Array(sc_der_array) // provide vec of certs when required
-        }
-    };
-
-    // add certs to protected header (spec 1.3 now requires integer 33(X5Chain) in favor of string "x5chain" going forward)
-    protected_h = protected_h.value(
-        iana::HeaderParameter::X5Chain.to_i64(),
-        sc_der_array_or_bytes.clone(),
-    );
-
-    let protected_header = protected_h.build();
-    let ph2 = ProtectedHeader {
-        original_data: None,
-        header: protected_header.clone(),
-    };
-
-    let unprotected_h = HeaderBuilder::new();
-
-    let mut unprotected_h = if _sync {
-        if let Some(tsp) = signer.time_stamp_provider() {
-            add_sigtst_header(*tsp, data, &ph2, unprotected_h)?
-        } else {
-            unprotected_h
-        }
-    } else {
-        if let Some(tsp) = signer.async_time_stamp_provider() {
-            add_sigtst_header_async(*tsp, data, &ph2, unprotected_h).await?
-        } else {
-            unprotected_h
-        }
-    };
-
-    // set the ocsp responder response if available
-    if let Some(ocsp) = ocsp_val {
-        let mut ocsp_vec: Vec<Value> = Vec::new();
-        let mut r_vals: Vec<(Value, Value)> = vec![];
-
-        ocsp_vec.push(Value::Bytes(ocsp));
-        r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
-
-        unprotected_h = unprotected_h.text_value("rVals".to_string(), Value::Map(r_vals));
-    }
-
-    // build complete header
-    let unprotected_header = unprotected_h.build();
-
-    Ok((protected_header, unprotected_header))
-}
-
-const PAD: &str = "pad";
-const PAD2: &str = "pad2";
-const PAD_OFFSET: usize = 7;
-
-// Pad the CoseSign1 structure with 0s to match the reserved box size.
-// There are some values lengths that are impossible to hit with a single padding so
-// when that happens a second padding is added to change the remaining needed padding.
-// The default initial guess works for almost all sizes, without the need for additional loops.
-fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
-    let mut sign1_clone = sign1.clone();
-    let cur_vec = sign1_clone
-        .to_tagged_vec()
-        .map_err(|_e| Error::CoseSignature)?;
-    let cur_size = cur_vec.len();
-
-    if cur_size == end_size {
-        return Ok(cur_vec);
-    }
-
-    // check for box too small and matched size
-    if cur_size + PAD_OFFSET > end_size {
-        return Err(Error::CoseSigboxTooSmall);
-    }
-
-    let mut padding_found = false;
-    let mut last_pad = 0;
-    let mut target_guess = end_size - cur_size - PAD_OFFSET; // start close to desired end_size accounting for label
-    loop {
-        // clone to use
-        sign1_clone = sign1.clone();
-
-        // replace padding with new estimate
-        for header_pair in &mut sign1_clone.unprotected.rest {
-            if header_pair.0 == Label::Text("pad".to_string()) {
-                if let Value::Bytes(b) = &header_pair.1 {
-                    last_pad = b.len();
-                }
-                header_pair.1 = Value::Bytes(vec![0u8; target_guess]);
-                padding_found = true;
-                break;
-            }
-        }
-
-        // if there was no padding add it and call again
-        if !padding_found {
-            sign1_clone.unprotected.rest.push((
-                Label::Text(PAD.to_string()),
-                Value::Bytes(vec![0u8; target_guess]),
-            ));
-            return pad_cose_sig(&mut sign1_clone, end_size);
-        }
-
-        // get current cbor vec to size if we reached target size
-        let new_cbor = sign1_clone
-            .to_tagged_vec()
-            .map_err(|_e| Error::CoseSignature)?;
-
-        match new_cbor.len() < end_size {
-            true => target_guess += 1,
-            false if new_cbor.len() == end_size => return Ok(new_cbor),
-            false => break, // we could not match end_size in a single pad so break and add a second
-        }
-    }
-
-    // if we reach here we need a new second padding object to hit exact size
-    sign1.unprotected.rest.push((
-        Label::Text(PAD2.to_string()),
-        Value::Bytes(vec![0u8; last_pad - 10]),
-    ));
-    pad_cose_sig(sign1, end_size)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError, SigningAlg},
+        time_stamp::{TimeStampError, TimeStampProvider},
+    };
 
     use super::sign_claim;
     #[cfg(not(target_arch = "wasm32"))]
@@ -432,7 +163,7 @@ mod tests {
         let claim_bytes = claim.data().unwrap();
 
         let signer = test_signer(SigningAlg::Ps256);
-        let box_size = signer.reserve_size();
+        let box_size = Signer::reserve_size(signer.as_ref());
 
         let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
 
@@ -442,7 +173,7 @@ mod tests {
     #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use c2pa_crypto::SigningAlg;
+        use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
@@ -475,8 +206,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> c2pa_crypto::SigningAlg {
-            c2pa_crypto::SigningAlg::Ps256
+        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
+            c2pa_crypto::raw_signature::SigningAlg::Ps256
         }
 
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -490,6 +221,40 @@ mod tests {
         }
 
         fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
+        }
+
+        fn raw_signer(&self) -> Box<&dyn c2pa_crypto::raw_signature::RawSigner> {
+            Box::new(self)
+        }
+    }
+
+    impl RawSigner for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+            eprintln!("Canary, canary, please cause this deploy to fail!");
+            Ok(b"totally bogus signature".to_vec())
+        }
+
+        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
+            c2pa_crypto::raw_signature::SigningAlg::Ps256
+        }
+
+        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            let cert_vec: Vec<u8> = Vec::new();
+            let certs = vec![cert_vec];
+            Ok(certs)
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+    }
+
+    impl TimeStampProvider for BogusSigner {
+        fn send_time_stamp_request(
+            &self,
+            _message: &[u8],
+        ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
             Some(Ok(Vec::new()))
         }
     }

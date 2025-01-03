@@ -31,12 +31,11 @@ use crate::{
     cose::{
         cert_chain_from_sign1, check_certificate_profile, parse_cose_sign1, signing_alg_from_sign1,
         validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustError,
-        CertificateTrustPolicy, CoseError,
+        CertificateTrustPolicy, CoseError, ValidationInfo,
     },
     p1363::parse_ec_der_sig,
-    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg},
+    raw_signature::{async_validator_for_signing_alg, validator_for_signing_alg, SigningAlg},
     time_stamp::TimeStampError,
-    SigningAlg, ValidationInfo,
 };
 
 /// A `Verifier` reads a COSE signature and reports on its validity.
@@ -44,6 +43,7 @@ use crate::{
 /// It can provide different levels of verification depending on the enum value
 /// chosen.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Verifier<'a> {
     /// Use a [`CertificateTrustPolicy`] to validate the signing certificate's
     /// profile against C2PA requirements _and_ validate the certificate's
@@ -89,16 +89,6 @@ impl Verifier<'_> {
             validate_cose_tst_info_async(&sign1, data).await
         };
 
-        if _sync {
-            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
-            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
-        } else {
-            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
-                .await?;
-            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
-                .await?;
-        }
-
         match alg {
             SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
                 if parse_ec_der_sig(&sign1.signature).is_ok() {
@@ -112,6 +102,16 @@ impl Verifier<'_> {
                 }
             }
             _ => (),
+        }
+
+        if _sync {
+            self.verify_profile(&sign1, &tst_info_res, validation_log)?;
+            self.verify_trust(&sign1, &tst_info_res, validation_log)?;
+        } else {
+            self.verify_profile_async(&sign1, &tst_info_res, validation_log)
+                .await?;
+            self.verify_trust_async(&sign1, &tst_info_res, validation_log)
+                .await?;
         }
 
         // Reconstruct payload and additional data as it should have been at time of
@@ -164,10 +164,8 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate profile if so configured.
-    ///
-    /// TO DO: This might not need to be public after refactoring.
     #[async_generic]
-    pub fn verify_profile(
+    pub(crate) fn verify_profile(
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,
@@ -236,10 +234,8 @@ impl Verifier<'_> {
     }
 
     /// Verify certificate profile if so configured.
-    ///
-    /// TO DO: This might not need to be public after refactoring.
     #[async_generic]
-    pub fn verify_trust(
+    pub(crate) fn verify_trust(
         &self,
         sign1: &CoseSign1,
         tst_info_res: &Result<TstInfo, CoseError>,

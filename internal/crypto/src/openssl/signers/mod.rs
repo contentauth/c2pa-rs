@@ -14,10 +14,7 @@
 //! This module binds OpenSSL logic for generating raw signatures to this
 //! crate's [`RawSigner`] trait.
 
-use crate::{
-    raw_signature::{RawSigner, RawSignerError},
-    SigningAlg,
-};
+use crate::raw_signature::{RawSigner, RawSignerError, SigningAlg};
 
 mod ecdsa_signer;
 mod ed25519_signer;

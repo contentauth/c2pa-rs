@@ -14,7 +14,10 @@
 use core::str;
 
 use async_trait::async_trait;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+};
 use rsa::{
     pkcs8::DecodePrivateKey,
     pss::SigningKey,
@@ -118,6 +121,67 @@ impl Signer for RsaWasmSigner {
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         None
+    }
+
+    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+        Box::new(self)
+    }
+}
+
+impl RawSigner for RsaWasmSigner {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        let mut rng = rand::thread_rng();
+
+        match self.alg {
+            SigningAlg::Ps256 => {
+                let s = rsa::pss::SigningKey::<Sha256>::new(self.pkey.clone());
+
+                let sig = s.sign_with_rng(&mut rng, data);
+
+                Ok(sig.to_bytes().to_vec())
+            }
+            SigningAlg::Ps384 => {
+                let s = SigningKey::<Sha384>::new(self.pkey.clone());
+
+                let sig = s.sign_with_rng(&mut rng, data);
+
+                Ok(sig.to_bytes().to_vec())
+            }
+            SigningAlg::Ps512 => {
+                let s = SigningKey::<Sha512>::new(self.pkey.clone());
+
+                let sig = s.sign_with_rng(&mut rng, data);
+
+                Ok(sig.to_bytes().to_vec())
+            }
+            _ => {
+                return Err(RawSignerError::InternalError(
+                    "unsupported signature algorithm".to_string(),
+                ))
+            }
+        }
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024 + self.certs_size + self.timestamp_size // the Cose_Sign1 contains complete certs and timestamps so account for size
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.signcerts.clone())
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+impl TimeStampProvider for RsaWasmSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }
 
@@ -277,11 +341,11 @@ impl RsaWasmSignerAsync {
 #[async_trait(?Send)]
 impl AsyncSigner for RsaWasmSignerAsync {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
-        self.signer.sign(&data)
+        Signer::sign(&self.signer, &data)
     }
 
     fn alg(&self) -> SigningAlg {
-        self.signer.alg()
+        Signer::alg(&self.signer)
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -289,20 +353,55 @@ impl AsyncSigner for RsaWasmSignerAsync {
     }
 
     fn reserve_size(&self) -> usize {
-        self.signer.reserve_size()
+        Signer::reserve_size(&self.signer)
     }
 
     async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
+
+    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+        Box::new(self)
+    }
 }
+
+#[async_trait(?Send)]
+impl AsyncRawSigner for RsaWasmSignerAsync {
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Signer::sign(&self.signer, &data).map_err(|e| RawSignerError::InternalError(e.to_string()))
+    }
+
+    fn alg(&self) -> SigningAlg {
+        Signer::alg(&self.signer)
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.signer.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        Signer::reserve_size(&self.signer)
+    }
+}
+
+#[async_trait(?Send)]
+impl AsyncTimeStampProvider for RsaWasmSignerAsync {
+    async fn send_time_stamp_request(
+        &self,
+        _message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        None
+    }
+}
+
+unsafe impl Sync for RsaWasmSignerAsync {}
 
 #[allow(unused_imports)]
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use asn1_rs::FromDer;
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use rsa::{
         pss::{Signature, VerifyingKey},
         sha2::{Digest, Sha256},
@@ -324,9 +423,9 @@ mod tests {
 
         let data = b"some sample content to sign";
 
-        let sig = signer.sign(data).unwrap();
+        let sig = Signer::sign(&signer, data).unwrap();
         println!("signature len = {}", sig.len());
-        assert!(sig.len() <= signer.reserve_size());
+        assert!(sig.len() <= Signer::reserve_size(&signer));
 
         let sk = rsa::pss::SigningKey::<Sha256>::new(signer.pkey.clone());
         let vk = sk.verifying_key();

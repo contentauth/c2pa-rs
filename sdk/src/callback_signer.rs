@@ -17,7 +17,10 @@
 //! using a callback and public signing certificates.
 
 use async_trait::async_trait;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::{
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+    time_stamp::{AsyncTimeStampProvider, TimeStampProvider},
+};
 
 use crate::{AsyncSigner, Error, Result, Signer};
 
@@ -159,6 +162,38 @@ impl Signer for CallbackSigner {
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
+
+    fn raw_signer(&self) -> Box<&dyn RawSigner> {
+        Box::new(self)
+    }
+}
+
+impl RawSigner for CallbackSigner {
+    // TO DISCUSS WITH GAVIN: Perhaps we could make CallbackSigner's API return c2pa_crypto::Result<..., RawSignerError> instead?
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        (self.callback)(self.context, data)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        let pems = pem::parse_many(&self.certs)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        Ok(pems.into_iter().map(|p| p.into_contents()).collect())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.reserve_size
+    }
+}
+
+impl TimeStampProvider for CallbackSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -188,5 +223,39 @@ impl AsyncSigner for CallbackSigner {
     #[cfg(target_arch = "wasm32")]
     async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
+    }
+
+    fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+        Box::new(self)
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl AsyncRawSigner for CallbackSigner {
+    // TO DISCUSS WITH GAVIN: Perhaps we could make CallbackSigner's API return c2pa_crypto::Result<..., RawSignerError> instead?
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        (self.callback)(self.context, &data)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        let pems = pem::parse_many(&self.certs)
+            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        Ok(pems.into_iter().map(|p| p.into_contents()).collect())
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.reserve_size
+    }
+}
+
+impl AsyncTimeStampProvider for CallbackSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.tsa_url.clone()
     }
 }

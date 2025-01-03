@@ -13,10 +13,7 @@
 
 use bcder::Oid;
 
-use crate::{
-    raw_signature::{oids::*, AsyncRawSignatureValidator},
-    SigningAlg,
-};
+use crate::raw_signature::{oids::*, AsyncRawSignatureValidator, SigningAlg};
 
 /// Return an async validator for the given signing algorithm.
 pub fn async_validator_for_signing_alg(
@@ -35,10 +32,7 @@ pub fn async_validator_for_signing_alg(
 
 /// Return a built-in async signature validator for the requested signature
 /// algorithm as identified by OID.
-///
-/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
-/// into c2pa-crypto.
-pub fn async_validator_for_sig_and_hash_algs(
+pub(crate) fn async_validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {

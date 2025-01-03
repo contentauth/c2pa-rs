@@ -18,8 +18,7 @@ use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError},
-    raw_signature::signer::test_signer,
-    SigningAlg,
+    raw_signature::{signer::test_signer, SigningAlg},
 };
 
 #[test]

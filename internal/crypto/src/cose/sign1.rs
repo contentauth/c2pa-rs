@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_generic::async_generic;
 use c2pa_status_tracker::{log_item, validation_codes::CLAIM_SIGNATURE_MISMATCH, StatusTracker};
 use ciborium::value::Value;
 use coset::{
@@ -18,7 +19,10 @@ use coset::{
     CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
 };
 
-use crate::{cose::CoseError, SigningAlg};
+use crate::{
+    cose::{validate_cose_tst_info, validate_cose_tst_info_async, CoseError},
+    raw_signature::SigningAlg,
+};
 
 /// Parse a byte slice as a COSE Sign1 data structure.
 ///
@@ -50,7 +54,7 @@ pub fn parse_cose_sign1(
     Ok(sign1)
 }
 
-/// TEMPORARILY PUBLIC while refactoring.
+/// TO DO: Documentation for this function.
 pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, CoseError> {
     let Some(ref alg) = sign1.protected.header.alg else {
         return Err(CoseError::UnsupportedSigningAlgorithm);
@@ -83,7 +87,7 @@ pub fn signing_alg_from_sign1(sign1: &coset::CoseSign1) -> Result<SigningAlg, Co
     }
 }
 
-/// TEMPORARILY PUBLIC while refactoring.
+/// TO DO: Documentation for this function.
 pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
     // Check the protected header first.
     let Some(value) = sign1
@@ -157,5 +161,28 @@ fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
         Value::Bytes(ref der_bytes) => Ok(vec![der_bytes.clone()]),
 
         _ => Err(CoseError::MissingSigningCertificateChain),
+    }
+}
+
+/// Return the time of signing for this signature.
+///
+/// Should not be used for certificate validation.
+#[async_generic]
+pub fn signing_time_from_sign1(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    // get timestamp info if available
+
+    let time_stamp_info = if _sync {
+        validate_cose_tst_info(sign1, data)
+    } else {
+        validate_cose_tst_info_async(sign1, data).await
+    };
+
+    if let Ok(tst_info) = time_stamp_info {
+        Some(tst_info.gen_time.into())
+    } else {
+        None
     }
 }

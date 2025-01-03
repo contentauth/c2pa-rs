@@ -24,7 +24,7 @@ use std::{
 use async_generic::async_generic;
 use async_recursion::async_recursion;
 use c2pa_crypto::{
-    cose::{parse_cose_sign1, CertificateTrustPolicy},
+    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
     hash::sha256,
 };
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
@@ -494,7 +494,8 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size)
+                // TEMPORARY: Assume V1 until we plumb things through further.
+                cose_sign(signer, &claim_bytes, box_size, TimeStampStorage::V1_sigTst)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -502,7 +503,8 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size).await
+                // TEMPORARY: Assume V1 until we plumb things through further.
+                cose_sign_async(signer, &claim_bytes, box_size, TimeStampStorage::V1_sigTst).await
             }
         };
         match result {
@@ -3595,7 +3597,10 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError, SigningAlg},
+        time_stamp::TimeStampProvider,
+    };
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3836,7 +3841,31 @@ pub mod tests {
         fn reserve_size(&self) -> usize {
             42
         }
+
+        fn raw_signer(&self) -> Box<&dyn RawSigner> {
+            Box::new(self)
+        }
     }
+
+    impl RawSigner for BadSigner {
+        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+            Ok(b"not a valid signature".to_vec())
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
+        }
+
+        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            Ok(Vec::new())
+        }
+
+        fn reserve_size(&self) -> usize {
+            42
+        }
+    }
+
+    impl TimeStampProvider for BadSigner {}
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -3865,7 +3894,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use c2pa_crypto::SigningAlg;
+        use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::create_signer;
 
@@ -5660,7 +5689,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -5731,7 +5760,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -5849,7 +5878,7 @@ pub mod tests {
         // get the embeddable manifest
         let mut input_stream = std::fs::File::open(ap).unwrap();
         let placed_manifest = store
-            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
+            .get_placed_manifest(Signer::reserve_size(&signer), "jpg", &mut input_stream)
             .unwrap();
 
         // insert manifest into output asset
@@ -5897,6 +5926,7 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
+        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -5935,61 +5965,47 @@ pub mod tests {
 
         /// This is an async signer wrapped around a local temp signer,
         /// that implements the dynamic assertion trait.
-        struct DynamicSigner {
-            alg: SigningAlg,
-            certs: Vec<Vec<u8>>,
-            reserve_size: usize,
-            tsa_url: Option<String>,
-            ocsp_val: Option<Vec<u8>>,
-        }
+        struct DynamicSigner(Box<dyn AsyncSigner>);
 
         impl DynamicSigner {
             fn new() -> Self {
-                let signer = test_signer(SigningAlg::Ps256);
-                DynamicSigner {
-                    alg: signer.alg(),
-                    certs: signer.certs().unwrap_or_default(),
-                    reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_authority_url(),
-                    ocsp_val: signer.ocsp_val(),
-                }
+                Self(async_test_signer(SigningAlg::Ps256))
             }
         }
 
         #[async_trait::async_trait]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
-                let signer = test_signer(SigningAlg::Ps256);
-                signer.sign(&data)
+                self.0.sign(data).await
             }
 
             fn alg(&self) -> SigningAlg {
-                self.alg
+                self.0.alg()
             }
 
             fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
-                let mut output: Vec<Vec<u8>> = Vec::new();
-                for v in &self.certs {
-                    output.push(v.clone());
-                }
-                Ok(output)
+                self.0.certs()
             }
 
             fn reserve_size(&self) -> usize {
-                self.reserve_size
+                self.0.reserve_size()
             }
 
             fn time_authority_url(&self) -> Option<String> {
-                self.tsa_url.clone()
+                self.0.time_authority_url()
             }
 
             async fn ocsp_val(&self) -> Option<Vec<u8>> {
-                self.ocsp_val.clone()
+                self.0.ocsp_val().await
             }
 
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
+            }
+
+            fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+                self.0.async_raw_signer()
             }
         }
 

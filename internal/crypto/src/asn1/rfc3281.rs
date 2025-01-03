@@ -79,6 +79,7 @@ impl AttributeCertificateInfo {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum AttCertVersion {
     V2 = 1,
 }
@@ -104,6 +105,7 @@ pub struct Holder {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum DigestedObjectType {
     PublicKey = 0,
     PublicKeyCert = 1,
@@ -142,6 +144,7 @@ pub struct ObjectDigestInfo {
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum AttCertIssuer {
     V1Form(GeneralNames),
     V2Form(Box<V2Form>),
