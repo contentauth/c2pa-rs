@@ -421,6 +421,10 @@ pub mod tests {
                 assert!(get_caiwriter_handler(supported_type).is_some());
             }
         }
+
+        // Writing native formats is beyond the scope of the SDK.
+        assert!(get_caiwriter_handler("nef").is_none());
+        assert!(get_caiwriter_handler("arw").is_none());
     }
 
     #[test]
