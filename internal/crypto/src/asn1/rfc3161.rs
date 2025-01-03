@@ -48,6 +48,7 @@ pub struct TimeStampReq {
 }
 
 impl TimeStampReq {
+    #[allow(dead_code)] // not used on all platforms
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;

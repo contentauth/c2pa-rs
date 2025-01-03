@@ -13,10 +13,7 @@
 
 use bcder::Oid;
 
-use crate::{
-    raw_signature::{oids::*, AsyncRawSignatureValidator},
-    SigningAlg,
-};
+use crate::raw_signature::{oids::*, AsyncRawSignatureValidator, SigningAlg};
 
 /// Return an async validator for the given signing algorithm.
 pub fn async_validator_for_signing_alg(
