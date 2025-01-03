@@ -31,7 +31,7 @@ use c2pa::{
     Result,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::raw_signature::SigningAlg;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");

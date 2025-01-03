@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(dead_code)] // TEMPORARY while refactoring
-
 use openssl::x509::X509;
 
 // Verify the certificate chain order.

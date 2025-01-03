@@ -29,42 +29,10 @@ use x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*, rfc5652::*};
 
 use crate::asn1::rfc3281::AttributeCertificate;
 
-/// The data content type.
-///
-/// `id-data` in the specification.
-///
-/// 1.2.840.113549.1.7.1
-pub const OID_ID_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 1]);
-
 /// The signed-data content type.
 ///
 /// 1.2.840.113549.1.7.2
 pub const OID_ID_SIGNED_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 2]);
-
-/// Enveloped data content type.
-///
-/// 1.2.840.113549.1.7.3
-pub const OID_ENVELOPE_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 3]);
-
-/// Digested-data content type.
-///
-/// 1.2.840.113549.1.7.5
-pub const OID_DIGESTED_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 5]);
-
-/// Encrypted-data content type.
-///
-/// 1.2.840.113549.1.7.6
-pub const OID_ENCRYPTED_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 6]);
-
-/// Authenticated-data content type.
-///
-/// 1.2.840.113549.1.9.16.1.2
-pub const OID_AUTHENTICATED_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 1, 2]);
-
-/// Identifies the content-type attribute.
-///
-/// 1.2.840.113549.1.9.3
-pub const OID_CONTENT_TYPE: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 3]);
 
 /// Identifies the message-digest attribute.
 ///
@@ -75,11 +43,6 @@ pub const OID_MESSAGE_DIGEST: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 
 ///
 /// 1.2.840.113549.1.9.5
 pub const OID_SIGNING_TIME: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 5]);
-
-/// Identifies the countersignature attribute.
-///
-/// 1.2.840.113549.1.9.6
-pub const OID_COUNTER_SIGNATURE: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 6]);
 
 /// Content info.
 ///
@@ -158,23 +121,6 @@ pub struct SignedData {
 }
 
 impl SignedData {
-    /// Attempt to decode BER encoded bytes to a parsed data structure.
-    pub fn decode_ber(data: &[u8]) -> Result<Self, DecodeError<std::convert::Infallible>> {
-        Constructed::decode(data, bcder::Mode::Ber, Self::decode)
-    }
-
-    pub fn decode<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-        cons.take_sequence(|cons| {
-            let oid = Oid::take_from(cons)?;
-
-            if oid != OID_ID_SIGNED_DATA {
-                return Err(cons.content_err("expected signed data OID"));
-            }
-
-            cons.take_constructed_if(Tag::CTX_0, Self::take_from)
-        })
-    }
-
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = CmsVersion::take_from(cons)?;
@@ -196,25 +142,6 @@ impl SignedData {
                 signer_infos,
             })
         })
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::sequence((
-            OID_ID_SIGNED_DATA.encode_ref(),
-            encode::sequence_as(
-                Tag::CTX_0,
-                encode::sequence((
-                    self.version.encode(),
-                    self.digest_algorithms.encode_ref(),
-                    self.content_info.encode_ref(),
-                    self.certificates
-                        .as_ref()
-                        .map(|certs| certs.encode_ref_as(Tag::CTX_0)),
-                    // TODO crls.
-                    self.signer_infos.encode_ref(),
-                )),
-            ),
-        ))
     }
 }
 
@@ -251,10 +178,6 @@ impl DigestAlgorithmIdentifiers {
 
             Ok(Self(identifiers))
         })
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::set(&self.0)
     }
 }
 
@@ -293,10 +216,6 @@ impl SignerInfos {
 
             Ok(Self(infos))
         })
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::set(&self.0)
     }
 }
 
@@ -342,15 +261,6 @@ impl EncapsulatedContentInfo {
                 content,
             })
         })
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::sequence((
-            self.content_type.encode_ref(),
-            self.content
-                .as_ref()
-                .map(|content| encode::sequence_as(Tag::CTX_0, content.encode_ref())),
-        ))
     }
 }
 
@@ -647,10 +557,6 @@ impl DerefMut for SignedAttributes {
 }
 
 impl SignedAttributes {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-        cons.take_set(|cons| Self::take_from_set(cons))
-    }
-
     pub fn take_from_set<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -759,10 +665,6 @@ impl DerefMut for UnsignedAttributes {
 }
 
 impl UnsignedAttributes {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-        cons.take_set(|cons| Self::take_from_set(cons))
-    }
-
     pub fn take_from_set<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -846,6 +748,8 @@ pub type UnprotectedAttributes = Vec<Attribute>;
 ///   ori [4] OtherRecipientInfo }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
+#[allow(clippy::enum_variant_names)]
 pub enum RecipientInfo {
     KeyTransRecipientInfo(KeyTransRecipientInfo),
     KeyAgreeRecipientInfo(KeyAgreeRecipientInfo),
@@ -881,6 +785,7 @@ pub struct KeyTransRecipientInfo {
 ///   subjectKeyIdentifier [0] SubjectKeyIdentifier }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum RecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
     SubjectKeyIdentifier(SubjectKeyIdentifier),
@@ -914,6 +819,7 @@ pub struct KeyAgreeRecipientInfo {
 ///   originatorKey [1] OriginatorPublicKey }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum OriginatorIdentifierOrKey {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
     SubjectKeyIdentifier(SubjectKeyIdentifier),
@@ -957,6 +863,7 @@ pub struct RecipientEncryptedKey {
 ///   rKeyId [0] IMPLICIT RecipientKeyIdentifier }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum KeyAgreeRecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
     RKeyId(RecipientKeyIdentifier),
@@ -1135,6 +1042,7 @@ impl RevocationInfoChoices {
 ///   other [1] IMPLICIT OtherRevocationInfoFormat }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum RevocationInfoChoice {
     Crl(Box<CertificateList>),
     Other(OtherRevocationInfoFormat),
@@ -1268,10 +1176,6 @@ impl CertificateSet {
 
         Ok(Self(certs))
     }
-
-    pub fn encode_ref_as(&self, tag: Tag) -> impl Values + '_ {
-        encode::set_as(tag, &self.0)
-    }
 }
 
 /// Issuer and serial number.
@@ -1372,10 +1276,6 @@ pub struct OtherKeyAttribute {
 
 pub type ContentType = Oid;
 
-pub type MessageDigest = OctetString;
-
-pub type SigningTime = Time;
-
 /// Time variant.
 ///
 /// ```ASN.1
@@ -1415,7 +1315,5 @@ impl From<Time> for chrono::DateTime<chrono::Utc> {
         }
     }
 }
-
-pub type CounterSignature = SignerInfo;
 
 pub type AttributeCertificateV2 = AttributeCertificate;

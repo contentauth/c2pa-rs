@@ -14,9 +14,8 @@
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    raw_signature::{signer_from_cert_chain_and_private_key, RawSignatureValidator},
+    raw_signature::{signer_from_cert_chain_and_private_key, RawSignatureValidator, SigningAlg},
     webcrypto::validators::Ed25519Validator,
-    SigningAlg,
 };
 
 #[wasm_bindgen_test]

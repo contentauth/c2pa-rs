@@ -96,7 +96,6 @@ pub(crate) struct ContentInfo {
     pub(crate) content: rasn::types::Any,
 }
 
-/// TO REVIEW: Does this need to be public after refactoring?
 pub(crate) fn signed_data_from_time_stamp_response(
     ts_resp: &[u8],
 ) -> Result<Option<SignedData>, TimeStampError> {
@@ -135,8 +134,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
     ))
 }
 
-/// TO REVIEW: Does this need to be public after refactoring?
-pub fn tst_info_from_signed_data(
+pub(crate) fn tst_info_from_signed_data(
     signed_data: &SignedData,
 ) -> Result<Option<TstInfo>, TimeStampError> {
     if signed_data.content_info.content_type != OID_CONTENT_TYPE_TST_INFO {

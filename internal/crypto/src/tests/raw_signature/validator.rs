@@ -16,10 +16,8 @@ use rasn::types::OctetString;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::{
-    raw_signature::{
-        validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
-    },
+use crate::raw_signature::{
+    validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
     SigningAlg,
 };
 

@@ -27,8 +27,6 @@ use crate::{
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
-///
-/// TO DO: Determine if this needs to remain fully public after refactoring.
 #[async_generic]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,

@@ -22,9 +22,8 @@ use openssl::{
 use crate::{
     openssl::{cert_chain::check_chain_order, OpenSslMutex},
     p1363::der_to_p1363,
-    raw_signature::{RawSigner, RawSignerError},
+    raw_signature::{RawSigner, RawSignerError, SigningAlg},
     time_stamp::TimeStampProvider,
-    SigningAlg,
 };
 
 enum EcdsaSigningAlg {

@@ -20,9 +20,8 @@ use x509_parser::{
 use crate::{
     cose::{CertificateTrustError, CertificateTrustPolicy},
     p1363::der_to_p1363,
-    raw_signature::RawSignatureValidationError,
+    raw_signature::{RawSignatureValidationError, SigningAlg},
     webcrypto::async_validator_for_signing_alg,
-    SigningAlg,
 };
 
 pub(crate) async fn check_certificate_trust(

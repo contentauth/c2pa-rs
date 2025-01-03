@@ -18,9 +18,8 @@ use std::{collections::HashMap, fmt};
 use async_generic::async_generic;
 use c2pa_crypto::{
     base64,
-    cose::{parse_cose_sign1, CertificateTrustPolicy, OcspFetchPolicy},
+    cose::{parse_cose_sign1, CertificateTrustPolicy, OcspFetchPolicy, ValidationInfo},
     ocsp::OcspResponse,
-    ValidationInfo,
 };
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};

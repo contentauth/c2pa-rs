@@ -14,12 +14,9 @@
 #![allow(clippy::unwrap_used)] // This mod is only used in test code.
 
 use async_trait::async_trait;
-use c2pa_crypto::{
-    raw_signature::{
-        async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
-        AsyncRawSigner,
-    },
-    SigningAlg,
+use c2pa_crypto::raw_signature::{
+    async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+    AsyncRawSigner, SigningAlg,
 };
 
 use crate::{signer::RawSignerWrapper, AsyncSigner, Result, Signer};
@@ -89,6 +86,8 @@ fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
             include_bytes!("../../tests/fixtures/certs/ed25519.pub").to_vec(),
             include_bytes!("../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
+
+        _ => unimplemented!("Unknown SigningAlg variant {alg:#?}"),
     }
 }
 

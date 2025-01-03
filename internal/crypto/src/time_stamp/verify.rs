@@ -11,9 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(unreachable_code)] // TEMPORARY: can't build on non-OpenSSL/non-WASM config without this
-#![allow(unused_variables)] // TEMPORARY: can't build on non-OpenSSL/non-WASM config without this
-
 use std::ops::Deref;
 
 use async_generic::async_generic;
@@ -38,10 +35,8 @@ use crate::{
 };
 
 /// Decode the TimeStampToken info and verify it against the supplied data.
-///
-/// TEMPORARILY PUBLIC while refactoring
 #[async_generic]
-pub fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
+pub(crate) fn verify_time_stamp(ts: &[u8], data: &[u8]) -> Result<TstInfo, TimeStampError> {
     // Did the time stamp expire between issuance and verification?
     let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
         return Err(TimeStampError::DecodeError(

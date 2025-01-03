@@ -18,7 +18,7 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
-use c2pa_crypto::{raw_signature::signer_from_cert_chain_and_private_key, SigningAlg};
+use c2pa_crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg};
 
 use crate::{error::Result, signer::RawSignerWrapper, Signer};
 

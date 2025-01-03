@@ -15,9 +15,8 @@ use core::str;
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-    SigningAlg,
 };
 use rsa::{
     pkcs8::DecodePrivateKey,
@@ -402,7 +401,7 @@ unsafe impl Sync for RsaWasmSignerAsync {}
 #[cfg(test)]
 mod tests {
     use asn1_rs::FromDer;
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use rsa::{
         pss::{Signature, VerifyingKey},
         sha2::{Digest, Sha256},

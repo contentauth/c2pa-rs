@@ -146,7 +146,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use c2pa_status_tracker::OneShotStatusTracker;
     use tempfile::tempdir;
 

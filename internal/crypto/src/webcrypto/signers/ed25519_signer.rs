@@ -15,9 +15,8 @@ use ed25519_dalek::{pkcs8::DecodePrivateKey, SigningKey};
 use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::{
-    raw_signature::{RawSigner, RawSignerError},
+    raw_signature::{RawSigner, RawSignerError, SigningAlg},
     time_stamp::TimeStampProvider,
-    SigningAlg,
 };
 
 /// Implements `RawSigner` trait using `ed25519_dalek` crate's implementation of

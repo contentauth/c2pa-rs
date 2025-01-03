@@ -23,10 +23,7 @@ use crate::{
 /// An `RsaLegacyValidator` can validate raw signatures with an RSA signature
 /// algorithm that is not supported directly by C2PA. (Some RFC 3161 time stamp
 /// providers issue these signatures, which is why it's supported here.)
-///
-/// TEMPORARILY public; will move to `pub(crate)` visibility later in the
-/// refactoring.
-pub enum RsaLegacyValidator {
+pub(crate) enum RsaLegacyValidator {
     Sha1,
     Rsa256,
     Rsa384,

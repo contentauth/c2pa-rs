@@ -15,8 +15,9 @@ use openssl::x509::X509;
 
 use crate::{
     openssl::{signers::signer_from_cert_chain_and_private_key, validators::RsaValidator},
-    raw_signature::{async_signer_from_cert_chain_and_private_key, RawSignatureValidator},
-    SigningAlg,
+    raw_signature::{
+        async_signer_from_cert_chain_and_private_key, RawSignatureValidator, SigningAlg,
+    },
 };
 
 #[test]

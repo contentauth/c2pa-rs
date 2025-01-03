@@ -1083,7 +1083,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     use serde_json::json;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::*;
