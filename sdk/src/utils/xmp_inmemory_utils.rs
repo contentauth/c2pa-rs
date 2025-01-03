@@ -11,13 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::{io::Cursor, str};
+
 use log::error;
 use quick_xml::{
     events::{BytesStart, Event},
     name::QName,
     Reader, Writer,
 };
-use std::{io::Cursor, str};
 
 use crate::{asset_io::CAIRead, jumbf_io::get_cailoader_handler, Error, Result};
 
