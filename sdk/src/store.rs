@@ -3666,9 +3666,8 @@ pub mod tests {
     use std::io::Write;
 
     use c2pa_crypto::{
-        raw_signature::{RawSigner, RawSignerError},
+        raw_signature::{RawSigner, RawSignerError, SigningAlg},
         time_stamp::TimeStampProvider,
-        SigningAlg,
     };
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
@@ -4077,7 +4076,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use c2pa_crypto::SigningAlg;
+        use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::create_signer;
 

@@ -19,7 +19,7 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
 
-pub mod asn1;
+pub(crate) mod asn1;
 pub mod base64;
 pub mod cose;
 pub mod hash;
@@ -32,18 +32,11 @@ compile_error!("OpenSSL feature is not compatible with WASM platform");
 #[cfg(feature = "openssl")]
 pub mod openssl;
 
-pub mod p1363;
-// ^^ TO REVIEW: Can this be made pub(crate) once refactoring is done?
+pub(crate) mod p1363;
 
 pub mod raw_signature;
 
-mod signing_alg;
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-
 pub mod time_stamp;
-
-mod validation_info;
-pub use validation_info::ValidationInfo;
 
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub mod webcrypto;

@@ -15,8 +15,7 @@ use async_trait::async_trait;
 use bcder::Oid;
 use thiserror::Error;
 
-use super::oids::*;
-use crate::SigningAlg;
+use crate::raw_signature::{oids::*, SigningAlg};
 
 /// A `RawSignatureValidator` implementation checks a signature encoded using a
 /// specific signature algorithm and a private/public key pair.
@@ -25,8 +24,8 @@ use crate::SigningAlg;
 /// another signature mechanism. In the C2PA ecosystem, this wrapper is
 /// typically COSE, but `RawSignatureValidator` does not implement COSE.
 pub trait RawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
     fn validate(
         &self,
         sig: &[u8],
@@ -44,14 +43,14 @@ pub trait RawSignatureValidator {
 ///
 /// The WASM implementation of `c2pa-crypto` also implements
 /// [`RawSignatureValidator`] (the synchronous version), but some encryption
-/// algorithms are not fully supported. When possible, it's preferable to use
-/// this implementation.
+/// algorithms are not supported. For that reason, it's preferable to use this
+/// implementation on WASM.
 ///
 /// [`RawSignatureValidator`]: crate::raw_signature::RawSignatureValidator
 #[async_trait(?Send)]
 pub trait AsyncRawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
+    /// Return `Ok(())` if the signature `sig` is valid for the raw content
+    /// `data` and the public key `public_key`.
     async fn validate_async(
         &self,
         sig: &[u8],
@@ -103,10 +102,7 @@ pub fn async_validator_for_signing_alg(
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
-///
-/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
-/// into c2pa-crypto
-pub fn validator_for_sig_and_hash_algs(
+pub(crate) fn validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn RawSignatureValidator>> {

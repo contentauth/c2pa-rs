@@ -23,8 +23,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
     p1363::{der_to_p1363, parse_ec_der_sig},
-    raw_signature::{AsyncRawSigner, RawSigner},
-    SigningAlg,
+    raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
 };
 
 /// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]

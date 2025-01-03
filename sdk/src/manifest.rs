@@ -16,7 +16,7 @@ use std::{borrow::Cow, collections::HashMap, io::Cursor, slice::Iter};
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::raw_signature::SigningAlg;
 use log::{debug, error};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -1505,7 +1505,7 @@ pub(crate) mod tests {
     use std::io::Cursor;
 
     #[cfg(any(feature = "file_io", target_arch = "wasm32"))]
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
     #[cfg(feature = "file_io")]
     use c2pa_status_tracker::{DetailedStatusTracker, StatusTracker};
     #[cfg(feature = "file_io")]

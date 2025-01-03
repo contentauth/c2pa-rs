@@ -151,9 +151,8 @@ fn signing_cert_valid(signing_cert: &[u8]) -> Result<()> {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use c2pa_crypto::{
-        raw_signature::{RawSigner, RawSignerError},
+        raw_signature::{RawSigner, RawSignerError, SigningAlg},
         time_stamp::{TimeStampError, TimeStampProvider},
-        SigningAlg,
     };
 
     use super::sign_claim;
@@ -180,7 +179,7 @@ mod tests {
     #[cfg(all(feature = "openssl_sign", feature = "file_io"))]
     #[actix::test]
     async fn test_sign_claim_async() {
-        use c2pa_crypto::SigningAlg;
+        use c2pa_crypto::raw_signature::SigningAlg;
 
         use crate::{cose_sign::sign_claim_async, AsyncSigner};
 
@@ -213,8 +212,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> c2pa_crypto::SigningAlg {
-            c2pa_crypto::SigningAlg::Ps256
+        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
+            c2pa_crypto::raw_signature::SigningAlg::Ps256
         }
 
         fn certs(&self) -> Result<Vec<Vec<u8>>> {
@@ -242,8 +241,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> c2pa_crypto::SigningAlg {
-            c2pa_crypto::SigningAlg::Ps256
+        fn alg(&self) -> c2pa_crypto::raw_signature::SigningAlg {
+            c2pa_crypto::raw_signature::SigningAlg::Ps256
         }
 
         fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
