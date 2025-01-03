@@ -421,10 +421,28 @@ pub mod tests {
                 assert!(get_caiwriter_handler(supported_type).is_some());
             }
         }
+    }
 
+    #[test]
+    fn test_get_writer_tiff() {
+        let h = TiffIO::new("");
         // Writing native formats is beyond the scope of the SDK.
-        assert!(get_caiwriter_handler("nef").is_none());
-        assert!(get_caiwriter_handler("arw").is_none());
+        // Only the following are supported.
+        let supported_tiff_types: [&str; 6] = [
+            "tif",
+            "tiff",
+            "image/tiff",
+            "dng",
+            "image/dng",
+            "image/x-adobe-dng",
+        ];
+        for tiff_type in h.supported_types() {
+            if supported_tiff_types.contains(tiff_type) {
+                assert!(get_caiwriter_handler(tiff_type).is_some());
+            } else {
+                assert!(get_caiwriter_handler(tiff_type).is_none());
+            }
+        }
     }
 
     #[test]
