@@ -749,6 +749,7 @@ pub type UnprotectedAttributes = Vec<Attribute>;
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
+#[allow(clippy::enum_variant_names)]
 pub enum RecipientInfo {
     KeyTransRecipientInfo(KeyTransRecipientInfo),
     KeyAgreeRecipientInfo(KeyAgreeRecipientInfo),
