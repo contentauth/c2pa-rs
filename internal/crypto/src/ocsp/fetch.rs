@@ -29,7 +29,7 @@ use crate::base64;
 /// will attempt to retrieve the raw DER-encoded OCSP response.
 ///
 /// Not available on WASM builds.
-pub fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     // There must be at least one cert that isn't an end-entity cert.
     if certs.len() < 2 {
         return None;

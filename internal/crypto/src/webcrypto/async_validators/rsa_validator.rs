@@ -13,9 +13,8 @@
 
 use async_trait::async_trait;
 
-use crate::{
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
-    webcrypto::AsyncRawSignatureValidator,
+use crate::raw_signature::{
+    AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `RsaValidator` can validate raw signatures with one of the RSA-PSS

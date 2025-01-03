@@ -6,12 +6,18 @@
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
 
-For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/c2pa-node/).  Some additional documentation for this repository is also available on GitHub:
+For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/rust-sdk/).  Some additional documentation for this repository is also available on GitHub:
 
 - [Usage](docs/usage.md)
 - [Supported formats](docs/supported-formats.md)
 - [Release notes](docs/release-notes.md)
 - [Contributing to the project](docs/project-contributions.md)
+
+- [C2PA Tool](cli/README.md) documentation:
+  - [Using C2PA Tool](cli/docs/usage.md)
+  - [Manifest definition file](cli/docs/manifest.md)
+  - [Using an X.509 certificate](cli/docs/x_509.md)
+  - [Release notes](cli/docs/release-notes.md)
 
 </div>
 
@@ -35,6 +41,10 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 ### New API
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information. 
+
+### Rust language requirement (MSRV)
+
+The `c2pa` crate requires Rust version 1.81.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 ### Contributions and feedback
 

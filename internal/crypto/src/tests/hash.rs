@@ -14,7 +14,7 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::hash::sha1;
+use crate::hash::{sha1, sha256};
 
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
@@ -25,6 +25,19 @@ fn test_sha1() {
         [
             53, 238, 131, 134, 65, 13, 65, 209, 75, 63, 119, 159, 201, 95, 70, 149, 244, 133, 22,
             130
+        ]
+    );
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_sha256() {
+    let hash = sha256(b"test message");
+    assert_eq!(
+        hash,
+        [
+            63, 10, 55, 123, 160, 164, 164, 96, 236, 182, 22, 246, 80, 124, 224, 216, 207, 163,
+            231, 4, 2, 93, 79, 218, 62, 208, 197, 202, 5, 70, 135, 40
         ]
     );
 }

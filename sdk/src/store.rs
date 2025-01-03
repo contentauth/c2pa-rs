@@ -23,6 +23,10 @@ use std::{
 
 use async_generic::async_generic;
 use async_recursion::async_recursion;
+use c2pa_crypto::{
+    cose::{parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage},
+    hash::sha256,
+};
 use c2pa_status_tracker::{log_item, DetailedStatusTracker, OneShotStatusTracker, StatusTracker};
 use log::error;
 
@@ -43,9 +47,12 @@ use crate::{
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
-    claim::{Claim, ClaimAssertion, ClaimAssertionType, ClaimAssetData, RemoteManifest},
+    claim::{
+        check_ocsp_status, Claim, ClaimAssertion, ClaimAssertionType, ClaimAssetData,
+        RemoteManifest,
+    },
     cose_sign::{cose_sign, cose_sign_async},
-    cose_validator::{check_ocsp_status, verify_cose, verify_cose_async},
+    cose_validator::{verify_cose, verify_cose_async},
     dynamic_assertion::{DynamicAssertion, PreliminaryClaim},
     error::{Error, Result},
     external_manifest::ManifestPatchCallback,
@@ -63,12 +70,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     salt::DefaultSalt,
     settings::get_settings_value,
-    trust_handler::TrustHandlerConfig,
-    utils::{
-        hash_utils::{hash_sha256, HashRange},
-        io_utils::stream_len,
-        patch::patch_bytes,
-    },
+    utils::{hash_utils::HashRange, io_utils::stream_len, patch::patch_bytes},
     validation_status, AsyncSigner, RemoteSigner, Signer,
 };
 
@@ -89,7 +91,7 @@ pub struct Store {
     claims: Vec<Claim>,
     label: String,
     provenance_path: Option<String>,
-    trust_handler: Box<dyn TrustHandlerConfig>,
+    ctp: CertificateTrustPolicy,
 }
 
 struct ManifestInfo<'a> {
@@ -133,12 +135,7 @@ impl Store {
             manifest_box_hash_cache: HashMap::new(),
             claims: Vec::new(),
             label: label.to_string(),
-            #[cfg(feature = "openssl")]
-            trust_handler: Box::new(crate::openssl::OpenSSLTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), target_arch = "wasm32"))]
-            trust_handler: Box::new(crate::wasm::WebTrustHandlerConfig::new()),
-            #[cfg(all(not(feature = "openssl"), not(target_arch = "wasm32")))]
-            trust_handler: Box::new(crate::trust_handler::TrustPassThrough::new()),
+            ctp: CertificateTrustPolicy::default(),
             provenance_path: None,
             //dynamic_assertions: Vec::new(),
         };
@@ -179,37 +176,28 @@ impl Store {
     /// Load set of trust anchors used for certificate validation. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.
     pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler
-            .load_trust_anchors_from_data(&mut trust_reader)
+        Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
     // Load set of private trust anchors used for certificate validation. [u8] to the
     /// private trust anchors is passed in the trust_vec variable.  This can be called multiple times
     /// if there are additional trust stores.
     pub fn add_private_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler
-            .append_private_trust_data(&mut trust_reader)
+        Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(trust_vec);
-        self.trust_handler.load_configuration(&mut trust_reader)
+        self.ctp.add_valid_ekus(trust_vec);
+        Ok(())
     }
 
     pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
-        let mut trust_reader = Cursor::new(allowed_vec);
-        self.trust_handler.load_allowed_list(&mut trust_reader)
+        Ok(self.ctp.add_end_entity_credentials(allowed_vec)?)
     }
 
     /// Clear all existing trust anchors
     pub fn clear_trust_anchors(&mut self) {
-        self.trust_handler.clear();
-    }
-
-    fn trust_handler(&self) -> &dyn TrustHandlerConfig {
-        self.trust_handler.as_ref()
+        self.ctp.clear();
     }
 
     /// Get the provenance if available.
@@ -451,7 +439,7 @@ impl Store {
     // with actual signature data.
     fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = hash_sha256(placeholder_str.as_bytes());
+        let mut placeholder = sha256(placeholder_str.as_bytes());
 
         use std::cmp::max;
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
@@ -484,7 +472,8 @@ impl Store {
         let data = claim.data().ok()?;
         let mut validation_log = OneShotStatusTracker::default();
 
-        if let Ok(info) = check_ocsp_status(sig, &data, self.trust_handler(), &mut validation_log) {
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
+        if let Ok(info) = check_ocsp_status(&sign1, &data, &self.ctp, &mut validation_log) {
             if let Some(revoked_at) = &info.revoked_at {
                 Some(format!(
                     "Certificate Status: Revoked, revoked at: {}",
@@ -516,19 +505,26 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
+        let tss = if claim.version() > 1 {
+            TimeStampStorage::V2_sigTst2_CTT
+        } else {
+            TimeStampStorage::V1_sigTst
+        };
+
         let result = if _sync {
             if signer.direct_cose_handling() {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, claim.version())
+                cose_sign(signer, &claim_bytes, box_size, tss)
             }
         } else {
             if signer.direct_cose_handling() {
                 // Let the signer do all the COSE processing and return the structured COSE data.
-                return signer.sign(claim_bytes.clone()).await; // do not verify remote signers (we never did)
+                return signer.sign(claim_bytes.clone()).await;
+            // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, claim.version()).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss).await
             }
         };
         match result {
@@ -541,21 +537,14 @@ impl Store {
                         let mut cose_log = OneShotStatusTracker::default();
 
                         let result = if _sync {
-                            verify_cose(
+                            verify_cose(&sig, &claim_bytes, b"", false, &self.ctp, &mut cose_log)
+                        } else {
+                            verify_cose_async(
                                 &sig,
                                 &claim_bytes,
                                 b"",
                                 false,
-                                self.trust_handler(),
-                                &mut cose_log,
-                            )
-                        } else {
-                            verify_cose_async(
-                                sig.clone(),
-                                claim_bytes,
-                                b"".to_vec(),
-                                false,
-                                self.trust_handler(),
+                                &self.ctp,
                                 &mut cose_log,
                             )
                             .await
@@ -1342,7 +1331,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        store.trust_handler(),
+                        &store.ctp,
                         validation_log,
                     )?;
 
@@ -1446,7 +1435,7 @@ impl Store {
                         asset_data,
                         false,
                         check_ingredient_trust,
-                        store.trust_handler(),
+                        &store.ctp,
                         validation_log,
                     )
                     .await?;
@@ -1494,15 +1483,8 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim_async(
-            claim,
-            asset_data,
-            true,
-            true,
-            store.trust_handler(),
-            validation_log,
-        )
-        .await?;
+        Claim::verify_claim_async(claim, asset_data, true, true, &store.ctp, validation_log)
+            .await?;
 
         Store::ingredient_checks_async(store, claim, asset_data, validation_log).await?;
 
@@ -1531,14 +1513,7 @@ impl Store {
         };
 
         // verify the provenance claim
-        Claim::verify_claim(
-            claim,
-            asset_data,
-            true,
-            true,
-            store.trust_handler(),
-            validation_log,
-        )?;
+        Claim::verify_claim(claim, asset_data, true, true, &store.ctp, validation_log)?;
 
         Store::ingredient_checks(store, claim, asset_data, validation_log)?;
 
@@ -3690,7 +3665,10 @@ pub mod tests {
 
     use std::io::Write;
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::{
+        raw_signature::{RawSigner, RawSignerError, SigningAlg},
+        time_stamp::TimeStampProvider,
+    };
     use c2pa_status_tracker::StatusTracker;
     use memchr::memmem;
     use serde::Serialize;
@@ -3708,9 +3686,10 @@ pub mod tests {
             hash_utils::Hasher,
             patch::patch_file,
             test::{
-                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path, temp_signer,
+                create_test_claim, fixture_path, temp_dir_path, temp_fixture_path,
                 write_jpeg_placeholder_file,
             },
+            test_signer::{async_test_signer, test_signer},
         },
     };
 
@@ -3761,7 +3740,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Test generate JUMBF
         // Get labels for label test
@@ -3881,7 +3860,7 @@ pub mod tests {
         claimv2.add_claim_generator_info(cgi);
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Test generate JUMBF
         // Get labels for label test
@@ -3988,7 +3967,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4028,7 +4007,7 @@ pub mod tests {
 
     struct BadSigner {}
 
-    impl crate::Signer for BadSigner {
+    impl Signer for BadSigner {
         fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             Ok(b"not a valid signature".to_vec())
         }
@@ -4044,9 +4023,31 @@ pub mod tests {
         fn reserve_size(&self) -> usize {
             42
         }
+
+        fn raw_signer(&self) -> Box<&dyn RawSigner> {
+            Box::new(self)
+        }
     }
 
-    impl c2pa_crypto::time_stamp::TimeStampProvider for BadSigner {}
+    impl RawSigner for BadSigner {
+        fn sign(&self, _data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+            Ok(b"not a valid signature".to_vec())
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ps256
+        }
+
+        fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+            Ok(Vec::new())
+        }
+
+        fn reserve_size(&self) -> usize {
+            42
+        }
+    }
+
+    impl TimeStampProvider for BadSigner {}
 
     #[test]
     #[cfg(feature = "file_io")]
@@ -4075,7 +4076,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{openssl::RsaSigner, signer::ConfigurableSigner, SigningAlg};
+        use c2pa_crypto::raw_signature::SigningAlg;
+
+        use crate::create_signer;
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4089,13 +4092,16 @@ pub mod tests {
         let signcert_path = fixture_path("rsa-pss256_key-expired.pub");
         let pkey_path = fixture_path("rsa-pss256-expired.pem");
         let signer =
-            RsaSigner::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
+            create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None).unwrap();
 
         store.commit_claim(claim).unwrap();
 
         let r = store.save_to_asset(&ap, &signer, &op);
         assert!(r.is_err());
-        assert_eq!(r.err().unwrap().to_string(), "COSE certificate has expired");
+        assert_eq!(
+            r.err().unwrap().to_string(),
+            "the certificate was not valid at time of signing"
+        );
     }
 
     #[test]
@@ -4130,12 +4136,12 @@ pub mod tests {
 
         // original data should not be in file anymore check for first 1k
         let buf = fs::read(&op).unwrap();
-        assert!(memmem::find(&buf, &original_jumbf[0..1024]).is_none());
+        assert_eq!(memmem::find(&buf, &original_jumbf[0..1024]), None);
     }
 
     #[actix::test]
     async fn test_jumbf_generation_async() {
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4260,7 +4266,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4356,7 +4362,7 @@ pub mod tests {
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
 
             // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
             store.commit_claim(claim1).unwrap();
@@ -4429,7 +4435,7 @@ pub mod tests {
             create_capture_claim(&mut claim_capture).unwrap();
 
             // Do we generate JUMBF?
-            let signer = temp_signer();
+            let signer = test_signer(SigningAlg::Ps256);
 
             // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commmits
             store.commit_claim(claim1).unwrap();
@@ -4503,7 +4509,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4577,7 +4583,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4651,7 +4657,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4717,7 +4723,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4761,7 +4767,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4805,7 +4811,7 @@ pub mod tests {
         let claim1 = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -4931,7 +4937,7 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -4969,7 +4975,7 @@ pub mod tests {
     fn test_data_box_creation() {
         use crate::utils::test::create_test_store;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5024,7 +5030,7 @@ pub mod tests {
     fn test_update_manifest() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store};
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("earth_apollo17.jpg");
@@ -5100,7 +5106,9 @@ pub mod tests {
         // replace the title that is inside the claim data - should cause signature to not match
         let report = patch_and_report("C.jpg", b"C.jpg", b"X.jpg");
         assert!(!report.logged_items().is_empty());
-        assert!(report.has_error(Error::CoseTimeStampMismatch));
+        assert!(report.has_error(Error::TimeStampError(
+            c2pa_crypto::time_stamp::TimeStampError::InvalidData
+        )));
         assert!(report.has_status(validation_status::TIMESTAMP_MISMATCH));
     }
 
@@ -5199,7 +5207,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list.
         store.commit_claim(claim1).unwrap();
@@ -5229,7 +5237,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let result: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(result);
@@ -5291,7 +5299,7 @@ pub mod tests {
         claim.set_external_manifest();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         store.commit_claim(claim).unwrap();
 
@@ -5328,7 +5336,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5396,7 +5404,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5448,7 +5456,7 @@ pub mod tests {
         let mut claim = create_test_claim().unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // start with base url
         let fp = format!("file:/{}", sidecar.to_str().unwrap());
@@ -5504,7 +5512,7 @@ pub mod tests {
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         store.commit_claim(claim1).unwrap();
 
@@ -5558,7 +5566,7 @@ pub mod tests {
         create_capture_claim(&mut claim_capture).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
         store.commit_claim(claim1).unwrap();
@@ -5628,7 +5636,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // get the embeddable manifest
         let em = store
@@ -5714,7 +5722,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // get the embeddable manifest
         let em = store
@@ -5777,12 +5785,12 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
         // test adding to actual image
-
         use std::io::SeekFrom;
+
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = crate::openssl::temp_signer_async::AsyncSignerAdapter::new(SigningAlg::Ps256);
+        let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -5851,7 +5859,7 @@ pub mod tests {
         let ap = fixture_path("cloud.jpg");
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -5863,7 +5871,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -5922,7 +5930,7 @@ pub mod tests {
         let mut hasher = Hasher::SHA256(Sha256::new());
 
         // Do we generate JUMBF?
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
         let mut store = Store::new();
@@ -5934,7 +5942,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
             .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -6028,7 +6036,7 @@ pub mod tests {
     fn test_placed_manifest() {
         use crate::jumbf::labels::to_normalized_uri;
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
 
         // test adding to actual image
         let ap = fixture_path("C.jpg");
@@ -6052,7 +6060,7 @@ pub mod tests {
         // get the embeddable manifest
         let mut input_stream = std::fs::File::open(ap).unwrap();
         let placed_manifest = store
-            .get_placed_manifest(signer.reserve_size(), "jpg", &mut input_stream)
+            .get_placed_manifest(Signer::reserve_size(&signer), "jpg", &mut input_stream)
             .unwrap();
 
         // insert manifest into output asset
@@ -6100,6 +6108,7 @@ pub mod tests {
     #[cfg(feature = "openssl_sign")]
     async fn test_dynamic_assertions() {
         use async_trait::async_trait;
+        use c2pa_crypto::raw_signature::AsyncRawSigner;
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -6138,64 +6147,47 @@ pub mod tests {
 
         /// This is an async signer wrapped around a local temp signer,
         /// that implements the dynamic assertion trait.
-        struct DynamicSigner {
-            alg: SigningAlg,
-            certs: Vec<Vec<u8>>,
-            reserve_size: usize,
-            tsa_url: Option<String>,
-            ocsp_val: Option<Vec<u8>>,
-        }
+        struct DynamicSigner(Box<dyn AsyncSigner>);
 
         impl DynamicSigner {
             fn new() -> Self {
-                let signer = temp_signer();
-                DynamicSigner {
-                    alg: signer.alg(),
-                    certs: signer.certs().unwrap_or_default(),
-                    reserve_size: signer.reserve_size(),
-                    tsa_url: signer.time_stamp_service_url(),
-                    ocsp_val: signer.ocsp_val(),
-                }
+                Self(async_test_signer(SigningAlg::Ps256))
             }
         }
 
         #[async_trait::async_trait]
         impl crate::AsyncSigner for DynamicSigner {
             async fn sign(&self, data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
-                let signer = temp_signer();
-                signer.sign(&data)
+                self.0.sign(data).await
             }
 
             fn alg(&self) -> SigningAlg {
-                self.alg
+                self.0.alg()
             }
 
             fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
-                let mut output: Vec<Vec<u8>> = Vec::new();
-                for v in &self.certs {
-                    output.push(v.clone());
-                }
-                Ok(output)
+                self.0.certs()
             }
 
             fn reserve_size(&self) -> usize {
-                self.reserve_size
+                self.0.reserve_size()
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                self.0.time_authority_url()
             }
 
             async fn ocsp_val(&self) -> Option<Vec<u8>> {
-                self.ocsp_val.clone()
+                self.0.ocsp_val().await
             }
 
             // Returns our dynamic assertion here.
             fn dynamic_assertions(&self) -> Vec<Box<dyn crate::DynamicAssertion>> {
                 vec![Box::new(TestDynamicAssertion {})]
             }
-        }
 
-        #[async_trait::async_trait]
-        impl c2pa_crypto::time_stamp::AsyncTimeStampProvider for DynamicSigner {
-            fn time_stamp_service_url(&self) -> Option<String> {
-                self.tsa_url.clone()
+            fn async_raw_signer(&self) -> Box<&dyn AsyncRawSigner> {
+                self.0.async_raw_signer()
             }
         }
 
@@ -6278,7 +6270,7 @@ pub mod tests {
                     store.commit_claim(claim).unwrap();
 
                     // Do we generate JUMBF?
-                    let signer = temp_signer();
+                    let signer = test_signer(SigningAlg::Ps256);
 
                     // add manifest based on
                     let new_output_path = output_path.join(init_dir.file_name().unwrap());

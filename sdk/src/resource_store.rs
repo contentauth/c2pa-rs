@@ -404,8 +404,10 @@ mod tests {
 
     use std::io::Cursor;
 
+    use c2pa_crypto::raw_signature::SigningAlg;
+
     use super::*;
-    use crate::{utils::test::temp_signer, Builder, Reader};
+    use crate::{utils::test_signer::test_signer, Builder, Reader};
 
     #[test]
     #[cfg(feature = "openssl_sign")]
@@ -451,7 +453,8 @@ mod tests {
 
         let image = include_bytes!("../tests/fixtures/earth_apollo17.jpg");
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+
         // Embed a manifest using the signer.
         let mut output_image = Cursor::new(Vec::new());
         builder

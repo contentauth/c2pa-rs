@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(dead_code)] // TEMPORARY while building
-
 use chrono::{DateTime, Utc};
 
 /// Return the current time in UTC.

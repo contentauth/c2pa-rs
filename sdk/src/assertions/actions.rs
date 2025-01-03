@@ -291,6 +291,7 @@ impl Action {
     }
 
     // Internal function to return any ingredients referenced by this action.
+    #[allow(dead_code)] // not used in some scenarios
     pub(crate) fn ingredient_ids(&mut self) -> Option<Vec<String>> {
         match self.get_parameter(CAI_INGREDIENT_IDS) {
             Some(Value::Array(ids)) => {

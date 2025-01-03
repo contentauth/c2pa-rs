@@ -1708,7 +1708,7 @@ impl RemoteRefEmbed for BmffIO {
                 let xmp = match self.get_reader().read_xmp(input_stream) {
                     Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
                     None => {
-                        let xmp = format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP);
+                        let xmp = MIN_XMP.to_string();
                         add_provenance(&xmp, &manifest_uri)?
                     }
                 };
@@ -1853,8 +1853,7 @@ pub mod tests {
     use super::*;
     use crate::utils::test::{fixture_path, temp_dir_path};
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "openssl", feature = "file_io"))]
     #[test]
     fn test_read_mp4() {
         use c2pa_status_tracker::DetailedStatusTracker;

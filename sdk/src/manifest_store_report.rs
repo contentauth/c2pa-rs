@@ -229,30 +229,36 @@ impl ManifestStoreReport {
             // is this an ingredient
             if let Some(ref c2pa_manifest) = &ingredient_assertion.c2pa_manifest {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
-                let hash = &c2pa_manifest.hash()[..5];
 
-                if let Some(ingredient_claim) = store.get_claim(&label) {
-                    // create new node
-                    let title = if let Some(title) = &ingredient_assertion.title {
-                        title.to_owned()
-                    } else {
-                        "No title".into()
-                    };
-                    let data = if name_only {
-                        format!("{}_{}", title, Hexlify(hash))
-                    } else {
-                        format!("Asset:{}, Manifest:{}", title, label)
-                    };
+                if let Some(hash) = c2pa_manifest.hash().get(0..5) {
+                    if let Some(ingredient_claim) = store.get_claim(&label) {
+                        // create new node
+                        let title = if let Some(title) = &ingredient_assertion.title {
+                            title.to_owned()
+                        } else {
+                            "No title".into()
+                        };
 
-                    let new_token = current_token.append(tree, data);
+                        let data = if name_only {
+                            format!("{}_{}", title, Hexlify(hash))
+                        } else {
+                            format!("Asset:{}, Manifest:{}", title, label)
+                        };
 
-                    ManifestStoreReport::populate_node(
-                        tree,
-                        store,
-                        ingredient_claim,
-                        &new_token,
-                        name_only,
-                    )?;
+                        let new_token = current_token.append(tree, data);
+
+                        ManifestStoreReport::populate_node(
+                            tree,
+                            store,
+                            ingredient_claim,
+                            &new_token,
+                            name_only,
+                        )?;
+                    }
+                } else {
+                    return Err(crate::Error::InvalidAsset(
+                        "Manifest hash too short".to_string(),
+                    ));
                 }
             } else {
                 let asset_name = if let Some(title) = &ingredient_assertion.title {

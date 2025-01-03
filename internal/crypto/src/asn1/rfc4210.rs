@@ -8,7 +8,6 @@
 
 use bcder::{
     decode::{Constructed, DecodeError, Source},
-    encode::{self, Values},
     Tag, Utf8String,
 };
 
@@ -27,10 +26,6 @@ impl PkiFreeText {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
-        cons.take_sequence(|cons| Self::from_sequence(cons))
-    }
-
     pub fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -43,9 +38,5 @@ impl PkiFreeText {
         }
 
         Ok(Self(res))
-    }
-
-    pub fn encode_ref(&self) -> impl Values + '_ {
-        encode::sequence(encode::slice(&self.0, |x| x.clone().encode()))
     }
 }

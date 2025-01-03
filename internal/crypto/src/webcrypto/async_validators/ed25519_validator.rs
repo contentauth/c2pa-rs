@@ -13,9 +13,8 @@
 
 use async_trait::async_trait;
 
-use crate::{
-    raw_signature::{RawSignatureValidationError, RawSignatureValidator},
-    webcrypto::AsyncRawSignatureValidator,
+use crate::raw_signature::{
+    AsyncRawSignatureValidator, RawSignatureValidationError, RawSignatureValidator,
 };
 
 /// An `Ed25519Validator` can validate raw signatures with the Ed25519 signature

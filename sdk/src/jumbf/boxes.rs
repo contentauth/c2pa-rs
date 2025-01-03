@@ -282,67 +282,74 @@ impl JUMBFSuperBox {
         self.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.data_boxes.get(index).map(|b| b.as_ref())
     }
 
     pub fn data_box_as_superbox(&self, index: usize) -> Option<&JUMBFSuperBox> {
-        let da_box = &self.data_boxes[index];
-        da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>()
+        self.data_boxes
+            .get(index)
+            .and_then(|da_box| da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>())
     }
 
     pub fn data_box_as_json_box(&self, index: usize) -> Option<&JUMBFJSONContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFJSONContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFJSONContentBox>()
+        })
     }
 
     pub fn data_box_as_cbor_box(&self, index: usize) -> Option<&JUMBFCBORContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFCBORContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFCBORContentBox>()
+        })
     }
 
     pub fn data_box_as_jp2c_box(&self, index: usize) -> Option<&JUMBFCodestreamContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFCodestreamContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFCodestreamContentBox>()
+        })
     }
 
     pub fn data_box_as_uuid_box(&self, index: usize) -> Option<&JUMBFUUIDContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFUUIDContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFUUIDContentBox>()
+        })
     }
 
     pub fn data_box_as_embedded_file_content_box(
         &self,
         index: usize,
     ) -> Option<&JUMBFEmbeddedFileContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        })
     }
 
     pub fn data_box_as_embedded_media_type_box(
         &self,
         index: usize,
     ) -> Option<&JUMBFEmbeddedFileDescriptionBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        })
     }
 }
 
@@ -1438,8 +1445,11 @@ impl CAIStore {
         self.store.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.store.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.store
+            .data_boxes
+            .get(index)
+            .map(|da_box| da_box.as_ref())
     }
 
     pub fn assertion_store(&self) -> Option<&JUMBFSuperBox> {
@@ -1512,13 +1522,18 @@ impl Cai {
         self.sbox.data_boxes.len()
     }
 
-    pub fn data_box(&self, index: usize) -> &dyn BMFFBox {
-        self.sbox.data_boxes[index].as_ref()
+    pub fn data_box(&self, index: usize) -> Option<&dyn BMFFBox> {
+        self.sbox
+            .data_boxes
+            .get(index)
+            .map(|da_box| da_box.as_ref())
     }
 
     pub fn data_box_as_superbox(&self, index: usize) -> Option<&JUMBFSuperBox> {
-        let da_box = &self.sbox.data_boxes[index];
-        da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>()
+        self.sbox
+            .data_boxes
+            .get(index)
+            .and_then(|da_box| da_box.as_ref().as_any().downcast_ref::<JUMBFSuperBox>())
     }
 
     pub fn store(&self) -> Option<&JUMBFSuperBox> {
@@ -1581,19 +1596,21 @@ impl JumbfEmbeddedFileBox {
     }
 
     pub fn media_type_box(&self) -> Option<&JUMBFEmbeddedFileDescriptionBox> {
-        let efd_box = &self.embedding_box.data_boxes[0];
-        efd_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        self.embedding_box.data_boxes.first().and_then(|efd_box| {
+            efd_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
+        })
     }
 
     pub fn data_box(&self) -> Option<&JUMBFEmbeddedFileContentBox> {
-        let efc_box = &self.embedding_box.data_boxes[1];
-        efc_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        self.embedding_box.data_boxes.get(1).and_then(|efc_box| {
+            efc_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFEmbeddedFileContentBox>()
+        })
     }
 
     pub fn set_salt(&mut self, salt: Vec<u8>) -> JumbfParseResult<()> {

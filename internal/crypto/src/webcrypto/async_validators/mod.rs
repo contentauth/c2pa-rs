@@ -11,38 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use async_trait::async_trait;
 use bcder::Oid;
 
-use crate::{
-    raw_signature::{oids::*, RawSignatureValidationError},
-    SigningAlg,
-};
-
-/// An `AsyncRawSignatureValidator` implementation checks a signature encoded
-/// using a specific signature algorithm and a private/public key pair.
-///
-/// IMPORTANT: This signature is typically embedded in a wrapper provided by
-/// another signature mechanism. In the C2PA ecosystem, this wrapper is
-/// typically COSE, but `AsyncRawSignatureValidator` does not implement COSE.
-///
-/// The WASM implementation of `c2pa-crypto` also implements
-/// [`RawSignatureValidator`] (the synchronous version), but some encryption
-/// algorithms are not fully supported. When possible, it's preferable to use
-/// this implementation.
-///
-/// [`RawSignatureValidator`]: crate::raw_signature::RawSignatureValidator
-#[async_trait(?Send)]
-pub trait AsyncRawSignatureValidator {
-    /// Return `true` if the signature `sig` is valid for the raw content `data`
-    /// and the public key `public_key`.
-    async fn validate_async(
-        &self,
-        sig: &[u8],
-        data: &[u8],
-        public_key: &[u8],
-    ) -> Result<(), RawSignatureValidationError>;
-}
+use crate::raw_signature::{oids::*, AsyncRawSignatureValidator, SigningAlg};
 
 /// Return an async validator for the given signing algorithm.
 pub fn async_validator_for_signing_alg(
@@ -61,10 +32,7 @@ pub fn async_validator_for_signing_alg(
 
 /// Return a built-in async signature validator for the requested signature
 /// algorithm as identified by OID.
-///
-/// TEMPORARILY PUBLIC: This will become `pub(crate)` once time stamp code moves
-/// into c2pa-crypto.
-pub fn async_validator_for_sig_and_hash_algs(
+pub(crate) fn async_validator_for_sig_and_hash_algs(
     sig_alg: &Oid,
     hash_alg: &Oid,
 ) -> Option<Box<dyn AsyncRawSignatureValidator>> {

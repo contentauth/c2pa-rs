@@ -229,7 +229,7 @@ impl RemoteRefEmbed for Mp3IO {
                 let xmp = xmp_inmemory_utils::add_provenance(
                     &self
                         .read_xmp(source_stream)
-                        .unwrap_or_else(|| format!("http://ns.adobe.com/xap/1.0/\0 {}", MIN_XMP)),
+                        .unwrap_or_else(|| MIN_XMP.to_string()),
                     &url,
                 )?;
                 let frame = Frame::with_content(
@@ -507,6 +507,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use tempfile::tempdir;
+    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
     use crate::utils::{
@@ -592,7 +593,7 @@ pub mod tests {
         let mp3_io = Mp3IO::new("mp3");
 
         let mut stream = File::open(fixture_path("sample1.mp3"))?;
-        assert!(mp3_io.read_xmp(&mut stream).is_none());
+        assert_eq!(mp3_io.read_xmp(&mut stream), None);
         stream.rewind()?;
 
         let mut output_stream1 = Cursor::new(Vec::new());
@@ -603,8 +604,10 @@ pub mod tests {
         )?;
         output_stream1.rewind()?;
 
-        let xmp = mp3_io.read_xmp(&mut output_stream1);
-        assert_eq!(xmp, Some("http://ns.adobe.com/xap/1.0/\0<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n    <rdf:Description rdf:about=\"\" xmlns:dcterms=\"http://purl.org/dc/terms/\" dcterms:provenance=\"Test\">\n    </rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>".to_owned()));
+        let xmp = mp3_io.read_xmp(&mut output_stream1).unwrap();
+
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "Test");
 
         Ok(())
     }

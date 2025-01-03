@@ -12,11 +12,9 @@
 // each license.
 
 use bcder::decode::Constructed;
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use x509_parser::nom::AsBytes;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::asn1::rfc3161::PkiStatus;
 use crate::{
     asn1::{
         rfc3161::{TimeStampResp, TimeStampToken, TstInfo, OID_CONTENT_TYPE_TST_INFO},
@@ -25,10 +23,8 @@ use crate::{
     time_stamp::TimeStampError,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct TimeStampResponse(pub TimeStampResp);
 
-#[cfg(not(target_arch = "wasm32"))]
 impl std::ops::Deref for TimeStampResponse {
     type Target = TimeStampResp;
 
@@ -37,16 +33,19 @@ impl std::ops::Deref for TimeStampResponse {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl TimeStampResponse {
     /// Return `true` if the request was successful.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn is_success(&self) -> bool {
+        use crate::asn1::rfc3161::PkiStatus;
+
         matches!(
             self.0.status.status,
             PkiStatus::Granted | PkiStatus::GrantedWithMods
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type == OID_ID_SIGNED_DATA {
@@ -67,6 +66,7 @@ impl TimeStampResponse {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
         if let Some(signed_data) = self.signed_data()? {
             if signed_data.content_info.content_type == OID_CONTENT_TYPE_TST_INFO {
@@ -90,14 +90,13 @@ impl TimeStampResponse {
 }
 
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct ContentInfo {
-    content_type: rasn::types::ObjectIdentifier,
+pub(crate) struct ContentInfo {
+    pub(crate) content_type: rasn::types::ObjectIdentifier,
 
     #[rasn(tag(explicit(0)))]
-    content: rasn::types::Any,
+    pub(crate) content: rasn::types::Any,
 }
 
-/// TO REVIEW: Does this need to be public after refactoring?
 pub(crate) fn signed_data_from_time_stamp_response(
     ts_resp: &[u8],
 ) -> Result<Option<SignedData>, TimeStampError> {
@@ -136,8 +135,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
     ))
 }
 
-/// TO REVIEW: Does this need to be public after refactoring?
-pub fn tst_info_from_signed_data(
+pub(crate) fn tst_info_from_signed_data(
     signed_data: &SignedData,
 ) -> Result<Option<TstInfo>, TimeStampError> {
     if signed_data.content_info.content_type != OID_CONTENT_TYPE_TST_INFO {

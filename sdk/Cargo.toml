@@ -1,6 +1,6 @@
 [package]
 name = "c2pa"
-version = "0.39.0"
+version = "0.40.0"
 description = "Rust SDK for C2PA (Coalition for Content Provenance and Authenticity) implementors"
 authors = [
     "Maurice Fisher <mfisher@adobe.com>",
@@ -18,7 +18,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.76.0"
+rust-version = "1.81.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -28,12 +28,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["v1_api"]
 add_thumbnails = ["image"]
-psxxx_ocsp_stapling_experimental = []
 file_io = ["openssl_sign"]
 serialize_thumbnails = []
 no_interleaved_io = ["file_io"]
 fetch_remote_manifests = []
-openssl = ["dep:openssl", "c2pa-crypto/openssl"]
+openssl = ["c2pa-crypto/openssl"]
 openssl_sign = ["openssl", "c2pa-crypto/openssl"]
 json_schema = ["dep:schemars", "c2pa-crypto/json_schema"]
 pdf = ["dep:lopdf"]
@@ -64,7 +63,7 @@ required-features = ["unstable_api"]
 crate-type = ["lib"]
 
 [dependencies]
-asn1-rs = "0.5.2"
+asn1-rs = "0.6.2"
 async-generic = "1.1"
 async-recursion = "1.1.1"
 async-trait = { version = "0.1.77" }
@@ -73,13 +72,13 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-c2pa-crypto = { path = "../internal/crypto", version = "0.1.2" }
-c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.1.0" }
-chrono = { version = "0.4.38", default-features = false, features = [
+c2pa-crypto = { path = "../internal/crypto", version = "0.2.0" }
+c2pa-status-tracker = { path = "../internal/status-tracker", version = "0.2.0" }
+chrono = { version = "0.4.39", default-features = false, features = [
     "serde",
     "wasmbind",
 ] }
-ciborium = "0.2.0"
+ciborium = "0.2.2"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "json5",
@@ -96,20 +95,20 @@ hex = "0.4.3"
 # Version 1.13.0 doesn't compile under Rust < 1.75, pinning to 1.12.0
 id3 = "=1.14.0"
 img-parts = "0.3.0"
-jfifdump = "0.5.1"
+jfifdump = "0.6.0"
 log = "0.4.8"
 lopdf = { version = "0.31.0", optional = true }
 lazy_static = "1.4.0"
-memchr = "2.7.1"
+memchr = "2.7.4"
 mp4 = "0.14.0"
 pem = "3.0.2"
 png_pong = "0.9.1"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
-rasn-ocsp = "0.18.0"
-rasn-pkix = "0.18.0"
-rasn = "0.18.0"
+rasn-ocsp = "0.22.0"
+rasn-pkix = "0.22.0"
+rasn = "0.22.0"
 riff = "2.0.0"
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
@@ -122,13 +121,13 @@ serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 sha2 = "0.10.6"
 tempfile = "3.10.1"
-thiserror = "1.0.61"
+thiserror = "2.0.8"
 treeline = "0.1.0"
 url = "2.5.3"
 uuid = { version = "1.10.0", features = ["serde", "v4", "js"] }
 x509-parser = "0.16.0"
 x509-certificate = "0.21.0"
-zip = { version = "0.6.6", default-features = false }
+zip = { version = "2.2.1", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "2.4.0"
@@ -136,19 +135,14 @@ image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
     "png",
 ], optional = true }
-instant = "0.1.12"
-openssl = { version = "0.10.61", features = ["vendored"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_log = { version = "1.0.0", features = ["color"] }
 getrandom = { version = "0.2.7", features = ["js"] }
-# We need to use the `inaccurate` flag here to ensure usage of the JavaScript Date API
-# to handle certificate timestamp checking correctly.
-instant = { version = "0.1.12", features = ["wasm-bindgen", "inaccurate"] }
 js-sys = "0.3.58"
 rand_core = "0.9.0-alpha.2"
 rsa = { version = "0.9.6", features = ["sha2"] }
-serde-wasm-bindgen = "0.5.0"
+serde-wasm-bindgen = "0.6.5"
 spki = "0.7.3"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.31"
@@ -162,8 +156,8 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.40"
-mockall = "0.11.2"
-c2pa = { path = ".", features = [
+mockall = "0.13.1"
+c2pa = { path = ".", default-features = false, features = [
     "unstable_api",
 ] } # allow integration tests to use the new API
 glob = "0.3.1"

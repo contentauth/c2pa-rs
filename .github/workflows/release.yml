@@ -14,6 +14,9 @@ jobs:
     name: Release-plz
     runs-on: ubuntu-latest
 
+    outputs:
+      c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,7 +28,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.83
+        id: release-plz
+        uses: MarcoIeni/release-plz-action@v0.5.86
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
@@ -38,3 +42,81 @@ jobs:
             tail -n +2 |\
             sed 's/origin\///' |\
             xargs -I {} git push origin --delete {}
+  
+      - name: Identify c2patool release
+        id: sniff-c2patool-release-tag
+        run: |
+          echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
+    
+  publish-c2patool-binaries:
+    name: Publish c2patool binaries
+    runs-on: ${{ matrix.os }}
+    needs: release-plz
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        rust_version: [ stable ]
+        experimental: [ false ]
+        include:
+          - os: macos-latest
+            artifact_name: c2patool_mac_universal.zip
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
+          - os: ubuntu-latest
+            artifact_name: c2patool_linux_intel.tar.gz
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-latest
+            artifact_name: c2patool_win_intel.zip
+            uploaded_asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
+
+    steps:
+      - name: Checkout repository
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+          components: llvm-tools-preview
+
+      - name: Install cargo-sbom
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-sbom
+          version: '0.9.1'
+
+      - name: Cache Rust dependencies
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run make release
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        run: cd cli && make release
+
+      - name: Upload binary to GitHub
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.uploaded_asset_name }}
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
+
+      - name: Generate SBOM
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        run: cd cli && cargo sbom > c2patool.${{ matrix.os }}.sbom.json
+
+      - name: Upload SBOM to Github
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: cli/c2patool.${{ matrix.os }}.sbom.json
+          asset_name: c2patool-${{ needs.release-plz.outputs.c2patool-release-tag }}-sbom.json
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true

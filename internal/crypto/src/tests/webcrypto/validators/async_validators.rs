@@ -16,11 +16,10 @@ use rasn::types::OctetString;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    raw_signature::RawSignatureValidationError,
+    raw_signature::{RawSignatureValidationError, SigningAlg},
     webcrypto::{
         async_validator_for_sig_and_hash_algs, async_validators::async_validator_for_signing_alg,
     },
-    SigningAlg,
 };
 
 const SAMPLE_DATA: &[u8] = b"some sample content to sign";

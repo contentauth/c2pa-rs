@@ -15,8 +15,18 @@
 
 pub(crate) mod oids;
 
+pub(crate) mod signer;
+pub use signer::{
+    async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
+    AsyncRawSigner, RawSigner, RawSignerError,
+};
+
+mod signing_alg;
+pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
+
 mod validator;
+pub(crate) use validator::validator_for_sig_and_hash_algs;
 pub use validator::{
-    validator_for_sig_and_hash_algs, validator_for_signing_alg, RawSignatureValidationError,
-    RawSignatureValidator,
+    async_validator_for_signing_alg, validator_for_signing_alg, AsyncRawSignatureValidator,
+    RawSignatureValidationError, RawSignatureValidator,
 };

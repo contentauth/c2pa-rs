@@ -41,6 +41,41 @@ pub(crate) fn insert_data_at<R: Read + Seek, W: Write>(
     Ok(())
 }
 
+// Replace data at arbitrary location and len in a stream.
+// start_location is where the replacement data will start
+// replace_len is how many bytes from source to replaced starting a start_location
+// data is the data that will be inserted at start_location
+#[allow(dead_code)]
+pub(crate) fn patch_stream<R: Read + Seek + ?Sized, W: Write + ?Sized>(
+    source: &mut R,
+    dest: &mut W,
+    start_location: u64,
+    replace_len: u64,
+    data: &[u8],
+) -> Result<()> {
+    source.rewind()?;
+    let source_len = stream_len(source)?;
+
+    if start_location + replace_len > source_len {
+        return Err(Error::BadParam("read past end of source stream".into()));
+    }
+
+    let mut before_handle = source.take(start_location);
+
+    // copy data before start location
+    std::io::copy(&mut before_handle, dest)?;
+
+    // write out new data
+    dest.write_all(data)?;
+
+    // write out the rest of the source skipping the bytes we wanted to replace
+    let source = before_handle.into_inner();
+    source.seek(SeekFrom::Start(start_location + replace_len))?;
+    std::io::copy(source, dest)?;
+
+    Ok(())
+}
+
 // Returns length of the stream, stream position is preserved
 #[allow(dead_code)]
 pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64> {
@@ -91,10 +126,10 @@ impl<R: Read + Seek> ReaderUtils for R {
 
         if old_pos
             .checked_add(data_len)
-            .ok_or(Error::BadParam("file read out of range".into()))?
+            .ok_or(Error::BadParam("source stream read out of range".into()))?
             > len
         {
-            return Err(Error::BadParam("read past file end".into()));
+            return Err(Error::BadParam("read past end of source stream".into()));
         }
 
         // make sure we can allocate vec
@@ -103,5 +138,78 @@ impl<R: Read + Seek> ReaderUtils for R {
         self.take(data_len).read_to_end(&mut output)?;
 
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    //use env_logger;
+    use super::*;
+
+    #[test]
+    fn test_patch_stream() {
+        let source = "this is a very very good test";
+
+        // test truncation
+        let mut output = Vec::new();
+        patch_stream(&mut Cursor::new(source.as_bytes()), &mut output, 10, 5, &[]).unwrap();
+        assert_eq!(&output, "this is a very good test".as_bytes());
+
+        // test truncation with new data
+        let mut output = Vec::new();
+        patch_stream(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            10,
+            14,
+            "so so".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(&output, "this is a so so test".as_bytes());
+
+        // test insertion, leaving existing data
+        let mut output = Vec::new();
+        patch_stream(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            10,
+            0,
+            "very ".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(&output, "this is a very very very good test".as_bytes());
+
+        // test replacement of data
+        let mut output = Vec::new();
+        patch_stream(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            0,
+            29,
+            "all new data".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(&output, "all new data".as_bytes());
+
+        // test removal of all data
+        let mut output = Vec::new();
+        patch_stream(&mut Cursor::new(source.as_bytes()), &mut output, 0, 29, &[]).unwrap();
+        assert_eq!(&output, "".as_bytes());
+
+        // test replacement of too much data
+        let mut output = Vec::new();
+        assert!(patch_stream(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            10,
+            29,
+            &[],
+        )
+        .is_err());
     }
 }

@@ -42,6 +42,7 @@ jobs:
           # these exact names:
           #
           #    * sdk (The primary C2PA Rust SDK)
+          #    * c2patool
           #    * export_schema
           #    * make_test_images
           #
@@ -86,6 +87,16 @@ jobs:
           fi
 
           if echo "$PR_TITLE" | grep -E '^chore(\(deps\))?: bump '; then
+            echo "Exception / OK: Dependabot update pattern"
+            exit 0;
+          fi
+
+          if echo "$PR_TITLE" | grep -E '^update: update '; then
+            echo "Exception / OK: Dependabot update pattern"
+            exit 0;
+          fi
+
+          if echo "$PR_TITLE" | grep -E '^update: bump '; then
             echo "Exception / OK: Dependabot update pattern"
             exit 0;
           fi
