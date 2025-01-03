@@ -23,9 +23,8 @@ use std::{
 use async_trait::async_trait;
 use c2pa_crypto::{
     cose::{CertificateTrustPolicy, TimeStampStorage},
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
-    SigningAlg,
 };
 use tempfile::TempDir;
 

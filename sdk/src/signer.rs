@@ -13,9 +13,8 @@
 
 use async_trait::async_trait;
 use c2pa_crypto::{
-    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError},
+    raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
     time_stamp::{TimeStampError, TimeStampProvider},
-    SigningAlg,
 };
 
 use crate::{DynamicAssertion, Result};

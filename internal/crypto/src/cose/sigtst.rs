@@ -31,7 +31,10 @@ use crate::{
 ///
 /// Return a [`TstInfo`] struct if available and valid.
 #[async_generic]
-pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<TstInfo, CoseError> {
+pub(crate) fn validate_cose_tst_info(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+) -> Result<TstInfo, CoseError> {
     let Some((sigtst, tss)) = &sign1
         .unprotected
         .rest
@@ -88,7 +91,7 @@ pub fn validate_cose_tst_info(sign1: &coset::CoseSign1, data: &[u8]) -> Result<T
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[async_generic]
-pub fn parse_and_validate_sigtst(
+pub(crate) fn parse_and_validate_sigtst(
     sigtst_cbor: &[u8],
     data: &[u8],
     p_header: &ProtectedHeader,
@@ -134,7 +137,7 @@ pub fn cose_countersign_data(data: &[u8], p_header: &ProtectedHeader) -> Vec<u8>
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct TstToken {
+pub(crate) struct TstToken {
     #[allow(missing_docs)]
     #[serde(with = "serde_bytes")]
     pub val: Vec<u8>,
@@ -147,13 +150,11 @@ struct TstContainer {
 }
 
 impl TstContainer {
-    pub fn add_token(&mut self, token: TstToken) {
+    pub(crate) fn add_token(&mut self, token: TstToken) {
         self.tst_tokens.push(token);
     }
 }
 
-/// TO DO: Determine if this needs to be public after refactoring.
-///
 /// Given a COSE [`ProtectedHeader`] and an arbitrary block of data, use the
 /// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
 /// timestamp for that block of data.
@@ -168,7 +169,7 @@ impl TstContainer {
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
     ))]
-pub fn add_sigtst_header(
+pub(crate) fn add_sigtst_header(
     ts_provider: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,

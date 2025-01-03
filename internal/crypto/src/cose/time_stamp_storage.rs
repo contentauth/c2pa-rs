@@ -18,6 +18,7 @@
 /// of the C2PA Technical Specification.
 ///
 /// [§10.3.2.5.4, Storing the time-stamp]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_storing_the_time_stamp
+/// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[allow(non_camel_case_types)] // We choose to match the exact header names as used in the C2PA specification.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TimeStampStorage {

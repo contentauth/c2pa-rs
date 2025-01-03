@@ -19,9 +19,8 @@ use openssl::{
 
 use crate::{
     openssl::{cert_chain::check_chain_order, OpenSslMutex},
-    raw_signature::{RawSigner, RawSignerError},
+    raw_signature::{RawSigner, RawSignerError, SigningAlg},
     time_stamp::TimeStampProvider,
-    SigningAlg,
 };
 
 /// Implements `RawSigner` trait using OpenSSL's implementation of
