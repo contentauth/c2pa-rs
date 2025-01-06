@@ -118,7 +118,7 @@ pub use assertions::Relationship;
 pub use asset_io::{CAIRead, CAIReadWrite};
 #[cfg(feature = "unstable_api")]
 pub use builder::{Builder, ManifestDefinition};
-pub use c2pa_crypto::SigningAlg;
+pub use c2pa_crypto::raw_signature::SigningAlg;
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 pub use dynamic_assertion::DynamicAssertion;
@@ -170,7 +170,6 @@ pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod store;
-pub(crate) mod time_stamp;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};

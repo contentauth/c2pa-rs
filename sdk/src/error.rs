@@ -13,6 +13,7 @@
 
 // #![deny(missing_docs)] (we'll turn this on once fully documented)
 
+use c2pa_crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError};
 use thiserror::Error;
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
@@ -317,6 +318,11 @@ pub enum Error {
 
     #[error(transparent)]
     InvalidCertificateError(#[from] c2pa_crypto::cose::InvalidCertificateError),
+
+    /// An unexpected internal error occured while requesting the time stamp
+    /// response.
+    #[error("internal error ({0})")]
+    InternalError(String),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
@@ -339,12 +345,57 @@ impl From<c2pa_crypto::webcrypto::WasmCryptoError> for Error {
     }
 }
 
-impl From<c2pa_crypto::cose::CoseError> for Error {
-    fn from(err: c2pa_crypto::cose::CoseError) -> Self {
+impl From<CoseError> for Error {
+    fn from(err: CoseError) -> Self {
         match err {
-            c2pa_crypto::cose::CoseError::NoTimeStampToken => Self::NotFound,
-            c2pa_crypto::cose::CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
-            c2pa_crypto::cose::CoseError::TimeStampError(e) => e.into(),
+            CoseError::MissingSigningCertificateChain => Self::CoseX5ChainMissing,
+            CoseError::MultipleSigningCertificateChains => Self::CoseVerifier,
+            CoseError::NoTimeStampToken => Self::NotFound,
+            CoseError::UnsupportedSigningAlgorithm => Self::CoseSignatureAlgorithmNotSupported,
+            CoseError::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
+            CoseError::CborParsingError(_) => Self::CoseTimeStampGeneration,
+            CoseError::CborGenerationError(_) => Self::CoseTimeStampGeneration,
+            CoseError::TimeStampError(e) => e.into(),
+            CoseError::CertificateProfileError(e) => e.into(),
+            CoseError::CertificateTrustError(e) => e.into(),
+            CoseError::BoxSizeTooSmall => Self::CoseSigboxTooSmall,
+            CoseError::RawSignerError(e) => e.into(),
+            CoseError::RawSignatureValidationError(e) => e.into(),
+            CoseError::InternalError(e) => Self::InternalError(e),
         }
+    }
+}
+
+impl From<Error> for CoseError {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::CoseX5ChainMissing => Self::MissingSigningCertificateChain,
+            Error::CoseVerifier => Self::MultipleSigningCertificateChains,
+            Error::NotFound => Self::NoTimeStampToken,
+            Error::CoseSignatureAlgorithmNotSupported => Self::UnsupportedSigningAlgorithm,
+            Error::InvalidEcdsaSignature => Self::InvalidEcdsaSignature,
+            Error::CoseTimeStampGeneration => Self::CborGenerationError(err.to_string()),
+            Error::TimeStampError(e) => Self::TimeStampError(e),
+            Error::CertificateProfileError(e) => Self::CertificateProfileError(e),
+            Error::CertificateTrustError(e) => Self::CertificateTrustError(e),
+            Error::CoseSigboxTooSmall => Self::BoxSizeTooSmall,
+            Error::RawSignerError(e) => Self::RawSignerError(e),
+            Error::RawSignatureValidationError(e) => Self::RawSignatureValidationError(e),
+            _ => Self::InternalError(err.to_string()),
+        }
+    }
+}
+
+impl From<Error> for RawSignerError {
+    fn from(err: Error) -> Self {
+        // See if better mappings exist, but I doubt it.
+        Self::InternalError(err.to_string())
+    }
+}
+
+impl From<Error> for TimeStampError {
+    fn from(err: Error) -> Self {
+        // See if better mappings exist, but I doubt it.
+        Self::InternalError(err.to_string())
     }
 }

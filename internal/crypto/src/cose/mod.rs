@@ -26,7 +26,29 @@ pub use certificate_profile::{check_certificate_profile, CertificateProfileError
 mod error;
 pub use error::CoseError;
 
-mod sigtst;
-pub use sigtst::{
-    cose_countersign_data, parse_and_validate_sigtst, parse_and_validate_sigtst_async, TstToken,
+mod ocsp;
+pub use ocsp::{check_ocsp_status, check_ocsp_status_async, OcspFetchPolicy};
+
+mod sign;
+pub use sign::{sign, sign_async};
+
+mod sign1;
+pub use sign1::{
+    cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1, signing_time_from_sign1,
+    signing_time_from_sign1_async,
 };
+
+mod sigtst;
+pub(crate) use sigtst::{
+    add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,
+    validate_cose_tst_info_async,
+};
+
+mod time_stamp_storage;
+pub use time_stamp_storage::TimeStampStorage;
+
+mod validation_info;
+pub use validation_info::ValidationInfo;
+
+mod verifier;
+pub use verifier::Verifier;

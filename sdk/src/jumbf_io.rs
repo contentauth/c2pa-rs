@@ -349,7 +349,7 @@ pub mod tests {
 
     use std::io::Seek;
 
-    use c2pa_crypto::SigningAlg;
+    use c2pa_crypto::raw_signature::SigningAlg;
 
     use super::*;
     use crate::{
