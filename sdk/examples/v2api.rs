@@ -16,7 +16,7 @@ use std::io::{Cursor, Seek};
 
 use anyhow::Result;
 use c2pa::{settings::load_settings_from_str, Builder, CallbackSigner, Reader};
-use c2pa_crypto::SigningAlg;
+use c2pa_crypto::raw_signature::SigningAlg;
 use serde_json::json;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");

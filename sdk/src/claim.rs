@@ -16,7 +16,11 @@ use std::path::Path;
 use std::{collections::HashMap, fmt};
 
 use async_generic::async_generic;
-use c2pa_crypto::{base64, cose::CertificateTrustPolicy, ValidationInfo};
+use c2pa_crypto::{
+    base64,
+    cose::{parse_cose_sign1, CertificateTrustPolicy, OcspFetchPolicy, ValidationInfo},
+    ocsp::OcspResponse,
+};
 use c2pa_status_tracker::{log_item, OneShotStatusTracker, StatusTracker};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,10 +38,7 @@ use crate::{
         AssetType, BmffHash, BoxHash, DataBox, DataHash, Metadata,
     },
     asset_io::CAIRead,
-    cose_validator::{
-        check_ocsp_status, check_ocsp_status_async, get_signing_info, get_signing_info_async,
-        verify_cose, verify_cose_async,
-    },
+    cose_validator::{get_signing_info, get_signing_info_async, verify_cose, verify_cose_async},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -52,6 +53,7 @@ use crate::{
     },
     jumbf_io::get_assetio_handler,
     salt::{DefaultSalt, SaltGenerator, NO_SALT},
+    settings::get_settings_value,
     utils::hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     validation_status, ClaimGeneratorInfo,
 };
@@ -1068,10 +1070,18 @@ impl Claim {
         }
 
         // check certificate revocation
-        check_ocsp_status_async(&sig, &data, ctp, validation_log).await?;
+        let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
+        check_ocsp_status_async(&sign1, &data, ctp, validation_log).await?;
 
-        let verified =
-            verify_cose_async(sig, data, additional_bytes, cert_check, ctp, validation_log).await;
+        let verified = verify_cose_async(
+            &sig,
+            &data,
+            &additional_bytes,
+            cert_check,
+            ctp,
+            validation_log,
+        )
+        .await;
 
         Claim::verify_internal(claim, asset_data, is_provenance, verified, validation_log)
     }
@@ -1113,7 +1123,8 @@ impl Claim {
         };
 
         // check certificate revocation
-        check_ocsp_status(sig, data, ctp, validation_log)?;
+        let sign1 = parse_cose_sign1(sig, data, validation_log)?;
+        check_ocsp_status(&sign1, data, ctp, validation_log)?;
 
         let verified = verify_cose(
             sig,
@@ -1981,6 +1992,41 @@ impl Claim {
             jumbf::labels::to_manifest_uri(manifest_label),
             Self::LABEL
         )
+    }
+}
+
+#[allow(dead_code)]
+#[async_generic]
+pub(crate) fn check_ocsp_status(
+    sign1: &coset::CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    validation_log: &mut impl StatusTracker,
+) -> Result<OcspResponse> {
+    // Moved here instead of c2pa-crypto because of the dependency on settings.
+
+    let fetch_policy = match get_settings_value::<bool>("verify.ocsp_fetch") {
+        Ok(true) => OcspFetchPolicy::FetchAllowed,
+        _ => OcspFetchPolicy::DoNotFetch,
+    };
+
+    if _sync {
+        Ok(c2pa_crypto::cose::check_ocsp_status(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )?)
+    } else {
+        Ok(c2pa_crypto::cose::check_ocsp_status_async(
+            sign1,
+            data,
+            fetch_policy,
+            ctp,
+            validation_log,
+        )
+        .await?)
     }
 }
 

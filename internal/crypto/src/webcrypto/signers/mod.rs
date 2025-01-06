@@ -11,10 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::{
-    raw_signature::{RawSigner, RawSignerError},
-    SigningAlg,
-};
+use crate::raw_signature::{RawSigner, RawSignerError, SigningAlg};
 
 mod ed25519_signer;
 

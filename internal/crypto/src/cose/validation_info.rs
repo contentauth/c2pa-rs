@@ -16,23 +16,33 @@
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
-use crate::SigningAlg;
+use crate::raw_signature::SigningAlg;
 
 /// Describes a signature's validation data and status.
 #[derive(Debug, Default)]
 pub struct ValidationInfo {
     /// Algorithm used to validate the signature
     pub alg: Option<SigningAlg>,
+
     /// Date the signature was created
     pub date: Option<DateTime<Utc>>,
+
     /// Certificate serial number
     pub cert_serial_number: Option<BigUint>,
+
     /// Certificate issuer organization
     pub issuer_org: Option<String>,
+
     /// Signature validity
+    ///
+    /// TO REVIEW: What does this `bool` mean?
     pub validated: bool,
+
     /// Certificate chain used to validate the signature
     pub cert_chain: Vec<u8>,
+
     /// Signature revocation status
+    ///
+    /// TO REVIEW: What does this `bool` mean?
     pub revocation_status: Option<bool>,
 }

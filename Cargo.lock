@@ -800,6 +800,7 @@ dependencies = [
  "assert_cmd",
  "atree",
  "c2pa",
+ "c2pa-crypto",
  "clap",
  "env_logger",
  "glob",
@@ -2224,9 +2225,9 @@ dependencies = [
 
 [[package]]
 name = "img-parts"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cd653b443fbb9271d937a4b2c1c7489af95c284a56f84d76bbd00eac857cb1c"
+checksum = "dfded0de32cc78ecad0061b3c6a263cec6bce298fc1e670a4926b6723664ed87"
 dependencies = [
  "bytes",
  "crc32fast",
