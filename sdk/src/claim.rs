@@ -2216,6 +2216,13 @@ impl Claim {
         mut ingredient: Vec<Claim>,
         redactions_opt: Option<Vec<String>>,
     ) -> Result<()> {
+        // make sure the ingredient is version compatible
+        if ingredient.iter().any(|x| x.claim_version > self.version()) {
+            return Err(Error::VersionCompatibility(
+                "ingredient claims must too new".into(),
+            ));
+        }
+
         // redact assertion from incoming ingredients
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
