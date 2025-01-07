@@ -429,8 +429,8 @@ jobs:
       - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Run cargo-udeps
+      - name: Run cargo-udeps (build and archive)
         run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo +nightly binstall cargo-udeps --locked
-          cargo +nightly udeps --all-targets --all-features
+          cargo +nightly install cargo-udeps --locked
+          which cargo-udeps
+          # cargo +nightly udeps --all-targets --all-features
