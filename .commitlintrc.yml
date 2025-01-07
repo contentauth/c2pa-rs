@@ -21,10 +21,11 @@ rules:
   scope:
     level: error
     options:
+      - c2patool
+      - cawg_identity
       - export_schema
       - make_test_images
       - sdk
-      - c2patool
 
   # Scope may be empty
   # (NOTE: Disabled for now while we work around
